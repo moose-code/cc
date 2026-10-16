@@ -23,7 +23,7 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 | `core.climbMultiplier()` | the pot scaled multiplier now, bps (10,000 is 1x, up to `climbMultiplierCapBps`, launch 40,000 is 4x): the pages of 80 credits the pot covers at the current rate, clamped to [1x, the cap]. the ceiling's idle loosening runs this many times as fast (the per minute climb is unscaled). show it when above 1x ("pot covers 3 pages, ceiling loosening 3x") |
 | `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()` | the eth pots |
 | `IBalanceModule(core.balanceModule()).available()` | the balance token the module commits to the bid (the Core holds none) |
-| `core.balanceRate()` | the balance token bid now, bps of par (par is a credit's `score * unitPerPoint`): the rising balance bid lowered to `available()` as bps of par, at most 10,000 |
+| `core.balanceRate()` | the balance token bid now, bps of par (par is a credit's `score * unitPerPoint`): the rising balance bid lowered to `available()` as bps of par, at most `settings.balanceBidCapBps` (10,000 at launch) |
 | `core.balanceBidOf(id)` | the balance token payout for credit `id` now: `score * unitPerPoint * balanceRate() / 10,000` |
 | `core.pileSize()`, `core.pilePage(startAfter, n)`, `core.creditInfo(id)` | the pile, oldest first, with cost and acquisition time |
 | `core.heldStatements()`, `core.statementInfo(sid)`, `core.statementAge(sid)`, `core.ratingOf(sid)`, `core.composerOf(sid)` | the held statements |
@@ -33,30 +33,32 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 | `controller.pointRate()`, `controller.valueOf(points)`, `controller.anchorBps()`, `controller.startBps()` | the pricing inputs |
 | `core.settings()`, `core.paused()`, `core.retired()`, the lock flags, `core.chosenComposeOn()`, `core.minCcToChoose()` | the switches |
 
+`ethRate()` and `bidOf(id)` report the rate and pot clamp without the purchase budget. A nonzero quote does not mean a purchase can execute: simulate the actual transaction, and handle `SpendCapReached(uint256 spent, uint256 cost, uint256 budget)` by waiting for the next bucket or an owner settings change. The first purchase of a bucket always passes. There is no separate remaining-budget view.
+
 ## 3. selling credits for eth
 
 1. read `core.bidOf(id)` for each credit (or `core.ethRate()` and scale by `score / refScore`) and `core.ethPot()`.
 2. `credits.setApprovalForAll(core, true)` once.
 3. `core.sellForEth(ids, minOut)` pays `core.bidOf(id)` = `ethRate() * score / refScore` per credit; set `minOut` a little under the sum of `bidOf` over the ids (each credit drops the rate by `dropPerCreditBps * score / refScore` for the next). the eth arrives in the same call. a batch whose total passes the pot reverts whole (`ZeroAmount` or `PotTooSmall`); up to about 91 credits fit under the gas cap (each credit reads its score).
 
-reverts: `Empty`, `ZeroId`, `NotOwner`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. event `CreditBought(id, from, cost)` per credit, `EthRateFill(spent, rate, pot)` per fill.
+reverts: `Empty`, `ZeroId`, `NotOwner`, `ZeroAmount`, `PotTooSmall`, `SpendCapReached`, `Slippage`, `Retired`. event `CreditBought(id, from, cost)` per credit, `EthRateFill(spent, rate, pot)` per fill.
 
 ## 4. sweeping a listing
 
-`core.buyListing(adapter, id, params)`. the adapter prices the listing from its own data; the engine pays the listing and pays the caller the gas at the base fee (capped at `keeperMaxBaseFee`, 1,500,000 gas) plus `keeperFee`, at most the gap between the bid and the listing.
+`core.buyListing(adapter, id, params)`. the adapter prices the listing from its own data; the engine pays the listing and pays the caller the gas at the base fee (capped at `keeperMaxBaseFee`, 1,500,000 gas) plus `keeperFee`, at most the gap between the bid and the listing and the pot left after the listing. the gas calculation adds 350,000 overhead gas for work after its count, the transaction base and typical calldata; this is an accounting constant, not a measured transaction total. the purchase budget counts the listing price plus the actual keeper payment.
 
 | adapter | `params` | reverts of the adapter |
 |---|---|---|
 | SeaportBasicAdapter | `abi.encode(BasicOrderParameters)` of a Seaport 1.6 basic order: Credits as offer token, `id`, amount 1, native consideration, an open order type, every additional recipient the offerer or allowlisted (`allowedRecipient(a)`) | `WrongToken`, `WrongId`, `WrongAmount`, `NotNative`, `ZeroPrice`, `RestrictedOrder`, `RecipientNotAllowed(recipient)` |
 | CreditStrategyAdapter | empty | `NotForSale` when `nftForSale(id)` is 0 |
 
-reverts of the Core: `AdapterNotAllowed`, `ZeroId`, `AlreadyOwned`, `BadQuote` (the adapter reverted or answered badly; an adapter's own revert surfaces as `BadQuote`), `ForbiddenTarget`, `ZeroAmount`, `PotTooSmall`, `AboveBid`, `CallFailed`, `NoCredit`, `BadCost`, `Retired`. event `ListingBought(id, adapter, caller, cost, paid, rate)`.
+reverts of the Core: `AdapterNotAllowed`, `ZeroId`, `AlreadyOwned`, `BadQuote` (the adapter reverted or answered badly; an adapter's own revert surfaces as `BadQuote`), `ForbiddenTarget`, `ZeroAmount`, `PotTooSmall`, `AboveBid`, `CallFailed`, `NoCredit`, `BadCost`, `SpendCapReached`, `Retired`. event `ListingBought(id, adapter, caller, cost, paid, rate)`.
 
 a listing whose price is above the bid is not swept; a holder sells it with `sellForEth` instead. a hook push landing inside the target call (a swap in a callback) is fee income at the next book.
 
 ## 5. composing
 
-`controller.nextPage()` ready means 80 credits wait (and, while the credit sale is on, the newest is past its window). `core.compose()` composes them with a random format, `core.compose(format)` with the given one. `core.composeChosen(ids, format)` composes 80 credits the caller names (requires `chosenComposeOn`, a CC balance of at least `minCcToChoose`, every credit past its window). the caller pays the gas, about 8.5 million after refunds; the payment settings `callerFee` and `callerMaxBaseFee` are 0 at launch. `core.setHeldFormat(sid, format)` restyles a held statement for a holder of `minCcToChoose` CC.
+`controller.nextPage()` ready means 80 credits wait (and, while the credit sale is on, the newest is past its window). `core.compose()` composes them with a random format, `core.compose(format)` with the given one. `core.composeChosen(ids, format)` composes 80 credits the caller names (requires `chosenComposeOn`, a CC balance of at least `minCcToChoose`, every credit past its window). the caller pays the gas, about 8.5 million after refunds; the payment settings are `callerMaxBaseFee` 3 gwei and `callerFee` 0.0003 eth at launch (decision 138), about 0.026 eth per page at or above 3 gwei. `core.setHeldFormat(sid, format)` restyles a held statement for a holder of `minCcToChoose` CC.
 
 reverts: `NotReady`, `BadFormat`, `NotInPile(id)`, `NotHeld`, `BadStatement`, `ChosenComposeOff`, `BelowMinCc`, `InWindow(id)`, `NotForSale` (restyle of an unheld statement), `Retired`. events `Composed(sid, ids, format, cost, price, caller)`, `HeldFormatSet(sid, format, caller)`.
 
@@ -68,7 +70,7 @@ reverts: `NotReady`, `BadFormat`, `NotInPile(id)`, `NotHeld`, `BadStatement`, `C
 
 ## 7. fees, booking and funding
 
-fees reach the Core from the pool's hook on every swap and are booked at the next door. `core.book()` books them now (a keeper calls it at the end of the anti sniper window, launch plus 30 minutes). `core.fund()` payable adds eth to the pot whole. `core.collectEscrow()` claims the Core's fee escrow credit into the pot. the payee share is pushed by the book, not claimed. the balance token is held by the module, not the Core, so there is no balance booking door. a plain send to the Core reverts `UseFund`. events `FeesAdded(amount, toPayee)`, `Funded(from, amount)`, `EscrowCollected(amount)`.
+fees reach the Core from the pool's hook on every swap and are booked at the next door. `core.book()` books them now. the first book with income at or after the factory launch time plus `settings.sniperSeconds` latches `payeeOn`; that book shares nothing, and later books apply `payeePpm`. the launch default is 1,800 seconds. changing this setting does not undo a latched payee share or change the external launch skim schedule. `core.fund()` payable adds eth to the pot whole. `core.collectEscrow()` claims the Core's fee escrow credit into the pot. the payee share is pushed by the book, not claimed. the balance token is held by the module, not the Core, so there is no balance booking door. a plain send to the Core reverts `UseFund`. events `FeesAdded(amount, toPayee)`, `Funded(from, amount)`, `EscrowCollected(amount)`.
 
 ## 8. the buyback
 
@@ -76,7 +78,9 @@ fees reach the Core from the pool's hook on every swap and are booked at the nex
 
 ## 9. the balance side
 
-the module holds the balance token; the Core holds none. its interface adds `available()` (the token it commits to the bid) and `pay(to, amount)` (the Core only). at launch `redeemOn` is true, `balanceBidOn` is false and no module is set, so `redeemStatement` reverts `NoBalanceModule`. `core.redeemStatement(sid)` for a held statement with `controller.atFloor(sid)` true leaves its proceeds in the module; reverts `BadModule` when the module's holding rises by less than `rating * unit * (10,000 - redeemSlippageBps) / 10,000`. `core.sellForBalance(ids, minOut)` pays `score * unitPerPoint * core.balanceRate() / 10,000` in balance token per credit from the module, the rising balance bid (SPEC section 4): the rate climbs in bps of par toward the 10,000 cap, floors at `10,000 - balanceBidMarginBps`, clamps to `available()` as bps of par, and drops per credit. read `core.balanceBidOf(id)` for each credit and set `minOut` a little under the sum (each credit drops the rate for the next). the batch total must fit `available()` in base units and the seller's holding must rise by the total, else it reverts `NoBalanceModule`, `BalanceBidOff`, `Empty`, `BadModule`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. with the bid off and `redeemOn`, redemptions keep filling the module (the accumulate mode). events `StatementRedeemed(sid, received)`, `CreditBought(id, from, cost)`, `BalanceRateFill(spent, rateBps, available)` per credit sold into the balance bid.
+the module holds the balance token; the Core holds none. its interface adds `available()` (the token it commits to the bid) and `pay(to, amount)` (the Core only). at launch `redeemOn` is true, `balanceBidOn` is false and no module is set, so `redeemStatement` reverts `NoBalanceModule`. `core.redeemStatement(sid)` for a held statement with `controller.atFloor(sid)` true leaves its proceeds in the module; reverts `BadModule` when the module's holding rises by less than `rating * unit * (10,000 - redeemSlippageBps) / 10,000`. `core.sellForBalance(ids, minOut)` pays `score * unitPerPoint * core.balanceRate() / 10,000` in balance token per credit from the module, the rising balance bid (SPEC section 4): the rate climbs in bps of par toward `settings.balanceBidCapBps` (10,000 at launch), floors at `10,000 - balanceBidMarginBps`, clamps to `available()` as bps of par, and drops per credit. read `core.balanceBidOf(id)` for each credit and set `minOut` a little under the sum (each credit drops the rate for the next). the batch total must fit `available()` in base units and the seller's holding must rise by the total, else it reverts `NoBalanceModule`, `BalanceBidOff`, `Empty`, `BadModule`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. with the bid off and `redeemOn`, redemptions keep filling the module (the accumulate mode). events `StatementRedeemed(sid, received)`, `CreditBought(id, from, cost)`, `BalanceRateFill(spent, rateBps, available)` per credit sold into the balance bid.
+
+balance purchases do not consume the ETH purchase budget. raising `balanceBidCapBps` permits bids above par; the floor remains `10,000 - balanceBidMarginBps`. lowering the cap checkpoints the old climb first and clamps the stored balance rate to the new cap.
 
 ## 10. adopt, migrate, rescue
 
@@ -90,4 +94,22 @@ the module holds the balance token; the Core holds none. its interface adds `ava
 
 ## 12. gas
 
-measured by test/GasCap.t.sol at the candidate, execution gas of one call, cold: `compose` about 8.5 million after refunds (10.6 million before), `buyListing` through the Seaport adapter about 480,000 and through the strategy adapter about 470,000, `buyback` about 270,000, `redeemStatement` under 1,500,000 with a real module, `sellForEth` about 400,000 for one credit and about 91 credits at the 16,777,216 transaction cap (per point, each credit reads its score); `swapCredit` about 253,000 (274,000 as a transaction, with the fee burned). the bounded reads: `nextPage` 500,000, `atFloor` 400,000, the adapter quote 300,000, the module unit 200,000 in the Core and 50,000 in the controller.
+last recorded before the issue 23 changes by test/GasCap.t.sol, execution gas of one call, cold: `compose` about 8.5 million after refunds (10.6 million before), `buyListing` through the Seaport adapter about 480,000 and through the strategy adapter about 470,000, `buyback` about 270,000, `redeemStatement` under 1,500,000 with a real module, `sellForEth` about 400,000 for one credit and about 91 credits at the 16,777,216 transaction cap (per point, each credit reads its score); `swapCredit` about 253,000 (274,000 as a transaction, with the fee burned). the bounded reads: `nextPage` 500,000, `atFloor` 400,000, the adapter quote 300,000, the module unit 200,000 in the Core and 50,000 in the controller.
+
+## 13. settings ABI and purchase buckets
+
+`settings()` and `SettingsSet` carry 34 fields in declaration order, packed into five storage slots. retain the original 29 fields, including `uint16 climbMultiplierCapBps`, then append `uint16 spendCapBps`, `uint32 bucketSeconds`, `uint32 balanceBidCapBps`, `uint32 idleStepSeconds`, `uint32 sniperSeconds`. use integer-safe decoders: `keeperFee`, `rateCap`, `callerFee`, `swapFeeCc` and `buybackSlice` exceed JavaScript's safe-number range at their width limits. the complete tuple types are:
+
+```text
+(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32)
+```
+
+`Sale` and `SaleSet` append `uint16 anchorMoveBps`, making six fields: `(uint16 markupBps,uint32 startCapBps,uint16 decayHours,uint32 anchorHalfLife,uint128 anchorMinCost,uint16 anchorMoveBps)`. a qualifying statement sale moves the anchor by this share of the upward gap, capped at `startCapBps`. zero disables sale-driven movement and leaves its clock unchanged. the launch value is 5,000.
+
+ETH purchases through `sellForEth` and `buyListing` share one fixed bucket, `floor(block.timestamp / bucketSeconds)`. the first successful purchase snapshots the booked buying pot before its cost. the bucket budget is `snapshotPot * spendCapBps / 10,000`; the first purchase of a bucket always passes whatever its cost, and later purchases need spent plus cost at or below the budget; successful purchase outflow accumulates against it. later deposits do not enlarge that snapshot, unused budget does not carry forward, and a failing purchase or batch rolls back its accounting. buybacks, caller payments, balance purchases, redemptions and migration do not consume this purchase budget. the launch is 100 bps, 1 percent, per 60 seconds. purchases on opposite sides of a boundary may consume two successive budgets.
+
+`spendCapBps == 10,000` bypasses enforcement, including for funds added after the snapshot, while still recording successful outflow. a settings edit retains active spent amounts and the original snapshot, and reprices its budget using the new cap. reducing the budget below spent blocks new purchases until the bucket ends or the budget is raised. a duration change translates the active bucket and preserves spent, snapshot and active bid drop floors; an already expired bucket is cleared. toggling bypass off does not erase spending during bypass. unrelated settings edits do not reset the budget.
+
+`bucketSeconds` also controls both bids' first-fill drop floor. `idleStepSeconds` controls ceiling loosening steps (600 seconds at launch). the climb and recovery climb remain per 60 seconds. `balanceBidCapBps` defaults to 10,000 and `sniperSeconds` to 1,800. all durations are owner settings. current bounds and coupled constraints are in RUNBOOK section 4 and SPEC section 3.
+
+for raw ETH quote readers, the expanded Settings moves `State.anchor` to slot 28: first-fill rate is slot 29; bucket is the low uint64 of slot 30, with peak time above it. decode with bigint and divide time by `bucketSeconds`. prefer generated ABI views for other reads. the web replay does not enforce or reserve purchase budget.

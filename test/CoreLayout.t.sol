@@ -40,8 +40,12 @@ contract CoreLayoutTest is Fixture {
         core.addAdapter(address(0xA110C));
         vm.stopPrank();
         assertTrue(core.allowedAdapter(address(0xA110C)), "setup: the adapter is approved");
-        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110C), uint256(3))))), 1, "allowedAdapter");
-        assertEq(uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110D), uint256(3))))), 0, "unset adapter");
+        assertEq(
+            uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110C), uint256(3))))), 1, "allowedAdapter"
+        );
+        assertEq(
+            uint256(vm.load(address(core), keccak256(abi.encode(address(0xA110D), uint256(3))))), 0, "unset adapter"
+        );
         vm.prank(owner);
         core.transferOwnership(address(0xBEEF));
         vm.startPrank(owner);
@@ -119,16 +123,16 @@ contract CoreLayoutTest is Fixture {
     }
 
     // promise: SPEC 1 the balance bid instance is appended after the eth anchor
-    /// `State.balance` (the balance bid Rate) follows `anchor` (slots 27 to 30): rateAtCheckpoint at 31,
-    /// checkpointTime and lastFillTime packed at 32, its anchor (lastFillRate, minuteStartRate, minuteBucket and
-    /// peakTime, peakRate) at 33 to 36. at launch the instance is reset to the floor 10_000 - balanceBidMarginBps, which
+    /// `State.balance` (the balance bid Rate) follows `anchor` (slots 28 to 31): rateAtCheckpoint at 32,
+    /// checkpointTime and lastFillTime packed at 33, its anchor (lastFillRate, minuteStartRate, minuteBucket and
+    /// peakTime, peakRate) at 34 to 37. at launch the instance is reset to the floor 10_000 - balanceBidMarginBps, which
     /// the stored rate keeps until a balance fill or a margin change
     function test_OK_balanceInstanceSitsAfterTheAnchor() public view {
         uint256 floor = 10_000 - core.settings().balanceBidMarginBps;
-        assertEq(_field(31, 0, 32), floor, "balance.rateAtCheckpoint is the floor at launch");
-        assertEq(_field(33, 0, 32), floor, "balance.anchor.lastFillRate is the floor");
-        assertEq(_field(34, 0, 32), floor, "balance.anchor.minuteStartRate is the floor");
-        assertEq(_field(36, 0, 32), floor, "balance.anchor.peakRate is the floor");
+        assertEq(_field(32, 0, 32), floor, "balance.rateAtCheckpoint is the floor at launch");
+        assertEq(_field(34, 0, 32), floor, "balance.anchor.lastFillRate is the floor");
+        assertEq(_field(35, 0, 32), floor, "balance.anchor.minuteStartRate is the floor");
+        assertEq(_field(37, 0, 32), floor, "balance.anchor.peakRate is the floor");
     }
 
     // promise: SPEC 1 the Core state is one State struct at slot 0
@@ -175,12 +179,12 @@ contract CoreLayoutTest is Fixture {
         assertEq(sword >> 208, 0, "no field above pauseMark");
         assertEq(uint256(vm.load(address(core), bytes32(S_HELD))), core.heldStatements().length, "held length");
         // composerOf: the compose caller, one word per statement, at the last declared slot
-        assertEq(uint256(vm.load(address(core), bytes32(_mapSlot(c.sid, S_COMPOSER)))), uint256(uint160(keeper)), "composer");
+        assertEq(
+            uint256(vm.load(address(core), bytes32(_mapSlot(c.sid, S_COMPOSER)))), uint256(uint160(keeper)), "composer"
+        );
         assertEq(core.composerOf(c.sid), keeper, "composerOf");
         assertEq(
-            uint256(vm.load(address(core), bytes32(uint256(keccak256(abi.encode(S_HELD)))))),
-            c.sid,
-            "first held id"
+            uint256(vm.load(address(core), bytes32(uint256(keccak256(abi.encode(S_HELD)))))), c.sid, "first held id"
         );
         // a second statement sits at index 1 of the held list, so a wrong offset of `slot` cannot read as zero
         _fillEthPile(80);

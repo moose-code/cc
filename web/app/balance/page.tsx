@@ -3,7 +3,7 @@
 import { TradePanel } from "@/components/TradePanel";
 import { NotDeployed } from "@/components/NotDeployed";
 import { engineDeployed } from "@/lib/config";
-import { BALANCE_SYMBOL } from "@/lib/events";
+import { BALANCE_SYMBOL } from "@/lib/format";
 import { useBalanceMarket } from "@/lib/market";
 import { useSnapshot } from "@/lib/live";
 import { eth } from "@/lib/format";

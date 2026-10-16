@@ -3,15 +3,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient } from "wagmi";
 import { decodeFunctionData, zeroAddress, type Address } from "viem";
-import { core, deployBlock, engineDeployed } from "./config";
+import { core, deployBlock, engineDeployed, STATEMENT_SIZE } from "./config";
 import { coreAbi, engineEventsAbi, erc20Abi, transferEventAbi } from "./abis";
 import { lsGet, lsSet, persistedMap, setAnchor, SCOPE, verifyScope } from "./cache";
 import { useHead } from "./live";
+import { useIxMode } from "./indexer";
 import { emptyStats, processLogs, type BalanceTokenInfo, type ComposeMode, type Scan } from "./events";
 
 export type { FeedEvent, FeedKind, Stats, Scan, CreditEvt, CreditHow, StatementRecord, ComposeMode } from "./events";
 
-export const STATEMENT_SIZE = 80; // credits composed into one statement (the length of Composed.ids)
+export { STATEMENT_SIZE };
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
@@ -36,7 +37,7 @@ export function useBlockTs(block?: bigint) {
   const client = usePublicClient();
   return useQuery<number | undefined>({
     queryKey: ["block-ts", block?.toString()],
-    enabled: block != null,
+    enabled: block != null && Boolean(client),
     staleTime: Infinity,
     queryFn: () => timestampOf(client!, block!),
   });
@@ -206,27 +207,22 @@ export function useScan() {
   const client = usePublicClient();
   const { data: hd } = useHead();
   const head = hd?.n;
+  // the scan is the fallback for the indexer: it runs only while the app is in chain mode (lib/indexer.ts useIxMode)
+  const chainMode = useIxMode() === "chain";
   const q = useQuery<Scan>({
     queryKey: ["scan", head?.toString()],
-    enabled: engineDeployed && Boolean(head),
+    enabled: engineDeployed && Boolean(head) && chainMode,
     gcTime: 30000,
     placeholderData: (prev) => prev,
     queryFn: () => {
       if (!client || !head) return EMPTY_SCAN;
-      const p = queue.then(() => scanTo(client, head)).catch(() => lastGood ?? EMPTY_SCAN);
-      queue = p;
+      const p = queue.then(() => scanTo(client, head)).catch((e) => {
+        if (!lastGood) throw e; // no scan yet: the query errors
+        return lastGood;
+      });
+      queue = p.catch(() => undefined);
       return p;
     },
   });
   return { ...q, data: q.data ?? EMPTY_SCAN };
 }
-
-export const useStats = () => {
-  const { data, ...q } = useScan();
-  return { ...q, data: data.stats };
-};
-
-export const useFeed = () => {
-  const { data, ...q } = useScan();
-  return { ...q, data: data.feed };
-};

@@ -34,8 +34,8 @@ interface IERC20R {
     function totalSupply() external view returns (uint256);
 }
 
-/// @notice one stage of the anvil fork scenario per run, selected by the STAGE env var. each stage broadcasts from
-/// impersonated accounts and asserts its result, so a failed stage reverts the forge run with a message.
+/// @notice one stage of the anvil fork scenario per run, selected by the STAGE env var. stages transact from
+/// impersonated accounts and assert their results, so a failed stage reverts the forge run with a message.
 /// `script/dev/e2e.sh` warps the node between stages. every door of the Core and the controller that a user or a keeper
 /// calls runs at least once. `buyListing` is outside the scenario: the CreditStrategy lists at about four times the
 /// rate cap and a Seaport order needs an external signature.
@@ -57,6 +57,7 @@ contract Scenario is Script {
     address internal A3;
     address internal KEEPER;
     address internal TRADER;
+    uint256 internal sellBucketSeconds;
 
     function run() external {
         core = ICore(payable(vm.envAddress("CORE")));
@@ -77,6 +78,11 @@ contract Scenario is Script {
         TRADER = vm.envAddress("TRADER");
 
         bytes32 stage = keccak256(bytes(vm.envString("STAGE")));
+        bool sellsEth = stage == keccak256("fill-a") || stage == keccak256("fill-b")
+            || stage == keccak256("fill-d") || stage == keccak256("fresh-fill")
+            || stage == keccak256("d-open") || stage == keccak256("fresh-compose");
+        sellBucketSeconds = sellsEth ? core.settings().bucketSeconds : 0;
+        if (sellsEth) vm.rpc("anvil_removeBlockTimestampInterval", "[]"); // fails outside Anvil
         if (stage == keccak256("a")) _a();
         else if (stage == keccak256("dev-wallet")) _devWallet();
         else if (stage == keccak256("fill-a")) _fillA();
@@ -143,54 +149,58 @@ contract Scenario is Script {
     }
 
     function _buyCoin() internal {
-        vm.broadcast(TRADER);
-        IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: 3 ether}(
-            hex"10", _v4Swap(true, 3 ether), _deadline()
+        bytes memory data = abi.encodeCall(
+            IUniversalRouterR.execute, (hex"10", _v4Swap(true, 3 ether), _deadline())
         );
+        if (sellBucketSeconds != 0) _send(TRADER, Mainnet.UNIVERSAL_ROUTER, data, 3 ether);
+        else {
+            vm.broadcast(TRADER);
+            IUniversalRouterR(Mainnet.UNIVERSAL_ROUTER).execute{value: 3 ether}(
+                hex"10", _v4Swap(true, 3 ether), _deadline()
+            );
+        }
     }
 
     // ------------------------------------------------------------------ fill-a: sell credits into the eth bid
 
-    /// @dev a long idle loosens the bid toward its cap, so an 80 credit fill could cost more than the pot holds. the
-    /// owner restates the bid at the launch rate, then coin buys and `book` top the pot up to the target
-    function _primeBid() internal {
-        uint256 launchRate = core.RATE_START();
-        vm.broadcast(OWNER);
-        core.setRate(launchRate);
-        uint256 target = 1 ether;
-        for (uint256 i; i < 25 && core.ethPot() < target; ++i) {
+    /// @dev a long idle loosens the bid toward its cap, so an `n` credit fill could cost more than the pot holds. the
+    /// owner restates the bid at the launch rate, then coin buys and `book` top the pot to a target sized for `n`
+    /// credits at that rate. the pot is the bid's clamp and feeds the climb multiplier, so the target scales with
+    /// `rateStart` rather than a flat value: `rateStart * n` is one credit of score refScore per credit, times 1.4 for
+    /// headroom over scores above refScore and the climb between the rate reset and the fill.
+    function _primeBid(uint256 n) internal {
+        uint256 launchRate = core.RATE_START();   // rateStart, the opening eth bid from the launch config
+        _send(OWNER, address(core), abi.encodeCall(ICore.setRate, (launchRate)), 0);
+        uint256 target = launchRate * n * 14 / 10;
+        for (uint256 i; i < 120 && core.ethPot() < target; ++i) {
             _buyCoin();
-            vm.broadcast(KEEPER);
-            core.book();
+            _send(KEEPER, address(core), abi.encodeCall(ICore.book, ()), 0);
         }
         require(core.ethPot() >= target, "prime: pot not funded to target");
+        _send(OWNER, address(core), abi.encodeCall(ICore.setRate, (launchRate)), 0);
     }
 
-    /// a batch sell and a single sell with `minOut`, the two overloads of `sellForEth`
+    /// 80 separate sells and one with `minOut`, exercising both overloads of `sellForEth`
     function _fillA() internal {
-        _primeBid();
-        vm.broadcast(A1);
-        ICredits(Mainnet.CREDITS).setApprovalForAll(address(core), true);
+        _primeBid(81);   // 80 separate sells, then 1 more with minOut
+        _send(A1, Mainnet.CREDITS, abi.encodeCall(ICredits.setApprovalForAll, (address(core), true)), 0);
 
         uint256 pileBefore = core.pileSize();
         uint256[] memory batch = _creditsOf(A1, 80);
-        vm.broadcast(A1);
-        core.sellForEth(batch);
+        _sellEach(A1, batch);
         require(core.pileSize() == pileBefore + 80, "fill-a: the batch sell did not enter the pile");
 
         uint256[] memory one = _creditsOf(A1, 1);
-        vm.broadcast(A1);
-        core.sellForEth(one, 0);
+        _send(A1, address(core), abi.encodeWithSignature("sellForEth(uint256[],uint256)", one, 0), 0);
         require(core.pileSize() == pileBefore + 81, "fill-a: the single sell did not enter the pile");
-        console.log("fill-a: batch 80 and single 1 sold, pileSize", core.pileSize());
+        console.log("fill-a: 80 and single 1 sold, pileSize", core.pileSize());
     }
 
     /// 80 credits of `who` sold into the eth bid after the bid is primed
     function _fill(address who, uint256 n, string memory name) internal {
-        _primeBid();
+        _primeBid(n);
         uint256[] memory ids = _creditsOf(who, n);
-        vm.broadcast(who);
-        core.sellForEth(ids);
+        _sellEach(who, ids);
         require(core.pileSize() >= n, string.concat(name, ": fewer credits in the pile than sold"));
         console.log(string.concat(name, ": sold, pileSize"), core.pileSize());
     }
@@ -269,17 +279,14 @@ contract Scenario is Script {
 
     /// five credits sold into the pile, then the credit sale switched on if it is off
     function _dOpen() internal {
-        vm.broadcast(A2);
-        ICredits(Mainnet.CREDITS).setApprovalForAll(address(core), true);
+        _send(A2, Mainnet.CREDITS, abi.encodeCall(ICredits.setApprovalForAll, (address(core), true)), 0);
         uint256[] memory ids = _creditsOf(A2, 5);
-        vm.broadcast(A2);
-        core.sellForEth(ids);
+        _sellEach(A2, ids);
 
         if (!ctl.creditSaleOn()) {
             CreditSale memory cs = _credit();
             cs.saleOn = true;
-            vm.broadcast(OWNER);
-            ctl.setCredit(cs);
+            _send(OWNER, address(ctl), abi.encodeCall(IControllerV1.setCredit, (cs)), 0);
         }
         require(ctl.creditSaleOn(), "d-open: the credit sale is not on");
         uint256 id = core.pilePage(0, 1)[0];
@@ -317,8 +324,7 @@ contract Scenario is Script {
     function _fillB() internal {
         _fill(A1, 80, "fill-b");
         if (!core.chosenComposeOn()) {
-            vm.broadcast(OWNER);
-            core.setChosenComposeOn(true);
+            _send(OWNER, address(core), abi.encodeCall(ICore.setChosenComposeOn, (true)), 0);
         }
         require(core.chosenComposeOn(), "fill-b: chosen composition is not on");
     }
@@ -336,7 +342,9 @@ contract Scenario is Script {
         vm.broadcast(TRADER);
         core.composeChosen(ids, 3);
 
-        require(IStatements(Mainnet.STATEMENTS).supply() == supplyBefore + 1, "compose-b: composeChosen minted no statement");
+        require(
+            IStatements(Mainnet.STATEMENTS).supply() == supplyBefore + 1, "compose-b: composeChosen minted no statement"
+        );
         require(core.pileSize() == pileBefore - 80, "compose-b: 80 credits did not leave the pile");
         uint256[] memory held = core.heldStatements();
         uint256 sid = held[held.length - 1];
@@ -365,7 +373,8 @@ contract Scenario is Script {
             startCapBps: ctl.startCapBps(),
             decayHours: ctl.decayHours(),
             anchorHalfLife: ctl.anchorHalfLife(),
-            anchorMinCost: ctl.anchorMinCost()
+            anchorMinCost: ctl.anchorMinCost(),
+            anchorMoveBps: ctl.anchorMoveBps()
         });
         sale.markupBps = 16_000;
         vm.broadcast(OWNER);
@@ -411,7 +420,10 @@ contract Scenario is Script {
         require(!okBuy && bytes4(buyErr) == ICore.Paused.selector, "pause: buy did not revert Paused while paused");
         (bool okCredit, bytes memory creditErr) =
             address(ctl).call{value: ctl.creditPrice(creditId)}(abi.encodeCall(IControllerV1.buyCredit, (creditId)));
-        require(!okCredit && bytes4(creditErr) == ICore.Paused.selector, "pause: buyCredit did not revert Paused while paused");
+        require(
+            !okCredit && bytes4(creditErr) == ICore.Paused.selector,
+            "pause: buyCredit did not revert Paused while paused"
+        );
 
         vm.broadcast(OWNER);
         core.setPaused(false);
@@ -462,7 +474,10 @@ contract Scenario is Script {
         core.redeemStatement(sid);
         (bool stillHeld,,) = core.statementInfo(sid);
         require(!stillHeld, "redeem: the statement is still held");
-        require(IBalanceModule(core.balanceModule()).available() >= potBefore + owed * 98 / 100, "redeem: the balance pot did not grow by the rating");
+        require(
+            IBalanceModule(core.balanceModule()).available() >= potBefore + owed * 98 / 100,
+            "redeem: the balance pot did not grow by the rating"
+        );
         require(core.heldStatements().length == held.length - 1, "redeem: held count did not fall by one");
 
         uint256 reserve = core.ethRedeemBurn();
@@ -503,11 +518,12 @@ contract Scenario is Script {
     function _requireBalanceCost(uint256 id) internal view {
         (bool inPile, uint256 cost,) = core.creditInfo(id);
         require(inPile, "balance-bid: the credit is not in the pile");
-        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
-            ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id)
-        );
+        uint256 score = ICreditScore(Mainnet.CREDIT_SCORE)
+            .scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
         uint256 expected = score * ctl.pointRate();
-        require(cost + score >= expected && cost <= expected + score, "balance-bid: the cost basis is not score * pointRate");
+        require(
+            cost + score >= expected && cost <= expected + score, "balance-bid: the cost basis is not score * pointRate"
+        );
         console.log("balance-bid: credit cost basis", id, cost);
     }
 
@@ -518,13 +534,11 @@ contract Scenario is Script {
     function _freshCompose() internal {
         require(core.pileSize() >= 80, "fresh-compose: fewer than 80 credits in the pile");
         uint256 heldBefore = core.heldStatements().length;
-        vm.broadcast(KEEPER);
-        core.compose();
+        _send(KEEPER, address(core), abi.encodeWithSignature("compose()"), 0);
         require(core.heldStatements().length == heldBefore + 1, "fresh-compose: no statement held after compose");
 
         uint256[] memory dust = _creditsOf(A1, 3);
-        vm.broadcast(A1);
-        core.sellForEth(dust);
+        _sellEach(A1, dust);
 
         require(core.heldStatements().length >= 2, "fresh-compose: fewer than two statements held");
         require(core.pileSize() >= 3, "fresh-compose: fewer than three credits in the pile");
@@ -558,6 +572,48 @@ contract Scenario is Script {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /// @dev each purchase gets a new Anvil bucket; the first purchase in that bucket may exceed its budget
+    function _sellEach(address who, uint256[] memory ids) internal {
+        uint256[] memory one = new uint256[](1);
+        for (uint256 i; i < ids.length; ++i) {
+            one[0] = ids[i];
+            uint256 before = core.pileSize();
+            _send(who, address(core), abi.encodeWithSignature("sellForEth(uint256[])", one), 0);
+            require(core.pileSize() == before + 1, "Anvil sell did not enter the pile");
+        }
+    }
+
+    /// @dev Forge re-simulates all broadcasts at one timestamp, so Anvil must mine these dev transactions directly.
+    function _send(address who, address to, bytes memory data, uint256 value) internal {
+        vm.rpc("evm_increaseTime", string.concat("[", vm.toString(sellBucketSeconds), "]"));
+        bytes32 txHash = abi.decode(vm.rpc(
+            "eth_sendTransaction",
+            string.concat(
+                '[{"from":"', vm.toString(who), '","to":"', vm.toString(to), '","data":"',
+                vm.toString(data), '","value":"', _quantity(value), '","gas":"0x17d7840"}]'
+            )
+        ), (bytes32));
+        vm.rpc("evm_mine", "[]");
+        string memory receipt = vm.rpcJson(
+            "eth_getTransactionReceipt", string.concat('["', vm.toString(txHash), '"]')
+        );
+        require(vm.parseJsonUint(receipt, ".status") == 1, "Anvil dev transaction reverted");
+        vm.createSelectFork(vm.envString("E2E_RPC_URL"), vm.parseJsonUint(receipt, ".blockNumber"));
+    }
+
+    function _quantity(uint256 value) internal pure returns (string memory) {
+        if (value == 0) return "0x0";
+        bytes16 digits = "0123456789abcdef";
+        uint256 n = value;
+        uint256 length;
+        while (n != 0) { ++length; n >>= 4; }
+        bytes memory out = new bytes(length + 2);
+        out[0] = "0";
+        out[1] = "x";
+        while (value != 0) { out[--length + 2] = digits[value & 15]; value >>= 4; }
+        return string(out);
+    }
 
     /// @dev the controller's credit sale settings as they are now
     function _credit() internal view returns (CreditSale memory) {

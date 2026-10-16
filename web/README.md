@@ -54,3 +54,5 @@ artist and operator cuts come off the payment inside the sale. The balance side
 replayed from the Core's per-credit rules at click time (`lib/sell.ts`, read by
 `sellQuote` and `balanceQuote` in `lib/live.ts`). A sweep of a listing
 (`buyListing`) is a keeper action and has no page.
+
+The sell page reads all 34 Core settings. ETH bids and quotes show the current rate; they do not reserve the ETH purchase budget. ETH purchases share the configured bucket cap (100 bps per 60 seconds at launch), and `SpendCapReached` asks the holder to retry in the next bucket. A setting of 10,000 bps bypasses the limiter. Balance purchases do not use this cap.

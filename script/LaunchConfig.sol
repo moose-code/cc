@@ -2,7 +2,15 @@
 pragma solidity ^0.8.28;
 
 import {CommonBase} from "forge-std/Base.sol";
-import {Stack, Settings, Sale, Credit, Mainnet, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
+import {
+    Stack,
+    Settings,
+    Sale,
+    Credit,
+    Mainnet,
+    RATE_START_MIN_WEI,
+    RATE_START_MAX_WEI
+} from "../src/interfaces/Interfaces.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {CreditBounds} from "../src/lib/CreditBounds.sol";
 
@@ -14,14 +22,14 @@ bytes32 constant V2_CONSTANTS_HASH = 0x1b7deab81425bd850537efbb78d999939ab5fe16c
 // the hash of each contract the config and the factory point at. script/config/v2-master.json holds the addresses
 // and these hashes
 uint256 constant V2_PIN_BLOCK = 26158000;
-bytes32 constant V2_CODEHASH_HOOK = 0x09eecbc3e49ea6f76a4b6d126a9a36b8ac7f2b3a63ad39155cdfa9953420331f;
+bytes32 constant V2_CODEHASH_HOOK = 0x6778602725c0d685c6444cdc70d6616d266939e09d283388a6b79b7bd496ebdc;
 bytes32 constant V2_CODEHASH_FACTORY = 0xc81a73b9453ca0e93afd762d32b98e4a9e2b157cdccd05d28fda9080f98e0c65;
 bytes32 constant V2_CODEHASH_LOCKER = 0x191e433101a918cc441bf7c143de216757b9a40ed2402131434a8747861c386a;
 bytes32 constant V2_CODEHASH_ESCROW = 0xeb557e5be7ab0b29b0c77f8dc18aada8e1d17910ae9e3b92909a9126872b9975;
-bytes32 constant V2_CODEHASH_MEV_MODULE = 0x571d7cd93b30cfc3ddbd202a8f293696705cbe1729550aedb9ee0d205330f146;
-bytes32 constant V2_CODEHASH_TOKEN_DEPLOYER = 0x850c232a162c90dc03cc31b2e605a0d3e285f51b04b725734795f7e19b70fd10;
+bytes32 constant V2_CODEHASH_MEV_MODULE = 0xe3bf485f62bf367feabe951d667032c6cea47a3089056ce0652df6edd145dc80;
+bytes32 constant V2_CODEHASH_TOKEN_DEPLOYER = 0xaf3924c04e77f7e9ccb5949e977c2d67c2186076108e5676cbe99ecd08dfb043;
 bytes32 constant V2_CODEHASH_ALLOWLIST = 0x7a98bacb16f0ec968f5d450c37e6a5a4ef213a8d48c61c666b2cea3e0f6318c4;
-bytes32 constant V2_CODEHASH_FEE_CONTROLLER = 0xcb35ea27cea5514210e1de1dc44f4551638d7333ec1989ef7de4e79449999e38;
+bytes32 constant V2_CODEHASH_FEE_CONTROLLER = 0x33ac026109644470a4feaf0c0960c41468adfc0029fe5bdca29fe0342ff85bae;
 bytes32 constant V2_CODEHASH_BURN_ROUTER = 0x446c38e7f907b120416c06e90f92f966a20cca49df8ea19711c6b12c4a40edd9;
 
 // the EIP 7702 delegation of the owner account, read at V2_PIN_BLOCK. the account runs the code of OWNER_DELEGATE
@@ -212,6 +220,11 @@ abstract contract ConfigReader is CommonBase {
         // forge-lint: disable-next-line(unsafe-typecast)
         s.swapFeeCc = uint96(_uint(j, ".settings.swapFeeCc", type(uint96).max));
         s.climbMultiplierCapBps = _u16(j, ".settings.climbMultiplierCapBps");
+        s.spendCapBps = _u16(j, ".settings.spendCapBps");
+        s.bucketSeconds = _u32(j, ".settings.bucketSeconds");
+        s.balanceBidCapBps = _u32(j, ".settings.balanceBidCapBps");
+        s.idleStepSeconds = _u32(j, ".settings.idleStepSeconds");
+        s.sniperSeconds = _u32(j, ".settings.sniperSeconds");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
@@ -220,7 +233,8 @@ abstract contract ConfigReader is CommonBase {
             startCapBps: _u32(j, ".sale.startCapBps"),
             decayHours: _u16(j, ".sale.decayHours"),
             anchorHalfLife: _u32(j, ".sale.anchorHalfLife"),
-            anchorMinCost: _u128(j, ".sale.anchorMinCost")
+            anchorMinCost: _u128(j, ".sale.anchorMinCost"),
+            anchorMoveBps: _u16(j, ".sale.anchorMoveBps")
         });
     }
 
@@ -325,11 +339,11 @@ abstract contract ConfigReader is CommonBase {
     /// @notice the name of the first launch sale setting outside the bounds the controller enforces, zero when all are inside
     function saleViolation(LaunchConfig memory c) internal pure returns (bytes32) {
         Sale memory k = c.sale;
-        if (k.markupBps < 10_000 || k.markupBps > 40_000) return "markupBps";
-        if (k.startCapBps < k.markupBps || k.startCapBps > 200_000) return "startCapBps";
-        if (k.decayHours < 1 || k.decayHours > 720) return "decayHours";
-        if (k.anchorHalfLife < 1 days || k.anchorHalfLife > 90 days) return "anchorHalfLife";
-        if (k.anchorMinCost > 10 ether) return "anchorMinCost";
+        if (k.markupBps < 10_000) return "markupBps";
+        if (k.startCapBps < k.markupBps) return "startCapBps";
+        if (k.decayHours < 1) return "decayHours";
+        if (k.anchorHalfLife < 1) return "anchorHalfLife";
+        if (k.anchorMoveBps > 10_000) return "anchorMoveBps";
         return bytes32(0);
     }
 

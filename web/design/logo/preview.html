@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>CC logo preview</title>
+<style>
+body{margin:0;font-family:'JetBrains Mono',monospace;display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
+.p{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:48px}
+.light{background:#f6f5f0;color:#1a1a1a}.dark{background:#121211;color:#ecebe6}
+.logo{position:relative}.logo i{position:absolute;transition:left .7s cubic-bezier(.6,0,.3,1),top .7s cubic-bezier(.6,0,.3,1)}
+.light i{mix-blend-mode:multiply}.dark i{mix-blend-mode:screen}
+.lock{display:flex;align-items:center;gap:12px}.lock b{font-size:15px}.lock span{font-size:11px;opacity:.6}
+</style></head><body>
+<div class="p light"><div class="logo" data-size="160"></div><div class="lock"><div class="logo" data-size="22"></div><b>CC</b><span>engine</span></div></div>
+<div class="p dark"><div class="logo" data-size="160"></div><div class="lock"><div class="logo" data-size="22"></div><b>CC</b><span>engine</span></div></div>
+<script>
+const C=["#00a3e0","#e5007e","#ffd400"],S=[[6,6],[36,6],[36,36],[6,36]];let step=0;
+const logos=[...document.querySelectorAll('.logo')];
+logos.forEach(l=>{const k=l.dataset.size/100;l.style.width=l.style.height=l.dataset.size+'px';C.forEach(c=>{const i=document.createElement('i');i.style.background=c;i.style.width=i.style.height=58*k+'px';l.appendChild(i)})});
+function draw(){logos.forEach(l=>{const k=l.dataset.size/100;[...l.children].forEach((sq,i)=>{const[x,y]=S[(i+step)%4];sq.style.left=x*k+'px';sq.style.top=y*k+'px'})})}
+draw();setInterval(()=>{step=(step+1)%4;draw()},1600);
+</script></body></html>

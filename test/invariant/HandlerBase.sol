@@ -179,6 +179,15 @@ abstract contract HandlerBase is Test {
     bool public gPayeeOn;
     address public gPayee;
     uint256 public gLaunchedAt;
+    uint256 public gSpendBucket;
+    uint256 public gSpendSeconds;
+    uint256 public gSpendSnapshot;
+    uint256 public gSpendBudget;
+    uint256 public gSpent;
+    uint256 public gCapViolations;
+    uint256 public gCappedFills;
+    uint256 public gCapRejections;
+    bool public gSpendActive;
     address public owner;
     address public v1;
     FuzzController public fuzz;
@@ -426,6 +435,17 @@ abstract contract HandlerBase is Test {
         everHeld.push(sid);
     }
 
+    /// Fixture inputs are measured around its real prefill purchases, independently of Core storage.
+    function seedSpendBooks(uint256 openingPot, uint256 spent, uint256 at) external {
+        Settings memory cfg = core.settings();
+        gSpendSeconds = cfg.bucketSeconds;
+        gSpendBucket = at / cfg.bucketSeconds;
+        gSpendSnapshot = openingPot;
+        gSpendBudget = FullMath.mulDiv(openingPot, cfg.spendCapBps, 10_000);
+        gSpent = spent;
+        gSpendActive = true;
+    }
+
     function seedEthBooks() external {
         gEthStart = core.ethPot() + core.ethToBuyback() + core.ethRedeemBurn();
         gPayeeOn = core.payeeOn();
@@ -520,6 +540,10 @@ abstract contract HandlerBase is Test {
     }
 
     function _unexpected(uint8 a, bytes memory why) internal {
+        if (why.length >= 4 && bytes4(why) == ICore.SpendCapReached.selector) {
+            ++gCapRejections;
+            return;
+        }
         unexpectedFails[a]++;
         if (why.length >= 4) {
             lastUnexpected[a] = bytes4(why);
@@ -699,7 +723,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// first slot of `State.anchor` in the Core (four words)
-    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(27));
+    bytes32 internal constant ANCHOR_SLOT = bytes32(uint256(28));
 
     /// the bid anchor state of the core, read from its storage: the rate of the last fill, the rate of the first fill in
     /// the current minute bucket, and that bucket
@@ -739,7 +763,7 @@ abstract contract HandlerBase is Test {
     /// bucket, `rate` (the price state at the fill) when the bucket is new
     function _minuteStartNow(uint256 rate) internal view returns (uint256) {
         (, uint256 start, uint256 bucket) = _anchorState();
-        return bucket == block.timestamp / 60 ? start : rate;
+        return bucket == block.timestamp / core.settings().bucketSeconds ? start : rate;
     }
 
     /// the price state of the eth rate right now, from the stored rate, the anchor and the peak: bounded by the ceiling
@@ -803,7 +827,6 @@ abstract contract HandlerBase is Test {
         }
     }
 
-
     /// eth booked into the pots (the pot share and the buyback share) enters the ledger
     function _booked(uint256 amount) internal {
         gEthIn += amount;
@@ -812,7 +835,32 @@ abstract contract HandlerBase is Test {
     /// a spend of `x` eth from the pot, which held `potBefore` when it began. a spend above the pot is a violation.
     /// returns the pot left, floored at zero: a handler call that reverts after the flag drops the flag, so the
     /// arithmetic that follows a recorded spend must not underflow
+    function _syncSpendGhost() internal {
+        Settings memory cfg = core.settings();
+        if (gSpendActive && gSpendBucket != block.timestamp / gSpendSeconds) gSpendActive = false;
+        if (gSpendActive) {
+            gSpendBucket = block.timestamp / cfg.bucketSeconds;
+            gSpendBudget = FullMath.mulDiv(gSpendSnapshot, cfg.spendCapBps, 10_000);
+        }
+        gSpendSeconds = cfg.bucketSeconds;
+    }
+
     function _recordSpend(uint256 x, uint256 potBefore) internal returns (uint256 left) {
+        _syncSpendGhost();
+        Settings memory cfg = core.settings();
+        if (!gSpendActive) {
+            gSpendActive = true;
+            gSpendBucket = block.timestamp / cfg.bucketSeconds;
+            gSpendSnapshot = potBefore;
+            gSpendBudget = FullMath.mulDiv(potBefore, cfg.spendCapBps, 10_000);
+            gSpent = 0;
+        }
+        bool firstOfBucket = gSpent == 0;
+        gSpent += x;
+        if (cfg.spendCapBps != 10_000) {
+            ++gCappedFills;
+            if (!firstOfBucket && gSpent > gSpendBudget) ++gCapViolations;
+        }
         if (x > potBefore) _flag(V_SPEND, "a spend above the pot at that moment");
         left = potBefore > x ? potBefore - x : 0;
     }
@@ -937,12 +985,12 @@ abstract contract HandlerBase is Test {
     }
 
     /// the model of one book on the income `inc`, written out again here: nothing for no income, the payee share of
-    /// `payeePpm` once it is on, the first book with income at or after `launchedAt + SNIPER_SECONDS` turns it on and
+    /// `payeePpm` once it is on, the first book with income at or after `launchedAt + settings.sniperSeconds` turns it on and
     /// shares nothing. updates the latch ghost. returns the share pushed to the payee and the part that goes to the pots
     function _bookModel(uint256 inc) internal returns (uint256 share, uint256 toPots) {
         if (inc == 0) return (0, 0);
         if (gPayeeOn) share = inc * core.settings().payeePpm / 1_000_000;
-        else if (block.timestamp >= gLaunchedAt + core.SNIPER_SECONDS()) gPayeeOn = true;
+        else if (block.timestamp >= gLaunchedAt + core.settings().sniperSeconds) gPayeeOn = true;
         toPots = inc - share;
     }
 
@@ -985,7 +1033,8 @@ abstract contract HandlerBase is Test {
         Pots memory p = _pots();
         uint256 payeeBefore = gPayee.balance;
         vm.prank(who);
-        try core.book() {} catch {
+        try core.book() {}
+        catch {
             _flag(V_POT, string.concat("book reverted: ", what));
             return (inc, 0);
         }
@@ -1075,6 +1124,7 @@ abstract contract HandlerBase is Test {
     }
 
     function _afterAction() internal {
+        _syncSpendGhost();
         _coinCheck();
         _settingsCheck();
         _potCheck();
@@ -1358,9 +1408,30 @@ abstract contract HandlerBase is Test {
             _failed(p.pull.bal0, p.pull.pot0, p.pull.rate0, "sellForEth");
             _refusedAbovePot(why);
             rs = p.pull.rs0;
-            if (!overshoot && !dup) _unexpected(a, why);
+            if (!overshoot && !dup && !(bytes4(why) == ICore.ZeroAmount.selector && _hasZeroSpend(ids, rs.st, p))) {
+                _unexpected(a, why);
+            }
         }
         _rsCheck(rs, 0);
+    }
+
+    /// A tiny rate can round a later credit to zero after an earlier credit's drop.
+    function _hasZeroSpend(uint256[] memory ids, Settings memory st, SellPre memory p) internal view returns (bool) {
+        bool active = gSpendActive && gSpendBucket == block.timestamp / gSpendSeconds;
+        uint256 budget = FullMath.mulDiv(active ? gSpendSnapshot : p.pot, st.spendCapBps, 10_000);
+        uint256 spent = active ? gSpent : 0;
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 score = _scoreOf(ids[i]);
+            uint256 cost = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, st.refScore);
+            if (cost == 0) return true;
+            if (cost > p.pot) return false;
+            if (st.spendCapBps != 10_000 && spent != 0 && (spent > budget || cost > budget - spent)) return false;
+            spent += cost;
+            p.pot -= cost;
+            p.minuteStart = BidModel.startAfter(st, p.price, p.minuteStart);
+            p.price = BidModel.dropOnce(st, p.price, p.minuteStart, score, st.refScore);
+        }
+        return false;
     }
 
     function _afterSell(address who, uint256[] memory ids, SellPre memory p, Settings memory st) internal {
@@ -1537,7 +1608,7 @@ abstract contract HandlerBase is Test {
         uint256 ceiling = FullMath.mulDiv(BidModel.read(st, p.pot, p.price), score, refScore);
         if (value > ceiling) _flag(V_ABOVE_CAP, "listing value above the ceiling");
         if (cost + paid > ceiling) _flag(V_ABOVE_CAP, "listing cost plus payment above the ceiling");
-        _listingPayChecks(paid, ceiling > cost ? ceiling - cost : 0, st);
+        _listingPayChecks(paid, (ceiling > cost ? ceiling - cost : 0).min(p.pot > cost ? p.pot - cost : 0), st);
         uint256 potLeft = _recordSpend(cost + paid, p.pot);
         _eth(p.bal, paid + cost, refund, "buyListing");
         if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and the payment");
@@ -1556,7 +1627,10 @@ abstract contract HandlerBase is Test {
         uint256 rate = block.basefee < st.keeperMaxBaseFee ? block.basefee : st.keeperMaxBaseFee;
         if (paid > gap || paid > BUYLISTING_GAS * rate + st.keeperFee) {
             _flag(V_LISTING_PAY, "listing payment above min(bid less cost, gas cap plus keeperFee)");
-        } else if (paid != gap && (paid < st.keeperFee || (rate == 0 ? paid != st.keeperFee : (paid - st.keeperFee) % rate != 0))) {
+        } else if (
+            paid != gap
+                && (paid < st.keeperFee || (rate == 0 ? paid != st.keeperFee : (paid - st.keeperFee) % rate != 0))
+        ) {
             _flag(V_LISTING_PAY, "listing payment is not the keeper fee plus whole gas units at the capped base fee");
         }
     }
@@ -1595,8 +1669,7 @@ abstract contract HandlerBase is Test {
     function _peekPage() internal view returns (bool ready, uint256[] memory ids) {
         ids = new uint256[](80);
         // the core reads the controller under a fixed gas cap of 500_000, and so does the model
-        (bool ok, bytes memory out) =
-            core.controller().staticcall{gas: 500_000}(abi.encodeWithSignature("nextPage()"));
+        (bool ok, bytes memory out) = core.controller().staticcall{gas: 500_000}(abi.encodeWithSignature("nextPage()"));
         if (!ok || out.length < 82 * 32) return (false, ids);
         (uint256 flag, uint256[80] memory p,) = abi.decode(out, (uint256, uint256[80], uint256));
         for (uint256 i; i < 80; ++i) {
@@ -1706,8 +1779,7 @@ abstract contract HandlerBase is Test {
             }
             windowOk = uint256(newest) + window <= block.timestamp;
         }
-        bool expect =
-            core.chosenComposeOn() && coin.balanceOf(keeper) >= core.minCcToChoose() && ctlReal && windowOk;
+        bool expect = core.chosenComposeOn() && coin.balanceOf(keeper) >= core.minCcToChoose() && ctlReal && windowOk;
         CPre memory p;
         p.basefee = _logBound(fmtSeed, 0.05 gwei, 300 gwei);
         vm.fee(p.basefee);
@@ -1778,7 +1850,9 @@ abstract contract HandlerBase is Test {
     function _afterComposeChosen(uint256[80] memory ids, CPre memory p) internal {
         _pullChecks(p.pull, vm.getRecordedLogs());
         uint256 sid = STATEMENTS.supply();
-        if (STATEMENTS.formatOf(sid) != p.fmt) _flag(V_COMPOSE, "the chosen statement format differs from the one named");
+        if (STATEMENTS.formatOf(sid) != p.fmt) {
+            _flag(V_COMPOSE, "the chosen statement format differs from the one named");
+        }
         if (sid != p.supply + 1 || STATEMENTS.ownerOf(sid) != address(core)) {
             _flag(V_COMPOSE, "chosen compose statement id is not supply + 1 or not held by the core");
         }
@@ -1825,9 +1899,15 @@ abstract contract HandlerBase is Test {
     /// @dev the caller payment of `compose`, `composeChosen` and `redeemStatement`: at most the counted gas bound at the base
     /// fee capped by `callerMaxBaseFee` plus `callerFee`, at least the fee when the pot covers it, at most the pot,
     /// exactly zero when both settings are zero, and exactly the debit of the pot and the outflow of the core
-    function _callerPayment(uint256 code, Settings memory st, uint256 gasBound, uint256 pot0, uint256 bal0, uint256 callerBal0, string memory what)
-        internal
-    {
+    function _callerPayment(
+        uint256 code,
+        Settings memory st,
+        uint256 gasBound,
+        uint256 pot0,
+        uint256 bal0,
+        uint256 callerBal0,
+        string memory what
+    ) internal {
         uint256 pay = keeper.balance - callerBal0;
         uint256 rate = block.basefee < st.callerMaxBaseFee ? block.basefee : st.callerMaxBaseFee;
         uint256 most = gasBound * rate + st.callerFee;
@@ -1835,7 +1915,9 @@ abstract contract HandlerBase is Test {
         if (pay > pot0) _flag(code, string.concat(what, " paid above the pot"));
         uint256 least = st.callerFee < pot0 ? st.callerFee : pot0;
         if (pay < least) _flag(code, string.concat(what, " paid below the fee"));
-        if (st.callerFee == 0 && st.callerMaxBaseFee == 0 && pay != 0) _flag(code, string.concat(what, " paid with the payment off"));
+        if (st.callerFee == 0 && st.callerMaxBaseFee == 0 && pay != 0) {
+            _flag(code, string.concat(what, " paid with the payment off"));
+        }
         if (core.ethPot() != pot0 - pay) _flag(V_POT, string.concat(what, " did not debit the pot by the payment"));
         _eth(bal0, pay, 0, what);
     }
@@ -1847,7 +1929,9 @@ abstract contract HandlerBase is Test {
         uint256 sid = STATEMENTS.supply();
         // the core ignores the controller's format: the default is derived from prevrandao and the head credit id
         uint256 want = uint256(keccak256(abi.encode(block.prevrandao, ids[0]))) % 8;
-        if (STATEMENTS.formatOf(sid) != want) _flag(V_COMPOSE, "the composed statement format differs from the default");
+        if (STATEMENTS.formatOf(sid) != want) {
+            _flag(V_COMPOSE, "the composed statement format differs from the default");
+        }
         if (sid != p.supply + 1 || STATEMENTS.ownerOf(sid) != address(core)) {
             _flag(V_COMPOSE, "new statement id is not supply + 1 or not held by the core");
         }
@@ -1949,7 +2033,9 @@ abstract contract HandlerBase is Test {
         if (p.bps > 1000) windowSwaps++;
         if (bought == 0) _flag(V_BUYBACK, "buyback bought no coin");
         if (burned != bought) _flag(V_BUYBACK, "buyback did not burn exactly the coin it bought");
-        if (spent == 0 || spent > budget) _flag(V_BUYBACK, "buyback spent more than the slice less the largest payment");
+        if (spent == 0 || spent > budget) {
+            _flag(V_BUYBACK, "buyback spent more than the slice less the largest payment");
+        }
         if (evTip != tip) _flag(V_BUYBACK, "buyback payment event differs from what the caller received");
         // the payment is the keeper fee scaled by the budget spent over the largest budget the setting allows, plus
         // counted gas at the capped base fee
@@ -2002,7 +2088,6 @@ abstract contract HandlerBase is Test {
         gBurnedByBuyback += bought;
     }
 
-
     /// puts eth into the core five ways, and in the balance side balance token. by mode: a plain send from an account
     /// (refused with UseFund), `fund` (added to the pot whole), a push from the hook or from the escrow (accepted, left for
     /// the next book), and eth forced in without a call (left for the next book too). `receive()` must accept every
@@ -2034,7 +2119,9 @@ abstract contract HandlerBase is Test {
                 _ok(a);
                 _booked(amt);
                 _eth(b0, 0, amt, "fund");
-                if (core.ethPot() != pot0 + amt || core.ethToBuyback() != tb0) _flag(V_POT, "fund did not add the whole amount to the pot");
+                if (core.ethPot() != pot0 + amt || core.ethToBuyback() != tb0) {
+                    _flag(V_POT, "fund did not add the whole amount to the pot");
+                }
             } catch (bytes memory why) {
                 _failed(b0, pot0, rate0, "donate");
                 _unexpected(a, why);
@@ -2071,7 +2158,9 @@ abstract contract HandlerBase is Test {
     /// the sum of the scores of the credits in the pile, read from the chain
     function _pileScore() internal view returns (uint256 sum) {
         uint256[] memory ids = core.pilePage(0, core.pileSize());
-        for (uint256 i; i < ids.length; ++i) sum += _scoreOf(ids[i]);
+        for (uint256 i; i < ids.length; ++i) {
+            sum += _scoreOf(ids[i]);
+        }
     }
 
     /// the dedicated swapper and the credits it holds outside the pile. no other action spends them, so the swap always
@@ -2081,7 +2170,9 @@ abstract contract HandlerBase is Test {
 
     function setSwapper(address who, uint256[] calldata ids) external {
         swapper = who;
-        for (uint256 i; i < ids.length; ++i) swapperCredits.push(ids[i]);
+        for (uint256 i; i < ids.length; ++i) {
+            swapperCredits.push(ids[i]);
+        }
     }
 
     /// the swapper swaps a pile credit for one it owns of equal or higher score, for the `swapFeeCc` coin fee it burns.
@@ -2488,15 +2579,17 @@ abstract contract HandlerBase is Test {
 
     /// @dev slots of `State.balance` (the balance bid Rate instance): rateAtCheckpoint at 32, checkpointTime|lastFillTime
     /// at 33, its Anchor (lastFillRate, minuteStartRate, minuteBucket|peakTime, peakRate) at 34 to 37
-    bytes32 internal constant BAL_RATE_SLOT = bytes32(uint256(31));
-    bytes32 internal constant BAL_CP_SLOT = bytes32(uint256(32));
-    bytes32 internal constant BAL_ANCHOR_SLOT = bytes32(uint256(33));
+    bytes32 internal constant BAL_RATE_SLOT = bytes32(uint256(32));
+    bytes32 internal constant BAL_CP_SLOT = bytes32(uint256(33));
+    bytes32 internal constant BAL_ANCHOR_SLOT = bytes32(uint256(34));
 
     /// @dev the balance bid clamp now, available as bps of par for a refScore credit, read from the module
     function _availBps(uint256 unit) internal view returns (uint256) {
         uint256 denom = uint256(core.settings().refScore) * unit;
         uint256 avail = module.available();
-        return (denom == 0 || avail >= denom) ? 10_000 : avail * 10_000 / denom;
+        uint256 cap = core.settings().balanceBidCapBps;
+        if (denom == 0) return cap;
+        return FullMath.mulDiv(avail, 10_000, denom).min(cap);
     }
 
     /// @dev available as bps of par for a refScore credit, uncapped: the pages pot of the balance instance
@@ -2528,16 +2621,16 @@ abstract contract HandlerBase is Test {
     function _balanceExpected(uint256[] memory ids, uint256 n, uint256 unit) internal view returns (uint256 total) {
         Settings memory st = core.settings();
         uint256 availBps = _availBps(unit);
-        uint256 price = BidModel.priceNow(st, _balanceBidState(availBps, unit), 10_000);
+        uint256 price = BidModel.priceNow(st, _balanceBidState(availBps, unit), st.balanceBidCapBps);
         uint256 floorBps = 10_000 - st.balanceBidMarginBps;
         uint256 bucket = uint64(uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 2))));
-        uint256 minuteStart = bucket == block.timestamp / 60
+        uint256 minuteStart = bucket == block.timestamp / core.settings().bucketSeconds
             ? uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 1)))
             : price;
         uint256 refScore = st.refScore;
         for (uint256 i; i < n; ++i) {
             uint256 score = _scoreOf(ids[i]);
-            total += score * unit * BidModel.read(st, availBps, price, 10_000) / 10_000;
+            total += score * unit * BidModel.read(st, availBps, price, st.balanceBidCapBps) / 10_000;
             minuteStart = BidModel.startAfter(st, price, minuteStart);
             price = BidModel.dropOnce(st, price, minuteStart, score, refScore, floorBps);
         }
@@ -2556,7 +2649,12 @@ abstract contract HandlerBase is Test {
         uint256 used;
         Settings memory st = core.settings();
         uint256 availBps = _availBps(unit);
-        uint256 rate = BidModel.read(st, availBps, BidModel.priceNow(st, _balanceBidState(availBps, unit), 10_000), 10_000);
+        uint256 rate = BidModel.read(
+            st,
+            availBps,
+            BidModel.priceNow(st, _balanceBidState(availBps, unit), st.balanceBidCapBps),
+            st.balanceBidCapBps
+        );
         // the floor rule of CoreLib._fillBalance (review ac8da10 M1): a clamped rate below the floor
         // `10_000 - balanceBidMarginBps` closes the bid with PotTooSmall. an available too short to pay the floor
         // makes no batch payable, so offer none
@@ -2622,7 +2720,7 @@ abstract contract HandlerBase is Test {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
         uint256 floorSum;
-        uint256 parSum;
+        uint256 capSum;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
             uint256 cost = abi.decode(logs[i].data, (uint256));
@@ -2630,7 +2728,7 @@ abstract contract HandlerBase is Test {
             // the recorded eth cost is the score-scaled floor rate backstop, at least 1 wei
             if (cost == 0) _flag(V_MODEL, "sellForBalance recorded a zero eth cost basis");
             uint256 par = _scoreOf(id) * p.unit;
-            parSum += par;
+            capSum += FullMath.mulDiv(par, core.settings().balanceBidCapBps, 10_000);
             floorSum += par * floorBps / 10_000;
             _addCredit(id, cost);
             _removeFrom(inventory[who], id);
@@ -2638,12 +2736,14 @@ abstract contract HandlerBase is Test {
         uint256 paid = _xBal(who) - p.actorX;
         // the balance tokens paid are the rising per credit bid summed with its drops, the shared-model figure above
         if (paid != bound_) _flag(V_ABOVE_CAP, "sellForBalance paid differs from the per point bid read before");
-        // independent of the model: every paid credit is at or above the floor and at or below par
+        // Independently bound every payment by the configured floor and cap.
         if (paid < floorSum) _flag(V_MODEL, "sellForBalance paid below the floor");
-        if (paid > parSum) _flag(V_ABOVE_CAP, "sellForBalance paid above par");
+        if (paid > capSum) _flag(V_ABOVE_CAP, "sellForBalance paid above configured cap");
         // the module paid the seller: its holding fell by the price, the core holds no balance token
         if (_xBal(address(core)) != p.xbal) _flag(V_POT, "sellForBalance moved the core's balance token");
-        if (p.balancePotPre - _xBal(address(module)) != paid) _flag(V_POT, "the module holding did not fall by the price");
+        if (p.balancePotPre - _xBal(address(module)) != paid) {
+            _flag(V_POT, "the module holding did not fall by the price");
+        }
         _eth(b0, 0, 0, "sellForBalance");
     }
 
@@ -2740,13 +2840,19 @@ abstract contract HandlerBase is Test {
         if (!p.ripe) _flag(V_DEPART, "an ineligible statement redeemed");
         // the proceeds stay in the module: its holding rises by at least the required amount, the core holds no balance token
         uint256 received = _xBal(address(module)) - p.balancePotPre;
-        if (received < p.required) _flag(V_REDEEM_SHORT, "redemption returned less than rating * unitPerPoint less slippage");
+        if (received < p.required) {
+            _flag(V_REDEEM_SHORT, "redemption returned less than rating * unitPerPoint less slippage");
+        }
         if (p.unit == 0) _flag(V_REDEEM_SHORT, "redemption with an unreadable unit per point");
         if (_xBal(address(core)) != p.xbal) _flag(V_POT, "a redemption moved the core's balance token");
         // every redemption moves redeemBurnBps of the reserve into the coin buyback
         uint256 released = p.reserve0 * p.st.redeemBurnBps / 10_000;
-        if (core.ethRedeemBurn() != p.reserve0 - released) _flag(V_POT, "redeem burn reserve not reduced by redeemBurnBps");
-        if (core.ethToBuyback() != p.toBuyback0 + released) _flag(V_POT, "the released reserve did not reach the coin buyback");
+        if (core.ethRedeemBurn() != p.reserve0 - released) {
+            _flag(V_POT, "redeem burn reserve not reduced by redeemBurnBps");
+        }
+        if (core.ethToBuyback() != p.toBuyback0 + released) {
+            _flag(V_POT, "the released reserve did not reach the coin buyback");
+        }
         _callerPayment(V_REDEEM_SHORT, p.st, REDEEM_GAS, p.pot0, p.b0, p.callerBal, "redeemStatement");
         if (_ownerOf(sid) != address(module)) _flag(V_DEPART, "redeemed statement is not with the module");
         SG storage g = _sg[sid];

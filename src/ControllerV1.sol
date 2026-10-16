@@ -3,7 +3,18 @@ pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {Halving} from "./lib/Halving.sol";
-import {Sale, Credit, CreditSale, IController, ICoreViews, ICoreSale, ICreditScore, ICredits, IBalanceModule, Mainnet} from "./interfaces/Interfaces.sol";
+import {
+    Sale,
+    Credit,
+    CreditSale,
+    IController,
+    ICoreViews,
+    ICoreSale,
+    ICreditScore,
+    ICredits,
+    IBalanceModule,
+    Mainnet
+} from "./interfaces/Interfaces.sol";
 import {CreditBounds} from "./lib/CreditBounds.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -27,7 +38,7 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// core floor.
 /// `anchorBps` (at least 10_000) is the running level of sale prices in bps of the reference. it moves up with sales and
 /// down with time. a `buy` of a statement whose cost is at least `anchorMinCost` and whose sale price in bps of the
-/// reference is above the anchor sets the anchor to the mean of the two. every other `buy` leaves the anchor unchanged.
+/// reference is above the anchor moves it by anchorMoveBps of the upward gap. other sales leave it unchanged.
 /// the part of the anchor above 10_000 halves every `anchorHalfLife`, continuously. the controller stores the anchor at
 /// its last change (`storedAnchorBps`, `anchorTime`) and evaluates the decay at the call. the price is computed from the
 /// current anchor at every call, so held statements follow it.
@@ -50,7 +61,6 @@ contract ControllerV1 is IController {
     uint256 private constant BPS = 10_000;
     /// gas of the controller's read of the balance module's `unitPerPoint()`. the Core allows `atFloor` 400,000 gas in all
     uint256 private constant UNIT_GAS = 50_000;
-    uint256 private constant MAX_ANCHOR_MIN_COST = 10 ether;
 
     error OnlyOwner();
     error BadSetting(bytes32 field);
@@ -69,20 +79,22 @@ contract ControllerV1 is IController {
 
     ICoreViews public immutable CORE;
 
-    /// start price over the anchor, bps. 10_000 to 40_000, at most `startCapBps`
+    /// start price over the anchor, bps. 10_000 to uint16.max, at most `startCapBps`
     uint16 public markupBps;
-    /// the most the start price can be, bps of the reference. `markupBps` to 200_000
+    /// the most the start price can be, bps of the reference. `markupBps` to uint32.max
     uint32 public startCapBps;
-    /// hours for the asking price to fall in a straight line from the start to the floor, then rest. 1 to 720
+    /// hours for the asking price to fall in a straight line from the start to the floor, then rest. 1 to uint16.max
     uint16 public decayHours;
     /// the anchor at `anchorTime`, bps of the reference. 10_000 to `startCapBps`. `anchorBps()` is the value now
     uint32 public storedAnchorBps;
     /// when `storedAnchorBps` was last set
     uint40 public anchorTime;
-    /// seconds for the part of the anchor above 10_000 to halve. 1 day to 90 days
+    /// seconds for the part of the anchor above 10_000 to halve. 1 to uint32.max seconds
     uint32 public anchorHalfLife;
-    /// the least statement cost, in wei, whose `buy` moves the anchor. 0 to 10 ether
+    /// the least statement cost, in wei, whose `buy` moves the anchor. 0 to uint128.max
     uint128 public anchorMinCost;
+    /// Share of the upward anchor gap moved by a qualifying sale, 0 to 10,000.
+    uint16 public anchorMoveBps;
     bool private _busy;
     /// whether the balance token pool key is set. launch value false
     bool public balancePoolKeySet;
@@ -95,13 +107,12 @@ contract ControllerV1 is IController {
     /// launch value true
     bool public creditSaleOn;
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit must sit before compose
-    /// may take it. 1 minute to 30 days
+    /// may take it. 1 to uint32.max seconds
     uint32 public creditWindow;
-    /// the credit sale floor over the larger of the credit's cost and `valueOf(score)`, bps. 10_000 to 40_000
+    /// the credit sale floor over the larger of the credit's cost and `valueOf(score)`, bps. 10_000 to uint16.max
     uint16 public creditFloorBps;
-    /// the credit sale start price over the floor, bps. 10_000 to 200_000
+    /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 public creditStartBps;
-
 
     constructor(address core, Sale memory sale, Credit memory credit) {
         CORE = ICoreViews(core);
@@ -110,7 +121,9 @@ contract ControllerV1 is IController {
         // forge-lint: disable-next-line(unsafe-typecast)
         anchorTime = uint40(block.timestamp);
         _setCredit(
-            CreditSale({saleOn: credit.saleOn, window: credit.window, floorBps: credit.floorBps, startBps: credit.startBps})
+            CreditSale({
+                saleOn: credit.saleOn, window: credit.window, floorBps: credit.floorBps, startBps: credit.startBps
+            })
         );
     }
 
@@ -121,10 +134,10 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ sale settings, owner, at once
 
-    /// sets the five sale settings at once. every field is checked against the bounds of the others in the call:
-    /// `markupBps` 10_000 to 40_000, at least the core's `saleFloorBps` and at most `startCapBps`; `startCapBps` at
-    /// least `markupBps`, at most 200_000; `decayHours` 1 to 720; `anchorHalfLife` 1 day to 90 days;
-    /// `anchorMinCost` 0 to 10 ether. an `anchorBps()` above the new `startCapBps` is lowered to it. a change of
+    /// sets the six sale settings at once. every field is checked against the bounds of the others in the call:
+    /// `markupBps` 10_000 to uint16.max, at least the core's `saleFloorBps` and at most `startCapBps`; `startCapBps` at
+    /// least `markupBps`, at most uint32.max; `decayHours` 1 to uint16.max; `anchorHalfLife` 1 to uint32.max seconds;
+    /// `anchorMinCost` 0 to uint128.max. an `anchorBps()` above the new `startCapBps` is lowered to it. a change of
     /// `anchorHalfLife` stores the anchor at the call first, so the new half life applies from now on
     function setSale(Sale calldata v) external onlyOwner {
         if (v.anchorHalfLife != anchorHalfLife) _setAnchorStored(anchorBps());
@@ -134,19 +147,20 @@ contract ControllerV1 is IController {
     }
 
     function _setSale(Sale memory v) private {
-        if (v.markupBps < BPS || v.markupBps > 40_000) revert BadSetting("markupBps");
+        if (v.markupBps < BPS) revert BadSetting("markupBps");
         // the sale floor can never be above the start: refuse a start below the core's current `saleFloorBps`. the read
         // is skipped while the core has no code yet, the constructor deployed before its core (the address is predicted)
         if (address(CORE).code.length != 0 && v.markupBps < _saleFloorBps()) revert BadSetting("markupBps");
-        if (v.startCapBps < v.markupBps || v.startCapBps > 200_000) revert BadSetting("startCapBps");
-        if (v.decayHours < 1 || v.decayHours > 720) revert BadSetting("decayHours");
-        if (v.anchorHalfLife < 1 days || v.anchorHalfLife > 90 days) revert BadSetting("anchorHalfLife");
-        if (v.anchorMinCost > MAX_ANCHOR_MIN_COST) revert BadSetting("anchorMinCost");
+        if (v.startCapBps < v.markupBps) revert BadSetting("startCapBps");
+        if (v.decayHours < 1) revert BadSetting("decayHours");
+        if (v.anchorHalfLife < 1) revert BadSetting("anchorHalfLife");
+        if (v.anchorMoveBps > BPS) revert BadSetting("anchorMoveBps");
         markupBps = v.markupBps;
         startCapBps = v.startCapBps;
         decayHours = v.decayHours;
         anchorHalfLife = v.anchorHalfLife;
         anchorMinCost = v.anchorMinCost;
+        anchorMoveBps = v.anchorMoveBps;
     }
 
     /// 10_000 to `startCapBps`. replaces the running level of sale prices and restarts its decay
@@ -174,8 +188,8 @@ contract ControllerV1 is IController {
     // ------------------------------------------------------------------ credit sale settings, owner, at once
 
     /// sets the credit sale settings at once. `saleOn` turns the credit sale window on or off: while on, pile credits
-    /// are for sale through `buyCredit` and compose takes only credits past their window. `window` 1 minute to 30 days,
-    /// `floorBps` 10_000 to 40_000, `startBps` 10_000 to 200_000
+    /// are for sale through `buyCredit` and compose takes only credits past their window. `window` 1 to uint32.max seconds,
+    /// `floorBps` 10_000 to uint16.max, `startBps` 10_000 to uint32.max
     function setCredit(CreditSale calldata v) external onlyOwner {
         _setCredit(v);
         emit CreditSaleSet(v);
@@ -294,9 +308,8 @@ contract ControllerV1 is IController {
     /// door. `scoreOf` is pure on a fixed verified contract, so the call is direct.
     /// `creditPrice` calls this only for a credit the core holds in the pile, so the reads cannot revert
     function _scoreOf(uint256 id) private view returns (uint256) {
-        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(
-            ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id)
-        );
+        return ICreditScore(Mainnet.CREDIT_SCORE)
+            .scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
     }
 
     /// true when credit acquired at `acquiredAt` may be composed: always while the sale is off, otherwise once
@@ -420,17 +433,18 @@ contract ControllerV1 is IController {
     }
 
     /// with `cost` at least `anchorMinCost`, a sale price in bps of the reference (rounded up) above the anchor sets the
-    /// anchor to the mean of the two, at most `startCapBps`. every other sale leaves the stored anchor and `anchorTime`
+    /// anchor by anchorMoveBps of their gap, at most `startCapBps`; zero leaves its clock unchanged. every other sale leaves the stored anchor and `anchorTime`
     /// unchanged. measuring in bps of the reference keeps a rating-rich statement sold at the normal markup from moving
     /// the anchor
     function _moveAnchor(uint256 sid, uint256 price, uint256 cost, uint256 ref) private {
-        if (cost < anchorMinCost) return;
+        if (anchorMoveBps == 0 || cost < anchorMinCost) return;
         // a zero reference would divide by zero below
         if (ref == 0) return;
-        uint256 saleBps = (price * BPS + ref - 1) / ref;
+        uint256 saleBps = FullMath.mulDiv(price, BPS, ref);
+        if (mulmod(price, BPS, ref) != 0) ++saleBps;
         uint256 current = anchorBps();
         if (saleBps <= current) return;
-        uint256 next = (current + saleBps) / 2;
+        uint256 next = current + FullMath.mulDiv(saleBps - current, anchorMoveBps, BPS);
         uint256 cap = startCapBps;
         if (next > cap) next = cap;
         // forge-lint: disable-next-line(unsafe-typecast)

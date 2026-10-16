@@ -1,13 +1,21 @@
 // Replays of what Core.sellForEth and Core.sellForBalance pay for a batch in one
 // call. Pure integer math over values read from the Core (live.ts reads them).
 
+// Five Settings words put State.anchor at slot 28 (test/CoreLayout.t.sol).
+export const ETH_ANCHOR_SLOT = 28n;
+
+// The bucket shares its word with peakTime. Keep uint64 values as bigint.
+export function ethAnchorWords(start: bigint, bucketWord: bigint, now: bigint, bucketSeconds: bigint) {
+  return { start, bucket: bucketWord & ((1n << 64n) - 1n), nowBucket: now / bucketSeconds };
+}
+
 export interface EthReplay {
   price: bigint; // ethPrice(): the price state at the first fill
   peak: bigint; // floorRate(): max(price state, remembered peak now)
   pot: bigint; // ethPot plus the unbooked share the first book adds
   start: bigint; // anchor.minuteStartRate
   bucket: bigint; // anchor.minuteBucket
-  nowBucket: bigint; // chain time / 60
+  nowBucket: bigint; // chain time / bucketSeconds
   dropPerCreditBps: bigint;
   dropFloorBps: bigint;
   ceilBps: bigint;

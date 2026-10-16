@@ -130,20 +130,20 @@ contract CoreUnitTest is CoreBase {
     }
 
     // promise: INTEGRATION BadRate on the constructor
-    /// the opening bid is a deploy input bounded to [1e13, 1e18] wei per credit
+    /// the opening bid is a deploy input bounded to [1, uint64.max] wei per credit
     function test_rateStartBounds() public {
         Settings memory s = lc.settings;
         vm.expectRevert(ICore.BadRate.selector);
-        this.mk(owner, address(ctl), lc.payee, lc.stack, 1e13 - 1, s);
+        this.mk(owner, address(ctl), lc.payee, lc.stack, 0, s);
         vm.expectRevert(ICore.BadRate.selector);
-        this.mk(owner, address(ctl), lc.payee, lc.stack, 1e18 + 1, s);
-        ICore lo = this.mk(owner, address(ctl), lc.payee, lc.stack, 1e13, s);
-        s.rateCap = 1e18;
-        ICore hi = this.mk(owner, address(ctl), lc.payee, lc.stack, 1e18, s);
-        assertEq(lo.RATE_START(), 1e13);
-        assertEq(lo.rateAtCheckpoint(), 1e13);
-        assertEq(hi.RATE_START(), 1e18);
-        assertEq(hi.rateAtCheckpoint(), 1e18);
+        this.mk(owner, address(ctl), lc.payee, lc.stack, uint256(type(uint64).max) + 1, s);
+        ICore lo = this.mk(owner, address(ctl), lc.payee, lc.stack, 1, s);
+        s.rateCap = type(uint64).max;
+        ICore hi = this.mk(owner, address(ctl), lc.payee, lc.stack, type(uint64).max, s);
+        assertEq(lo.RATE_START(), 1);
+        assertEq(lo.rateAtCheckpoint(), 1);
+        assertEq(hi.RATE_START(), type(uint64).max);
+        assertEq(hi.rateAtCheckpoint(), type(uint64).max);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -290,7 +290,9 @@ contract CoreUnitTest is CoreBase {
         _fund(10 ether);
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         // above the credit's bid (the rate scaled by its score over refScore), so the buy reverts AboveBid
-        assertGt(price, (core.ethRate() * _scoreOf(LISTED_A)) / core.settings().refScore, "listing is above the credit's bid");
+        assertGt(
+            price, (core.ethRate() * _scoreOf(LISTED_A)) / core.settings().refScore, "listing is above the credit's bid"
+        );
         vm.prank(keeper);
         vm.expectRevert(ICore.AboveBid.selector);
         _buyRaw(price, _listing(LISTED_A), LISTED_A, STRATEGY);
@@ -355,6 +357,18 @@ contract CoreUnitTest is CoreBase {
     /// the payment is the gas counted at the base fee plus the whole keeper fee, on the real strategy path. the counted
     /// gas covers the gas used and the transaction base cost, and scales with the base fee
     function test_buyListing_paysCountedGasAtTheBaseFeePlusTheFee() public {
+        _assertListingGasPayment();
+    }
+
+    // promise: the first capped purchase reimburses gas for initial budget accounting as well as the listing
+    function test_buyListing_countedGasCoversFirstCappedBucket() public {
+        Settings memory s = core.settings();
+        s.spendCapBps = 100;
+        _setSettings(s);
+        _assertListingGasPayment();
+    }
+
+    function _assertListingGasPayment() internal {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
         assertEq(price, 0.036 ether);
         // refScore set to the listed credit's score, so its bid is the full rate with room for the keeper payment
@@ -389,8 +403,14 @@ contract CoreUnitTest is CoreBase {
             uint256 ceiling = core.bidOf(id);
             ListingTarget t = _listingTarget(id);
             uint256 snap = vm.snapshotState();
-            PayRun memory r =
-                _payRun(rawAdapter, _raw(address(t), ceiling - gaps[i], abi.encodeCall(ListingTarget.fill, (id, 0))), id, ceiling - gaps[i], 1 gwei, 1 gwei);
+            PayRun memory r = _payRun(
+                rawAdapter,
+                _raw(address(t), ceiling - gaps[i], abi.encodeCall(ListingTarget.fill, (id, 0))),
+                id,
+                ceiling - gaps[i],
+                1 gwei,
+                1 gwei
+            );
             assertEq(r.paid, gaps[i], "the payment is the gap");
             (, uint256 basis,) = core.creditInfo(id);
             assertEq(basis, ceiling, "cost plus payment is the bid");
@@ -794,7 +814,6 @@ contract CoreUnitTest is CoreBase {
     /*//////////////////////////////////////////////////////////////
                          rate properties under fuzz
     //////////////////////////////////////////////////////////////*/
-
 }
 
 /// everything that follows a real compose. the stand in balance module is set in `setUp`, the compose itself goes through
@@ -843,13 +862,13 @@ contract CoreComposedTest is CoreBase {
         uint256[] memory h = _held();
         assertEq(h.length, 1);
         assertEq(h[0], c.sid);
-        assertEq(core.ethPot(), c.potBefore);
+        assertEq(core.ethPot(), c.potBefore - c.paid, "the pot pays the caller and nothing else");
         _solvent();
     }
 
-    // promise: SPEC 1 compose is unpaid at launch
-    /// at the launch values of `callerFee` and `callerMaxBaseFee` (zero) a compose moves no eth out of the Core: the
-    /// Core balance and `ethPot` are unchanged, at any basefee and with the buyback payment settings at their ceilings
+    // promise: SPEC 1 both caller settings at zero pay nothing
+    /// with `callerFee` and `callerMaxBaseFee` at zero a compose moves no eth out of the Core: the Core balance and
+    /// `ethPot` are unchanged, at any basefee and with the buyback payment settings at their ceilings
     function test_compose_movesNoEthOut() public {
         Composed memory c = _composeOnce();
         uint256 snap = preComposeSnap;
@@ -858,6 +877,8 @@ contract CoreComposedTest is CoreBase {
         Settings memory s = core.settings();
         s.keeperFee = 0.005 ether;
         s.keeperMaxBaseFee = 100 gwei;
+        s.callerFee = 0;
+        s.callerMaxBaseFee = 0;
 
         vm.revertToState(snap);
         _setSettings(s);
@@ -986,5 +1007,4 @@ contract CoreComposedTest is CoreBase {
         assertEq(_moduleHolding(), held + 3e18, "the module holding rose by the transfer");
         assertEq(xt.balanceOf(address(core)), 0, "the core holds no balance token");
     }
-
 }

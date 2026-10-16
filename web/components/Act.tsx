@@ -12,11 +12,13 @@ export function Act({
   steps,
   disabled,
   title,
+  secondary,
 }: {
   label: string;
   steps: (write: Write) => Promise<void>;
   disabled?: boolean;
   title?: string;
+  secondary?: boolean;
 }) {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -24,11 +26,11 @@ export function Act({
   return (
     <>
       {isConnected ? (
-        <button className="action" onClick={() => run(steps)} disabled={disabled || pending} title={title}>
+        <button className={`action${secondary ? " secondary" : ""}`} onClick={() => run(steps)} disabled={disabled || pending} title={title}>
           {pending ? "confirm in wallet…" : label}
         </button>
       ) : (
-        <button className="action" onClick={openConnectModal}>
+        <button className={`action${secondary ? " secondary" : ""}`} onClick={openConnectModal}>
           connect to {label}
         </button>
       )}

@@ -71,7 +71,7 @@ export function runMarket(o) {
   const rng = mulberry32(o.seed);
   const p = Object.assign({}, DEFAULTS, {
     rateStart: RATE0, rateCap: 3 * RATE0, days: 30, stepSec: 60,
-    climbPerMin: o.climbPerMin, recoveryClimbPerMin: o.climbPerMin, idleLoosenPct: o.idleLoosenPct,
+    climbPerMin: o.climbPerMin, recoveryClimbPerMin: o.recoveryClimbPerMin ?? DEFAULTS.recoveryClimbPerMin, idleLoosenPct: o.idleLoosenPct,
     multiplierCap: o.multiplierCap, hourlyBound: o.hourlyBound,
   });
   const core = new Core(p, 0);
@@ -230,7 +230,63 @@ function runCombo(scenario, climbBps, loosenBps, cap) {
 
 if (!(process.argv[1] && process.argv[1].endsWith('market.mjs'))) {
   // imported: expose the pieces, run nothing
-} else main();
+} else if (process.argv.includes('--spendcap')) console.log(JSON.stringify(runSpendCapStudy(), null, 2));
+else main();
+
+// A bounded stale-bid exposure study. Sellers use the direct bid door and receive its full score-scaled quote.
+// Listing purchases pay ask plus a bounded keeper payment and can therefore spend less than this seller model.
+export function runSpendCapStudy() {
+  const assumptions = {
+    seed: 129, initialPotEth: 10, initialReferenceBidEth: DEFAULTS.rateStart / W,
+    flatAskEth: 0.005, collapseEndFraction: 0.2, collapseSeconds: 600,
+    credits: 500, scoreMix: [{ points: 150, count: 50 }, { points: 300, count: 100 }, { points: 433, count: 200 }, { points: 600, count: 100 }, { points: 750, count: 50 }],
+    blockSeconds: 12, sellingHorizonSeconds: 21600, totalHorizonSeconds: 86400,
+    capBps: [50, 100, 200], startBucketOffsetsSeconds: [0, 48], bucketSeconds: DEFAULTS.bucketSeconds,
+    feesDepositsSalesOrBalancePurchases: false,
+    sellerRule: 'Seeded inventory order; each block repeatedly sells the first credit whose score-scaled bid covers its flat per-credit ask. Purchases pay the direct bid, not the ask. Stops at inventory exhaustion or selling horizon.',
+    crossingRule: 'First modeled block or fill with the reference-score bid strictly below the flat ask. In the collapse case measure only at or after 600 seconds, below the final market ask; mixed-score credits can still clear after crossing.',
+    recoveryRule: 'After a downward crossing, first modeled block after selling stops with the reference-score bid at least the final market ask, 0.005 ETH. Null without a crossing means N/A; null after a crossing means recovery was not observed by the total horizon.',
+    arithmetic: 'Number price trajectory and integer-wei bucket accounting; synthetic economic model, not an EVM differential test.',
+    settings: { climbBps: DEFAULTS.climbPerMin * 100, recoveryClimbBps: DEFAULTS.recoveryClimbPerMin * 100, dropBps: DEFAULTS.dropPerCreditPct * 100, dropFloorBps: DEFAULTS.dropToPct * 100, idleLoosenBps: DEFAULTS.idleLoosenPct * 100, idleStepSeconds: DEFAULTS.idleStepSeconds, multiplierCapBps: DEFAULTS.climbMultiplierCapBps, rateCapEth: DEFAULTS.rateCap / W, peakHalfLifeSeconds: DEFAULTS.peakHalfLifeHours * 3600 },
+  };
+  const rows = [];
+  for (const scenario of ['flat', 'collapse']) for (const cap of assumptions.capBps) for (const offset of assumptions.startBucketOffsetsSeconds) {
+    const rng = mulberry32(assumptions.seed);
+    const inventory = assumptions.scoreMix.flatMap(({ points, count }) => Array(count).fill(points));
+    for (let i = inventory.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [inventory[i], inventory[j]] = [inventory[j], inventory[i]]; }
+    const core = new Core({ ...DEFAULTS, spendCapBps: cap }, offset); core.fund(assumptions.initialPotEth, offset);
+    let bought = 0, pointsBought = 0, spent = 0, crossing = null, stopped = null, recovery = null, initialRecovery = null, budgetStallBlocks = 0, unmarketableBlocks = 0;
+    const askAt = (t) => scenario === 'flat' ? assumptions.flatAskEth : assumptions.initialReferenceBidEth * (1 - 0.8 * Math.min(t / assumptions.collapseSeconds, 1));
+    const checkCrossing = (t) => {
+      if (crossing === null && (scenario === 'flat' || t >= assumptions.collapseSeconds) && core.ethRate(t + offset) / W < askAt(t)) crossing = { seconds: t, credits: bought, pointsBought, spentEth: spent, referenceBidEth: core.ethRate(t + offset) / W, askEth: askAt(t) };
+    };
+    for (let t = 0; t <= assumptions.totalHorizonSeconds; t += assumptions.blockSeconds) {
+      checkCrossing(t);
+      if (stopped === null && (t >= assumptions.sellingHorizonSeconds || inventory.length === 0)) stopped = { seconds: t, credits: bought, pointsBought, spentEth: spent, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: inventory.length === 0 ? 'inventory exhausted' : 'selling horizon' };
+      if (stopped !== null) {
+        if (crossing !== null && recovery === null && core.ethRate(t + offset) / W >= assumptions.flatAskEth) recovery = t - stopped.seconds;
+        if (initialRecovery === null && core.ethRate(t + offset) >= DEFAULTS.rateStart) initialRecovery = t - stopped.seconds;
+        continue;
+      }
+      let filled = 0;
+      for (;;) {
+        const bid = core.ethRate(t + offset) / W;
+        const index = inventory.findIndex((score) => bid * score * 1e4 / core.s.refScore >= askAt(t));
+        if (index < 0) { if (!filled) unmarketableBlocks++; break; }
+        const paid = core.sellForEth(t + offset, inventory[index]);
+        if (!(paid > 0)) { budgetStallBlocks++; break; }
+        pointsBought += inventory[index]; inventory.splice(index, 1); bought++; spent += paid; filled++; checkCrossing(t);
+      }
+      if (inventory.length === 0) {
+        stopped = { seconds: t, credits: bought, pointsBought, spentEth: spent, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: 'inventory exhausted' };
+        if (crossing !== null && core.ethRate(t + offset) / W >= assumptions.flatAskEth) recovery = 0;
+        if (core.ethRate(t + offset) >= DEFAULTS.rateStart) initialRecovery = 0;
+      }
+    }
+    rows.push({ scenario, capBps: cap, startBucketOffsetSeconds: offset, crossing, stopped, recoverySecondsAfterStop: recovery, initialBidRecoverySecondsAfterStop: initialRecovery, remainingCredits: inventory.length, pointsBought, remainingPoints: inventory.reduce((sum, score) => sum + score, 0), budgetStallBlocks, unmarketableBlocks, finalPotEth: core.ethPot, finalReferenceBidEth: core.ethRate(assumptions.totalHorizonSeconds + offset) / W });
+  }
+  return { assumptions, rows };
+}
 
 function main() {
 const t0 = Date.now();

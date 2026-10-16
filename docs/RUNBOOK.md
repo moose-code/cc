@@ -6,7 +6,7 @@ the launch, the owner commands after it, and what to do when something stops hal
 
 | item | note |
 |---|---|
-| the live v2 stack | the five stack addresses are in the tracked script/config/mainnet.json (factory 0x9b17bf6f97F5429368E11028BC637479b4667f7b); the recorded stack with its code hashes is script/config/v2-mainnet.json, pinned by preflight |
+| the live v2 stack | the five stack addresses are in the tracked script/config/mainnet.json (factory 0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c, the deployed ArtcoinsFactoryV2); the recorded stack with its code hashes is script/config/v2-mainnet.json, pinned by preflight |
 | the signer | one key does every transaction: the v2 factory owner 0xCB43078C32423F5348Cab5885911C3B5faE217F9, also the config `owner` and `creator`, the Core owner and the payee. `deployToken` is owner only on the deprecated factory. sign with `--ledger` or `--account <name>`; `--private-key $PRIVATE_KEY` only on a throwaway fork |
 | eth | the deploy fee (0.069 eth at the pin, read live) plus gas for eleven transactions, 19,069,638 gas measured on the master stack fixture: 0.088 eth at 1 gwei, 0.164 at 5 gwei, 0.450 at 20 gwei, fee included. fund about 20 percent over the figure for the expected base fee |
 | read rpc | an archive capable mainnet rpc in `MAINNET_RPC_URL`, for every command that does not send |
@@ -26,7 +26,7 @@ the launch, the owner commands after it, and what to do when something stops hal
 | 6 | broadcast | `git checkout foundry.lock; git submodule update -- lib/solady`, then `script/tools/check-freeze.sh` from the candidate commit (every row of the freeze table ok, exit 0), then `DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow --ledger`. note the printed addresses: `export CORE=... COIN=... CONTROLLER=... RENDERER=...`. then the set back of step 3 |
 | 7 | verify | section 3 |
 | 8 | postflight | `CORE=$CORE DEPLOYER=$DEPLOYER LAUNCH_CONFIG=script/config/local.json CONFIG_HASH=$CONFIG_HASH forge script script/Postflight.s.sol --rpc-url $MAINNET_RPC_URL`. 73 rows, every one ok; the locked recipients row is a WARN until `lockRecipients`. record the start tick it prints and the date as the launch price |
-| 9 | the window's end | 30 minutes after the launch block: `cast send $CORE "book()" --rpc-url $MAINNET_RPC_URL --ledger` (anyone may send it). it latches the payee share; fees that arrive between the window's end and this call are not shared |
+| 9 | the window's end | the keeper (section 8) sends `book()` at the first block past the factory launch time plus live `settings.sniperSeconds` (1,800 seconds at launch) with income pending. by hand if the keeper is down: `cast send $CORE "book()" --rpc-url $PRIVATE_RPC` from any account but the owner key (the `/keeper` web page has the button). the first book with income latches the payee share and shares none of that income; later books apply `payeePpm` |
 | 10 | later owner decisions | `lockRecipients` (with `lockSuccessor`), `lockAllowlist`, the balance side, the credit sale, chosen composition: section 4 |
 
 the eleven transactions of step 6, in order: the library `CoreLib`, the Core, the controller, the Seaport adapter, the CreditStrategy adapter, the coin renderer `CoinRenderer` (constructed with the config owner), `setCore` on the renderer (binds the Core, once), `setController`, `addAdapter` twice, `deployToken` with the fee, which names the renderer in the token config. the creations go through the deterministic deployer (CREATE2) at addresses that depend on the config and the salts; a contract with code at its address is skipped and a call whose effect is on chain is skipped, so a stopped run continues from the chain (section 6).
@@ -39,13 +39,13 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 
 | block | rows |
 |---|---|
-| the bid | `rateStart` (market price on launch day of a credit of score `refScore`, wei), `rateCap` (3 times it), `refScore` 4,330,000 (the launch average credit score), the nine bid settings |
-| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 12, anchor half life 604,800, anchor min cost 0.1 eth) |
+| the bid | `rateStart` (market price on launch day of a credit of score `refScore`, wei), `rateCap` (3 times it), `refScore` 4,330,000 (the launch average credit score), `climbMultiplierCapBps` 40,000, `spendCapBps` 100, `bucketSeconds` 60, `idleStepSeconds` 600 and the other bid settings |
+| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 12, anchor half life 604,800, anchor min cost 0.1 eth, `anchorMoveBps` 5,000) |
 | the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `floorBps` 11,000, `startBps` 30,000 (`refScore` is a bid setting above) |
 | the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
-| the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 1,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
-| the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0, `callerMaxBaseFee` 0 |
-| the payee and the artist | `payee` the owner, `payeePpm` 0 at launch (the owner raises it later); `artist` the launch artist address; the nft sale cuts `saleToArtistBps` 250, `saleToOperatorBps` 50 |
+| the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 1,000, `balanceBidCapBps` 10,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
+| the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0.0003 eth, `callerMaxBaseFee` 3 gwei (decision 138) |
+| the payee and the artist | `payee` the owner, `payeePpm` 0 at launch (the owner raises it later), `settings.sniperSeconds` 1,800; `artist` the launch artist address; the nft sale cuts `saleToArtistBps` 250, `saleToOperatorBps` 50 |
 | the adapters | the Seaport recipient allowlist (the OpenSea fee collector 0x0000a26b00c1F0DF003000390027140000fAa719) |
 | the coin | name CC, symbol CC, supply 1e27, start tick -175000, position -175000 to 887200, skim 1,000 bps, bounty 9,000, lp fee 0, sniper 9,000 bps over 1,800 s, protocol 2,000 bps, restricted, allowlist empty, image, description |
 | the build | the masked runtime code hashes of the five contracts and the library creation hash |
@@ -62,7 +62,8 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 | what | how |
 |---|---|
-| a Core setting | `script/SetSettings.s.sol`: `SET_<field>=<value>` for each changed field, `SET_RATE=<wei>` for `setRate`; with `CONTROLLER=$CONTROLLER` it drives `setSale` and `setCredit`. one call sets the whole struct, so set every field you mean |
+| a Core setting | `script/SetSettings.s.sol`: `SET_<field>=<value>` for each changed field, `SET_RATE=<wei>` for `setRate`; with `CONTROLLER=$CONTROLLER` it drives `setSale` and `setCredit`. the script preserves unnamed live fields; `SETTINGS_PATCH` accepts an inline JSON object or file of Core settings, then `SET_<field>` overrides it |
+| lowering the spend cap in an incident | `CORE=$CORE SET_spendCapBps=50 SEND=1 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL --broadcast --slow --account <keystore>`. a lower cap applies to the live bucket immediately, and a higher cap does too: the budget is recomputed from the bucket's snapshot and the spent amount is kept |
 | pause and resume | `cast send $CORE "setPaused(bool)" true` and `false` |
 | the payee | `cast send $CORE "setPayee(address)" <to>`; the payee fee share and the operator cut are pushed by the book and the sales, not claimed |
 | the artist | `cast send $CORE "setArtist(address)" <to>`; the artist cut of nft sales is pushed to it (the zero address is refused while `saleToArtistBps` is nonzero) |
@@ -74,6 +75,35 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 | composing | `compose()`, `compose(uint8)` or `composeChosen` when nobody else does; switch the payment on with `callerFee` and `callerMaxBaseFee` if pages sit |
 | the coin | `coin.lockRecipients()` (script/Lock.s.sol: postflight, then the lock) seals the bounty recipient and ends fee stream migration; take it together with `lockSuccessor`. `lockAllowlist()`, `unrestrict()`, `renounceAdmin()`, `setMetadataRenderer`, `updateImage`, `updateDescription` are the coin admin's |
 | the coin's metadata renderer | named in the token config by the launch (`CoinRenderer`, transactions 6 and 7 create and bind it). to replace it: deploy the new renderer, then `cast send $COIN "setMetadataRenderer(address)" $RENDERER --rpc-url $MAINNET_RPC_URL --ledger` (the coin refuses an address without code); `setMetadataRenderer(address(0))` returns to the built in json; `renounceAdmin()` freezes the choice. read back `cast call $COIN "metadataRenderer()(address)"` and `cast call $COIN "tokenURI()(string)" \| head -c 200`; `CORE=$CORE COIN=$COIN script/tools/coin-metadata.sh` decodes the live metadata into files and a viewer. after a replacement run postflight with `COIN_CHANGED=1` |
+
+### editing economic settings
+
+`Settings` has 34 fields in five storage slots. the original 29 include `climbMultiplierCapBps`; the last five are `spendCapBps` (uint16), `bucketSeconds`, `balanceBidCapBps`, `idleStepSeconds` and `sniperSeconds` (uint32 each). the controller's six-field `Sale` appends `anchorMoveBps` (uint16). update integrations to these tuples before using the new contracts; INTEGRATION section 13 gives the ABI order.
+
+preview a patch without sending:
+
+```sh
+CORE=$CORE CONTROLLER=$CONTROLLER SET_spendCapBps=100 SET_bucketSeconds=60 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL
+```
+
+`SetSettings` prepares the complete batch from live structs before executing any setter, and validates the exact setter order as the owner inside a temporary EVM snapshot, then restores every simulated write. it prints the Core before/after table and calldata, plus controller calldata when changed. with `CONTROLLER` set, sale fields use `SET_markupBps`, `SET_startCapBps`, `SET_decayHours`, `SET_anchorHalfLife`, `SET_anchorMinCost`, `SET_anchorMoveBps`; credit fields use `SET_saleOn=0|1`, `SET_window`, `SET_floorBps`, `SET_startBps`. the JSON patch applies to Core fields only. unspecified fields keep their live values, single-field environment values override JSON, unknown fields and values wider than their ABI types are refused.
+
+the setter order is `setSale` first when its new markup satisfies the old Core floor, then changed `setSettings`, optional nonzero `SET_RATE`, a deferred `setSale` when lowering markup requires the new Core floor first, then changed `setCredit`. the final Core floor must fit the final markup. raising the Core floor and markup together therefore raises markup first; lowering both past the old floor lowers the Core floor first. `SET_RATE=0` skips the rate setter. a rate cap below the live bid or price state prints a warning because the bid falls when applied.
+
+after reviewing the preview, the owner can send the same inputs with `SEND=1`, `--broadcast`, `--slow` and the chosen signer. these are separate transactions, so an interruption may leave earlier setters applied; read the live structs and rerun the preview before continuing. preview restores simulated writes and does not grant permission to broadcast.
+
+the ETH purchase cap applies to direct seller payouts and adapter listing price plus actual keeper payment. 100 bps per 60 seconds is the launch default. `SET_spendCapBps=10000` bypasses enforcement and still records outflow; switching it back on retains that spending. a changed cap reprices the original active snapshot, and a changed bucket duration carries active spent, snapshot and both bids' active drop floors forward. changing settings never resets active spent to zero. if spent already exceeds a lowered budget, new purchases wait for the next bucket or a higher budget. ETH bid views omit budget headroom, so simulate the purchase and handle `SpendCapReached(spent,cost,budget)` even with a nonzero bid and a funded pot. the first purchase of a bucket always passes, so a pot whose budget is under one credit still buys one credit per bucket. balance purchases have no ETH cap.
+
+`settings.sniperSeconds` controls only the one-way payee latch relative to the factory's launch timestamp. changing it cannot undo `payeeOn`, and `setSettings` books income under the old settings before applying the new ones. it does not change `launch.sniperSeconds`, the external pool's launch skim schedule. the two launch defaults are both 1,800 seconds; read the live Core setting for later book timing.
+
+### bounds and coupled checks
+
+bounds use the declared unsigned integer width where no narrower limit follows. uint16 max is 65,535, uint32 max is 4,294,967,295. the defaults stay the launch values; wider bounds make owner choices possible and do not promise sensible economics for every combination.
+
+- `dropPerCreditBps` is 1 to 10,000; `dropFloorBps`, `saleToBuybackBps`, `recoveryGapBps`, `redeemSlippageBps`, `balanceBidMarginBps`, `redeemBurnBps`, `feeToRedeemBurnBps` and `creditCostToPotBps` are 0 to 10,000. artist plus operator sale cuts must total strictly less than 10,000; an artist cut also requires a nonzero artist. `payeePpm` is 0 to 1,000,000.
+- `climbPerMinBps` and `idleLoosenBps` are 1 to uint16 max; `recoveryClimbPerMinBps` is at least `climbPerMinBps` and at most uint16 max. `ceilBps` and `climbMultiplierCapBps` are 10,000 to uint16 max. `saleFloorBps` is 0 to uint16 max and no higher than controller markup. `buybackDelay` is 1 to uint16 max blocks. `peakHalfLife`, `refScore`, `bucketSeconds` and `idleStepSeconds` are 1 to uint32 max; `sniperSeconds` is 0 to uint32 max. `balanceBidCapBps` is 10,000 to uint32 max; raising it leaves the floor at `10,000 - balanceBidMarginBps`. `spendCapBps` is 1 to 10,000, with 10,000 the bypass value.
+- `rateStart`, `rateCap` and `setRate` accept 1 to uint64 max wei; `setRate` must also fit live `rateCap`. `buybackSlice` is 1 to uint128 max wei and at least `2 * (600,000 * keeperMaxBaseFee + keeperFee)`. `keeperFee` and `callerFee` are 0 to uint64 max, their base-fee ceilings 0 to uint48 max, and `swapFeeCc` is 0 to uint96 max base units. caller payments remain capped at the pot; listing keeper payment remains capped at the bid gap and pot left.
+- sale markup is 10,000 to uint16 max, at least the Core floor and at most `startCapBps`; `startCapBps` is markup to uint32 max; `decayHours` is 1 to uint16 max; `anchorHalfLife` is 1 to uint32 max seconds; `anchorMinCost` is 0 to uint128 max; `anchorMoveBps` is 0 to 10,000 (launch 5,000). zero anchor movement leaves the sale anchor clock unchanged. credit window is 1 to uint32 max seconds, credit floor is 10,000 to uint16 max, and credit start is 10,000 to uint32 max.
 
 ### the lock table
 
@@ -96,15 +126,17 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 | duty | call | paid |
 |---|---|---|
-| sweep a listing below the bid | `buyListing(adapter, id, params)` | gas at the base fee up to 5 gwei plus 0.0003 eth, at most the gap |
+| sweep a listing below the bid | `buyListing(adapter, id, params)`, simulate for available bucket budget first | gas at the base fee up to 5 gwei plus 0.0003 eth, at most the gap and pot left; gas accounting adds 350,000 overhead and caps counted gas at 1,500,000 |
 | burn | `buyback()` every 25 blocks while the buyback pot holds at least twice the largest payment | gas plus the scaled fee |
-| compose | `compose()` when `nextPage()` is ready | 0 until the owner switches the payment on |
-| redeem | `redeemStatement(sid)` when `atFloor(sid)` and `redeemOn` | 0; reverts `NoBalanceModule` until the module is set |
+| compose | `compose()` when `nextPage()` is ready | gas at the base fee up to 3 gwei plus 0.0003 eth (decision 138) |
+| redeem | `redeemStatement(sid)` when `atFloor(sid)` and `redeemOn` | like compose; reverts `NoBalanceModule` until the module is set |
 | book | `book()` at the window's end, `collectEscrow()` if the escrow holds a credit for the Core | nothing |
+
+the owner keeper (`keeper/`, section 8) runs every duty from launch (decision 136); the table is also the manual fallback on the `/keeper` web page.
 
 ### a dump that walks the bid down, and statements above the floor
 
-the bid recovers at 2 percent a minute below the remembered peak and 0.5 percent above it; a one minute dump of 140 credits is back in about an hour. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
+at launch settings the bid recovers at 2 percent a minute below the recovery level and 0.5 percent above it. the ETH purchase budget also limits how much a dump can sell per bucket; time until fills resume depends on that budget and the fixed bucket boundary. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
 
 ### watching the buyback after a price fall
 
@@ -112,7 +144,7 @@ the 0.5 eth slice is unprofitable to sandwich down to about a quarter of the lau
 
 ## 5. what cannot change after the launch
 
-the skim (10 points), the bounty split (9,000 of 10,000), the protocol recipient, the ticks and the supply are fixed in the pool and the coin. the Core's stack, coin, `RATE_START` and `SNIPER_SECONDS` are immutables; a new stack or a new coin is a new Core. everything in docs/SPEC.md section 3 is adjustable.
+the skim (10 points), the bounty split (9,000 of 10,000), the protocol recipient, the ticks and the supply are fixed in the pool and the coin. the Core's stack, coin and `RATE_START` are immutables; a new stack or a new coin is a new Core. everything in docs/SPEC.md section 3 is adjustable.
 
 ## 6. when a transaction fails half way
 
@@ -202,3 +234,85 @@ OPENSEA_API_KEY=... REFRESH=1 RECORD=deployments/1.json script/dev/activity.sh e
 ```
 
 The record carries chain id 1, so the evm.now links of this node point at chain id 1 and resolve only on the local node. The sweep needs the bid above a listing's price plus `BOT_MARGIN`; the bid climbs 0.5 percent a minute toward the rate cap, so the first sweeps come in the second or third round. On the pinned 26158000 fork the orders are newer than the fork, and `SEAPORT_CATCHUP=1` warps the node past their start once at the start of the run (the fills still need chain id 1). `SEAPORT_ORDERS=<file>` replaces the fetch with a file of the format `{"count": N, "orders": [{"id": "<credit id>", "price": "<wei>", "params": <BasicOrderParameters, decimal strings, additionalRecipients as {amount, recipient}>}]}`, which `script/dev/opensea-listings.mjs` also writes.
+
+## 8. the keeper
+
+`keeper/` is the owner keeper of decisions 136 to 139: one node process that calls every keeper door from its own hot wallet, never the owner key (decision 57). it reads the state once per block (the shared `readSnapshot` of `packages/engine` plus the keeper's reads, pinned to one block), decides with pure functions (`keeper/src/decide.ts`), simulates each call with `eth_estimateGas` from the keeper, rechecks the profit rule at the measured gas, and sends one transaction at a time through the private relays, waiting for its receipt before the next. a paid door goes only when the Core pays at least its own gas at the worst base fee plus its tip plus `MARGIN_ETH`; every skip is logged with its reason.
+
+| priority | door | when |
+|---|---|---|
+| 1 | `buyListing(adapter, id, params)` | a CreditStrategy or Seaport listing has sat under `bidOf(id)` and under the pot, net of the keeper's cost, for `LISTING_DELAY_SEC` (2 minutes, decision 137), the order is open and its offerer still holds the credit; best gap first. while `spendCapBps` is under 10,000 the keeper reads `spendState()` and skips a listing whose price plus keeper payment the bucket budget cannot take (the first purchase of a bucket always passes) until the next bucket; a `SpendCapReached` simulation is a wait |
+| 2 | `buyback()` | `ethToBuyback` above 0, `lastBuybackBlock + buybackDelay` reached, the slice at least `2 * maxPay` and the scaled fee covering the tip |
+| 3 | `compose()` | `nextPage()` ready; paid 3 gwei plus 0.0003 eth (decision 138), so it waits above about 3 gwei |
+| 4 | `collectEscrow()` | the fee escrow holds more for the Core than the gas of the claim |
+| 5 | `book()` | `launchedAt + settings.sniperSeconds` passed, `payeeOn` false, income pending: the book that latches the payee share |
+| 6 | `redeemStatement(sid)` | `atFloor(sid)`; logged only while no balance module is set (it reverts `NoBalanceModule`) |
+
+### environment
+
+every value is an environment variable; nothing secret is written to a file by the keeper or this repo. the OpenSea key and the webhook come from the shell or the host's secret store.
+
+| variable | default | meaning |
+|---|---|---|
+| `RECORD` | `deployments/<CHAIN_ID>.json` | the deployment record (section 7 shape): `core`, `controller`, `seaportAdapter`, `strategyAdapter`, `chainId` |
+| `RPC_URLS` | | read rpcs, comma separated, first preferred. on mainnet the keeper appends the public fallbacks (Tenderly gateway, drpc, publicnode) and logs `rpc fallback answered` when one is used |
+| `RELAY_URLS` | MEV Blocker, then Flashbots Protect (decision 139) | private relays for `eth_sendRawTransaction`, tried in order. a live chain refuses to start without one |
+| `KEYSTORE`, `KEYSTORE_PASSWORD_FILE` | | the keeper's v3 keystore (`cast wallet new <dir>`) and a file holding its password, both mounted secrets. decrypted in memory |
+| `DRY_RUN=1` with `KEEPER_ADDRESS` | | simulate and log `dry run: would send` for each call, send nothing; no key needed |
+| `MAX_BASEFEE_GWEI_<DOOR>`, `MAX_PRIORITY_GWEI_<DOOR>` | 5 for `BUY_LISTING` and `BUYBACK`, 3 for the rest; tip 0.05, 0.02 for `COMPOSE` | per door ceiling and tip (`MAX_BASEFEE_GWEI` and `MAX_PRIORITY_GWEI` set all). a transaction's `maxFeePerGas` is the ceiling plus the tip, so it never lands above the ceiling |
+| `MARGIN_ETH` | 0.00005 | what a paid door must clear above its own cost |
+| `DAILY_BUDGET_ETH` | 0.2 | the net eth (gas spent minus Core payments) the wallet may lose per UTC day; a send whose gross cost does not fit waits |
+| `LISTING_DELAY_SEC` | 120 | decision 137 |
+| `STRATEGY_IDS` | `Credits.tokensOf(strategy)` | the CreditStrategy ids to watch, or `off`; refreshed every `STRATEGY_REFRESH_SEC` (600). The default set is kept by delta from the Credits Transfer logs of the strategy (state file `STATE_DIR/strategy-inventory.json`), with a rolling re-read of 300 prices per refresh and a full read once a day |
+| `STRATEGY_FULL_READ` | | `1` reads the whole strategy inventory on every refresh (first start, or a node without log queries) |
+| `INDEXER_URL` | | indexer origin (https or local); seeds the strategy inventory on the first start from `strategy_listing` instead of `tokensOf` |
+| `OPENSEA_API_KEY` | | enables the Seaport source (`packages/engine/src/opensea.mjs`), refreshed every `OPENSEA_REFRESH_SEC` (300); `SEAPORT_ORDERS=<file>` reads the same shape from a file instead |
+| `ALERT_WEBHOOK_URL` | | JSON POST `{source, key, text, ...}` for alerts (decision 139) |
+| `LOW_BALANCE_ETH` | 0.05 | alert under this wallet balance |
+| `BREAKER_THRESHOLD`, `BREAKER_PAUSE_SEC` | 3, 3600 | consecutive failures of a door (an on chain revert, a send no relay took, a receipt that never came) that pause it, and for how long |
+| `DOORS` | all | a comma list to run only some doors |
+| `STATE_DIR` | `keeper/.state` | the daily ledger files (amounts and hashes only) |
+
+### start
+
+```sh
+npm ci                                  # repo root: installs web/, keeper/ and packages/engine
+cast wallet new ~/keeper-keystore       # once: the keeper's own key, never the owner's
+RPC_URLS=$MAINNET_RPC_URL KEYSTORE=... KEYSTORE_PASSWORD_FILE=... ALERT_WEBHOOK_URL=... \
+  OPENSEA_API_KEY=... npm start --workspace keeper
+```
+
+at start the keeper refuses the owner address 0xCB43078C32423F5348Cab5885911C3B5faE217F9 and the Core's `owner()`, refuses an rpc whose chain is not the record's, warns when the keeper address carries EIP 7702 delegation code (`0xef0100`), and logs its whole configuration with secrets reduced to whether they are set. on Fly.io or Railway (decision 139) the service runs `npm start --workspace keeper` from the repo root with node 22.18 or later; the keystore and the password file are mounted secrets and `STATE_DIR` a volume.
+
+### dry run
+
+```sh
+DRY_RUN=1 KEEPER_ADDRESS=<keeper> RPC_URLS=$MAINNET_RPC_URL npm run tick --workspace keeper   # one tick, then exit
+```
+
+each line is one JSON object. `skip` names a door and why it waits; `dry run: would send` carries the call, the simulated gas, the Core payment and the keeper's cost; `intended (logged only)` is a redemption while no module is set. run it before the first live start and after any settings change.
+
+### funding and top up
+
+the keeper spends gas and is repaid by the Core on the paid doors; `book` and `collectEscrow` are unpaid. hold about 0.1 eth (a compose needs about 9 million gas of headroom, 0.045 eth at 5 gwei, repaid in the same transaction). the `balance` alert fires under `LOW_BALANCE_ETH`; top up with a plain send from any account. the ledger (`STATE_DIR/ledger-<day>.json`) shows the day's spend, receipts and count.
+
+### alerts
+
+| key | meaning | action |
+|---|---|---|
+| `breaker:<door>` | the door failed `BREAKER_THRESHOLD` times in a row and is paused | read the `reverted on chain` or `send failed` lines; a revert after a passing simulation is a lost race or a relay problem |
+| `budget` | the day's net loss reached `DAILY_BUDGET_ETH` | read the ledger; raise the budget or wait for the UTC day |
+| `balance` | the wallet is under `LOW_BALANCE_ETH` | top up |
+| `tick` | five ticks in a row failed to read the chain | check the rpcs |
+
+### manual override
+
+the `/keeper` web page has `book`, `buyback` and the pots for any wallet; `compose()` is on `/compose`. stop the keeper (or set `DOORS` without the door) before acting by hand on the same door, so two senders do not race. pausing the engine (`setPaused`) does not stop the keeper's buybacks or sweeps.
+
+### tests
+
+| what | how |
+|---|---|
+| unit, every gate at its boundary | `npm test --workspace keeper` |
+| one tick per door against the local stack | `STACK=master script/dev/local.sh`, then `npm run e2e --workspace keeper` |
+| the Seaport sweep on a chain id 1 fork | `CHAIN_ID=1 STACK=master PORT=8609 script/dev/anvil.sh`, `CHAIN_ID=1 STACK=master RPC_URL=http://127.0.0.1:8609 script/deploy.sh local`, then `npm run e2e:seaport --workspace keeper`. it signs its own order with a key made in memory; with `OPENSEA_API_KEY` in the shell it also checks the live fetch against the adapter |

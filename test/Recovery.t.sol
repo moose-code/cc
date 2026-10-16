@@ -54,9 +54,9 @@ contract RecoveryTest is Fixture {
 
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a one minute dump of 140 credits halves the bid; the recovery climb brings it back to the pre dump price in about
-    /// 59 minutes at the launch gap (fast from the 50 percent floor up to the recovery level, then the slow climb over
-    /// the last `recoveryGapBps` to the peak). the climb is unscaled by the pot (decision 128 variant d scales only the
-    /// ceiling loosening). the exact minute is asserted and logged
+    /// 36 minutes at the launch gap. at launch `climbPerMinBps` and `recoveryClimbPerMinBps` are both 200, so the climb
+    /// from the 50 percent floor to the peak is a uniform 2 percent a minute. the climb is unscaled by the pot (decision
+    /// 128 variant d scales only the ceiling loosening). the exact minute is asserted and logged
     function test_oneMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -68,12 +68,12 @@ contract RecoveryTest is Fixture {
         assertGe(dropped, pre * 45 / 100, "the dump did not fall below the minute floor");
         uint256 m = _minutesToRecover(pre);
         emit log_named_uint("one minute dump: minutes to recover to the pre dump price", m);
-        assertEq(m, 59, "one minute dump: minutes to recover at the launch gap");
+        assertEq(m, 36, "one minute dump: minutes to recover at the launch gap");
     }
 
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a three minute dump of about 420 credits walks the bid down by half each minute, to about an eighth of the pre
-    /// dump price; the recovery climb brings it back in 146 minutes at the launch gap (the climb is unscaled by the pot)
+    /// dump price; the recovery climb brings it back in 104 minutes at the launch gap (the climb is unscaled by the pot)
     function test_threeMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -86,7 +86,7 @@ contract RecoveryTest is Fixture {
         assertLt(dropped, pre * 20 / 100, "three minutes of dumping cut the bid to about an eighth");
         uint256 m = _minutesToRecover(pre);
         emit log_named_uint("three minute dump: minutes to recover to the pre dump price", m);
-        assertEq(m, 146, "three minute dump: minutes to recover at the launch gap");
+        assertEq(m, 104, "three minute dump: minutes to recover at the launch gap");
     }
 
     // promise: SPEC 1 setRate restates the remembered peak

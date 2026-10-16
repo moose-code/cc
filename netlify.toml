@@ -1,0 +1,23 @@
+# Netlify build for the web app in web/. Values here are public (inlined into the client bundle) and override
+# same-named variables set in the Netlify UI. OPENSEA_API_KEY is a secret: set it in the UI or with
+# `netlify env:set OPENSEA_API_KEY <key> --secret --scope functions`, never in this file.
+
+[build]
+  base = "web"
+  # NEXT_PUBLIC_SITE_URL falls back to Netlify's URL of the deploy (production domain or deploy preview origin),
+  # so og:image urls are absolute on every deploy.
+  command = "NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL:-$URL} npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NEXT_PUBLIC_CHAIN_ID = "1"
+  # the mainnet indexer app in indexer/fly.mainnet.toml
+  NEXT_PUBLIC_INDEXER_URL = "https://cc-indexer-mainnet.fly.dev"
+  # CreditStrategy deploy block, as in indexer/env/mainnet.env STRATEGY_START_BLOCK
+  NEXT_PUBLIC_STRATEGY_START_BLOCK = "26037623"
+  # Set from the mainnet deployment record once the engine is deployed (uncomment and fill):
+  # NEXT_PUBLIC_CORE = ""
+  # NEXT_PUBLIC_DEPLOY_BLOCK = ""
+  # NEXT_PUBLIC_STRATEGY_ADAPTER = ""
+  # NEXT_PUBLIC_SEAPORT_ADAPTER = ""

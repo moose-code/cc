@@ -120,14 +120,29 @@ past_window; stage compose-a
 stage claims
 stage d-open
 
-say "the credit price falls over its window"
+say "the credit price holds at or above its floor as the bid climbs (decision 116)"
+# creditPrice(id) = max(cost, valueOf(score)) * creditFloorBps / 10000, scaled up by the age curve to creditStartBps at
+# acquisition. the floor tracks the climbing eth bid through valueOf, so the price rises with the bid; the invariant is
+# that it never sits below that floor. compute the floor from the controller's getters and assert price >= floor.
+CREDITS=0x97630aA70AB14ed9883B41dAfccBc11349723043
+CREDIT_SCORE=0x817A9cFfb4d6E7c206e745A4229001A472C1b7B7
 N="$(call "$CORE" 'pileSize()(uint256)' | awk '{print $1}')"
 ID0="$(call "$CORE" 'pilePage(uint256,uint256)(uint256[])' 0 "$N" | tr ',' '\n' | tail -1 | grep -oE '[0-9]+' | head -1)"   # the newest credit, inside its window
-P0="$(call "$CTL" 'creditPrice(uint256)(uint256)' "$ID0" | awk '{print $1}')"
+credit_floor() {   # the controller's creditPrice floor for credit $1 at the latest block
+  local id="$1" cost seed paid score val fbps
+  cost="$(call "$CORE" 'creditInfo(uint256)(bool,uint256,uint64)' "$id" | sed -n 2p | awk '{print $1}')"
+  seed="$(call "$CREDITS" 'seedOf(uint256)(bytes21)' "$id" | awk '{print $1}')"
+  paid="$(call "$CREDITS" 'timestampOf(uint256)(uint64)' "$id" | awk '{print $1}')"
+  score="$(call "$CREDIT_SCORE" 'scoreOf(bytes21,uint64)(uint256)' "$seed" "$paid" | awk '{print $1}')"
+  val="$(call "$CTL" 'valueOf(uint256)(uint256)' "$score" | awk '{print $1}')"
+  fbps="$(call "$CTL" 'creditFloorBps()(uint16)' | awk '{print $1}')"
+  python3 -c "c=$cost; v=$val; print((c if c>v else v)*$fbps//10000)"
+}
+P0="$(call "$CTL" 'creditPrice(uint256)(uint256)' "$ID0" | awk '{print $1}')"; F0="$(credit_floor "$ID0")"
 warp 7200
-P1="$(call "$CTL" 'creditPrice(uint256)(uint256)' "$ID0" | awk '{print $1}')"
-echo "creditPrice of $ID0: $P0 then, $P1 two hours later"
-[ "$(python3 -c "print(int($P1 < $P0))")" = 1 ] || echo "WARNING: creditPrice did not fall (the value follows the climbing rate); continuing" >&2
+P1="$(call "$CTL" 'creditPrice(uint256)(uint256)' "$ID0" | awk '{print $1}')"; F1="$(credit_floor "$ID0")"
+echo "creditPrice of $ID0: $P0 (floor $F0) then $P1 (floor $F1) two hours later"
+[ "$(python3 -c "print(int($P0 >= $F0 and $P1 >= $F1))")" = 1 ] || { echo "CHECK FAILED: creditPrice fell below its floor" >&2; exit 1; }
 
 stage d-buy
 stage fill-b
