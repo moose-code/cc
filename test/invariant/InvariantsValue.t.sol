@@ -48,6 +48,11 @@ contract ValueHandler is Test {
     uint256 public gRefusal; // a refusal with an unexpected selector
 
     mapping(bytes32 => uint256) public calls;
+    /// successful fills and checked round trips, so a run that only refused shows up
+    uint256 public ethFills;
+    uint256 public balanceFills;
+    uint256 public creditBuys;
+    uint256 public tripsChecked;
 
     constructor(ICore core_, IControllerV1 ctl_, MockBalanceToken xt_, bytes32 slot0_, uint160 sp0_, uint256 unit_) {
         core = core_;
@@ -114,6 +119,7 @@ contract ValueHandler is Test {
         if (!b.open) return;
         delete bought[id];
         if (b.epoch != epoch) return;
+        ++tripsChecked;
         if (back * (10_000 + ctl.creditSpreadBps()) > (b.paid + 1) * 10_000) ++gTrip;
     }
 
@@ -136,6 +142,7 @@ contract ValueHandler is Test {
             if (paid > bid) ++g2;
             if (paid > room) ++g7;
             if (coreBefore - address(core).balance != paid) ++g1;
+            ++ethFills;
             _trip(id, paid);
         } catch (bytes memory why) {
             held[k].push(id);
@@ -156,6 +163,7 @@ contract ValueHandler is Test {
             uint256 got = xt.balanceOf(a) - before;
             if (got > _score(id) * unit * cap / 10_000) ++gBalance;
             if (address(core).balance < coreBefore) ++g1;
+            ++balanceFills;
             _trip(id, got * _spot() / 1e18);
         } catch (bytes memory why) {
             held[k].push(id);
@@ -183,6 +191,7 @@ contract ValueHandler is Test {
         try ctl.buyCredit{value: price}(id) {
             bought[id] = Bought({paid: before - a.balance, epoch: epoch, open: true});
             held[k].push(id);
+            ++creditBuys;
         } catch (bytes memory why) {
             _expected(why, IControllerV1.NoQuote.selector, ICore.NoQuote.selector, IControllerV1.NotForSale.selector);
         }
@@ -268,6 +277,30 @@ contract InvariantsValue is ValueBase {
         sel[5] = ValueHandler.observe.selector;
         sel[6] = ValueHandler.warp.selector;
         targetSelector(FuzzSelector({addr: address(h), selectors: sel}));
+    }
+
+    /// the handler's routes work at the start state: eth and balance fills land, a credit bought from the engine is sold
+    /// back in the next block through each door, and both round trips are checked against the spread
+    // promise: the value mode handler exercises every route it checks
+    function test_handlerExercisesTheRoutes() public {
+        h.sellEth(0);
+        h.sellBalance(1);
+        h.buyCredit(0);
+        h.warp(0);
+        h.sellEth(0); // actor 0 holds the bought credit and its own credits; repeat until the bought one is sold
+        for (uint256 i = 1; i < 20 && h.tripsChecked() == 0; ++i) {
+            h.sellEth(i << 8);
+        }
+        h.buyCredit(1 | (1 << 8)); // the second pile credit, to actor 1
+        h.warp(0);
+        for (uint256 i; i < 20 && h.tripsChecked() < 2; ++i) {
+            h.sellBalance(1 | (i << 8));
+        }
+        assertGt(h.ethFills(), 0, "no eth fill");
+        assertGt(h.balanceFills(), 0, "no balance fill");
+        assertEq(h.creditBuys(), 2, "the credit buys");
+        assertEq(h.tripsChecked(), 2, "a round trip through each door");
+        assertEq(h.gTrip() + h.g1() + h.g2() + h.g7() + h.gBalance() + h.gRefusal(), 0, "no broken promise");
     }
 
     /// 1. eth leaves the core in value mode only as the seller's payment of an eth fill, and never on a balance fill
