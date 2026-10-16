@@ -3,10 +3,8 @@
 # passes when every job succeeded or was skipped.
 # contracts follows the AGENTS.md rule: forge build plus the test files the change touched. The
 # full suite, the rehearsal and the deep invariants run in the candidate workflow.
-# Fork tests run against an anvil that forks mainnet at block 26158000 and loads the tracked master
-# stack fixture (script/config/stack-master-26158000.hex), with STACK=master and --chain-id 1.
-# UPSTREAM_RPC_URL is the repo secret MAINNET_RPC_URL when set, else the public tenderly gateway,
-# which serves archive state at the pinned block. foundry-toolchain saves foundry's rpc cache.
+# Fork tests run against an anvil that forks a recent mainnet block, where the deployed v2 stack lives.
+# UPSTREAM_RPC_URL is the repo secret FORK_URL when set, else publicnode. foundry-toolchain saves foundry's rpc cache.
 name: ci
 
 on:
@@ -57,9 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      UPSTREAM_RPC_URL: ${{ secrets.MAINNET_RPC_URL || 'https://gateway.tenderly.co/public/mainnet' }}
+      UPSTREAM_RPC_URL: ${{ secrets.FORK_URL || 'https://ethereum-rpc.publicnode.com' }}
       MAINNET_RPC_URL: http://127.0.0.1:8545
-      STACK: master
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,18 +72,14 @@ jobs:
             out
           key: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-${{ hashFiles('src/**', 'test/**', 'script/**') }}
           restore-keys: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-
-      # master stack fixture: artcoins launcher commit 6d099486 deployed onto a mainnet fork at block 26158000,
-      # dumped to script/config/stack-master-26158000.hex (rebuild recipe: docs/RUNBOOK.md section 7). The
-      # fork tests target it, so anvil forks mainnet at the pin block and loads the dump the way
-      # script/dev/anvil.sh does (anvil_loadState over curl, the dump exceeds the argv limit).
-      - name: master stack anvil
+      # the deployed v2 stack (factory 0xC27e182e) is live on mainnet: anvil forks a recent block of it
+      - name: mainnet fork anvil
         run: |
-          nohup anvil --fork-url "$UPSTREAM_RPC_URL" --fork-block-number 26158000 --chain-id 31337 --port 8545 \
+          latest=$(cast block-number --rpc-url "$UPSTREAM_RPC_URL")
+          nohup anvil --fork-url "$UPSTREAM_RPC_URL" --fork-block-number $((latest - 100)) --chain-id 31337 --port 8545 \
             --auto-impersonate --retries 10 --timeout 60000 > anvil.log 2>&1 &
           for _ in $(seq 1 60); do cast chain-id --rpc-url "$MAINNET_RPC_URL" >/dev/null 2>&1 && break; sleep 1; done
-          printf '{"jsonrpc":"2.0","id":1,"method":"anvil_loadState","params":["%s"]}' "$(cat script/config/stack-master-26158000.hex)" |
-            curl -sf -X POST "$MAINNET_RPC_URL" -H 'content-type: application/json' --data @- | tee load.json
-          grep -q '"result":true' load.json
+          cast chain-id --rpc-url "$MAINNET_RPC_URL"
       - run: forge build
       - name: touched test files
         env:
@@ -101,10 +94,10 @@ jobs:
             forge test --match-path "$f" -vv --chain-id 1
             echo "::endgroup::"
           done
-      # the local deploy path (preflight, deploy, postflight) on the fixture anvil: the test runner does not enforce the
+      # the local deploy path (preflight, deploy, postflight) on the fork anvil: the test runner does not enforce the
       # script-only guards of forge script, so a broken deploy path fails here
       - name: local deploy
-        run: STACK=master RPC_URL=http://127.0.0.1:8545 script/deploy.sh local
+        run: RPC_URL=http://127.0.0.1:8545 script/deploy.sh local
 
   ci-ok:
     if: always()
