@@ -64,7 +64,7 @@ export function Tween({ wei }: { wei: bigint | undefined }) {
 export function usePotPage() {
   const { data: snap } = useSnapshot();
   const pts = snap ? potPoints(snap.potWithPending, snap.ethRate) : undefined;
-  const per100 = snap?.ethRate ? eth(snap.ethRate, 5) : undefined;
+  const per100 = snap ? eth(snap.ethRate, 5) : undefined;
   return { pts, per100 };
 }
 
