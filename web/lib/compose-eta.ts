@@ -29,6 +29,12 @@ export function composeEta(i: EtaInput): Eta | undefined {
   return { seconds: ((end - i.held) / i.perHour) * 3600 + i.windowS, estimated: true };
 }
 
+// Seconds until a held credit's sale window ends; 0 once past it, when its price rests at the floor and compose can
+// take it. The window is 0 while the credit sale is off.
+export function floorIn(acquiredAt: number, windowS: number, now: number): number {
+  return Math.max(0, acquiredAt + windowS - now);
+}
+
 // "~25h", "~1h 20m" (minutes under 2h), "now" at zero. "—" without an estimate.
 export function etaLabel(e: Eta | undefined): string {
   if (!e) return "—";
