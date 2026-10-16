@@ -389,7 +389,7 @@ abstract contract Fixture is Test, ProdDeployer {
     // ------------------------------------------------------------------ credits
 
     /// @notice true when the CreditStrategy holds `id` now and it is not one of the three named listings
-    function _heldByStrategy(uint256 id) private view returns (bool) {
+    function _heldByStrategy(uint256 id) internal view returns (bool) {
         if (id == LISTED_A || id == LISTED_B || id == LISTED_C) return false;
         try CREDITS.ownerOf(id) returns (address o) {
             return o == STRATEGY;
