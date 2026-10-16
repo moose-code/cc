@@ -73,3 +73,20 @@ the launch keeps pointing at the fork fixture (`STACK=master`, `script/config/v2
 owner's decision on the hook. with that decision the repoint is: mainnet.json stack factory, hook, locker, escrow and mev
 module to the addresses above (pool manager, tick spacing and pool fee are unchanged), v2-mainnet.json to the full set,
 and the `V2_CODEHASH_*` and `V2_PIN_BLOCK` pins to the mainnet stack at block 26202473 or later.
+
+## resolution: the deployed stack is the launch stack
+
+the owner decided the deployed stack is the launch stack. the hook matches artcoins commit `d27c932f` (tag
+`v2-stack-2026-10-15`, `FOUNDRY_PROFILE=ci`: solc 0.8.26, viaIR, runs 200, no metadata). its only source difference from
+the fixture build (`6d099486`) is in `HookCalldata.sol`: the referrer parse bounds are tighter (the inner slice must be at
+least 0x60 bytes and the payload length word must fit). fee skim, bounty, protocol share, escrow depositors, lock,
+lowerBaselineSkim and permission bits are unchanged.
+
+the engine's buyback hookData (abi encoded SwapData with the refund address) is unaffected: a malformed referrer slice
+yields a zero referrer, and referral is off.
+
+repoint: `script/config/mainnet.json` stack and `script/config/v2-mainnet.json` carry the addresses above (`v2-master.json`
+stays as the fixture record). `V2_CODEHASH_HOOK`, `V2_CODEHASH_MEV_MODULE`, `V2_CODEHASH_TOKEN_DEPLOYER` and
+`V2_CODEHASH_FEE_CONTROLLER` are repinned to the plain `extcodehash` of the deployed contracts (the pin includes
+immutables, so the three members whose immutables differ change too). factory, locker, escrow, allowlist and burn router
+hashes equal the existing pins. the burn router is `0x183751c6D50c3f2B377c0aD9BD8Fab1e187740d4`.

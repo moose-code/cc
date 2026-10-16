@@ -44,6 +44,9 @@ library V2Stack {
     uint16 internal constant MASTER_TREASURY_BPS = 8000;
     uint256 internal constant MASTER_DEPLOY_FEE = 0;
 
+    /// treasury of the fee controller of the deployed mainnet stack (factory 0xC27e182e)
+    address internal constant DEPLOYED_TREASURY = 0x41c3BD8A36f8fE9Bb77900ca02400b32BB35A6A4;
+
     struct Params {
         address owner;
         address treasury;
@@ -99,7 +102,9 @@ library V2Stack {
     /// @notice the stack after `check` against the record params
     function attach() internal view returns (Stack memory s) {
         s = live();
-        check(s, masterParams(s.owner));
+        Params memory p = masterParams(s.owner);
+        if (!_master()) p.treasury = DEPLOYED_TREASURY;
+        check(s, p);
     }
 
     /// @notice the post deploy requires of DeployV2Lib.check against the stack. constantsHash is compared across the

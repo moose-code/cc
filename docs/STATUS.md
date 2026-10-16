@@ -4,6 +4,8 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
+The launch stack is the mainnet ArtcoinsFactoryV2 `0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c` (artcoins `d27c932f`, tag v2-stack-2026-10-15); `script/config/mainnet.json`, `script/config/v2-mainnet.json` and the `V2_CODEHASH_*` pins of `script/LaunchConfig.sol` name it. See docs/reviews/STACK-mainnet-C27e182e.md.
+
 Issue 23 implementation is complete on `codex/issue-23-spend-cap`, based on merged PR 21 (`3a9491e`). Decisions 129/130 are implemented: 10,000 bps bypasses enforcement while all successful ETH purchase outflow is counted; owner settings edits preserve the active opening-pot snapshot and used spending, and cap edits immediately reprice that snapshot. The contract/tooling/test commit is `7d08b1e`. No implementation decision remains open.
 
 Verification: final `forge build`; 245 unique affected unit/script tests passed and one skipped across the verified packets; eight affected normal-depth invariant variants passed, 46 tests/groups with five invariants checked per variant and no failures; simulator 1,960 checks; browser simulator checks; web's three selfchecks and TypeScript; generated-interface consistency; compiled build identities. Independent review against the immutable source is `docs/reviews/REVIEW-23-final-source.md`. Exact commands, receipts, layout/bounds, commit ledger and limitations are in `docs/reviews/IMPLEMENTATION-23.md`. Core is 24,038 bytes (538 below EIP-170), CoreLib 20,579 and ControllerV1 12,037. The task's node on port 8600 was stopped; the owner's 8545 node was not changed.

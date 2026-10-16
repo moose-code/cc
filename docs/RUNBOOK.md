@@ -6,7 +6,7 @@ the launch, the owner commands after it, and what to do when something stops hal
 
 | item | note |
 |---|---|
-| the live v2 stack | the five stack addresses are in the tracked script/config/mainnet.json (factory 0x9b17bf6f97F5429368E11028BC637479b4667f7b); the recorded stack with its code hashes is script/config/v2-mainnet.json, pinned by preflight |
+| the live v2 stack | the five stack addresses are in the tracked script/config/mainnet.json (factory 0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c, the deployed ArtcoinsFactoryV2); the recorded stack with its code hashes is script/config/v2-mainnet.json, pinned by preflight |
 | the signer | one key does every transaction: the v2 factory owner 0xCB43078C32423F5348Cab5885911C3B5faE217F9, also the config `owner` and `creator`, the Core owner and the payee. `deployToken` is owner only on the deprecated factory. sign with `--ledger` or `--account <name>`; `--private-key $PRIVATE_KEY` only on a throwaway fork |
 | eth | the deploy fee (0.069 eth at the pin, read live) plus gas for eleven transactions, 19,069,638 gas measured on the master stack fixture: 0.088 eth at 1 gwei, 0.164 at 5 gwei, 0.450 at 20 gwei, fee included. fund about 20 percent over the figure for the expected base fee |
 | read rpc | an archive capable mainnet rpc in `MAINNET_RPC_URL`, for every command that does not send |
