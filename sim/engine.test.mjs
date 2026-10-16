@@ -1193,4 +1193,45 @@ const R0 = 6.668e15;
     n += 4;
   }
 }
+// promise: duration edits preserve active drop floors and discard expired floors on both bid instances.
+{
+  const make = () => {
+    const c = fresh({ dropPerCreditPct: 50, dropToPct: 50, rateStart: 1e16, balanceBidOn: true, balanceBidMarginBps: 9000 }, 100);
+    c.setBalanceModule(0, 0.001); c.balancePot = 100;
+    c.setSettings({ rate: 1e16 }, 120);
+    c.balRate = 10000; c.balLastFillRate = 10000; c.balPeakRate = 10000;
+    c.balCheckpointTime = 120; c.balLastFillTime = 120; c.balPeakTime = 120;
+    ok(c.sellForEth(120) > 0, 'the ETH fill opens bucket two');
+    ok(c.xBuy(433, 120) > 0, 'the balance fill opens bucket two');
+    return c;
+  };
+  const active = make();
+  active.setSettings({ bucketSeconds: 100 }, 120);
+  assert.equal(active.burstTime, 1); assert.equal(active.balBurstBucket, 1);
+  near(active.burstBase, 1e16, 1e-12, 'active ETH base survives rebasing');
+  near(active.balBurstBase, 10000, 1e-12, 'active balance base survives rebasing');
+  ok(active.sellForEth(120) > 0, 'a second ETH fill succeeds');
+  ok(active.xBuy(433, 120) > 0, 'a second balance fill succeeds');
+  near(active.rateAtCheckpoint, 5e15, 1e-12, 'the ETH drop keeps its original half-price floor');
+  near(active.balRate, 5000, 1e-12, 'the balance drop keeps its original half-price floor');
+  n += 2;
+  const expired = make();
+  expired.setSettings({ bucketSeconds: 100 }, 200);
+  assert.equal(expired.burstTime, 2); assert.equal(expired.balBurstBucket, 2);
+  assert.equal(expired.burstBase, 0); assert.equal(expired.balBurstBase, 0); n += 4;
+  const ethBefore = expired.priceRate(200), balanceBefore = expired.balPriceState(200);
+  ok(expired.sellForEth(200) > 0, 'an ETH fill reopens the expired floor');
+  ok(expired.xBuy(433, 200) > 0, 'a balance fill reopens the expired floor');
+  near(expired.burstBase, ethBefore, 1e-12, 'the next ETH fill snapshots its current rate');
+  near(expired.balBurstBase, balanceBefore, 1e-12, 'the next balance fill snapshots its current rate');
+  near(expired.rateAtCheckpoint, ethBefore / 2, 1e-12, 'the expired ETH base cannot hold the old higher floor');
+  near(expired.balRate, balanceBefore / 2, 1e-12, 'the expired balance base cannot hold the old higher floor');
+}
+// promise: a listing that consumes the whole pot succeeds with zero keeper payment even when its score raises the bid ceiling.
+{
+  const c = fresh({ rateStart: 1e16 }, 0.01);
+  const result = c.buyListing(0.01, 0, 866);
+  assert.deepEqual(result, { cost: 0.01, paid: 0 });
+  assert.equal(c.ethPot, 0); assert.equal(c.spendBucket.spent, 10000000000000000n); n += 3;
+}
 console.log(`ok, ${n} checks passed`);

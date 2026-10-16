@@ -483,6 +483,12 @@ export class Core {
       this.balPeakRate = this.balPeakAt(now); this.balPeakTime = now;
     }
     this.spendBucket.rebase(now, this.s.bucketSeconds, next.bucketSeconds);
+    if (next.bucketSeconds !== this.s.bucketSeconds) {
+      const oldBucket = Math.floor(now / this.s.bucketSeconds), nextBucket = Math.floor(now / next.bucketSeconds);
+      if (this.burstTime !== oldBucket) this.burstBase = 0;
+      if (this.balBurstBucket !== oldBucket) this.balBurstBase = 0;
+      this.burstTime = nextBucket; this.balBurstBucket = nextBucket;
+    }
     this.s = next; this.c = nextC; this.cr = nextCr;
     this.checkpointMult = this.bidMult();
     if (patch.anchorHalfLife !== undefined) this.setAnchor(anchorNow, now);
@@ -517,7 +523,7 @@ export class Core {
     const paid = this.rateAtCheckpoint;
     // CoreLib.drop: the minute floor is dropFloorBps of the price at the first fill of the minute bucket (now / 60), and restarts at the price when the price is already under the floor (setRate, lowered caps)
     const bucket = Math.floor(now / this.s.bucketSeconds);
-    if (bucket !== this.burstTime || paid < (this.burstBase * this.s.dropToPct) / 100) { this.burstTime = bucket; this.burstBase = paid; }
+    if (bucket !== this.burstTime || this.burstBase === 0 || paid < (this.burstBase * this.s.dropToPct) / 100) { this.burstTime = bucket; this.burstBase = paid; }
     const fall = Math.min((this.s.dropPerCreditPct / 100) * ratio, 1);
     const r = Math.max(paid * (1 - fall), (this.burstBase * this.s.dropToPct) / 100);
     this.lastPaidRate = paid;
@@ -580,7 +586,7 @@ export class Core {
     const ratio = this.scoreRatio(pts);
     const ceil = (this.ethRate(now) / W) * ratio;
     if (ask > this.ethPot || ask > ceil) return null;
-    const paid = Math.min(this.listingPayMax(), ceil - ask);
+    const paid = Math.min(this.listingPayMax(), ceil - ask, this.ethPot - ask);
     if (!this.spend(ask + paid, now, ratio)) return null;
     return { cost: ask, paid };
   }
@@ -811,7 +817,7 @@ export class Core {
     this.balRate = price; this.balCheckpointTime = now;
     // drop the balance rate per credit (CoreLib._drop, absFloor = floor)
     const bucket = Math.floor(now / this.s.bucketSeconds);
-    if (bucket !== this.balBurstBucket || price < (this.balBurstBase * this.s.dropToPct) / 100) { this.balBurstBucket = bucket; this.balBurstBase = price; }
+    if (bucket !== this.balBurstBucket || this.balBurstBase === 0 || price < (this.balBurstBase * this.s.dropToPct) / 100) { this.balBurstBucket = bucket; this.balBurstBase = price; }
     this.balLastFillRate = price;
     this.balPeakRate = Math.max(price, this.balPeakAt(now)); this.balPeakTime = now;
     const fall = Math.min((this.s.dropPerCreditPct / 100) * this.scoreRatio(pts), 1);

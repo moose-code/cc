@@ -54,3 +54,11 @@ The boundary-adjacent start gives another budget after twelve seconds. Its effec
 `node --check sim/engine.js`, `node --check sim/market.mjs`, and `git diff --check` also passed. The launch config used for verification was copied from the parent implementation and is not part of this simulator commit.
 
 The parent implementation owns Solidity verification, generated interfaces, build identities, independent candidate review and the single frozen candidate gate. No deployment or transaction is part of this packet.
+
+## Independent review followup
+
+The simulator now translates both ETH and balance drop-floor anchors when `bucketSeconds` changes. An anchor active under the old duration retains its opening rate in the new bucket. An expired anchor clears its opening rate even if its old numeric bucket identifier equals the new identifier; the next successful purchase captures a fresh opening rate. This closes the counterexample where a 50 percent floor could become a second 50 percent drop after a duration edit.
+
+Listing keeper payment is also clamped to the buying pot remaining after the ask. A listing whose ask consumes the whole pot can succeed with a zero keeper payment when its score-adjusted bid ceiling exceeds the ask.
+
+Verification after both fixes: `node sim/engine.test.mjs` passed 1,942 checks, including active and expired duration edits on both bid instances and the exact-pot listing case. `node sim/market.mjs --spendcap` completed the same twelve bounded scenarios; its JSON output was byte-identical to the prior report run, so the measured results above are unchanged. `node --check sim/engine.js` and `git diff --check` passed. The borrowed launch config remains outside this simulator commit. No Forge, whole-suite, production build, deployment or transaction ran.
