@@ -4,7 +4,7 @@ import { useFeed, useHistoryDown, type FeedFilter } from "@/lib/data";
 import { useBlockTs, useScan } from "@/lib/engine";
 import type { FeedEvent, FeedKind } from "@/lib/events";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
+import { potPoints, useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
 import { useStatementRating } from "./Cards";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
@@ -59,31 +59,30 @@ export function Tween({ wei }: { wei: bigint | undefined }) {
 }
 
 
-// Next-credit and next-statement progress at the top of the rail.
-// Next credit: pot as a share of the reference bid, drawn in 8 segments.
+// Pot and next-statement progress at the top of the rail.
+// Pot: the points it buys at the rate, drawn as the share of one page (settings.pointsPerPage) in 8 segments.
 // Next statement: credits held toward the next STATEMENT_SIZE, one cell each.
-// Pot over the rate (the bid for 100 points), in percent, capped at 100 (a pot above one bid is a full bar), and the filled count
-// of an 8 segment bar.
-export function useNextCredit() {
+// `pts` is the points the pot (with pending income) buys at the rate; `ratio` that as a percent of one page, capped
+// at 100; `segs` the filled count of an 8 segment bar; `per100` the rate, eth per 100 points.
+export function usePotPage() {
   const { data: snap } = useSnapshot();
-  const pot = snap?.potWithPending;
-  const bid = snap?.ethRate;
-  const ratio = pot != null && bid ? Math.min(100, Number((pot * 10000n) / bid) / 100) : undefined;
+  const pts = snap ? potPoints(snap.potWithPending, snap.ethRate) : undefined;
+  const ratio = pts != null && snap ? Math.min(100, (Number(pts) * 100) / snap.settings.pointsPerPage) : undefined;
   const segs = ratio == null ? 0 : Math.min(8, Math.floor(ratio / 12.5));
-  const per100 = bid ? eth(bid, 5) : undefined; // ethRate is wei per 100 points
-  return { ratio, segs, per100 };
+  const per100 = snap?.ethRate ? eth(snap.ethRate, 5) : undefined;
+  return { pts, ratio, segs, per100 };
 }
 
 export function EngineProgress() {
   const { data: snap } = useSnapshot();
   const ready = snap ? Number(snap.pileSize % BigInt(STATEMENT_SIZE)) : 0;
-  const { ratio, segs } = useNextCredit();
+  const { pts, segs } = usePotPage();
   return (
     <div className="progress">
       <div className="progress-row">
         <div className="progress-head">
-          <span>next credit</span>
-          <b>{ratio == null ? "—" : `${commas(ratio)}%`}</b>
+          <span>pot covers</span>
+          <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
         </div>
         <div className="progress-segs">
           {Array.from({ length: 8 }, (_, i) => (

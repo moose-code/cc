@@ -9,7 +9,7 @@ import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
 import { core, credits, engineDeployed } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
-import { balanceQuote, sellQuote, useBalanceToken, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
+import { balanceQuote, potPoints, sellQuote, useBalanceToken, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
 import { BALANCE_SYMBOL, commas, eth, formatBalance } from "@/lib/format";
 import type { Write } from "@/lib/tx";
 import { useBalanceInEth } from "@/lib/market";
@@ -28,13 +28,13 @@ export default function SellPage() {
   const balanceEth = useBalanceInEth();
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  const bid = snap?.ethRate ?? 0n;
+  const bid = snap?.ethRate ?? 0n; // wei per 100 points
   const pot = snap?.ethPot ?? 0n;
-  const buyableNow = bid > 0n ? pot / bid : 0n;
-  // the pot scaled multiplier (10_000 is 1x) that scales the ceiling's idle loosening, and the pages the pot covers at
-  // the current bid, the same figure as "pot covers" (a page is 80 credits). the bid is flat at the rate cap
+  const potPts = potPoints(pot, bid);
+  // the pot scaled multiplier (10_000 is 1x) that scales the ceiling's idle loosening, and the pages of
+  // settings.pointsPerPage points the pot covers at the current bid. the bid is flat at the rate cap
   const climbX = Number(snap?.climbMultiplier ?? 10000n) / 10000;
-  const potPages = `${buyableNow / 80n}.${(buyableNow % 80n) * 10n / 80n}`;
+  const potPages = snap ? (Number(potPts) / snap.settings.pointsPerPage).toFixed(1) : "0.0";
   const atCap = snap ? bid >= snap.settings.rateCap : false;
   const per100 = eth(bid, 5); // ethRate is wei per 100 points
   // the module reads can fail; the balance side is then unavailable and the eth side renders alone
@@ -103,7 +103,7 @@ export default function SellPage() {
                 </div>
                 <div className="r">
                   <span>pot covers, before eth cap</span>
-                  <span>~{commas(buyableNow)} credits</span>
+                  <span>~{commas(potPts)} pts</span>
                 </div>
                 <div className="r">
                   <span>pot</span>

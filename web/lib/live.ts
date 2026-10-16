@@ -543,6 +543,11 @@ export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
 
 // ---- helpers --------------------------------------------------------------------
 
+// Points the eth pot buys at `rate` (wei per 100 points): pot * 100 / rate. 0 at a zero rate.
+export function potPoints(pot: bigint, rate: bigint): bigint {
+  return rate > 0n ? (pot * 100n) / rate : 0n;
+}
+
 // "3h 12m", "4m 05s", "12s"
 export function countdown(s: number): string {
   s = Math.max(0, Math.floor(s));

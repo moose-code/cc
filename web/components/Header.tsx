@@ -7,7 +7,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAcquireCandidate, useAcquireTx } from "@/lib/useAcquire";
 import { useEns } from "@/lib/ens";
 import { commas, eth, evmNowTx, shortAddr } from "@/lib/format";
-import { useNextCredit } from "./EngineFeed";
+import { usePotPage } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
 
 const NAV = [
@@ -60,7 +60,7 @@ export function Header() {
           <Acquire />
         </div>
       ) : (
-        <NextCredit />
+        <PotPage />
       )}
       <WalletButton />
     </header>
@@ -104,19 +104,19 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// Next credit progress, the bid per 100 points and the acquire button beside the wallet. The home page shows the
-// progress in the rail, so its header holds the acquire button alone.
-function NextCredit() {
-  const { ratio, segs, per100 } = useNextCredit();
+// The points the pot covers (segments: the share of one page), the bid per 100 points and the acquire button beside
+// the wallet. The home page shows the pot in the rail, so its header holds the acquire button alone.
+function PotPage() {
+  const { pts, segs, per100 } = usePotPage();
   return (
     <div className="hdr-next">
-      <span className="hdr-next-label">next credit</span>
+      <span className="hdr-next-label">pot covers</span>
       <div className="hdr-next-segs" aria-hidden>
         {Array.from({ length: 8 }, (_, i) => (
           <i key={i} className={i < segs ? "on" : undefined} />
         ))}
       </div>
-      <b>{ratio == null ? "—" : `${commas(ratio)}%`}</b>
+      <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
       {per100 && <span className="hdr-next-bid">· bid {per100} ETH / 100 pts</span>}
       <Acquire />
     </div>
