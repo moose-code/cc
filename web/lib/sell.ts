@@ -20,13 +20,13 @@ export interface EthReplay {
   dropFloorBps: bigint;
   ceilBps: bigint;
   rateCap: bigint;
-  refScore: bigint; // the Core setting the bid divides by
+  scorePer100Points: bigint; // score units in 100 points (SCORE_PER_100_POINTS; the selfchecks pass smaller values)
 }
 
 // Total eth sellForEth pays for the credits `scores` (their scores, in order)
 // sold in one call. Each credit pays min(price state, pot left) * score /
-// refScore (Core.bidOf). The fill then (CoreLib.drop) sets the minute anchor,
-// lowers the price state by dropPer100PointsBps * score / refScore (bounded at
+// scorePer100Points (Core.bidOf). The fill then (CoreLib.drop) sets the minute anchor,
+// lowers the price state by dropPer100PointsBps * score / scorePer100Points (bounded at
 // 10000) held at or above dropFloorBps of the minute's first-fill state, and
 // raises the remembered peak to the fill price. The next state is bounded by the
 // ceiling, ceilBps of max(fill price, peak) with no idle loosening in the same
@@ -40,7 +40,7 @@ export function replayEth(scores: bigint[], a: EthReplay): bigint {
   let total = 0n;
   for (const score of scores) {
     const read = r < left ? r : left;
-    const x = (read * score) / a.refScore;
+    const x = (read * score) / a.scorePer100Points;
     total += x;
     left -= x;
     if (bucket !== a.nowBucket || r < (start * a.dropFloorBps) / 10000n) {
@@ -48,8 +48,8 @@ export function replayEth(scores: bigint[], a: EthReplay): bigint {
       start = r;
     }
     if (r > peak) peak = r;
-    // one rounding, fall rounded up (CoreLib.drop): r * (10000*refScore - dropPer100PointsBps*score) / (10000*refScore)
-    const denom = 10000n * a.refScore;
+    // one rounding, fall rounded up (CoreLib.drop): r * (10000*scorePer100Points - dropPer100PointsBps*score) / (10000*scorePer100Points)
+    const denom = 10000n * a.scorePer100Points;
     const fallNum = a.dropPer100PointsBps * score;
     const dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
     const floor = (start * a.dropFloorBps) / 10000n;
@@ -64,14 +64,14 @@ export function replayEth(scores: bigint[], a: EthReplay): bigint {
 export interface BalanceReplay {
   rate: bigint; // balanceRate(): the balance bid rate now, bps of par
   unit: bigint; // the module's unitPerPoint()
-  refScore: bigint;
+  scorePer100Points: bigint;
   dropPer100PointsBps: bigint;
   dropFloorBps: bigint;
   floorBps: bigint; // 10000 - balanceBidMarginBps
 }
 
 // Total balance token sellForBalance pays for the credits `scores` (in order) in one call. Each credit pays
-// score * unit * rate / 10000 and the fill drops the rate per credit by dropPer100PointsBps * score / refScore (one
+// score * unit * rate / 10000 and the fill drops the rate per credit by dropPer100PointsBps * score / scorePer100Points (one
 // rounding), held at or above the minute floor and the bid floor, mirroring CoreLib._drop. The quote is the first
 // fills of the minute, so the minute start is the starting rate. The available() clamp is not replayed: with ample
 // available it does not bind, and a module too short to pay the floor reverts PotTooSmall, which no minOut can clear.
@@ -81,7 +81,7 @@ export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
   let total = 0n;
   for (const score of scores) {
     total += (score * a.unit * r) / 10000n;
-    const denom = 10000n * a.refScore;
+    const denom = 10000n * a.scorePer100Points;
     const fallNum = a.dropPer100PointsBps * score;
     let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
     const mfloor = (start * a.dropFloorBps) / 10000n;

@@ -14,11 +14,11 @@ const a: EthReplay = {
   dropFloorBps: 5000n,
   ceilBps: 10000n,
   rateCap: 10n ** 18n,
-  refScore: 1000n,
+  scorePer100Points: 1000n,
 };
 
-// credits of score refScore (score / refScore is 1): each pays the full rate and drops the rate by dropPer100PointsBps
-const ref = (k: number): bigint[] => Array<bigint>(k).fill(a.refScore);
+// credits of score scorePer100Points (score / scorePer100Points is 1): each pays the full rate and drops the rate by dropPer100PointsBps
+const ref = (k: number): bigint[] => Array<bigint>(k).fill(a.scorePer100Points);
 
 assert.equal(replayEth(ref(0), a), 0n);
 assert.equal(replayEth(ref(1), a), 1000n);
@@ -34,12 +34,12 @@ assert.equal(replayEth(ref(2), { ...a, bucket: 7n, start: 1000n, dropFloorBps: 9
 assert.equal(replayEth(ref(2), { ...a, ceilBps: 9000n }), 1000n + 900n);
 // the rate cap bounds the state after a fill
 assert.equal(replayEth(ref(2), { ...a, rateCap: 800n }), 1000n + 800n);
-// per point: a credit of score 2 * refScore pays twice the rate and drops it twice as far (1 percent)
+// per point: a credit of score 2 * scorePer100Points pays twice the rate and drops it twice as far (1 percent)
 assert.equal(replayEth([2000n], a), 2000n);
 assert.equal(replayEth([2000n, 1000n], a), 2000n + 990n);
-// balance: score * unit * rate / 10000 per credit, the rate dropped per credit by dropPer100PointsBps * score / refScore
+// balance: score * unit * rate / 10000 per credit, the rate dropped per credit by dropPer100PointsBps * score / scorePer100Points
 // in one rounding, never below the floor
-const b = { rate: 10000n, unit: 100n, refScore: 10n, dropPer100PointsBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
+const b = { rate: 10000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
 // at par: 300, then the rate is 10000 * (100000 - 150) / 100000 = 9985 and the second credit pays 5 * 100 * 9985 / 10000
 assert.equal(replayBalance([3n, 5n], b), 300n + 499n);
 // at the floor the drop cannot lower the rate: 270 then 450
@@ -75,11 +75,11 @@ assert.equal(bucketCount(room(0n), [60n, 50n, 20n]), 2);
 assert.equal(bucketCount(room(90n), [20n]), 0);
 // a credit listed twice keeps its lower price
 assert.deepEqual(cheapestPerId([L(1, 90n), L(1, 80n, "opensea"), L(2, 5n)]).map((l) => [Number(l.id), l.price, l.source]), [[1, 80n, "opensea"], [2, 5n, "strategy"]]);
-// shortlist: estimated bid = rate * score / refScore; ids without a score are skipped; n bounds the result
+// shortlist: estimated bid = rate * score / scorePer100Points; ids without a score are skipped; n bounds the result
 const scores = new Map([[1n, 2000n], [2n, 1000n], [3n, 1000n]]);
 assert.deepEqual(shortlist([L(1, 150n), L(2, 90n), L(3, 120n), L(4, 1n)], 100n, 1000n, scores, 2).map((l) => Number(l.id)), [1, 2]);
 assert.equal(shortlist([L(1, 1n)], 100n, 0n, scores, 5).length, 0);
-// a pricier high-rated listing beats cheap low-rated ones: rate 100, refScore 1000, id 9 scores 8000 (bid 800, price 500, margin 300), ids 1..8 score 1000 (bid 100)
+// a pricier high-rated listing beats cheap low-rated ones: rate 100, scorePer100Points 1000, id 9 scores 8000 (bid 800, price 500, margin 300), ids 1..8 score 1000 (bid 100)
 const many = new Map<bigint, bigint>([[9n, 8000n], ...[1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n].map((i): [bigint, bigint] => [i, 1000n])]);
 const cheapLow = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => L(i, BigInt(10 * i)));
 assert.deepEqual(shortlist([...cheapLow, L(9, 500n, "opensea")], 100n, 1000n, many, 1).map((l) => Number(l.id)), [9]);
@@ -121,7 +121,7 @@ const rec: ClimbState = { ...cs, r: E / 2n, peakRate: 4n * E, lastFillRate: E / 
 close(priceAt(rec, 1060), 0.5e18 * 1.03);
 // the pot bounds the read: a pot under the price state reads at the pot
 assert.equal(rateAt({ ...cs, ethPot: E / 2n }, 1000), E / 2n > 0n ? 5e17 : 0);
-// bidAt scales by score over refScore
+// bidAt scales by score over scorePer100Points
 close(bidAt(cs, 1000, 2000n, 1000n), 2e18);
 // clearsIn: now, a reachable price (bisected time lands on the price), a price above the pot, a price above the cap
 assert.deepEqual(clearsIn(cs, 1n * E, 1000n, 1000n, 1000), { kind: "now" });

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { CreditTile } from "@/components/Tiles";
 import { PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
-import { engineDeployed } from "@/lib/config";
+import { engineDeployed, SCORE_PER_100_POINTS } from "@/lib/config";
 import { countdown, useBalanceToken, useHead, useNow, useSnapshot } from "@/lib/live";
 import { useAcquireTx } from "@/lib/useAcquire";
 import { useListings, type ListingRow, type ListingsData } from "@/lib/useListings";
@@ -46,7 +46,7 @@ function RiseLine({ data }: { data: ListingsData }) {
   const w = (x: number) => BigInt(Math.floor(x));
   const e = nextRise(data.climb, now);
   const first = data.rows[0];
-  const after = first && first.score > 0n ? ` · #${first.id} bid ${eth((w(e.rate) * first.score) / data.refScore)} ETH after` : "";
+  const after = first && first.score > 0n ? ` · #${first.id} bid ${eth((w(e.rate) * first.score) / SCORE_PER_100_POINTS)} ETH after` : "";
   const per100 = `${eth(w(e.rate), 5)} ETH / 100 pts`;
   const text =
     e.kind === "climb"
@@ -95,7 +95,7 @@ export default function ListingsPage() {
   const pts = (s: bigint) => Math.round(Number(s) / 10_000);
   const offers =
     data && snap && lo != null && hi != null
-      ? `offers ${eth((snap.ethRate * lo) / data.refScore)} to ${eth((snap.ethRate * hi) / data.refScore)} ETH for ${pts(lo)} to ${pts(hi)} pts`
+      ? `offers ${eth((snap.ethRate * lo) / SCORE_PER_100_POINTS)} to ${eth((snap.ethRate * hi) / SCORE_PER_100_POINTS)} ETH for ${pts(lo)} to ${pts(hi)} pts`
       : undefined;
   const metaFull = (
     <>

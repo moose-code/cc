@@ -7,7 +7,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { numberToHex, type Address } from "viem";
 import { usePublicClient } from "wagmi";
-import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapter } from "./config";
+import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, strategy, strategyAdapter } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { useIxMode } from "./indexer";
@@ -39,7 +39,6 @@ export interface ListingsData {
   capped: boolean;
   bucketSeconds: number;
   climb: ClimbState; // the eth bid's climb state at the head block, for the next-rise line
-  refScore: bigint;
 }
 
 export function useListings() {
@@ -61,8 +60,7 @@ export function useListings() {
       const { listings, known, osMax } = await gatherListings(c, head!.n);
       const best = cheapestPerId(listings);
       const scores = await scoresFor(c, best.map((l) => l.id), known);
-      const refScore = 1_000_000n;
-      const bidFor = (rate: bigint, s: bigint) => (rate * s) / refScore;
+      const bidFor = (rate: bigint, s: bigint) => (rate * s) / SCORE_PER_100_POINTS;
       let rows = best.flatMap((l) => {
         const score = scores.get(l.id);
         return score == null ? [] : [{ ...l, score, bid: bidFor(snap.ethRate, score), live: false }];
@@ -170,12 +168,12 @@ export function useListings() {
         const clears = covered && fitsBucket(room, cost);
         const wait = covered && !clears ? room.nextIn : undefined;
         // at or under the bid yet not clearing: the venue's adapter is off or the Core is retired, no time applies
-        const f = clearsIn(state, r.price, r.score, refScore, now);
+        const f = clearsIn(state, r.price, r.score, SCORE_PER_100_POINTS, now);
         const eta: ClearsIn = clears ? { kind: "now" } : r.price > snap.potWithPending ? { kind: "pot" } : f.kind === "now" ? { kind: "far" } : f;
         return { ...r, gap: gapOf(r.price, r.bid), clears, wait, eta, balanceBid: balanceOf(r) };
       });
       out.sort((a, b) => a.gap - b.gap);
-      return { rows: out, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state, refScore };
+      return { rows: out, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state };
     },
   });
 }

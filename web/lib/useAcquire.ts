@@ -10,7 +10,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
-import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
+import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { creditScores, MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
@@ -186,9 +186,8 @@ export function useAcquireCandidate() {
       // 2. shortlist by estimated margin over every listing
       const ids = [...new Set(listings.map((l) => l.id))];
       const scores = await scoresFor(c, ids, known);
-      const refScore = 1_000_000n;
-      const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / refScore;
-      const picked = shortlist(listings, snap.ethRate, refScore, scores, SHORTLIST);
+      const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / SCORE_PER_100_POINTS;
+      const picked = shortlist(listings, snap.ethRate, SCORE_PER_100_POINTS, scores, SHORTLIST);
       if (!picked.length) return { cleared: [], top: [], waiting: 0, nextIn: 0 };
 
       // 3. live read of the shortlist

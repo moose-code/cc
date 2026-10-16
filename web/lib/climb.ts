@@ -66,7 +66,7 @@ function recover(c: ClimbState, r: number, target: number, now: number): number 
 export const rateAt = (c: ClimbState, now: number): number => Math.min(priceAt(c, now), N(c.ethPot + c.pending));
 
 /** Core.bidOf(id) at `now` for a credit of `score`, wei. */
-export const bidAt = (c: ClimbState, now: number, score: bigint, refScore: bigint): number => Math.floor((rateAt(c, now) * N(score)) / N(refScore));
+export const bidAt = (c: ClimbState, now: number, score: bigint, scorePer100Points: bigint): number => Math.floor((rateAt(c, now) * N(score)) / N(scorePer100Points));
 
 export type ClearsIn =
   | { kind: "now" } // the bid is at or above the price already
@@ -82,12 +82,12 @@ export const HORIZON = 30 * 86_400;
  * constant pot. The rate is sampled on a geometric grid (step 5 percent of the elapsed time, at least a minute) and
  * the first crossing is bisected.
  */
-export function clearsIn(c: ClimbState, price: bigint, score: bigint, refScore: bigint, now: number): ClearsIn {
+export function clearsIn(c: ClimbState, price: bigint, score: bigint, scorePer100Points: bigint, now: number): ClearsIn {
   if (score === 0n || price <= 0n) return { kind: "far" };
   const p = N(price);
-  const hit = (t: number) => bidAt(c, t, score, refScore) >= p;
+  const hit = (t: number) => bidAt(c, t, score, scorePer100Points) >= p;
   if (hit(now)) return { kind: "now" };
-  const need = (p * N(refScore)) / N(score); // the rate that pays `price`
+  const need = (p * N(scorePer100Points)) / N(score); // the rate that pays `price`
   if (need > N(c.ethPot + c.pending)) return { kind: "pot" };
   if (need > N(c.rateCap)) return { kind: "cap" };
   let lo = 0;
@@ -115,7 +115,7 @@ export type NextRise =
   | { kind: "pot"; rate: number }; // the pot bounds the rate, nothing rises until it grows
 
 /**
- * The next event that moves the eth bid, wei per refScore credit. The contract climb is continuous
+ * The next event that moves the eth bid, wei per 100 points. The contract climb is continuous
  * (CoreLib._climbTo compounds exp(ln(1 + bps/1e4) * seconds / 60)), so below the ceiling there is no discrete step:
  * the figure is the rate 60 s ahead (the per-minute climb, fast or slow as _recover applies it) and the countdown
  * runs to the next whole minute of the chain clock. At the ceiling the next event is the idle step, which counts from
