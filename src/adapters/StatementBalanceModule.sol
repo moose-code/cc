@@ -16,8 +16,9 @@ interface IStatementBalanceToken {
     function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256);
 }
 
-interface IStatementApproval {
+interface IStatementSource {
     function approve(address to, uint256 id) external;
+    function creditScoreOf(uint256 id) external view returns (uint256);
 }
 
 interface IStatementBalanceCore {
@@ -43,6 +44,7 @@ contract StatementBalanceModule is IBalanceModule {
     error InsufficientAvailable();
     error CoreNotRetired();
     error InvalidSuccessor();
+    error RedeemedBelowRating();
 
     event ReserveMigrated(address indexed successor, address indexed module, uint256 amount);
 
@@ -61,15 +63,23 @@ contract StatementBalanceModule is IBalanceModule {
         _;
     }
 
-    /// the Core transfers custody first. approval is limited to this statement and consumed by withdrawal.
+    /// the Core transfers custody first. approval is limited to this statement and consumed by withdrawal. the module's
+    /// balance must rise by at least the statement's rating times `unitPerPoint`.
     function redeem(uint256 statementId) external override onlyCore returns (uint256 out) {
         IStatementBalanceToken token = IStatementBalanceToken(balanceToken);
+        IStatementSource statements = IStatementSource(Mainnet.STATEMENTS);
+        uint256 required = statements.creditScoreOf(statementId) * unitPerPoint;
         uint256 expected = token.quote(statementId);
-        IStatementApproval(Mainnet.STATEMENTS).approve(balanceToken, statementId);
-        return token.withdraw(statementId, expected);
+        statements.approve(balanceToken, statementId);
+        uint256 before = SafeTransferLib.balanceOf(balanceToken, address(this));
+        token.withdraw(statementId, expected);
+        out = SafeTransferLib.balanceOf(balanceToken, address(this)) - before;
+        if (out < required) revert RedeemedBelowRating();
     }
 
-    /// do not advertise a bid before ordinary token holders can transfer their balance.
+    /// returns 0 until upstream retirement is complete and the opening block is reached, then the module's token
+    /// balance. `totalRetired` is 0 or `launchRetirement`: `retireLaunchSupply` assigns it once, behind a
+    /// `totalRetired != 0` revert.
     function available() public view override returns (uint256) {
         IStatementBalanceToken token = IStatementBalanceToken(balanceToken);
         if (token.totalRetired() != token.launchRetirement() || block.number < token.transfersOpenBlock()) return 0;

@@ -96,7 +96,7 @@ the first run's two failures were fixed at the root at eab58c7 (`9fb6c65`): the 
 | topic | rule |
 |---|---|
 | naming | "balance", never "exit", in code, comments, tests and docs (decision 102) |
-| tests | mainnet fork pinned to block 26158000 (`FORK_BLOCK`), real contracts only, the two stand ins are the balance module and the balance token. every kept test carries a `// promise:` line |
+| tests | mainnet fork pinned to block 26158000 (`FORK_BLOCK`), real contracts only, the balance module and the balance token are the test doubles in test/standins; `StatementBalanceModule` has its own test files (docs/SPEC.md section 13). every kept test carries a `// promise:` line |
 | toolchain | foundry 1.8.1 (isolate on), solc 0.8.30. forge 1.8.1 rewrites foundry.lock and bumps lib/solady on build: `git checkout foundry.lock; git submodule update -- lib/solady` before committing. a fresh worktree needs the nested uniswap submodules: `git -C lib/v4-periphery submodule update --init lib/v4-core lib/permit2`, or an rsync of them from a checkout that has them |
 | fork env | `set -a; source <a .env with MAINNET_RPC_URL and FORK_BLOCK>; set +a` before fork tests; this repo tracks only .env.example |
 | timings | clean build 3 to 4 minutes, a test file change seconds, a src/Core.sol change about 40 seconds. a test file about 10 to 60 seconds. a Deep suite 10 to 15 minutes |

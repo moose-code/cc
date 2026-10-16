@@ -11,11 +11,50 @@ interface IStatementBalanceModuleErrors {
     error InsufficientAvailable();
     error CoreNotRetired();
     error InvalidSuccessor();
+    error RedeemedBelowRating();
 
     event ReserveMigrated(address indexed successor, address indexed module, uint256 amount);
 
     function core() external view returns (address);
     function migrateReserve() external returns (uint256 amount);
+}
+
+/// public stand in for the Statements calls the module makes: rating read and per-statement approval.
+contract StatementsDouble {
+    mapping(uint256 => uint256) public creditScoreOf;
+    mapping(uint256 => address) public approved;
+
+    function setScore(uint256 id, uint256 score) external {
+        creditScoreOf[id] = score;
+    }
+
+    function approve(address to, uint256 id) external {
+        approved[id] = to;
+    }
+
+    function clearApproval(uint256 id) external {
+        delete approved[id];
+    }
+}
+
+/// calls back into the module from inside the token transfer.
+contract ReentrantHook {
+    address public module;
+    bool public called;
+    uint256 public innerMigrated;
+    bool public innerPayReverted;
+
+    constructor(address module_) {
+        module = module_;
+    }
+
+    function onTransfer() external {
+        called = true;
+        innerMigrated = IStatementBalanceModuleErrors(module).migrateReserve();
+        try IBalanceModule(module).pay(address(this), 1) {} catch {
+            innerPayReverted = true;
+        }
+    }
 }
 
 contract BalanceGateTokenDouble {
@@ -26,6 +65,8 @@ contract BalanceGateTokenDouble {
     uint256 public totalRetired;
     uint64 public transfersOpenBlock;
     bool public rejectTransfer;
+    uint256 public shortfall;
+    address public hook;
     mapping(address => uint256) public balanceOf;
 
     function configure(address source, uint256 unit, uint8 precision) external {
@@ -47,9 +88,31 @@ contract BalanceGateTokenDouble {
         rejectTransfer = reject;
     }
 
+    function setShortfall(uint256 amount) external {
+        shortfall = amount;
+    }
+
+    function setHook(address target) external {
+        hook = target;
+    }
+
+    function quote(uint256 id) public view returns (uint256) {
+        return StatementsDouble(Mainnet.STATEMENTS).creditScoreOf(id) * SCORE_TO_TOKEN;
+    }
+
+    function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256 amount) {
+        StatementsDouble source = StatementsDouble(Mainnet.STATEMENTS);
+        require(source.approved(id) == address(this), "statement not approved");
+        require(expectedAmount == quote(id), "quote changed");
+        source.clearApproval(id);
+        amount = expectedAmount - shortfall;
+        balanceOf[msg.sender] += amount;
+    }
+
     function transfer(address to, uint256 amount) external returns (bool) {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
+        if (hook != address(0)) ReentrantHook(hook).onTransfer();
         return !rejectTransfer;
     }
 }
@@ -77,6 +140,7 @@ contract StatementBalanceModuleTest is Test {
     address public successor;
 
     function setUp() public {
+        vm.etch(Mainnet.STATEMENTS, address(new StatementsDouble()).code);
         token = new BalanceGateTokenDouble();
         module = _deploy(address(this), address(token));
     }
@@ -149,6 +213,30 @@ contract StatementBalanceModuleTest is Test {
         vm.stopPrank();
     }
 
+    // promise: a redemption pays the statement's rating times the unit into the module, consumes the approval and
+    // leaves the balance unspendable until the gates open.
+    function test_redeemCreditsRatingAndConsumesApproval() public {
+        StatementsDouble source = StatementsDouble(Mainnet.STATEMENTS);
+        source.setScore(7, 1_324_012);
+        assertEq(module.redeem(7), 1_324_012 * 1e14);
+        assertEq(token.balanceOf(address(module)), 1_324_012 * 1e14);
+        assertEq(source.approved(7), address(0));
+        assertEq(module.available(), 0);
+        _open();
+        assertEq(module.available(), 1_324_012 * 1e14);
+    }
+
+    // promise: a redemption that raises the module's balance by less than rating times the unit reverts and changes nothing.
+    function test_redeemRevertsBelowRating() public {
+        StatementsDouble source = StatementsDouble(Mainnet.STATEMENTS);
+        source.setScore(7, 1_324_012);
+        token.setShortfall(1);
+        vm.expectRevert(IStatementBalanceModuleErrors.RedeemedBelowRating.selector);
+        module.redeem(7);
+        assertEq(token.balanceOf(address(module)), 0);
+        assertEq(source.approved(7), address(0));
+    }
+
     // promise: both retirement finalization and the inclusive opening block gate the full spendable holding.
     function test_availableRequiresBothGates() public {
         token.mint(address(module), 100 ether);
@@ -164,6 +252,18 @@ contract StatementBalanceModuleTest is Test {
         vm.roll(opensAt - 1);
         assertEq(module.available(), 0);
         vm.roll(opensAt);
+        assertEq(module.available(), 100 ether);
+    }
+
+    // promise: a retired total different from launchRetirement, below or above, keeps the bid closed; equal opens it.
+    function test_availableClosedUnlessRetiredTotalEqualsLaunchRetirement() public {
+        token.mint(address(module), 100 ether);
+        uint256 launch = token.launchRetirement();
+        token.setGate(launch - 1, uint64(block.number));
+        assertEq(module.available(), 0);
+        token.setGate(launch + 1, uint64(block.number));
+        assertEq(module.available(), 0);
+        token.setGate(launch, uint64(block.number));
         assertEq(module.available(), 100 ether);
     }
 
@@ -291,5 +391,52 @@ contract StatementBalanceModuleTest is Test {
         vm.roll(block.number + 1);
         assertEq(_migrateReserve(), 100 ether);
         assertEq(target.available(), 100 ether);
+    }
+
+    // promise: a successor module bound to another token receives nothing and the reserve stays.
+    function test_hostileSuccessorModuleOnOtherTokenKeepsReserve() public {
+        retired = true;
+        _open();
+        token.mint(address(module), 100 ether);
+        (BalanceSuccessorDouble next,) = _migrationTarget();
+        BalanceGateTokenDouble otherToken = new BalanceGateTokenDouble();
+        IBalanceModule foreign = _deploy(address(next), address(otherToken));
+        next.configure(address(token), address(foreign));
+        vm.expectRevert(IStatementBalanceModuleErrors.InvalidSuccessor.selector);
+        _migrateReserve();
+        next.configure(address(otherToken), address(foreign));
+        vm.expectRevert(IStatementBalanceModuleErrors.InvalidSuccessor.selector);
+        _migrateReserve();
+        assertEq(token.balanceOf(address(module)), 100 ether);
+        assertEq(otherToken.balanceOf(address(foreign)), 0);
+    }
+
+    // promise: a bound successor cannot receive the reserve while the source Core has not retired.
+    function test_boundSuccessorReceivesNothingBeforeCoreRetires() public {
+        (, IBalanceModule target) = _migrationTarget();
+        _open();
+        token.mint(address(module), 100 ether);
+        vm.prank(recipient);
+        vm.expectRevert(IStatementBalanceModuleErrors.CoreNotRetired.selector);
+        _migrateReserve();
+        assertEq(token.balanceOf(address(module)), 100 ether);
+        assertEq(token.balanceOf(address(target)), 0);
+    }
+
+    // promise: a token callback during migration cannot move more than the holding or reach Core-only payment.
+    function test_reentrantTokenCallbackCannotMoveMoreThanTheHolding() public {
+        retired = true;
+        (, IBalanceModule target) = _migrationTarget();
+        _open();
+        token.mint(address(module), 100 ether);
+        ReentrantHook hook = new ReentrantHook(address(module));
+        token.setHook(address(hook));
+        assertEq(_migrateReserve(), 100 ether);
+        assertTrue(hook.called());
+        assertEq(hook.innerMigrated(), 0);
+        assertTrue(hook.innerPayReverted());
+        assertEq(token.balanceOf(address(module)), 0);
+        assertEq(token.balanceOf(address(target)), 100 ether);
+        assertEq(token.balanceOf(address(hook)), 0);
     }
 }

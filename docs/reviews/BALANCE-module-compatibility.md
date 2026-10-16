@@ -1,39 +1,40 @@
-# Current-main compatibility with Jack's redemption contract
+# Compatibility of StatementBalanceModule with Jack's redemption contract
 
-Scope: engine current main `a6441ea7eb2c05d3558b16f84bccf047965757d4`, plus token replacement PR #32 and this production module. Main advanced from `496f2f9` during implementation; the newly merged change configures the deployed Artcoins stack rather than changing Core's runtime sources. The earlier legacy-engine review is not current-main evidence.
+Scope: engine main `a6441ea7eb2c05d3558b16f84bccf047965757d4`, token replacement PR 32 and the module in PR 33 (decisions 142 and 143).
 
-Upstream snapshot: `jckbtchr-vv/credits` main `38cdb26cc80431d103221f729cdcf63c0b93b060`, `contracts/src/experimental/AuctionLineageWithdrawals.sol` and its base `LineageWithdrawals.sol`. Contract sources are unchanged from the earlier `c3bdcba` snapshot, but the integration assertions are rewritten for current main's module custody. Compiled using upstream solc 0.8.28, via IR, optimizer 200; creation bytecode SHA-256 `980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08`. The helper and test both enforce this hash and the source revision. Private source and compiled bytecode are not vendored.
+Upstream: `jckbtchr-vv/credits` at `38cdb26cc80431d103221f729cdcf63c0b93b060`, `contracts/src/experimental/AuctionLineageWithdrawals.sol` and its base `LineageWithdrawals.sol`. Compiler solc 0.8.28 via IR, optimizer 200. Creation bytecode SHA-256 `980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08`. `script/prepare-upstream-balance.py` and `test/UpstreamBalance.t.sol` both enforce the revision and the hash. The private source and bytecode are not vendored.
 
-The adapter implements the current `IBalanceModule`: `balanceToken`, live-readable `unitPerPoint`, `redeem`, `available`, `pay`. Four-decimal raw scores multiply by `1e14` to become 18-decimal BALANCE; a whole point therefore becomes one BALANCE. Core measures the actual increase in the module's holdings, and payments leave that module directly for the seller. The source NFT stays permanently in Jack's contract. Receipt and artwork history accrue to the module, and token ink/history accounting preserves transferred quantities.
+## Module rules
 
-Acceptance cases: missing renderer registration rolls back NFT custody and receipts; opening does not bypass creator retirement; after retirement, redemption before opening succeeds into module custody while available is zero and selling Credits fails without moving them; at opening the balance becomes spendable; a funded affordable page of real Credits is purchased, recomposed and redeemed again; duplicate redemption fails; Core retirement permits same-token reserve transfer to the real successor Core's bound module, including later Statement proceeds.
+- `unitPerPoint` is `1e14`. A four-decimal raw score becomes an 18-decimal BALANCE amount.
+- `redeem(sid)` is callable by the Core. It reads `creditScoreOf(sid)`, quotes, approves that statement, withdraws, and reverts `RedeemedBelowRating` when the module's balance rose by less than `creditScoreOf * unitPerPoint`. The upstream contract holds the surrendered Statement. Receipts and artwork history belong to the module.
+- `available()` returns 0 until `totalRetired == launchRetirement` and `block.number >= transfersOpenBlock`, then the module's token balance. Upstream sets `totalRetired` once, in `retireLaunchSupply`, behind a `totalRetired != 0` revert, so it is 0 or `launchRetirement`.
+- `pay(to, amount)` is callable by the Core and reverts above `available()`.
+- `migrateReserve()` is callable by anyone after Core retirement. It sends the module's whole balance to the successor's current module when that module is a distinct contract bound to the successor and to the same token. Repeat calls move later proceeds.
+- Binding getters do not authenticate code. The owner selects the successor and its module, as with Core migration.
 
-Budget caveat: one Statement does not fund every arbitrary group of 80 Credits, because ratings differ. An initial test incorrectly assumed equal-count pages cost the same; it hit the existing `PotTooSmall` protection. The integration uses an affordable page selected from real strategy-held Credits, filtering current ownership because the dated fixture includes subsequent sales, and bounds paid units between the configured 90 percent floor and 100 percent cap. This is interface/custody verification, not a market-throughput or self-funding guarantee. The general Fixture bypasses the ETH purchase cap while assembling its initial page; this test does not verify launch purchase-budget economics.
+## Tests
 
-Reproduce with a clean authorized upstream checkout at the pinned revision and its pinned dependencies:
+`test/StatementBalanceModule.t.sol` uses public doubles of Statements and the token. It covers the constructor checks, Core-only calls, redemption at and below the rating, both launch gates (retired total below, equal and above `launchRetirement`), payment limits, and migration cases: retired and live Core, invalid and hostile successors, a module bound to another token, and a token callback that re-enters `migrateReserve` and `pay`.
+
+`test/UpstreamBalance.t.sol` runs the real upstream bytecode on a fork: missing renderer registration rolls back custody, opening does not bypass creator retirement, redemption before opening fills the module while `available()` is 0, spendable balance at opening, an affordable page of real Credits purchased, recomposed and redeemed again, duplicate redemption fails, and Core retirement migrates the reserve to the real successor Core's bound module including later proceeds. One Statement funds a page of 80 Credits only when the page's ratings fit the pot, so the test selects an affordable page from the strategy's current holdings. The test skips when `out/upstream-balance.json` is absent and fails instead when `REQUIRE_UPSTREAM_BALANCE=true`.
+
+## Reproduce
 
 ```
 python3 script/prepare-upstream-balance.py /path/to/credits
 forge build src/adapters/StatementBalanceModule.sol
-# Start in a separate terminal, using an archive-capable Ethereum RPC:
-STACK=live FORK_BLOCK=26205390 PORT=8613 FORK_URL=<rpc-url> script/dev/anvil.sh
+STACK=live FORK_BLOCK=26205390 PORT=<free port> FORK_URL=<archive rpc> script/dev/anvil.sh
 forge test --match-path test/StatementBalanceModule.t.sol -vv
-STACK=live MAINNET_RPC_URL=http://127.0.0.1:8613 FORK_BLOCK=0 REQUIRE_UPSTREAM_BALANCE=true forge test --chain-id 1 --match-path test/UpstreamBalance.t.sol -vv
+STACK=live MAINNET_RPC_URL=http://127.0.0.1:<port> FORK_BLOCK=0 REQUIRE_UPSTREAM_BALANCE=true forge test --chain-id 1 --match-path test/UpstreamBalance.t.sol -vv
 ```
 
-The test skips only when the optional private-source artifact is absent and `REQUIRE_UPSTREAM_BALANCE` is unset; required verification sets it true so missing preparation fails. Fork upstream: Ethereum block `26205390`, with the deployed factory `0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c`, served by this task's isolated Anvil on port 8613. Upstream renderer registration and funder retirement use local test impersonation. No transaction is sent to Ethereum.
+Fork block 26205390, factory `0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c`. Upstream renderer registration and funder retirement use test impersonation. No transaction is sent to Ethereum.
 
-Verification results: 45 unique focused Forge tests passed, zero final skips: 28 affected replacement/owner/build-identity tests on the recent live-stack fork, 12 adapter unit tests, and five real-upstream tests. The live-stack combined run passed 31/33; only the two cycle tests reran after repairing the dated test fixture's ownership filtering, and both passed. Initial tests also exposed and corrected the equal-count affordability assumption; no production runtime repair was needed. Exact final commands:
+## Results at c37caf0
 
-```
-STACK=live MAINNET_RPC_URL=http://127.0.0.1:8613 FORK_BLOCK=0 REQUIRE_UPSTREAM_BALANCE=true forge test --chain-id 1 --match-path 'test/{BalanceTokenReplacement,OwnerPowers,BuildIdentity,UpstreamBalance}.t.sol' -vv
-STACK=live MAINNET_RPC_URL=http://127.0.0.1:8613 FORK_BLOCK=0 REQUIRE_UPSTREAM_BALANCE=true forge test --chain-id 1 --match-path test/UpstreamBalance.t.sol --match-test 'test_(exactOpeningRedeemsAndRecyclesIntoCredits|retirementMigratesReserveAndLaterRedemption)' -vv
-```
+45 focused tests passed with no skips: 28 replacement, owner and build-identity tests on the live-stack fork, 12 module tests and 5 upstream tests. `script/tools/gen-interfaces.sh --check` passed. Core, CoreLib and Controller build identities were unchanged. Module runtime is 2,402 bytes. Independent source review of c37caf0 found no remaining actionable findings.
 
-The module unit file ran separately with `--chain-id 1 --match-path 'test/{StatementBalanceModule,UpstreamBalance}.t.sol'`; its 12 tests passed. At that first run the optional integration artifact path was incorrect and skipped; the required runs above use the corrected path and forbid a missing artifact. Zero-skips verification of all five actual cases is established by the three unchanged passing cases plus the final two passing cycles, not by the earlier skip.
+## Limits
 
-Targeted production build passed; `script/tools/gen-interfaces.sh --check` passed. Existing Core/CoreLib/Controller build identities passed unchanged after the main-stack merge. New module runtime is 2,402 bytes; creation-artifact SHA-256 is `a9511c9063c506338b1810df6d59954169b603ae228a59bb5f29d2a2c479d218`. Independent source reviewer `/root/review_current_main` found no contract blocker at isolated snapshot `1ed6d81`. Review requested clarification that successor/module getter checks do not authenticate code; documentation now explicitly retains the existing owner trust. Final independent source review of immutable commit `c37caf0` by `/root/review_current_main` covered ancestry, upstream source, final ownership-aware helper, generated interface and documentation. No remaining actionable findings. The reviewer did not rerun the reported tests. Source and evidence are consistent for the requested implementation scope; release prerequisites remain open. No release or deployment acceptance. Final live BALANCE identity, constructor parameters, renderer registration, supply retirement, opening block and canonical pool remain activation prerequisites. Tests do not run Jack's complete auction lifecycle or initialize its real auction pool; they make no claim about final auction pricing/liquidity or production gas costs.
-
-Task cleanup: the isolated task-owned Anvil instances on 8612 (old fixture) and 8613 (live stack) were stopped after verification. No owner node was changed.
-
-Published implementation: `c37caf0`, review record `7996b55`, adapter PR https://github.com/ripe0x/cc/pull/33 stacked on token replacement PR https://github.com/ripe0x/cc/pull/32. Next is owner review; no merge/deployment/activation was performed.
+This is implementation compatibility evidence. It does not cover Jack's auction lifecycle, the real auction pool, market throughput or production gas. Before activation, authenticate the live contract, constructor parameters, renderer registration, creator retirement, opening block and canonical pool (docs/RUNBOOK.md, wiring the production balance module).

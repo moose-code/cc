@@ -9,6 +9,7 @@ interface IStatementBalanceModule {
     error InvalidConfiguration();
     error InvalidSuccessor();
     error OnlyCore();
+    error RedeemedBelowRating();
 
     event ReserveMigrated(address indexed successor, address indexed module, uint256 amount);
 
