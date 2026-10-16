@@ -185,7 +185,7 @@ export function useAcquireCandidate() {
       // 2. shortlist by estimated margin over every listing
       const ids = [...new Set(listings.map((l) => l.id))];
       const scores = await scoresFor(c, ids, known);
-      const refScore = BigInt(snap.settings.refScore);
+      const refScore = 1_000_000n;
       const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / refScore;
       const picked = shortlist(listings, snap.ethRate, refScore, scores, SHORTLIST);
       if (!picked.length) return { cleared: [], top: [], waiting: 0, nextIn: 0 };

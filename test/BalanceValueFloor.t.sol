@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Mainnet, ICreditScore} from "../src/interfaces/Interfaces.sol";
@@ -51,7 +52,7 @@ contract BalanceValueFloorTest is Fixture {
 
     /// the rate term in wei of `points`
     function _rate(uint256 points) private view returns (uint256) {
-        return FullMath.mulDiv(core.floorRate(), points, ctl.refScore());
+        return FullMath.mulDiv(core.floorRate(), points, RATE_SCORE);
     }
 
     function _max(uint256 a, uint256 b) private pure returns (uint256) {
@@ -124,7 +125,7 @@ contract BalanceValueFloorTest is Fixture {
         assertFalse(ctl.balancePoolKeySet(), "no pool key at launch");
         uint256 rating = core.ratingOf(sid);
         assertEq(ctl.valueOf(rating), _rate(rating), "valueOf is the rate term");
-        assertEq(ctl.pointRate(), core.floorRate() / ctl.refScore(), "the point rate");
+        assertEq(ctl.pointRate(), core.floorRate() / RATE_SCORE, "the point rate");
     }
 
     // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) times creditFloorBps
@@ -205,5 +206,4 @@ contract BalanceValueFloorTest is Fixture {
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setBalancePoolKey(k);
     }
-
 }

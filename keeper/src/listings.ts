@@ -211,7 +211,7 @@ export class Sources {
   // the candidates of this block: every watched listing under the bid scaled by its score, read in full
   async candidates(snap: Snapshot, blockNumber: bigint): Promise<Listing[]> {
     await Promise.all([this.refreshStrategy(), this.refreshSeaport()]);
-    const ref = BigInt(snap.settings.refScore);
+    const ref = 1_000_000n;
     const t = this.now();
     const pick = (ws: Watched[]) =>
       ws

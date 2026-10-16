@@ -269,7 +269,7 @@ abstract contract InvariantFixture is Fixture {
             for (uint256 i; i < 80; ++i) {
                 balanceIds[i] = ids[ethN + i];
             }
-            // the balance bid reads `refScore` from the core setting, so it does not depend on the controller in force.
+            // the balance bid uses the fixed 100 point basis, so it does not depend on the controller in force.
             // the credits enter the single pile with an eth cost basis
             vm.prank(filler);
             core.sellForBalance(balanceIds);

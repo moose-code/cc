@@ -446,19 +446,6 @@ export const controllerAbi = [
   },
   {
     "type": "function",
-    "name": "refScore",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "referenceOf",
     "inputs": [
       {

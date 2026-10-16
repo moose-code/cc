@@ -25,14 +25,14 @@ assert.equal(ETH_ANCHOR_SLOT, 28n);
 const max64 = (1n << 64n) - 1n;
 assert.deepEqual(ethAnchorWords(1000n, (1234n << 64n) | max64, max64, 1n), { start: 1000n, bucket: max64, nowBucket: max64 });
 const anchor = ethAnchorWords(1005n, (1234n << 64n) | 7n, 90n, 12n);
-const quote: EthReplay = { ...anchor, price: 1000n, peak: 1000n, pot: 10000n, dropPerCreditBps: 100n, dropFloorBps: 9900n, ceilBps: 10000n, rateCap: 10000n, refScore: 1000n };
+const quote: EthReplay = { ...anchor, price: 1000n, peak: 1000n, pot: 10000n, dropPer100PointsBps: 100n, dropFloorBps: 9900n, ceilBps: 10000n, rateCap: 10000n, refScore: 1000n };
 assert.equal(quote.nowBucket, 7n);
 // The active bucket keeps its 994 floor; a new bucket would lower it to 990.
 assert.equal(replayEth([1000n, 1000n], quote), 1000n + 994n);
 assert.equal(replayEth([1000n, 1000n], { ...quote, nowBucket: 8n }), 1000n + 990n);
 
 // promise: a raised balance cap does not raise the floor above par minus the margin.
-assert.equal(replayBalance([10n, 10n], { rate: 100000n, unit: 100n, refScore: 10n, dropPerCreditBps: 10000n, dropFloorBps: 0n, floorBps: 9000n }), 10000n + 900n);
+assert.equal(replayBalance([10n, 10n], { rate: 100000n, unit: 100n, refScore: 10n, dropPer100PointsBps: 10000n, dropFloorBps: 0n, floorBps: 9000n }), 10000n + 900n);
 
 // promise: the cap error names the next action for decoded and selector-only transaction failures.
 const capError = encodeErrorResult({ abi: coreAbi, errorName: "SpendCapReached", args: [100n, 1n, 100n] });

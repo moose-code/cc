@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {Sale, CreditSale} from "../../src/interfaces/Interfaces.sol";
+import {Sale, CreditSale, RATE_SCORE} from "../../src/interfaces/Interfaces.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {HandlerOwner} from "./HandlerOwner.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
@@ -607,13 +607,13 @@ abstract contract HandlerSale is HandlerOwner {
     }
 
     /// the price reference of statement `sid`: the larger of its cost and `valueOf(rating)`, the same value the
-    /// controller prices against. `valueOf` is at least the floor rate times the rating over `refScore`, which is
+    /// controller prices against. `valueOf` is at least the floor rate times the rating over 100 points, which is
     /// written out here (the product cannot overflow a word, so the plain divide matches the controller `mulDiv`)
     function _modelRef(uint256 sid, uint256 cost) internal returns (uint256) {
         uint256 rating = core.ratingOf(sid);
-        uint256 rate = core.floorRate() * rating / uint256(IControllerV1(v1).refScore());
+        uint256 rate = core.floorRate() * rating / RATE_SCORE;
         uint256 value = IControllerV1(v1).valueOf(rating);
-        if (value < rate) _flag(V_SALE_PATH, "valueOf is below the floor rate times the points over refScore");
+        if (value < rate) _flag(V_SALE_PATH, "valueOf is below the floor rate times the points over 100 points");
         return value > cost ? value : cost;
     }
 

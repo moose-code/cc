@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -269,7 +270,7 @@ contract BalanceTokenReplacementTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
         ctl.setBalancePoolKey(badCk);
         // a key on the new token is accepted and prices valueOf above the rate floor
-        uint256 points = core.settings().refScore;
+        uint256 points = RATE_SCORE;
         uint256 rateValue = ctl.valueOf(points);
         PoolKey memory newKey = PoolKey({
             currency0: Currency.wrap(address(0)),
@@ -294,7 +295,7 @@ contract BalanceTokenReplacementTest is Fixture {
     // rule: valueOf, priceOf and atFloor ignore a pool key whose currency1 is not the current token
     function test_oldPoolIgnoredUntilMatchingTokenSelected() public {
         uint256 sid = _composeOnce().sid;
-        uint256 points = core.settings().refScore;
+        uint256 points = RATE_SCORE;
         uint256 rateValue = ctl.valueOf(points);
         PoolKey memory key = PoolKey({
             currency0: Currency.wrap(address(0)),

@@ -283,7 +283,7 @@ export const coreAbi = [
         "internalType": "struct Settings",
         "components": [
           {
-            "name": "dropPerCreditBps",
+            "name": "dropPer100PointsBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -403,7 +403,7 @@ export const coreAbi = [
             "internalType": "uint24"
           },
           {
-            "name": "refScore",
+            "name": "pointsPerPage",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -705,6 +705,25 @@ export const coreAbi = [
   },
   {
     "type": "function",
+    "name": "balanceBidForScore",
+    "inputs": [
+      {
+        "name": "score",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "balanceBidOf",
     "inputs": [
       {
@@ -770,6 +789,25 @@ export const coreAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bidForScore",
+    "inputs": [
+      {
+        "name": "score",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -997,6 +1035,19 @@ export const coreAbi = [
         "name": "acquiredAt",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ethPerPoint",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1732,7 +1783,7 @@ export const coreAbi = [
         "internalType": "struct Settings",
         "components": [
           {
-            "name": "dropPerCreditBps",
+            "name": "dropPer100PointsBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -1852,7 +1903,7 @@ export const coreAbi = [
             "internalType": "uint24"
           },
           {
-            "name": "refScore",
+            "name": "pointsPerPage",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -1931,7 +1982,7 @@ export const coreAbi = [
         "internalType": "struct Settings",
         "components": [
           {
-            "name": "dropPerCreditBps",
+            "name": "dropPer100PointsBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -2051,7 +2102,7 @@ export const coreAbi = [
             "internalType": "uint24"
           },
           {
-            "name": "refScore",
+            "name": "pointsPerPage",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -2207,12 +2258,12 @@ export const coreAbi = [
     "name": "swapCredit",
     "inputs": [
       {
-        "name": "inId",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "outId",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2924,7 +2975,7 @@ export const coreAbi = [
         "internalType": "struct Settings",
         "components": [
           {
-            "name": "dropPerCreditBps",
+            "name": "dropPer100PointsBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -3044,7 +3095,7 @@ export const coreAbi = [
             "internalType": "uint24"
           },
           {
-            "name": "refScore",
+            "name": "pointsPerPage",
             "type": "uint32",
             "internalType": "uint32"
           },

@@ -353,11 +353,11 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
     peak,
     pot: ethPot + toPot,
     ...ethAnchorWords(BigInt(startWord ?? "0x0"), BigInt(bucketWord ?? "0x0"), BigInt(Math.floor(now)), BigInt(st.bucketSeconds)),
-    dropPerCreditBps: BigInt(st.dropPerCreditBps),
+    dropPer100PointsBps: BigInt(st.dropPer100PointsBps),
     dropFloorBps: BigInt(st.dropFloorBps),
     ceilBps: BigInt(st.ceilBps),
     rateCap: BigInt(st.rateCap),
-    refScore: BigInt(st.refScore),
+    refScore: 1_000_000n,
   });
 }
 
@@ -534,8 +534,8 @@ export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
   return replayBalance(scores, {
     rate: snap.balanceRate,
     unit: snap.balanceUnit,
-    refScore: BigInt(snap.settings.refScore),
-    dropPerCreditBps: BigInt(snap.settings.dropPerCreditBps),
+    refScore: 1_000_000n,
+    dropPer100PointsBps: BigInt(snap.settings.dropPer100PointsBps),
     dropFloorBps: BigInt(snap.settings.dropFloorBps),
     floorBps: 10000n - BigInt(snap.settings.balanceBidMarginBps),
   });

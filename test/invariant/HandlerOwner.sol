@@ -49,7 +49,7 @@ abstract contract HandlerOwner is HandlerBase {
     /// random valid settings over operating ranges, from `seed`. `corner` picks an extreme to force on top
     function _genSettings(uint256 seed, uint256 corner, Settings memory c) internal pure returns (Settings memory s) {
         // forge-lint: disable-start(unsafe-typecast)
-        s.dropPerCreditBps = uint16(_f(_r(seed, 2), 1, 1_000, c.dropPerCreditBps));
+        s.dropPer100PointsBps = uint16(_f(_r(seed, 2), 1, 1_000, c.dropPer100PointsBps));
         s.dropFloorBps = uint16(_f(_r(seed, 3), 5_000, 10_000, c.dropFloorBps));
         s.climbPerMinBps = uint16(_f(_r(seed, 4), 1, 1_000, c.climbPerMinBps));
         s.ceilBps = uint16(_f(_r(seed, 5), 10_000, 30_000, c.ceilBps));
@@ -68,7 +68,7 @@ abstract contract HandlerOwner is HandlerBase {
         s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
         s.feeToRedeemBurnBps = uint16(_f(_r(seed, 27), 0, 10_000, c.feeToRedeemBurnBps));
         s.payeePpm = uint24(_f(_r(seed, 40), 0, 200_000, c.payeePpm));
-        s.refScore = uint32(_f(_r(seed, 41), 800_000, 8_000_000, c.refScore));
+        s.pointsPerPage = uint32(_f(_r(seed, 41), 1, 100_000, c.pointsPerPage));
         s.swapFeeCc = uint96(_f(_r(seed, 42), 0, 1e24, c.swapFeeCc));
         s.climbMultiplierCapBps = uint16(_f(_r(seed, 43), 10_000, 40_000, c.climbMultiplierCapBps));
         s.callerFee = uint64(_f(_r(seed, 10), 0, 0.005 ether, c.callerFee));
@@ -96,7 +96,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (k == 1) {
             s.rateCap = uint64(RATE_START_MAX_WEI);
         } else if (k == 2) {
-            s.dropPerCreditBps = 1;
+            s.dropPer100PointsBps = 1;
             s.dropFloorBps = 10_000;
         } else if (k == 3) {
             s.climbPerMinBps = 1;
@@ -111,7 +111,7 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (k == 8) {
             s.idleLoosenBps = 1;
         } else if (k == 9) {
-            s.dropPerCreditBps = 1_000;
+            s.dropPer100PointsBps = 1_000;
             s.dropFloorBps = 5_000;
         } else if (k == 10) {
             // the smallest slice: the cheapest payment allows it
@@ -248,7 +248,7 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// the bounds of docs/DECISIONS.md section 2, written out again. the name of the first field out of bounds, or zero
     function _firstViolation(Settings memory s) internal pure returns (bytes32) {
-        if (s.dropPerCreditBps < 1 || s.dropPerCreditBps > 10_000) return "dropPerCreditBps";
+        if (s.dropPer100PointsBps < 1 || s.dropPer100PointsBps > 10_000) return "dropPer100PointsBps";
         if (s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1) return "climbPerMinBps";
         if (s.ceilBps < 10_000) return "ceilBps";
@@ -268,7 +268,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.balanceBidMarginBps > 10_000) return "balanceBidMarginBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 1_000_000) return "payeePpm";
-        if (s.refScore < 1) return "refScore";
+        if (s.pointsPerPage < 1) return "pointsPerPage";
         if (s.climbMultiplierCapBps < 10_000) return "climbMultiplierCapBps";
         if (s.spendCapBps < 1 || s.spendCapBps > 10_000) return "spendCapBps";
         if (s.bucketSeconds < 1) return "bucketSeconds";
@@ -285,11 +285,11 @@ abstract contract HandlerOwner is HandlerBase {
     function _break(Settings memory s, uint256 which) internal pure returns (bytes32 name) {
         which %= 24;
         if (which == 0) {
-            s.dropPerCreditBps = 10_001;
-            return "dropPerCreditBps";
+            s.dropPer100PointsBps = 10_001;
+            return "dropPer100PointsBps";
         } else if (which == 1) {
-            s.dropPerCreditBps = 0;
-            return "dropPerCreditBps";
+            s.dropPer100PointsBps = 0;
+            return "dropPer100PointsBps";
         } else if (which == 2) {
             s.dropFloorBps = 10_001;
             return "dropFloorBps";
@@ -339,8 +339,8 @@ abstract contract HandlerOwner is HandlerBase {
             s.payeePpm = 1_000_001;
             return "payeePpm";
         } else if (which == 18) {
-            s.refScore = 0;
-            return "refScore";
+            s.pointsPerPage = 0;
+            return "pointsPerPage";
         } else if (which == 19) {
             s.climbMultiplierCapBps = 9_999;
             return "climbMultiplierCapBps";
@@ -950,7 +950,7 @@ abstract contract HandlerOwner is HandlerBase {
     /// the owner sets one of the eight credit settings (three on the core, five on the controller) to a value inside or
     /// outside its bounds, or a stranger tries. inside: it goes through and reads back. outside a bounded numeric field:
     /// BadSetting. a stranger: OnlyOwner. no asset or pot moves
-    // refScore left the controller credit settings for the Core settings; the settings fuzz mutates it
+    // the settings fuzz mutates pointsPerPage, a Core setting
     function creditSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_CREDIT_SETTINGS;
         uint256 which = mode % 7;

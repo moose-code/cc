@@ -59,7 +59,7 @@ export default function CreditsPage() {
 
   const meta = [
     `${pile.length} held by engine`,
-    snap && `bid ${eth(snap.ethRate)} ETH at rating ${rating(snap.settings.refScore)}`,
+    snap && `bid ${eth(snap.ethRate)} ETH at rating ${rating(1_000_000n)}`,
     eta.perHour != null && eta.perHour > 0 && `${rateLabel(eta.perHour)} bought an hour`,
     historyDown && "history unavailable",
   ].filter(Boolean);

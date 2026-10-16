@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -169,9 +170,11 @@ contract CreditSaleTest is Fixture {
         uint256[] memory ids = _fillEthPile(1);
         uint256 id = ids[0];
         _liftRateCap();
-        uint256 big = core.ethPot() * 4;
+        // a pot well above the per-credit bid (a credit above 100 points bids more than the per-100-point rate) and a
+        // rate well under the pot, so the sell back fits the pot and the sale floor rests on the per-point value term
+        _fundPot(20 ether);
         vm.prank(owner);
-        core.setRate(big);
+        core.setRate(0.1 ether);
         _on();
         _warp(ctl.creditWindow());
         uint256 price = ctl.creditPrice(id);
@@ -230,17 +233,17 @@ contract CreditSaleTest is Fixture {
         uint256 id = _fillEthPile(1)[0];
         _on();
         // raise the rate well above the credit's recorded cost, so the flat floorRate sits above both the cost and the
-        // per-point value term; a high refScore puts the credit's score well below it, so valueOf(score) is a fraction of floorRate
+        // per-point value term; a score below 100 points puts valueOf(score) at a fraction of floorRate
         _liftRateCap();
         vm.prank(owner);
         core.setRate(1e17);
-        _setRefScore(8_000_000);
+        _mockScore(id, RATE_SCORE / 2);
         uint256 s = _scoreOf(id);
-        assertLt(s, 8_000_000, "the credit scores below refScore");
+        assertLt(s, RATE_SCORE, "the credit scores below 100 points");
         (, uint256 cost,) = core.creditInfo(id);
         uint256 fr = core.floorRate();
         uint256 value = ctl.valueOf(s);
-        assertEq(value, FullMath.mulDiv(fr, s, 8_000_000), "valueOf is the rate term, no pool");
+        assertEq(value, FullMath.mulDiv(fr, s, RATE_SCORE), "valueOf is the rate term, no pool");
         uint256 hi = _max(cost, value);
         assertLt(hi, fr, "the governing term is below the flat floor rate that was dropped");
         uint256 fb = ctl.creditFloorBps();
