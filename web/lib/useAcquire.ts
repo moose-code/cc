@@ -12,7 +12,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
 import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
-import { creditScores, MULTICALL3, useHead, type Snapshot } from "./live";
+import { creditScores, MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
 import { useTx } from "./tx";
 import { clearing, shortlist, type Listing, type Priced } from "./acquire";
@@ -145,9 +145,8 @@ export function useAcquireCandidate() {
     retry: 0,
     queryFn: async () => {
       try {
-      const snap = qc.getQueryData<Snapshot>(["snapshot", core]);
-      if (!snap) return { cleared: [], top: [] };
       const c = client!;
+      const snap = await qc.ensureQueryData<Snapshot>({ queryKey: ["snapshot", core], queryFn: () => readSnapshot(c, core!) });
 
       // 1. listings and known scores
       const { listings, known } = await gatherListings(c, head!.n);

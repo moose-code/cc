@@ -9,7 +9,7 @@ import { numberToHex, type Address } from "viem";
 import { usePublicClient } from "wagmi";
 import { core, credits, engineDeployed, seaportAdapter, strategy, strategyAdapter } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
-import { MULTICALL3, useHead, type Snapshot } from "./live";
+import { MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { useIxMode } from "./indexer";
 import { cheapestPerId, type Priced } from "./acquire";
 import { gatherListings, scoresFor } from "./useAcquire";
@@ -45,9 +45,9 @@ export function useListings() {
     staleTime: 10_000,
     retry: 0,
     queryFn: async () => {
-      const snap = qc.getQueryData<Snapshot>(["snapshot", core]);
-      if (!snap) return undefined;
       const c = client!;
+      // the snapshot query is mounted by other pages; load it here when this page is opened first
+      const snap = await qc.ensureQueryData<Snapshot>({ queryKey: ["snapshot", core], queryFn: () => readSnapshot(c, core!) });
       const { listings, known, osMax } = await gatherListings(c, head!.n);
       const best = cheapestPerId(listings);
       const scores = await scoresFor(c, best.map((l) => l.id), known);
