@@ -269,6 +269,58 @@ contract BidRuleTest is Fixture {
         assertApproxEqRel(core.ethRate(), price * 1_218_994_419_994_757_376 / 1e18, 1e9, "and it climbs from there");
     }
 
+    // promise: SPEC 1 decision 147: the climb's pot clamp counts the unbooked fee income
+    /// the hook has pushed fee income that no `_book` has folded into `ethPot` yet. the stored price climbs toward the
+    /// pot share of that pending income, so the eth rate grows after launch before anyone books
+    function test_climbCountsUnbookedFeeIncome() public {
+        _with(_openCeiling);
+        assertEq(core.ethPot(), 0, "nothing booked at launch");
+        assertEq(address(core).balance, 0, "fresh deploy holds no eth");
+        // the hook pushes 1 eth of pool bounty, unbooked. the pot share is 0.9 eth (feeToRedeemBurnBps 1000), far
+        // above the climbed rate, so the clamp does not bind the climb
+        vm.deal(address(core), 1 ether);
+        vm.prank(owner);
+        core.setRate(START);
+        assertEq(core.ethRate(), START, "the opening rate before the climb");
+        _warp(10 minutes);
+        uint256 rate = core.ethRate();
+        assertEq(core.ethPot(), 0, "the booked pot is still empty, the climb rose on the pending income");
+        assertGt(rate, START, "the stored price climbed on the pending pot clamp");
+        // _openCeiling climbs at climbPerMinBps 1000: 1.1 per minute, 1.1^10 = 2.5937424601
+        assertApproxEqRel(rate, START * 2_593_742_460_100_000_000 / 1e18, 1e9, "the climb for 10 minutes");
+    }
+
+    // promise: SPEC 1 decision 147: a payable door's own value is not pending income
+    /// `fund` books the income above the pots, checkpoints, then adds `msg.value` to the pot. the checkpoint runs while
+    /// `msg.value` is on the balance but not in a pot, and it reads a zero pending pot, so the stored price holds
+    function test_payableDoorExcludesItsOwnValueFromPendingIncome() public {
+        assertEq(core.ethPot(), 0, "nothing booked at launch");
+        assertEq(address(core).balance, 0, "fresh deploy holds no eth");
+        _warp(10 minutes);
+        vm.deal(address(this), 1 ether);
+        core.fund{value: 1 ether}();
+        assertEq(core.ethPot(), 1 ether, "the whole value is the pot, none booked as fee income");
+        assertEq(core.rateAtCheckpoint(), START, "fund's own value is not pending income, the climb held at the pot");
+    }
+
+    // promise: SPEC 1 decision 147: booking the pending income does not jump the climb
+    /// the pot clamp is `ethPot` plus the pending pot share, conserved across a `_book` that folds the pending income
+    /// into `ethPot`, so the eth rate is continuous across `book` and the climb continues from the same price
+    function test_bookDoesNotJumpTheClimb() public {
+        _with(_openCeiling);
+        vm.deal(address(core), 5 ether);
+        vm.prank(owner);
+        core.setRate(START);
+        _warp(10 minutes);
+        uint256 before = core.ethRate();
+        assertGt(before, START, "climbing on the pending pot clamp");
+        core.book();
+        assertEq(core.ethPot(), 4.5 ether, "the pot share of the booked income (feeToRedeemBurnBps 1000)");
+        assertEq(core.ethRate(), before, "book conserves the clamp pot, the rate does not jump");
+        _warp(10 minutes);
+        assertGt(core.ethRate(), before, "the climb continues from the booked pot");
+    }
+
     // promise: SPEC 1 the price state stays at or below rateCap (inv 19)
     /// a year of idle loosening never takes the rate above `rateCap`
     function test_loosenedCeilingNeverPassesTheRateCap() public {
