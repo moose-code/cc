@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
-import {CreditIds} from "./utils/CreditIds.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {IBalanceModule} from "../src/interfaces/Interfaces.sol";
@@ -118,7 +117,7 @@ contract UpstreamBalanceTest is Fixture {
         uint256[] memory scores = new uint256[](160);
         uint256 got;
         while (got < 160) {
-            uint256 id = CreditIds.at(creditCursor++);
+            uint256 id = _nextCredit();
             if (id == LISTED_A || id == LISTED_B || id == LISTED_C) continue;
             // The recent fork can include sales after this fixture list was captured.
             if (CREDITS.ownerOf(id) != STRATEGY) continue;

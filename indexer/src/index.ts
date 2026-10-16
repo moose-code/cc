@@ -119,11 +119,17 @@ ponder.on("Core:BalanceRateFill", async ({ event, context }) => {
   // This column follows earlier BalanceModuleSet logs, never a latest-state RPC read.
   const { balanceToken } = await ensureEngine(context);
   if (balanceBuy?.tx === event.transaction.hash) {
-    await context.db.update(credit, { id: balanceBuy.id }).set({ balancePaid: spent });
+    await context.db.update(credit, { id: balanceBuy.id }).set({ balancePaid: spent, balancePaidToken: balanceToken });
     await context.db.update(activity, { id: balanceBuy.activityId }).set({ amount2: spent, balanceToken });
   }
   balanceBuy = null;
-  if (balanceToken) await bumpBalancePaid(context, event, balanceToken, spent);
+  if (balanceToken) {
+    await bumpBalancePaid(context, event, balanceToken, spent);
+  } else {
+    console.error(
+      `BalanceRateFill at ${event.transaction.hash} spent ${spent} while engine.balanceToken is null; the payout is credited to no token`,
+    );
+  }
 });
 
 ponder.on("Core:ListingBought", async ({ event, context }) => {

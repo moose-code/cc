@@ -114,7 +114,7 @@ ETH purchases through `sellForEth` and `buyListing` share one fixed bucket, `flo
 
 for raw ETH quote readers, the expanded Settings moves `State.anchor` to slot 28: first-fill rate is slot 29; bucket is the low uint64 of slot 30, with peak time above it. decode with bigint and divide time by `bucketSeconds`. prefer generated ABI views for other reads. the web replay does not enforce or reserve purchase budget.
 
-Decision 142: owner setBalanceModule may select another token until lockBalanceModule. Holdings stay with their original modules; no conversion occurs. A stored pool key for another token contributes no pool value. Clients should use sellForBalance(ids, minOut, expectedToken) to pin currency and quantity; a mismatch reverts BalanceTokenChanged before any Credit moves. The older overloads accept the token active at execution. The web seller uses the token-pinned form. Re-select an old module to access its reserve and handle old reserves before locking replacement.
+owner setBalanceModule may select another token until lockBalanceModule. holdings stay with their original modules, so each module keeps its own token reserve. a stored pool key contributes pool value while its currency1 is the current balance token. clients pin currency and quantity with sellForBalance(ids, minOut, expectedToken), which reverts BalanceTokenChanged before any Credit moves on a mismatch. the older overloads accept the token active at execution, and the web seller uses the token-pinned form. re-select an old module to spend its reserve, and spend old reserves before locking the replacement.
 
 ## Production balance module (decision 144)
 

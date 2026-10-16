@@ -149,11 +149,11 @@ PY
 summary() {
   local round="$1" ceth burn sold
   sold="$(cast logs --from-block "$(jq -r .deployBlock "$REC")" --address "$CTL" 'Bought(uint256,address,uint256)' --rpc-url "$RPC" | grep -c blockNumber || true)"
-  burn="$(python3 - "$RPC" "$COIN" << 'PY'
+  burn="$(python3 - "$RPC" "$COIN" "$(jq -r .deployBlock "$REC")" << 'PY'
 import json, sys, urllib.request
-rpc, coin = sys.argv[1:3]
+rpc, coin, from_block = sys.argv[1:4]
 sig = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
-body = {"jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [{"fromBlock": "0x0", "toBlock": "latest", "address": coin, "topics": [sig, None, "0x" + "0" * 64]}]}
+body = {"jsonrpc": "2.0", "id": 1, "method": "eth_getLogs", "params": [{"fromBlock": hex(int(from_block)), "toBlock": "latest", "address": coin, "topics": [sig, None, "0x" + "0" * 64]}]}
 r = json.load(urllib.request.urlopen(urllib.request.Request(rpc, json.dumps(body).encode(), {"content-type": "application/json"})))
 print(sum(int(l["data"], 16) for l in r["result"]) // 10**18)
 PY

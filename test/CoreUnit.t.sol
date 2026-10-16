@@ -14,7 +14,6 @@ import {ProbeTarget} from "./attackers/ProbeTarget.sol";
 import {ListingTarget} from "./attackers/ListingTarget.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
-import {CreditIds} from "./utils/CreditIds.sol";
 
 /// shared helpers of the core unit suites. everything runs on the real stack of the Fixture: the live coin, hook,
 /// pool, Credits, Statements, CreditStrategy and Seaport. a test that needs an exact pot donates
@@ -261,7 +260,7 @@ contract CoreUnitTest is CoreBase {
 
         // not approved
         address bob = _user("bob");
-        uint256 id = CreditIds.at(500);
+        uint256 id = _heldCredit(0);
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, bob, id);
         vm.prank(bob);
@@ -397,7 +396,7 @@ contract CoreUnitTest is CoreBase {
         _fund(10 ether);
         uint256[4] memory gaps = [uint256(0), 1, 1000, 0.0004 ether];
         for (uint256 i; i < gaps.length; ++i) {
-            uint256 id = CreditIds.at(545 + i);
+            uint256 id = _heldCredit(1 + i);
             // refScore set to this credit's score, so its bid is the full rate and the gap and fee math is the flat case
             _refScoreToCredit(id);
             uint256 ceiling = core.bidOf(id);
@@ -541,7 +540,7 @@ contract CoreUnitTest is CoreBase {
     /// a target that refunds part of what it was paid sends eth to the core, which `receive` refuses: the buy reverts and
     /// nothing moves
     function test_buyListing_aRefundFromTheTargetRevertsTheBuy() public {
-        uint256 id = CreditIds.at(630);
+        uint256 id = _heldCredit(0);
         ProbeTarget p = _probe(id, 5);
         _fund(10 ether);
         uint256 value = core.bidOf(id) * 3 / 4;
@@ -561,13 +560,15 @@ contract CoreUnitTest is CoreBase {
     function test_buyListing_probeModes() public {
         _fund(10 ether);
         for (uint256 m; m <= 8; ++m) {
-            uint256 id = CreditIds.at(600 + m);
+            uint256 id = _heldCredit(m);
             ProbeTarget p = _probe(id, m);
+            // the credit's bid is the full rate, so the half rate payment of an honest mode is under it
+            _refScoreToCredit(id);
             vm.deal(address(p), 1 ether);
             uint256 value = (core.ethRate() / 2).min(core.ethPot() / 20);
             vm.prank(keeper);
             try core.buyListing(
-                rawAdapter, id, _raw(address(p), value, abi.encodeCall(ProbeTarget.fill, (id, CreditIds.at(620 + m))))
+                rawAdapter, id, _raw(address(p), value, abi.encodeCall(ProbeTarget.fill, (id, _heldCredit(9 + m))))
             ) {
                 assertTrue(p.honest(m), "a hostile mode succeeded");
             } catch {

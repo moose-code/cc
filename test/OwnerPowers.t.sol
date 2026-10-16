@@ -175,8 +175,8 @@ contract OwnerFormerQueueTest is OwnerBase {
         core.setBalanceModule(address(spareMod));
     }
 
-    // promise: decision 142 permits explicit owner token replacement without changing the unit source
-    function test_module_replaceKeepsTheTokenAndTheUnitStaysWithTheModule() public {
+    // promise: an explicit owner setBalanceModule changes the balance token to the new module's token and reads the new unit
+    function test_module_replaceChangesTheTokenAndReadsTheNewUnit() public {
         _setBalanceModule(address(spareMod));
         MockBalanceModule second = new MockBalanceModule(address(spareToken), 3 * UNIT);
         _setBalanceModule(address(second));
@@ -368,7 +368,6 @@ contract OwnerLocksTest is OwnerBase {
         (bool u,) = address(core).call(abi.encodeWithSignature("unlockController()"));
         assertFalse(u);
     }
-
 }
 
 contract OwnerHandoverTest is OwnerBase {
