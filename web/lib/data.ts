@@ -57,10 +57,10 @@ export function useStats(): { data?: Stats } {
 }
 
 /** Credits bought per hour over the last 24 hours (adopted credits are not buys). undefined while unknown. */
-export function useBuyRate(): number | undefined {
+export function useBuyRate(): { perHour: number | undefined; recent: boolean } {
   const mode = useIxMode();
   const { data: head } = useHead();
-  const ixRate = useBuyRateIx(head?.ts).perHour;
+  const ix = useBuyRateIx(head?.ts);
   const { data: scan } = useScan();
   const { blocks, oldest } = useMemo(() => {
     const blocks: bigint[] = [];
@@ -82,7 +82,7 @@ export function useBuyRate(): number | undefined {
     const seconds = Math.min(WINDOW, Math.max(3600, head.ts - oldestTs));
     return count / (seconds / 3600);
   }, [blocks, oldest, head, oldestTs]);
-  return mode === "ix" ? ixRate : mode === "chain" ? chainRate : undefined;
+  return mode === "ix" ? ix : { perHour: mode === "chain" ? chainRate : undefined, recent: false };
 }
 
 // ---- feed ----------------------------------------------------------------------------------------------------

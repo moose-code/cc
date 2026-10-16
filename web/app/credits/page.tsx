@@ -65,7 +65,7 @@ export default function CreditsPage() {
   const meta = [
     `${pile.length} held by engine`,
     snap && `bid ${bidPer100(snap.ethRate, snap.settings.refScore)} ETH / 100 pts`,
-    eta.perHour != null && eta.perHour > 0 && `${rateLabel(eta.perHour)} bought an hour`,
+    eta.perHour != null && eta.perHour > 0 && `${rateLabel(eta.perHour)} bought an hour${eta.recent ? ", recent pace" : ""}`,
     eta.at(0) && `next statement composes in ${etaLabel(eta.at(0))}`,
     historyDown && "history unavailable",
   ].filter(Boolean);
