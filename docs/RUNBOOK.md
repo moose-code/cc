@@ -264,6 +264,8 @@ every value is an environment variable; nothing secret is written to a file by t
 | `MARGIN_ETH` | 0.00005 | what a paid door must clear above its own cost |
 | `DAILY_BUDGET_ETH` | 0.2 | the net eth (gas spent minus Core payments) the wallet may lose per UTC day; a send whose gross cost does not fit waits |
 | `LISTING_DELAY_SEC` | 120 | decision 137 |
+| `BOOK_MIN_ETH` | 0.01 | once the payee share is latched, the keeper books when the pending income (Core balance above the booked pots) exceeds this |
+| `BOOK_MIN_SEC` | 600 | the keeper's last book must be older than this for the latched book above, so booked state follows income at a bounded gas cost |
 | `STRATEGY_IDS` | `Credits.tokensOf(strategy)` | the CreditStrategy ids to watch, or `off`; refreshed every `STRATEGY_REFRESH_SEC` (600). The default set is kept by delta from the Credits Transfer logs of the strategy (state file `STATE_DIR/strategy-inventory.json`), with a rolling re-read of 300 prices per refresh and a full read once a day |
 | `STRATEGY_FULL_READ` | | `1` reads the whole strategy inventory on every refresh (first start, or a node without log queries) |
 | `INDEXER_URL` | | indexer origin (https or local); seeds the strategy inventory on the first start from `strategy_listing` instead of `tokensOf` |

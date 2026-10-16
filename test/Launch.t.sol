@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsHookV2, IArtCoinsMevSkimV2} from "../src/interfaces/ArtCoinsV2.sol";
 
 /// the launch of the coin through the v2 factory as its owner and everything it must read back as
@@ -46,6 +47,46 @@ contract LaunchTest is Fixture {
         (uint24 now_, bool active) = mev.currentSkimBps(poolId);
         assertEq(now_, 1000);
         assertFalse(active);
+    }
+
+    // promise: SPEC 1 decision 147: the first ever fill reads the opening rate climbed on a hook fed thin pot
+    /// a cold launch: one buy feeds a thin pot, left unbooked, no setRate and no pre funding. ten minutes later the bid
+    /// has climbed from the opening rate on the pot share of the hook income, and the first ever sellForEth pays the
+    /// bid quoted in the same block, stamping lastFillTime, the anchor, the peak and the spend budget
+    function test_firstFillFromTheOpeningRateOnAHookFedThinPot() public {
+        assertEq(core.ethPot(), 0, "nothing booked at launch");
+        assertEq(core.RATE_START(), OPEN_RATE, "the opening rate the first fill starts from");
+        _skipSniperWindow();
+        uint256 id = _credits(seller, 1)[0];
+        _unitScore(id); // score is refScore, so the bid is the full rate
+
+        autoBook = false;
+        _buyCoin(funder, 1 ether);
+        assertEq(core.ethPot(), 0, "the fee income waits unbooked, no door and no setRate");
+        assertGt(address(core).balance, 0, "the hook fed the pot");
+        _warp(10 minutes);
+        uint256 rate = core.ethRate();
+        uint256 quote = core.bidOf(id);
+        assertGt(rate, OPEN_RATE, "the bid climbed from the opening rate on the unbooked income");
+
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+        uint256 paid = seller.balance - before;
+        assertEq(paid, quote, "the first fill paid the bid quoted in the same block");
+        assertEq(core.lastFillTime(), block.timestamp, "the fill stamped lastFillTime");
+        (uint256 anchor, uint256 start, uint256 bucket) = _anchor();
+        assertEq(anchor, rate, "the anchor is the rate paid");
+        assertEq(start, rate, "and the start of the minute");
+        assertEq(bucket, block.timestamp / 60, "the minute bucket of the fill");
+        (uint256 peakRate, uint256 peakTime) = _peak();
+        assertGe(peakRate, rate, "the remembered peak is at least the rate paid");
+        assertEq(peakTime, block.timestamp, "the peak time is the fill");
+        // the spend budget snapshots the post book pot of the first spend; at launch spendCapBps 10_000 is the whole pot
+        (uint64 spendBucket, uint128 budget,) = core.spendState();
+        Settings memory s = core.settings();
+        assertEq(uint256(budget), (core.ethPot() + paid) * s.spendCapBps / 10_000, "the budget is the post book pot");
+        assertEq(spendBucket, block.timestamp / s.bucketSeconds, "the spend bucket of the fill");
     }
 
     // with the referral cap at zero a swap that names a referrer succeeds

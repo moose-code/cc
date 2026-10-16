@@ -15,6 +15,7 @@ import {BidModel} from "../utils/BidModel.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
+import {MockNft} from "../standins/MockNft.sol";
 import {MigrationSink} from "../standins/MigrationSink.sol";
 
 /// @notice the owner as an adversarial actor. the owner calls `setSettings` with random valid settings across the
@@ -170,6 +171,7 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 rate;
         uint256 price;
         uint256 xBal;
+        address xToken;
     }
 
     function _opre() internal view returns (OPre memory p) {
@@ -180,12 +182,15 @@ abstract contract HandlerOwner is HandlerBase {
         p.rate = core.ethRate();
         p.price = _priceNow(core.settings());
         p.xBal = _xBal(address(core));
+        p.xToken = core.balanceToken();
     }
 
-    /// what no owner call may touch: the core's eth and its pots. the core holds no balance token (the module does)
+    /// what no owner call may touch: the core's eth and its pots. the core holds only balance token donated straight to
+    /// it (dust the module does not hold), so the token holding is unchanged unless the call replaced the token. a
+    /// replacement onto a fresh token is checked against the donated dust in `replaceModule`
     function _opost(OPre memory p, string memory what) internal {
         _eth(p.bal, 0, 0, what);
-        _x(p.xBal, 0, 0, what);
+        if (core.balanceToken() == p.xToken) _x(p.xBal, 0, 0, what);
         if (core.ethPot() != p.pot || core.ethToBuyback() != p.toBuyback || core.ethRedeemBurn() != p.reserve) {
             _flag(V_OWNER, "an owner call moved a pot");
         }
@@ -201,6 +206,12 @@ abstract contract HandlerOwner is HandlerBase {
         vm.prank(owner);
         core.setSettings(ns);
         gSettingsHash = keccak256(abi.encode(core.settings()));
+    }
+
+    /// the owner sets exactly `rate` through `setRate`. not in the fuzz selector list: the smoke tests use it
+    function setRateExact(uint256 rate) external {
+        vm.prank(owner);
+        core.setRate(rate);
     }
 
     function setSettings(uint256 seed, uint256 corner) external checked {
@@ -532,11 +543,14 @@ abstract contract HandlerOwner is HandlerBase {
         try core.setBalanceModule(address(next)) {
             if (want != 0) _flag(V_OWNER, "a refused module set was accepted");
             _afterModuleSet(p, next, token);
-            // a token change leaves the replaced module's reserve where it was and the Core holding none of either token
+            // a token change leaves the replaced module's reserve where it was, the Core holding only the dust donated
+            // straight to it on the replaced token, and none of the fresh token
             if (core.balanceToken() != token) {
                 MockBalanceToken old = MockBalanceToken(token);
                 if (old.balanceOf(oldModule) != oldReserve) _flag(V_OWNER, "a replacement moved the old reserve");
-                if (old.balanceOf(address(core)) != 0) _flag(V_OWNER, "the Core holds the replaced token");
+                if (old.balanceOf(address(core)) != gDonatedX[token]) {
+                    _flag(V_OWNER, "the Core holds the replaced token beyond the donated dust");
+                }
                 if (_xBal(address(core)) != 0) _flag(V_OWNER, "the Core holds the new token");
             }
             module = next;
@@ -681,6 +695,8 @@ abstract contract HandlerOwner is HandlerBase {
         _ok(a);
     }
 
+    MockNft internal rescueMock;
+
     struct Rescue {
         bool ok;
         address token;
@@ -728,8 +744,11 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (m == 3) {
             r.token = address(coin);
             if (phase2() && seed % 2 == 0) r.token = core.balanceToken();
-            // a keccak derived address, so a random token never lands on a precompile or the forge console address
-            if (seed % 5 == 0) r.token = address(uint160(uint256(keccak256(abi.encode("rescueToken", seed)))));
+            // a deployed token that does not hold the id, so the call never depends on what lives at a derived address
+            if (seed % 5 == 0) {
+                if (address(rescueMock) == address(0)) rescueMock = new MockNft();
+                r.token = address(rescueMock);
+            }
             r.id = 1 + seed % 1e18;
             r.ok = true;
             r.want = ICore.NotHolder.selector;
