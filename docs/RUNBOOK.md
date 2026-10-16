@@ -164,7 +164,7 @@ The dump is tracked so CI can load it (`.github/workflows/ci.yml` and `candidate
 4. Dump the fork state:
    `cast rpc anvil_dumpState --rpc-url http://127.0.0.1:8601 | python3 -c 'import sys,json;sys.stdout.write(json.load(sys.stdin))' > script/config/stack-master-26158000.hex`
 
-The dump is anvil_dumpState gzip hex, loadable through the `anvil_loadState` rpc, not `anvil --load-state`. `STACK=master script/dev/anvil.sh` forks at chain id 31337 and loads the state after startup; the engine's forge scripts re-enter chain id 1 with `--chain-id 1` and the test suite runs with `--chain-id 1`.
+The dump is anvil_dumpState gzip hex, loadable through the `anvil_loadState` rpc, not `anvil --load-state`. `STACK=master script/dev/anvil.sh` forks at chain id 31337 and loads the state after startup; the engine's forge scripts re-enter chain id 1 with `--chain-id 1` and the test suite runs with `--chain-id 1`. After `anvil_loadState` the loader pins the dev wallet's nonce to the upstream value at `FORK_BLOCK` (`anvil_setNonce`): the dump carries the nonce from its build block (26158000), so rebuilding the owner's chain on a fork at a later block would otherwise have a seed `CREATE` (the mock balance token) land on the address a contract the mainnet wallet has since made already occupies, and the seed reverts. At the default 26158000 fork this is a no-op.
 
 ### activity speed run against the running local chain
 

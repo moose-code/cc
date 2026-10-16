@@ -313,7 +313,19 @@ library CoreLib {
         returns (uint256 price, uint256 read)
     {
         State storage c = state();
-        (price, read,) = _climb(c.anchor, r, pot, c.settings.rateCap, pot, anchorTime, t, nowTs);
+        (price, read,) = _climb(c.anchor, r, pot, c.settings.rateCap, _ethPagesPot(c), anchorTime, t, nowTs);
+    }
+
+    /// the eth instance pages pot: `ethPot` plus the pot share of the unbooked fee income the next `_book` adds (the
+    /// payee share while `payeeOn`, then `feeToRedeemBurnBps` of the rest to the redeem burn pot, the remainder to the
+    /// pot). `msg.value` of the current call is excluded, the same as `Core._income`. the total is conserved across a
+    /// `_book`, so a door that books before it checkpoints reads the same pages pot the handler and the views read
+    function _ethPagesPot(State storage c) private view returns (uint256) {
+        uint256 income = (address(this).balance - msg.value).zeroFloorSub(c.ethPot + c.ethToBuyback + c.ethRedeemBurn);
+        if (income == 0) return c.ethPot;
+        Settings storage s = c.settings;
+        if (c.payeeOn) income -= income * s.payeePpm / 1_000_000;
+        return c.ethPot + income - income * s.feeToRedeemBurnBps / BPS;
     }
 
     /// @notice the floor rate at `nowTs` in wei per credit: the larger of the price state climbed before the pot clamp
@@ -326,23 +338,23 @@ library CoreLib {
         returns (uint256)
     {
         State storage c = state();
-        (uint256 price,, uint256 peakNow) = _climb(c.anchor, r, pot, c.settings.rateCap, pot, anchorTime, t, nowTs);
+        (uint256 price,, uint256 peakNow) = _climb(c.anchor, r, pot, c.settings.rateCap, _ethPagesPot(c), anchorTime, t, nowTs);
         return price.max(peakNow);
     }
 
-    /// @notice the eth instance pages multiplier now, bps (10_000 is 1x): the pages the pot covers at the stored rate,
-    /// clamped to [1, 4]. the Core forwards its `climbMultiplier()`
+    /// @notice the eth instance pages multiplier now, bps (10_000 is 1x): the pages the pot (with the pending fee share)
+    /// covers at the last fill rate, clamped to [1x, `climbMultiplierCapBps`]. the Core forwards its `climbMultiplier()`
     function climbMultiplier() external view returns (uint256) {
         State storage c = state();
-        return _climbMulBps(c.ethPot, c.anchor.lastFillRate);
+        return _climbMulBps(_ethPagesPot(c), c.anchor.lastFillRate, c.settings.climbMultiplierCapBps);
     }
 
     /// @notice the price state, read and peak of a bid instance at `nowTs`, from its stored rate `r` of checkpoint
     /// time `t`. `a` is the instance anchor, `clampTo` its clamp (eth: the pot; balance: available as bps of par),
     /// `capMax` its hard cap (eth: `rateCap`; balance: 10_000), `pagesPot` the pot the pages multiplier reads (eth: the
-    /// booked eth pot; balance: available as bps of par, uncapped). the shared climb settings are read
-    /// from `state()`. the idle climb and the ceiling's idle loosening scale by `m`, the pages the pot buys at the last
-    /// fill rate clamped to [1, 4] (decision 128)
+    /// pot with the pending fee share; balance: available as bps of par). the shared climb settings are read from
+    /// `state()`. the idle climb (`climbPerMinBps`, `recoveryClimbPerMinBps`) is unscaled; the ceiling's idle loosening
+    /// scales by `m`, the pages the pot buys at the last fill rate, clamped to [1, `climbMultiplierCapBps` / 10_000] (decision 128, variant d)
     function _climb(
         Anchor storage a,
         uint256 r,
@@ -357,9 +369,10 @@ library CoreLib {
         peakNow = Halving.halve(a.peakRate, nowTs.zeroFloorSub(a.peakTime), s.peakHalfLife);
         uint256 anchor = a.lastFillRate.max(peakNow);
         uint256 idle = nowTs.zeroFloorSub(anchorTime);
-        // the multiplier reads the last fill rate, not the climbing stored rate, so it is fixed between fills: a
-        // checkpoint of the climbed rate never changes the read, and the idle climb keeps its speed while idle
-        uint256 m = _climbMulBps(pagesPot, a.lastFillRate);
+        // the multiplier counts pages at the last fill rate (the rate credits last cleared at), not the climbing stored
+        // rate, so it is fixed between fills: a checkpoint never moves the read and the displayed bid matches the paid
+        // bid (decision 128, variant d)
+        uint256 m = _climbMulBps(pagesPot, a.lastFillRate, s.climbMultiplierCapBps);
         uint256 loosened = 10_000 + uint256(s.idleLoosenBps) * m / BPS * (idle / 10 minutes);
         uint256 cap = (anchor * loosened * s.ceilBps / 1e8).min(capMax);
         price = r;
@@ -367,20 +380,19 @@ library CoreLib {
             price = cap;
         } else if (nowTs > t && r != 0) {
             uint256 target = cap.min(clampTo);
-            if (r < target) price = _recover(r, target, m, t, nowTs, a, s);
+            if (r < target) price = _recover(r, target, t, nowTs, a, s);
         }
         read = price.min(clampTo);
     }
 
-    /// @notice the pot scaled climb multiplier, bps in [10_000, 40_000]. `m` is the pages of 80 refScore credits the
-    /// pages pot buys at the last fill rate `fillRate`, clamped to [1, 4]: one page costs `fillRate * 80`, so pages in
-    /// bps is `pagesPot * 10_000 / (fillRate * 80) = pagesPot * 125 / fillRate`. the fill rate is the last clearing rate,
-    /// fixed between fills. a zero fill rate reads as 1x
-    function _climbMulBps(uint256 pagesPot, uint256 fillRate) private pure returns (uint256) {
-        if (fillRate == 0) return BPS;
-        uint256 mBps = pagesPot * 125 / fillRate;
+    /// @notice the pot scaled multiplier, bps in [10_000, `capBps`]. `m` is the pages of 80 credits of score refScore
+    /// the pages pot buys at the rate `rate`: one page costs `rate * 80`, so pages in bps is `pagesPot * 125 / rate`,
+    /// clamped to [1x, `capBps`]. a zero rate reads as 1x. only the ceiling's idle loosening scales by it
+    function _climbMulBps(uint256 pagesPot, uint256 rate, uint256 capBps) private pure returns (uint256) {
+        if (rate == 0) return BPS;
+        uint256 mBps = pagesPot * 125 / rate;
         if (mBps < BPS) return BPS;
-        if (mBps > 4 * BPS) return 4 * BPS;
+        if (mBps > capBps) return capBps;
         return mBps;
     }
 
@@ -391,15 +403,15 @@ library CoreLib {
     /// in wad seconds: closed form, linear in log time, so it does not move with the evaluation time. The trajectory is
     /// continuous at the crossing and monotone in `nowTs`. The ceiling clamp can fall as the peak decays, which lowers
     /// the clamped result; the unclamped climb never does
-    function _recover(uint256 r, uint256 target, uint256 m, uint256 t, uint256 nowTs, Anchor storage a, Settings storage s)
+    function _recover(uint256 r, uint256 target, uint256 t, uint256 nowTs, Anchor storage a, Settings storage s)
         private
         view
         returns (uint256)
     {
         // forge-lint: disable-start(unsafe-typecast)
-        // the per minute climb is `climbPerMinBps * m` bps, so the wad growth factor is `1e18 + bps * m * 1e10`
-        int256 lnFast = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.recoveryClimbPerMinBps) * m * 1e10));
-        int256 lnSlow = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * m * 1e10));
+        // the per minute climb is unscaled (decision 128, variant d: the multiplier scales the ceiling loosening only)
+        int256 lnFast = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.recoveryClimbPerMinBps) * 1e14));
+        int256 lnSlow = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * 1e14));
         uint256 peakT = Halving.halve(a.peakRate, t.zeroFloorSub(a.peakTime), s.peakHalfLife);
         uint256 levelT = peakT * (10_000 - s.recoveryGapBps) / 10_000;
         uint256 fullWadSec = (nowTs - t) * 1e18;
@@ -548,7 +560,7 @@ library CoreLib {
             c.rateAtCheckpoint,
             c.ethPot,
             c.settings.rateCap,
-            c.ethPot,
+            _ethPagesPot(c),
             c.lastFillTime,
             c.checkpointTime,
             block.timestamp
@@ -626,7 +638,7 @@ library CoreLib {
             c.rateAtCheckpoint,
             eth,
             c.settings.rateCap,
-            eth,
+            _ethPagesPot(c),
             c.lastFillTime,
             c.checkpointTime,
             block.timestamp
@@ -784,7 +796,7 @@ library CoreLib {
             c.rateAtCheckpoint,
             c.ethPot,
             c.settings.rateCap,
-            c.ethPot,
+            _ethPagesPot(c),
             c.lastFillTime,
             c.checkpointTime,
             block.timestamp
@@ -836,10 +848,12 @@ library CoreLib {
         return avail * BPS / denom;
     }
 
-    /// the balance token amount `avail` as bps of par for a refScore credit, uncapped, where `denom` is
-    /// `refScore * unit`. the pages pot of the balance instance, read by the pages multiplier; a zero denom reads as zero
+    /// the balance token amount `avail` as bps of par for a refScore credit, where `denom` is `refScore * unit`. the
+    /// pages pot of the balance instance, read by the pages multiplier; a zero denom reads as zero. `avail` is saturated
+    /// at `320 * denom` before the multiply: `m` reaches its 4x cap at `pagesPot = 320 * fillRate` and `fillRate` is at
+    /// most `BPS`, so the saturation leaves `m` unchanged and the multiply cannot overflow on a huge `available()`
     function _toBpsRaw(uint256 avail, uint256 denom) private pure returns (uint256) {
-        return denom == 0 ? 0 : avail * BPS / denom;
+        return denom == 0 ? 0 : avail.min(320 * denom) * BPS / denom;
     }
 
     /// @notice the balance token bid rate now, bps of par. the Core forwards its `balanceRate()`

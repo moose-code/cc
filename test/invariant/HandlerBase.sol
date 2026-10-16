@@ -725,7 +725,7 @@ abstract contract HandlerBase is Test {
         return BidModel.Bid({
             r: core.rateAtCheckpoint(),
             pot: core.ethPot(),
-            pagesPot: core.ethPot(),
+            pagesPot: core.ethPot() + _pendingPot(st),
             lastFillRate: anchor,
             peakRate: peakRate,
             peakTime: peakTime,
@@ -761,7 +761,7 @@ abstract contract HandlerBase is Test {
             BidModel.Bid({
                 r: s.stored,
                 pot: s.pot,
-                pagesPot: s.pot,
+                pagesPot: s.pot + s.pend,
                 lastFillRate: s.anchor,
                 peakRate: s.peakRate,
                 peakTime: s.peakTime,
@@ -775,10 +775,28 @@ abstract contract HandlerBase is Test {
                 _flag(V_RATE_BOUND, "the rate after a warp differs from the model");
             }
         } else {
-            if (core.rateAtCheckpoint() > s.stored.max(p)) {
+            // the contract checkpoints `m` and the clamp from the pot at checkpoint time, which an action that moves
+            // the balance before it books (a skim then a book, or a book then a spend) shifts off the start pot. the
+            // checkpoint pot lies between the start and end pots and priceNow rises with the pot, so the stored rate is
+            // bounded by the larger of the two model prices
+            Settings memory end = core.settings();
+            uint256 pEnd = BidModel.priceNow(
+                end,
+                BidModel.Bid({
+                    r: s.stored,
+                    pot: core.ethPot(),
+                    pagesPot: core.ethPot() + _pendingPot(end),
+                    lastFillRate: s.anchor,
+                    peakRate: s.peakRate,
+                    peakTime: s.peakTime,
+                    lastFillTime: s.lastFill,
+                    checkpointTime: s.cp,
+                    nowTs: block.timestamp
+                })
+            );
+            if (core.rateAtCheckpoint() > s.stored.max(p).max(pEnd)) {
                 _flag(V_RATE_BOUND, "the stored rate rose with no time passing");
             }
-            Settings memory end = core.settings();
             if (rate1 != BidModel.read(end, core.ethPot() + _pendingPot(end), _priceNow(end))) {
                 _flag(V_RATE_BOUND, "the read differs from the price state lowered to the clamp of the end pot");
             }
@@ -2326,9 +2344,10 @@ abstract contract HandlerBase is Test {
             if (core.checkpointTime() != block.timestamp) _flag(V_RATE_BOUND, "a book with income did not checkpoint");
         }
         _ok(a);
-        // the book moved the pot: the model of the rate follows from the state it left, which `_rs` read before
-        // the income was counted; the read before the book already included the share the book added
-        if (core.ethRate() != rs.rate) _flag(V_RATE_BOUND, "the quote before the book differs from the read after it");
+        // the book checkpointed the rate: with the pages multiplier read at the current rate (decision 128 variant d),
+        // the checkpoint can move the read, so the read follows the model from the state the book left rather than
+        // matching the pre book quote exactly
+        _rsCheck(rs, 0);
     }
 
     /// a payee that reverts, or one that burns all its gas, created once each

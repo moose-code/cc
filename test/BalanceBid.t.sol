@@ -96,15 +96,38 @@ contract BalanceBidTest is Fixture {
         vm.revertToState(snap);
     }
 
-    // promise: SPEC 4 decision 128: the balance instance climb scales with the module's available
-    /// one page of available (80 credits of score refScore at par) climbs at 1x, four pages at the 4x cap. the
-    /// available as bps of par is the multiplier's pot; the par clamp (10_000) does not bind the one minute climb
-    function test_balanceClimbScalesWithAvailable() public {
+    // promise: SPEC 4 decision 128 variant d: the balance climb does not scale with available (only the loosening does)
+    /// the balance instance shares the eth rule: the per minute climb is unscaled, so one page of available and four
+    /// pages climb the same (climbPerMinBps 50, 0.5 percent a minute). the multiplier scales the ceiling loosening,
+    /// which the par cap (10_000) bounds in the narrow [floor, par] band
+    function test_balanceClimbUnscaledByAvailable() public {
         uint256 floor = _floorBps();
         // one page at par is 80 * refScore * UNIT; available sized so availBpsRaw / (80 * floor) is 1 and 4 pages
         uint256 onePage = 80 * uint256(core.settings().refScore) * UNIT * floor / 10_000;
-        assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_100 / 10_000, 1, "one page climbs at 1x");
-        assertApproxEqAbs(_balanceClimbAfterMinute(onePage * 4), floor * 10_400 / 10_000, 1, "four pages climb at the 4x cap");
+        assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_050 / 10_000, 1, "one page climbs at 1x");
+        assertApproxEqAbs(_balanceClimbAfterMinute(onePage * 4), floor * 10_050 / 10_000, 1, "four pages climb at the same 1x");
+    }
+
+    // promise: SPEC 4 a module answering a huge available() never overflows the pages pot or freezes setSettings
+    /// `_toBpsRaw` saturates `available()` before the bps multiply, so a module reporting `type(uint256).max` (a common
+    /// "unlimited" answer) keeps the multiplier at its 4x cap and does not panic `balanceRate`, `balanceBidOf`,
+    /// `sellForBalance` or `setSettings` (the `_balanceCheckpointNow` path that is the only way to turn the bid off)
+    function test_hugeAvailableDoesNotOverflowOrFreeze() public {
+        mod.setAvailable(type(uint256).max);
+        uint256 r = core.balanceRate();
+        assertGt(r, 0, "balanceRate answers");
+        assertLe(r, 10_000, "at most par");
+        uint256[] memory ids = _credits(user, 1);
+        assertGt(core.balanceBidOf(ids[0]), 0, "balanceBidOf answers");
+        uint256 before = xt.balanceOf(user);
+        vm.prank(user);
+        core.sellForBalance(ids);
+        assertGt(xt.balanceOf(user) - before, 0, "sellForBalance paid");
+        // setSettings checkpoints the balance instance while the bid is on; it must not revert
+        Settings memory s = core.settings();
+        s.climbPerMinBps = 123;
+        _setSettings(s);
+        assertEq(core.settings().climbPerMinBps, 123, "setSettings landed");
     }
 
     // promise: SPEC 4 the payout never exceeds par: score * unit at the 10_000 cap
