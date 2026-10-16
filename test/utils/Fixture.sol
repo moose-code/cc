@@ -119,6 +119,14 @@ abstract contract Fixture is Test, ProdDeployer {
     address internal funder;
 
     uint256 internal creditCursor;
+    uint256[] internal strategyPool;
+    mapping(uint256 => bool) internal inStrategyPool;
+    bool internal strategyPoolBuilt;
+    /// credits in the strategy pool: the suites move at most 600 and read 40 listing candidates from the end
+    uint256 internal constant STRATEGY_POOL_SIZE = 700;
+    /// the scan for strategy credits beyond the recorded ids covers [start, end)
+    uint256 internal constant POOL_SCAN_START = 60_000;
+    uint256 internal constant POOL_SCAN_END = 100_000;
 
     // ------------------------------------------------------------------ the balance side
 
@@ -257,6 +265,7 @@ abstract contract Fixture is Test, ProdDeployer {
         launchKey = d.launchKey;
         poolId = d.poolId;
         launchTime = block.timestamp;
+        _strategyPool();
     }
 
     // ------------------------------------------------------------------ builders on the fixture config
@@ -377,17 +386,53 @@ abstract contract Fixture is Test, ProdDeployer {
 
     // ------------------------------------------------------------------ credits
 
+    /// @notice the credits the CreditStrategy holds at the fork block, in a fixed order: the ids of test/utils/CreditIds.sol
+    /// the strategy still holds in their recorded order, then, up to `STRATEGY_POOL_SIZE`, held ids found by scanning
+    /// upward from `POOL_SCAN_START`. the three listed credits are left out. built once in `setUp`, so the order and the
+    /// contents are fixed for the test and survive a snapshot revert
+    function _strategyPool() internal returns (uint256[] storage) {
+        if (strategyPoolBuilt) return strategyPool;
+        strategyPoolBuilt = true;
+        uint256 n = CreditIds.count();
+        for (uint256 i; i < n; ++i) _poolAdd(CreditIds.at(i));
+        for (uint256 id = POOL_SCAN_START; strategyPool.length < STRATEGY_POOL_SIZE && id < POOL_SCAN_END; ++id) {
+            _poolAdd(id);
+        }
+        require(strategyPool.length >= STRATEGY_POOL_SIZE, "strategy pool short: widen the scan");
+        return strategyPool;
+    }
+
+    function _poolAdd(uint256 id) private {
+        if (id == LISTED_A || id == LISTED_B || id == LISTED_C || inStrategyPool[id]) return;
+        try CREDITS.ownerOf(id) returns (address o) {
+            if (o == STRATEGY) {
+                inStrategyPool[id] = true;
+                strategyPool.push(id);
+            }
+        } catch {}
+    }
+
+    /// @notice the `k`th strategy credit counted from the end of the pool, for a test that needs a credit apart from the
+    /// ones `_credits` hands out from the front. the same `k` is the same credit for the whole test
+    function _heldCredit(uint256 k) internal returns (uint256 id) {
+        uint256[] storage pool = _strategyPool();
+        require(pool.length > creditCursor + k, "strategy pool too small: refresh test/utils/CreditIds.sol");
+        id = pool[pool.length - 1 - k];
+        assertEq(CREDITS.ownerOf(id), STRATEGY, "pool credit is not held by the strategy");
+    }
+
     /// @notice moves `n` real credits from the CreditStrategy to `to` and approves the core for them
     /// @return ids the credit ids
     function _credits(address to, uint256 n) internal returns (uint256[] memory ids) {
+        uint256[] storage pool = _strategyPool();
+        require(pool.length >= creditCursor + n, "strategy pool too small: refresh test/utils/CreditIds.sol");
         ids = new uint256[](n);
-        uint256 got;
-        while (got < n) {
-            uint256 id = CreditIds.at(creditCursor++);
-            if (id == LISTED_A || id == LISTED_B || id == LISTED_C) continue;
+        for (uint256 i; i < n; ++i) {
+            uint256 id = pool[creditCursor++];
             vm.prank(STRATEGY);
             CREDITS.transferFrom(STRATEGY, to, id);
-            ids[got++] = id;
+            assertEq(CREDITS.ownerOf(id), to, "credit did not reach the recipient");
+            ids[i] = id;
         }
         vm.prank(to);
         CREDITS.setApprovalForAll(address(core), true);
