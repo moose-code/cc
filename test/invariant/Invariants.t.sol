@@ -483,7 +483,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertLe(rate, price, "the read is above the price state");
         uint256 pot = core.ethPot();
         uint256 pending = address(core).balance - pot - core.ethToBuyback() - core.ethRedeemBurn();
-        assertLe(price, _ethCap(pot), "the price state is above the rate cap and the ceiling");
+        assertLe(price, _ethCap(pot + pending), "the price state is above the rate cap and the ceiling");
         assertLe(rate, pot + pending, "the read is above the pot and the pending income");
         if (pending == 0) {
             assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
@@ -500,17 +500,18 @@ abstract contract InvariantsBase is InvariantFixture {
         (uint256 peakRate, uint256 peakTime) = _peak();
         uint256 anchor = _anchorNow(lastFillRate, peakRate, peakTime, st.peakHalfLife);
         uint256 idle = block.timestamp > core.lastFillTime() ? block.timestamp - core.lastFillTime() : 0;
-        uint256 m = _climbMulBps(pagesPot, lastFillRate);
+        // decision 128 variant d: the loosening scales by m, counted at the last fill rate, capped by climbMultiplierCapBps
+        uint256 m = _climbMulBps(pagesPot, lastFillRate, st.climbMultiplierCapBps);
         uint256 ceiling = anchor * (10_000 + uint256(st.idleLoosenBps) * m / 10_000 * (idle / 600)) * st.ceilBps / 1e8;
         return ceiling < st.rateCap ? ceiling : st.rateCap;
     }
 
-    /// the pot scaled multiplier in bps, clamped to [1, 4]: the pages of 80 credits the pages pot covers at the last
-    /// fill rate (decision 128)
-    function _climbMulBps(uint256 pagesPot, uint256 fillRate) internal pure returns (uint256) {
-        if (fillRate == 0) return 10_000;
-        uint256 mBps = pagesPot * 125 / fillRate;
-        return mBps < 10_000 ? 10_000 : (mBps > 40_000 ? 40_000 : mBps);
+    /// the pot scaled multiplier in bps, clamped to [1x, capBps]: the pages of 80 credits the pages pot covers at the
+    /// last fill rate (decision 128 variant d, the loosening only)
+    function _climbMulBps(uint256 pagesPot, uint256 rate, uint256 capBps) internal pure returns (uint256) {
+        if (rate == 0) return 10_000;
+        uint256 mBps = pagesPot * 125 / rate;
+        return mBps < 10_000 ? 10_000 : (mBps > capBps ? capBps : mBps);
     }
 
     /// the larger of the fill rate and the remembered peak decayed to now

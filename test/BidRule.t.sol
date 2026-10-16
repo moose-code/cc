@@ -264,8 +264,8 @@ contract BidRuleTest is Fixture {
         assertEq(core.rateAtCheckpoint(), price, "the checkpoint at the refill stores the price from before");
         assertEq(core.ethRate(), price, "the read after the refill is that price");
         _warp(10 minutes);
-        // climbPerMinBps 100 scaled 4x by the 20 eth refill: 1.04 per minute, 1.04^10 = 1.4802442849183439
-        assertApproxEqRel(core.ethRate(), price * 1_480_244_284_918_343_000 / 1e18, 1e10, "and it climbs from there");
+        // the climb is unscaled (climbPerMinBps 50): 1.005 per minute, 1.005^10 = 1.0511401320407896
+        assertApproxEqRel(core.ethRate(), price * 1_051_140_132_040_790_000 / 1e18, 1e9, "and it climbs from there");
     }
 
     // promise: SPEC 1 the price state stays at or below rateCap (inv 19)
@@ -349,13 +349,13 @@ contract BidRuleTest is Fixture {
     }
 
     // promise: SPEC 1 risk: a market above the bid waits for the climb or setRate
-    /// every seller asks the full new price, 200 percent of the old one. the 20 eth pot runs the loosening at the 4x cap
-    /// (24 percent of the anchor per 10 idle minutes), so the ceiling clears 200 percent at the 4th interval
-    /// (110 percent * (1 + 24 percent * 4) = 215 percent), 40 minutes
+    /// every seller asks the full new price, 200 percent of the old one. the 20 eth pot loosens the ceiling at the 4x
+    /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128 variant
+    /// d, climbPerMinBps 50): the bid reaches 200 percent only when the 0.5 percent a minute climb gets there, minute 140
     function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() public {
         (uint256 m,) = _minutesToFirstFill(20_000);
         emit log_named_uint("minutes to the first fill, no cheap ask", m);
-        assertEq(m, 40);
+        assertEq(m, 140);
     }
 
     // ------------------------------------------------------------------ decision 128: pot scaled climb
@@ -380,14 +380,13 @@ contract BidRuleTest is Fixture {
         return core.ethPrice() * 10_000 / stored;
     }
 
-    // promise: SPEC 4 decision 128: the idle climb scales with the pages the pot covers, clamped to [1, 4]
-    /// at one page the climb is the launch rate (climbPerMinBps 100, 1 percent a minute), at three pages 3x, at ten
-    /// pages the 4x cap
-    function test_climbScalesWithPotPages() public {
+    // promise: SPEC 4 decision 128 variant d: the per minute climb does not scale with the pot, only the loosening does
+    /// the climb is the launch rate (climbPerMinBps 50, 0.5 percent a minute) at one, three and ten pages alike
+    function test_climbUnscaledByPotPages() public {
         _with(_highCeiling);
-        assertApproxEqAbs(_climbFactorBps(1), 10_100, 2, "one page climbs at 1x");
-        assertApproxEqAbs(_climbFactorBps(3), 10_300, 2, "three pages climb at 3x");
-        assertApproxEqAbs(_climbFactorBps(10), 10_400, 2, "ten pages climb at the 4x cap");
+        assertApproxEqAbs(_climbFactorBps(1), 10_050, 2, "one page climbs at 1x");
+        assertApproxEqAbs(_climbFactorBps(3), 10_050, 2, "three pages climb at the same 1x");
+        assertApproxEqAbs(_climbFactorBps(10), 10_050, 2, "ten pages climb at the same 1x");
     }
 
     /// @dev the loosened ceiling after 10 idle minutes at a pot sized to `pages` pages, in bps of the anchor (10_000
@@ -400,7 +399,7 @@ contract BidRuleTest is Fixture {
         _potTo(1 ether);
         _sellOne();
         (uint256 anchor,,) = _anchor();
-        // pages of 80 at the anchor (the last fill rate the multiplier reads) sets the multiplier to `pages` exactly
+        // pages of 80 at the last fill rate (the anchor the multiplier reads) sets the multiplier to `pages` exactly
         uint256 pot = pages * 80 * anchor;
         stdstore.target(address(core)).sig("ethPot()").checked_write(pot);
         vm.deal(address(core), pot);
@@ -408,7 +407,7 @@ contract BidRuleTest is Fixture {
         return core.ethRate() * 1e8 / (anchor * core.settings().ceilBps);
     }
 
-    // promise: SPEC 4 decision 128: the ceiling's idle loosening scales with the pages the pot covers, clamped to [1, 4]
+    // promise: SPEC 4 decision 128 variant d: the ceiling's idle loosening scales with the pages the pot covers, clamped to [1x, the cap]
     /// the launch loosening is 6 percent per 10 minutes (idleLoosenBps 600); at three pages it is 18 percent, at ten
     /// pages the 4x cap, 24 percent
     function test_ceilingLooseningScalesWithPotPages() public {
@@ -422,6 +421,12 @@ contract BidRuleTest is Fixture {
     /// a fill then four hours idle at a full pot (the 4x cap): the ceiling grows per the pot scaled loosening, 24 idle
     /// intervals of 600 * 4 bps, with no hourly cap (the hourly bound was rejected, decision 128)
     function test_fullPotLoosensAtTheCapOverFourHours() public {
+        // a fast climb so the read pins to the loosened ceiling (the launch 50 climb stays below it); the loosening is
+        // what the 4x pot multiplier scales
+        Settings memory s = core.settings();
+        s.climbPerMinBps = 1_000;
+        s.recoveryClimbPerMinBps = 1_000;
+        _setSettings(s);
         _potTo(20 ether);
         _sellOne();
         (uint256 anchor,,) = _anchor();

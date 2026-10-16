@@ -30,13 +30,13 @@ library BidModel {
         uint256 nowTs;
     }
 
-    /// @dev the pot scaled climb multiplier, bps in [10_000, 40_000]: the pages of 80 refScore credits the pages pot
-    /// buys at the last fill rate, clamped to [1, 4]. one page costs `fillRate * 80`, so pages in bps is
-    /// `pagesPot * 125 / fillRate`. the fill rate is fixed between fills, so a checkpoint never changes the read
-    function climbMul(uint256 pagesPot, uint256 fillRate) internal pure returns (uint256) {
-        if (fillRate == 0) return 10_000;
-        uint256 mBps = pagesPot * 125 / fillRate;
-        return mBps < 10_000 ? 10_000 : (mBps > 40_000 ? 40_000 : mBps);
+    /// @dev the pot scaled multiplier, bps in [10_000, capBps]: the pages of 80 refScore credits the pages pot buys at
+    /// the current rate, clamped to [1x, capBps]. one page costs `rate * 80`, so pages in bps is `pagesPot * 125 / rate`.
+    /// only the ceiling's idle loosening scales by it (decision 128, variant d)
+    function climbMul(uint256 pagesPot, uint256 rate, uint256 capBps) internal pure returns (uint256) {
+        if (rate == 0) return 10_000;
+        uint256 mBps = pagesPot * 125 / rate;
+        return mBps < 10_000 ? 10_000 : (mBps > capBps ? capBps : mBps);
     }
 
     /// @dev the price state at the first fill of the minute after a fill at `fillState`: `minuteStart`, or `fillState` when
@@ -110,23 +110,23 @@ library BidModel {
     }
 
     /// @dev priceNow with an explicit cap (eth: `rateCap`; balance: 10_000). reproduces `CoreLib._climb`: the idle climb
-    /// and the loosening scale by the pot multiplier `m` (decision 128)
+    /// is unscaled and the ceiling's loosening scales by the pot multiplier `m` at the current rate (decision 128, variant d)
     function priceNow(Settings memory s, Bid memory b, uint256 cap) internal pure returns (uint256) {
         uint256 anchor = b.lastFillRate.max(peakNow(s, b.peakRate, b.peakTime, b.nowTs));
         uint256 idle = b.nowTs > b.lastFillTime ? b.nowTs - b.lastFillTime : 0;
-        uint256 m = climbMul(b.pagesPot, b.lastFillRate);
+        uint256 m = climbMul(b.pagesPot, b.lastFillRate, s.climbMultiplierCapBps);
         uint256 capV = ceiling(s, anchor, idle, m).min(cap);
         if (b.r >= capV) return capV;
         if (b.nowTs <= b.checkpointTime || b.r == 0) return b.r;
         uint256 target = capV.min(b.pot);
         if (b.r >= target) return b.r;
-        return _recover(s, b, target, m);
+        return _recover(s, b, target);
     }
 
-    function _recover(Settings memory s, Bid memory b, uint256 target, uint256 m) private pure returns (uint256) {
+    function _recover(Settings memory s, Bid memory b, uint256 target) private pure returns (uint256) {
         // forge-lint: disable-start(unsafe-typecast)
-        int256 lnFast = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.recoveryClimbPerMinBps) * m * 1e10));
-        int256 lnSlow = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * m * 1e10));
+        int256 lnFast = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.recoveryClimbPerMinBps) * 1e14));
+        int256 lnSlow = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * 1e14));
         uint256 peakT = Halving.halve(
             b.peakRate, b.checkpointTime > b.peakTime ? b.checkpointTime - b.peakTime : 0, s.peakHalfLife
         );

@@ -28,8 +28,8 @@ export default function SellPage() {
   const bid = snap?.ethRate ?? 0n;
   const pot = snap?.ethPot ?? 0n;
   const buyableNow = bid > 0n ? Number(pot / bid) : 0;
-  // the pot scaled climb multiplier (10_000 is 1x) and the pages the pot covers at the current bid, the same figure as
-  // "engine can buy now" (a page is 80 credits). the bid is flat once it reaches the rate cap
+  // the pot scaled multiplier (10_000 is 1x) that scales the ceiling's idle loosening, and the pages the pot covers at
+  // the current bid, the same figure as "engine can buy now" (a page is 80 credits). the bid is flat at the rate cap
   const climbX = Number(snap?.climbMultiplier ?? 10000n) / 10000;
   const potPages = buyableNow / 80;
   const atCap = snap ? bid >= snap.settings.rateCap : false;
@@ -97,7 +97,7 @@ export default function SellPage() {
               {atCap ? (
                 <span className="muted">bid at cap</span>
               ) : climbX > 1 ? (
-                <span className="muted">pot covers {potPages.toFixed(1)} pages, climbing {climbX.toFixed(1)}x</span>
+                <span className="muted">pot covers {potPages.toFixed(1)} pages, ceiling loosening {climbX.toFixed(1)}x</span>
               ) : null}
             </div>
             <div className="quote">

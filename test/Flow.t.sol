@@ -56,22 +56,22 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[28] memory) {
+    function _lo() internal pure returns (uint256[29] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[28] memory) {
+    function _hi() internal pure returns (uint256[29] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[28] memory) {
+    function _names() internal pure returns (bytes32[29] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[28] memory lo = _lo();
-        uint256[28] memory hi = _hi();
+        uint256[29] memory lo = _lo();
+        uint256[29] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
@@ -134,8 +134,8 @@ contract FlowTest is Fixture {
 
     // promise: INTEGRATION BadSetting: bounds are inclusive
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[28] memory lo = _lo();
-        uint256[28] memory hi = _hi();
+        uint256[29] memory lo = _lo();
+        uint256[29] memory hi = _hi();
         _markupToTheBound();
         for (uint256 i; i < N; ++i) {
             for (uint256 k; k < 2; ++k) {
@@ -157,9 +157,9 @@ contract FlowTest is Fixture {
 
     // promise: INTEGRATION BadSetting
     function test_settings_everyBoundViolationReverts() public {
-        uint256[28] memory lo = _lo();
-        uint256[28] memory hi = _hi();
-        bytes32[28] memory names = _names();
+        uint256[29] memory lo = _lo();
+        uint256[29] memory hi = _hi();
+        bytes32[29] memory names = _names();
         for (uint256 i; i < N; ++i) {
             // the two switches take 0 or 1, nothing is out of bounds
             if (i == 11 || i == 12) continue;

@@ -499,8 +499,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.floorRate(s.rateAtCheckpoint, s.ethPot, s.lastFillTime, s.checkpointTime, block.timestamp);
     }
 
-    /// the pot scaled climb multiplier now, bps (10_000 is 1x): how many pages of 80 credits of score `refScore` the
-    /// booked pot covers at the last fill rate, clamped to [1, 4]. the idle climb and the ceiling's idle loosening scale by it
+    /// the pot scaled multiplier now, bps (10_000 is 1x): how many pages of 80 credits of score `refScore` the booked
+    /// pot covers at the last fill rate, clamped to [1x, `climbMultiplierCapBps`]. the ceiling's idle loosening scales by it
     function climbMultiplier() external view returns (uint256) {
         return CoreLib.climbMultiplier();
     }
