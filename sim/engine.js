@@ -14,6 +14,10 @@ export const REF_PTS = 433;
 // copies a launch value and the two cannot drift
 import { readFileSync as _readFileSync } from 'node:fs'; // build-strip
 export const LAUNCH_RAW = JSON.parse(_readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8')); // build-inline
+// Jack's balance token constants live in one place, sim/upstream.js (build.mjs inlines it for the browser). the balance
+// model's unit, decimals and redemption math read them, so a change in his repo is a one-line sim change
+import { UNIT_PER_POINT, DECIMALS, redeemQuote } from './upstream.js'; // build-strip
+export { UNIT_PER_POINT, DECIMALS, redeemQuote }; // build-strip
 const _cs = LAUNCH_RAW.settings, _sale = LAUNCH_RAW.sale, _cr = LAUNCH_RAW.credit, _ln = LAUNCH_RAW.launch;
 
 // the Core's Settings struct (src/interfaces/Interfaces.sol), same field names, values read from the config.
@@ -782,6 +786,12 @@ export class Core {
   curvePrice(st, now) { return Math.max(this.statementPrice(this.reference(st, now), st, now), this.floorPrice(st)); }
   // the unit the balance token bid, the redemption and the pool term use: the unitPerPoint the module reports now
   unit() { return this.xpLive; }
+  // base units Jack's contract withdraws for a statement of stored rating `scoreUnits`, from sim/upstream.js: the single
+  // source for UNIT_PER_POINT (base units per score unit) and DECIMALS (10 ** DECIMALS base units to one token). the eth
+  // value the sim tracks for a redemption is this amount at the balance token pool price; the model's `xpLive` is that
+  // eth value per whole point. a change in Jack's unit or decimals is a one-line change in sim/upstream.js
+  redeemBaseUnits(scoreUnits) { return redeemQuote(scoreUnits); }
+  tokenOne() { return 10 ** DECIMALS; }
   // ControllerV1.priceOf: the engine price of a statement now, the curve price
   askingPrice(st, now) { return this.curvePrice(st, now); }
   // the lowest asking price the statement will ever have under the current settings: saleFloorBps of the reference
