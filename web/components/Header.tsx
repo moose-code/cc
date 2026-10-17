@@ -4,9 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAcquireCandidate, useAcquireTx } from "@/lib/useAcquire";
+import { useAcquireCandidate } from "@/lib/useAcquire";
 import { useEns } from "@/lib/ens";
-import { commas, eth, evmNowTx, shortAddr } from "@/lib/format";
+import { commas, eth, shortAddr } from "@/lib/format";
 import { usePotPage } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
 
@@ -40,7 +40,7 @@ export function Header() {
         {open ? "✕" : "≡"}
       </button>
 
-      {/* nav + connect collapse into the hamburger menu on mobile */}
+      {/* nav, pot figures and the wallet; collapse into the hamburger menu on mobile */}
       <div className={`menu${open ? " open" : ""}`}>
         <nav className="nav">
           {NAV.map((n) => (
@@ -53,10 +53,9 @@ export function Header() {
             </Link>
           ))}
         </nav>
+        <PotPage />
+        <WalletButton />
       </div>
-
-      <PotPage />
-      <WalletButton />
     </header>
   );
 }
@@ -103,7 +102,7 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// The points the pot covers, the bid per 100 points and the acquire button beside the wallet, on every page.
+// The points the pot covers, the bid per 100 points and the next-listing bar, beside the wallet on every page.
 function PotPage() {
   const { pts, per100 } = usePotPage();
   return (
@@ -112,7 +111,6 @@ function PotPage() {
       <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
       {per100 && <span className="hdr-next-bid">· bid {per100} ETH / 100 pts</span>}
       <NextListing />
-      <Acquire />
     </div>
   );
 }
@@ -128,10 +126,6 @@ function useWide() {
     return () => m.removeEventListener("change", f);
   }, []);
   return wide;
-}
-
-function Acquire() {
-  return useWide() ? <AcquireButton /> : null;
 }
 
 // The next listing the engine will reach: the cheapest row still above its bid, with its ask and the bid's progress
@@ -166,40 +160,3 @@ function NextListingBar() {
   );
 }
 
-// Buys the listing that clears (price at or below its bid, the pot and the bucket's spend cap) through
-// Core.buyListing. The call is simulated before the button enables and again right before sending; a revert drops
-// that listing for the block and the next one is tried.
-function AcquireButton() {
-  const { cleared, block, waiting, nextIn, reverted } = useAcquireCandidate();
-  const { buy, available, pending, err, done } = useAcquireTx(block);
-  const next = available(cleared)[0];
-
-  if (done)
-    return (
-      <a className="hdr-acq-done" href={evmNowTx(done.hash)} target="_blank" rel="noreferrer">
-        acquired #{done.id.toString()} ↗
-      </a>
-    );
-  // always shown; inactive while no listing clears its bid and the pot
-  return (
-    <>
-      {err && <span className="hdr-acq-err">{err}</span>}
-      <button
-        className={next ? "hdr-acq on" : "hdr-acq"}
-        onClick={() => buy(cleared)}
-        disabled={!next || pending}
-        title={
-          next
-            ? `credit #${next.id} bids ${eth(next.bid)} ETH (${next.source})`
-            : reverted
-              ? `the purchase would revert: ${reverted}`
-              : waiting
-                ? `${waiting} at or under the bid; the spend cap resets in ${nextIn}s`
-                : "no listed credit is at or under its bid"
-        }
-      >
-        {pending ? "acquiring…" : next ? `acquire · ${eth(next.price)} ETH` : "acquire"}
-      </button>
-    </>
-  );
-}

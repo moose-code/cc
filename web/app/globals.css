@@ -662,8 +662,27 @@ a:hover {
   font-size: 14px;
   font-weight: 600;
 }
+/* feed view tabs: plain muted text, the active one in ink; no boxed segment */
 .ledger-head .seg {
   margin-left: auto;
+  border: 0;
+  gap: 16px;
+}
+.ledger-head .seg button {
+  padding: 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+.ledger-head .seg button + button {
+  border-left: 0;
+}
+.ledger-head .seg button:hover {
+  color: var(--muted);
+}
+.ledger-head .seg button.on {
+  background: none;
+  color: var(--ink);
+  font-weight: 600;
 }
 .live {
   display: inline-flex;
@@ -1281,9 +1300,23 @@ button.tp-row:disabled {
 .footer a:hover {
   color: var(--ink);
 }
-.footer .seg button {
-  padding: 2px 8px;
-  font-size: 11px;
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: 0;
+  color: var(--faint);
+  cursor: pointer;
+}
+.theme-toggle:hover {
+  color: var(--ink);
+}
+.theme-toggle svg {
+  width: 15px;
+  height: 15px;
 }
 .plates {
   display: flex;
@@ -2256,19 +2289,13 @@ button.tp-row:disabled {
 
 @media (max-width: 860px) {
   .header {
-    flex-wrap: wrap;
-    height: auto;
-    min-height: 52px;
+    position: relative;
+    height: 52px;
     padding: 4px 16px;
     gap: 0 12px;
   }
   .brand {
     order: 1;
-  }
-  .wallet {
-    order: 2;
-    margin-left: auto;
-    gap: 8px;
   }
   .brand-sub {
     display: none;
@@ -2283,19 +2310,27 @@ button.tp-row:disabled {
   .btn-fill .narrow {
     display: inline;
   }
+  /* the toggle is the only other top-row item, so it sits at the right edge */
   .nav-toggle {
     display: block;
-    order: 3;
+    order: 2;
+    margin-left: auto;
   }
+  /* the menu drops below the header as an overlay, so opening it does not push the page down */
   .menu {
-    order: 4;
-    width: 100%;
-    flex: 0 0 100%;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
     display: none;
     flex-direction: column;
     align-items: flex-start;
-    padding: 12px 0;
+    gap: 4px;
+    padding: 12px 16px;
+    background: var(--paper);
     border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--structure);
+    z-index: 50;
   }
   .menu.open {
     display: flex;
@@ -2307,6 +2342,12 @@ button.tp-row:disabled {
   }
   .nav a {
     padding: 12px 0;
+  }
+  .menu .wallet {
+    margin-left: 0;
+    width: 100%;
+    padding-top: 8px;
+    gap: 8px;
   }
 }
 
