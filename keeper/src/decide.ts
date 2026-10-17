@@ -417,6 +417,9 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
     case "redeemStatement":
       payment = callerPayment(s, gasUsed, REDEEM_GAS, b);
       break;
+    case "refreshReference":
+      payment = callerPayment(s, gasUsed, REFRESH_GAS, b);
+      break;
     case "collectEscrow":
       return { ok: s.escrowBalance >= cost, payment, cost };
     case "book":
