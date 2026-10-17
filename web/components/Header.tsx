@@ -37,7 +37,9 @@ export function Header() {
         aria-label="menu"
         aria-expanded={open}
       >
-        {open ? "✕" : "≡"}
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+          {open ? <path d="M4 4l10 10M14 4L4 14" /> : <path d="M3 5h12M3 9h12M3 13h12" />}
+        </svg>
       </button>
 
       {/* nav, pot figures and the wallet; collapse into the hamburger menu on mobile */}
