@@ -88,7 +88,7 @@ interface IControllerV1 {
     function refreshReference() external;
     function setAgeEligibilityOn(bool v) external;
     function setAnchorBps(uint32 v) external;
-    function setBalancePoolKey(PoolKey memory key) external;
+    function setBalancePoolKey(PoolKey memory key, uint256 expectedSpot) external;
     function setCredit(CreditSale memory v) external;
     function setQuote(Quote memory v) external;
     function setSale(Sale memory v) external;

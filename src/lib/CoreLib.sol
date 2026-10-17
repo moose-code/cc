@@ -263,6 +263,9 @@ library CoreLib {
     function setSettings(Settings calldata ns) external {
         bytes32 bad = SettingsBounds.firstViolation(ns);
         if (bad != 0) revert BadSetting(bad);
+        // value mode bounds dump volume with the drop, but the eth route keeps the spend cap as its incident bound: the
+        // cap must be active (under 10_000, not the bypass) whenever the value switch is on
+        if (ns.valueModeOn && ns.spendCapBps >= BPS) revert BadSetting("spendCapBps");
         State storage c = state();
         // the artist cut is never nonzero while the artist is the zero address, so a sale never pushes it to address(0).
         // the constructor sets the artist before its own call here, so the launch config must carry a real artist
@@ -299,6 +302,24 @@ library CoreLib {
             _resetBalanceToFloor(c, floor);
         } else {
             _resetBalanceToFloorIfBelow(c, floor);
+        }
+        // leaving value mode: the eth instance climbed idle during value mode and could reopen the eth bid at the cap on
+        // a rollback. reset it to the value mode eth rate the shared instance was paying, so the eth bid resumes there;
+        // with no usable quote reset to 1 wei so it climbs back up from the floor rather than reopening high
+        if (wasValue && !ns.valueModeOn) {
+            (uint256 vr, bool okv) = _valueRate(c);
+            // the quote, else the last good value rate kept in the idle eth instance; 1 wei if neither is known
+            uint256 target = okv ? vr : c.rateAtCheckpoint;
+            if (target == 0) target = 1;
+            // mirror `setRate`: the stored rate, the last fill rate and the remembered peak all become `target` with a
+            // fresh peak and checkpoint time, so the eth bid resumes from `target` and climbs the ceiling from there
+            c.anchor.lastFillRate = target;
+            c.anchor.peakRate = target;
+            c.rateAtCheckpoint = target;
+            // forge-lint: disable-next-line(unsafe-typecast)
+            c.anchor.peakTime = uint64(block.timestamp);
+            // forge-lint: disable-next-line(unsafe-typecast)
+            c.checkpointTime = uint64(block.timestamp);
         }
         emit SettingsSet(ns);
     }
@@ -453,7 +474,15 @@ library CoreLib {
     /// a pot grows or a rate is spent, so no climb is credited under a later pot
     function checkpoint() external {
         State storage c = state();
-        (c.rateAtCheckpoint,,) = _ethClimb(c);
+        if (c.settings.valueModeOn) {
+            // value mode prices the eth bid off the shared instance, so the eth instance is idle. keep its stored rate as
+            // the last good value mode eth rate: the balance sale cost basis reads it when the quote is momentarily down,
+            // and the switch off reset resumes from it. a down quote leaves the previous good rate in place
+            (uint256 vr, bool okv) = _valueRate(c);
+            if (okv) c.rateAtCheckpoint = vr;
+        } else {
+            (c.rateAtCheckpoint,,) = _ethClimb(c);
+        }
         // forge-lint: disable-next-line(unsafe-typecast)
         c.checkpointTime = uint64(block.timestamp);
     }
@@ -1085,10 +1114,11 @@ library CoreLib {
     /// climbed before the pot clamp and the decayed eth peak. read only
     function _ethFloorNow(State storage c) private view returns (uint256) {
         if (c.settings.valueModeOn) {
-            // value mode: the eth bid the shared instance prices, a record only, 0 (a 1 wei basis) while the quote fails,
-            // so the balance route never waits on a quote
-            (uint256 rate,) = _valueRate(c);
-            return rate;
+            // value mode: the eth bid the shared instance prices, a record only. a momentarily down quote falls back to
+            // the last good value mode eth rate kept in the idle eth instance (checkpoint), so a balance sale never
+            // books a 1 wei basis while the reference is briefly unusable; the balance route never waits on a quote
+            (uint256 rate, bool okv) = _valueRate(c);
+            return okv ? rate : c.rateAtCheckpoint;
         }
         (uint256 ep,, uint256 epk) = _ethClimb(c);
         return ep.max(epk);

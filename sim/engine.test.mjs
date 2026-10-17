@@ -781,7 +781,7 @@ const R0 = 6.668e15;
 // drops the shared instance, valueOf is the sale value with the floor rate and cost terms dropped, an unusable quote bids and
 // sells nothing, and only the switch and the bid turning on reset the shared instance
 {
-  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 500); assert.equal(QUOTE.referenceMaxStale, 0); n += 3; // the launch config: off, owner inputs pending
+  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 450); assert.equal(QUOTE.referenceMaxStale, 0); n += 3; // the launch config: off, owner inputs pending
   assert.equal(quoteViolation({ ...QUOTE, referenceStepBps: 10001 }), 'referenceStepBps'); assert.equal(quoteViolation({ ...QUOTE, tolBps: 10000 }), 'tolBps'); assert.equal(quoteViolation(QUOTE), null); n += 3;
   const BPS = 10000, U = 0.001 / 100; // eth per point at the unit price
   const Q = { referenceRateBpsPerHour: 100, referenceStepBps: 200, tolBps: 500, referenceMaxStale: 3600, referenceMinSeconds: 0, balancePoolSet: true, balanceBidCapBps: 11000, balanceBidMarginBps: 1000 };

@@ -159,6 +159,8 @@ contract FlowTest is Fixture {
                 _set(s, i, v);
                 uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
                 if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);
+                // value mode requires the eth spend cap active (under 10,000, decision 157)
+                if (s.valueModeOn && s.spendCapBps >= 10_000) s.spendCapBps = 9_999;
                 _owner(s);
                 vm.warp(block.timestamp + 61);
                 if (s.valueModeOn) {

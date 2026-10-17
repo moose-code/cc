@@ -161,7 +161,7 @@ abstract contract InvariantFixture is Fixture {
                 tickSpacing: 60,
                 hooks: address(0)
             });
-            ctl.setBalancePoolKey(k);
+            ctl.setBalancePoolKey(k, 1e12);
         }
         // the hostile controller swap comes after the pool key is set on the real controller, so the key survives it
         if (hostile) core.setController(address(fuzz));

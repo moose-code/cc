@@ -84,7 +84,7 @@ contract RatingReferenceTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setBalancePoolKey(k);
+        ctl.setBalancePoolKey(k, spotOf(sp));
     }
 
     // ------------------------------------------------------------------ reference

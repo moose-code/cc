@@ -92,10 +92,13 @@ contract CreditSaleTest is Fixture {
         _creditBad(c, "creditWindow");
         c.window = type(uint32).max;
 
-        // the spread takes any uint16
+        // the spread couples with the reference tolerance (loop closure, decision 157): at the launch tol 450 the
+        // spread must be at least 943, so a zero spread reverts and a spread above it stores
         c.spreadBps = 0;
+        _creditBad(c, "creditSpreadBps");
+        c.spreadBps = 1_000;
         ctl.setCredit(c);
-        assertEq(ctl.floorMultBps(), 10_000, "a zero spread at the 10,000 cap is a floor at the reference");
+        assertEq(ctl.floorMultBps(), 11_000, "spread 1,000 at the 10,000 cap is a 10 percent floor over the reference");
         c.spreadBps = type(uint16).max;
         ctl.setCredit(c);
         assertEq(ctl.creditSpreadBps(), type(uint16).max);

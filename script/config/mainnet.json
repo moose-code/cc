@@ -67,7 +67,7 @@
   "quote": {
     "referenceRateBpsPerHour": 0,
     "referenceStepBps": 0,
-    "tolBps": 500,
+    "tolBps": 450,
     "referenceMaxStale": 0,
     "referenceMinSeconds": 600,
     "minLiquidity": 0

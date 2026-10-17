@@ -6,6 +6,8 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {ICredits, CreditSale, Settings, Mainnet} from "../../src/interfaces/Interfaces.sol";
@@ -85,8 +87,8 @@ contract Seed is Script {
         token.mint(address(module), vm.parseJsonUint(cfg, ".dev.balanceMintToModule"));
         token.mint(trader, LP_TOKENS);
         if (hasWallet) token.mint(wallet, vm.parseJsonUint(cfg, ".dev.walletBalance"));
-        IPoolManager(Mainnet.POOL_MANAGER)
-            .initialize(pool, uint160(vm.parseJsonUint(cfg, ".dev.balancePoolSqrtPriceX96")));
+        uint160 poolSqrt = uint160(vm.parseJsonUint(cfg, ".dev.balancePoolSqrtPriceX96"));
+        IPoolManager(Mainnet.POOL_MANAGER).initialize(pool, poolSqrt);
         TestLiquidityHelper lp = new TestLiquidityHelper();
         token.approve(address(lp), type(uint256).max);
         lp.modify{value: LP_ETH}(pool, -TICK_FULL, TICK_FULL, int256(LIQUIDITY));
@@ -106,7 +108,9 @@ contract Seed is Script {
                 fee: 3000,
                 tickSpacing: 60,
                 hooks: address(0)
-            })
+            }),
+            // the expected eth spot, wei per 1e18 base units, from the pool sqrt the script just initialized
+            FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, poolSqrt), FixedPoint96.Q96, poolSqrt)
         );
         ctl.setCredit(
             CreditSale({

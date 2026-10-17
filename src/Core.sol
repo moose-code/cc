@@ -716,7 +716,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             .min(room - value);
         _spend(value + paid, score);
         _push(id, value + paid);
-        emit ListingBought(id, adapter, msg.sender, value, paid, s.rateAtCheckpoint);
+        // the fill drop lands on the shared instance in value mode and on the eth instance outside it, so report the
+        // rate the fill actually moved: the shared rate (bps of par) in value mode, the eth checkpoint rate otherwise
+        uint256 rate = cfg.valueModeOn ? s.balance.rateAtCheckpoint : s.rateAtCheckpoint;
+        emit ListingBought(id, adapter, msg.sender, value, paid, rate);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
 

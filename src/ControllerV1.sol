@@ -206,8 +206,11 @@ contract ControllerV1 is IController {
 
     /// sets the native eth / balance token pool whose sqrt price prices the pool term of `valueOf`.
     /// `currency0` must be native eth (the zero address) and `currency1` the core's current balance token, the order a
-    /// native eth pool sorts to. the pool must be initialized, so `valueOf` reads a live price at once. effective at once
-    function setBalancePoolKey(PoolKey calldata key) external onlyOwner {
+    /// native eth pool sorts to. the pool must be initialized, so `valueOf` reads a live price at once. the reference is
+    /// seeded from the live spot, and the owner passes `expectedSpot` (wei per 1e18 base units): a live spot more than
+    /// `tolBps` from it reverts, so the reference is not seeded from a pool moved or manipulated between signing and
+    /// landing. effective at once
+    function setBalancePoolKey(PoolKey calldata key, uint256 expectedSpot) external onlyOwner {
         address token = CORE.balanceToken();
         if (token == address(0)) revert BadSetting("balanceToken");
         address c0 = Currency.unwrap(key.currency0);
@@ -220,6 +223,8 @@ contract ControllerV1 is IController {
         emit BalancePoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
         // the reference starts at the spot of the key the owner sets, in the owner's transaction
         (uint256 spot,) = _spot();
+        uint256 band = expectedSpot * quote.tolBps / BPS;
+        if (spot < expectedSpot - band || spot > expectedSpot + band) revert BadSetting("spot");
         _setRef(spot, spot);
     }
 
@@ -231,8 +236,34 @@ contract ControllerV1 is IController {
     function _setQuote(Quote memory v) private {
         if (v.referenceStepBps > BPS) revert BadSetting("referenceStepBps");
         if (v.tolBps >= BPS) revert BadSetting("tolBps");
+        // the rate, the step and the staleness are all set or all zero: a partial triple would move or expire the
+        // reference without the matching bound, a misconfiguration
+        bool anyRef = v.referenceRateBpsPerHour != 0 || v.referenceStepBps != 0 || v.referenceMaxStale != 0;
+        bool allRef = v.referenceRateBpsPerHour != 0 && v.referenceStepBps != 0 && v.referenceMaxStale != 0;
+        if (anyRef && !allRef) revert BadSetting("referenceTriple");
+        // the sale spread covers the worst round trip through the reference band at the current credit spread
+        _checkLoopClosure(v.tolBps, creditSpreadBps);
+        // the reference band widened by the sale spread stays inside the bid margin, so a buy from the bid and a sale
+        // back loses in either currency. the Core read is skipped while the Core has no code yet (constructor order)
+        if (address(CORE).code.length != 0) {
+            uint256 margin = ICoreSale(address(CORE)).settings().balanceBidMarginBps;
+            if ((BPS + v.referenceStepBps) * (BPS + v.tolBps) * (BPS - margin) >= BPS * BPS * BPS) {
+                revert BadSetting("referenceBand");
+            }
+        }
         quote = v;
         emit QuoteSet(v);
+    }
+
+    /// the sale spread (bps over the bid cap) must cover the worst round trip through the reference band: with a buy at
+    /// the band top `(10_000 + tol)` and a sale floor at the band bottom `(10_000 - tol)`, the ask clears the bid only
+    /// when `(10_000 + spread) >= (10_000 + tol) * 10_000 / (10_000 - tol)` (the bid cap cancels on both sides). about
+    /// 1,053 at `tol` 500, 943 at 450
+    function _checkLoopClosure(uint256 tol, uint256 spread) private pure {
+        uint256 num = (BPS + tol) * BPS;
+        uint256 den = BPS - tol;
+        uint256 req = (num + den - 1) / den - BPS;
+        if (spread < req) revert BadSetting("creditSpreadBps");
     }
 
     // ------------------------------------------------------------------ the protected price
@@ -342,6 +373,8 @@ contract ControllerV1 is IController {
     function _setCredit(CreditSale memory v) private {
         if (!CreditBounds.windowOk(v.window)) revert BadSetting("creditWindow");
         if (!CreditBounds.startBpsOk(v.startBps)) revert BadSetting("creditStartBps");
+        // the sale spread covers the worst round trip through the reference band at the current reference tolerance
+        _checkLoopClosure(quote.tolBps, v.spreadBps);
         creditSaleOn = v.saleOn;
         creditWindow = v.window;
         creditSpreadBps = v.spreadBps;
