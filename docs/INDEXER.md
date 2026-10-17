@@ -74,7 +74,7 @@ All addresses and start blocks come from `deployments/<chainId>.json`. The confi
 | source | address | filter | start block | events |
 |---|---|---|---|---|
 | Core | record `core` (CoreLib events are emitted under the Core address) | all events | record `deployBlock` | every Core and CoreLib event (inventory B1, about 35) |
-| Controller | factory over Core `ControllerSet(address controller)` | all events | block of each `ControllerSet` | `Bought`, `AnchorMoved`, `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet` |
+| Controller | factory over Core `ControllerSet(address controller)` | all events | block of each `ControllerSet` | `Bought`, `AnchorMoved`, `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`, `QuoteSet`, `ReferenceRefreshed` |
 | CC burns | record `coin` | `Transfer` with `to = 0x0` | record `deployBlock` | all burns; attribution to the engine via the tx (Buyback tx, `CreditSwapped.fee`) |
 | $BALANCE paid | Core | `BalanceRateFill.spent`, associated with preceding `CreditBought` and latest prior `BalanceModuleSet` | Core deployment | module custody, per-credit payment in log order |
 | Credits | `0x97630aA70AB14ed9883B41dAfccBc11349723043` | `Transfer` | collection deploy block (to be read) | owners for every credit, engine ins and outs, migrate moves |
@@ -120,11 +120,11 @@ One row per snapshot block (section 5.2) with the snapshot fields. Drives charts
 
 ### 6.4 `setting_change`
 
-One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `PausedSet`, `PayeeSet`, `ArtistSet`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet`, lock events, ownership events, controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`): `name`, `before` json, `after` json. Answers "what was X at block B" without archive calls.
+One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `PausedSet`, `PayeeSet`, `ArtistSet`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet`, lock events, ownership events, controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`, `QuoteSet`): `name`, `before` json, `after` json. Answers "what was X at block B" without archive calls.
 
 ### 6.5 `controller`
 
-`address`, `setBlock`, `active`, sale params (`markupBps`, `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`), credit sale params (`saleOn`, `window`, `spreadBps`, `startBps`), `anchorBps` (stored value and its block), `balancePoolKey` fields.
+`address`, `setBlock`, `active`, sale params (`markupBps`, `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`), credit sale params (`saleOn`, `window`, `spreadBps`, `startBps`), `anchorBps` (stored value and its block), `balancePoolKey` fields, the reference price settings (`referenceRateBpsPerHour`, `referenceStepBps`, `referenceTolBps`, `referenceMaxStale`, `referenceMinSeconds`, `referenceMinLiquidity`, from `QuoteSet`), and the reference at the last `ReferenceRefreshed` (`referencePrice`, `referenceSpot`, `referenceTime`, decisions 148 and 157).
 
 ### 6.6 `credit`
 
@@ -233,7 +233,7 @@ Ponder rolls back writes inside `reorgWindow`. Snapshot rows written by block ha
 
 ### 8.2 ordering facts the handlers rely on
 
-- `EthRateFill` precedes its `CreditBought` in the same tx; a bought credit with a preceding fill in the tx is an `eth_bid`, with a `BalanceRateFill` after it a `balance_bid`.
+- `EthRateFill` (in value mode `ValueRateFill`, decision 148) precedes its `CreditBought` in the same tx; a bought credit with a preceding fill in the tx is an `eth_bid`, with a `BalanceRateFill` after it a `balance_bid`.
 - `Bought` (controller) and `StatementSoldTo` (Core) are one sale; the activity row comes from `StatementSoldTo`.
 - `CreditSwapped`: the in credit takes the out credit's pile key, cost basis and acquisition time.
 - `Migrated` moves credits with no per-id event; Credits `Transfer(core, successor)` in the same tx gives the ids.
@@ -265,6 +265,8 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | settings, controller params | L snapshot; also I `engine.settings`, `controller` (not read by the web yet) |
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
 | reserve and the room the bids read (packet B, decision 154) | L `Core.reserve()` in the snapshot; D `potRoom` = `potWithPending` less the reserve, the clamp of the eth bid and the cap of a listing sweep |
+| value mode and the quote (packet C, decision 148) | L snapshot: `settings.valueModeOn`; `noQuote` when value mode is on and `ethRate` reverts `NoQuote` (the snapshot then reads the eth bid as 0); controller `valuePerPoint(false)` and `valuePerPoint(true)` for `value.usable` and the per point values; also I `controller.quote*` (QuoteSet) |
+| balance token reference against spot (packet C, decisions 148 and 157) | L controller `referencePrice()`, `referenceTime()`, `spotPrice()` and `quote()` in the snapshot (`value.referencePrice`, `value.spot`); shown on the balance page; also I `controller.referencePrice`, `referenceSpot`, `referenceTime` at the last `ReferenceRefreshed` |
 | ETH/USD | L Chainlink |
 | rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
 | header bid at refScore | L snapshot `ethRate` |
@@ -325,7 +327,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 
 | page | indexer | live |
 |---|---|---|
-| sell | wallet credits with scores (I `credit` by owner) | bids and quotes (`bidOf`, anchor slots), approvals; per-credit batch fills D from the same quote reads (eth: `replayEthFills`; balance: `replayBalanceFills` over the L snapshot `balanceRate` and `balanceUnit`); USD at the L Chainlink ETH/USD feed, the balance side through the L balance pool spot |
+| sell | wallet credits with scores (I `credit` by owner) | bids and quotes (`bidOf`, anchor slots; in value mode `balanceRate` and controller `valuePerPoint(false)`), approvals; per-credit batch fills D from the same quote reads (eth: `replayEthFills`; balance: `replayBalanceFills` over the L snapshot `balanceRate` and `balanceUnit`; value mode: `replayValueFills`); USD at the L Chainlink ETH/USD feed, the balance side through the L balance pool spot |
 | compose | pile with order and window state (I) | `nextPage` readiness, CC balance |
 | balance | $BALANCE price history (phase 2) | pool, quotes, module available |
 | keeper | `engine.lastBuybackBlock` (I; chain mode: Core view), `stats` payouts | pots, artist, payee, head |

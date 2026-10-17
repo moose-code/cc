@@ -9,6 +9,8 @@ import type { Door, DoorPolicy } from "./config.ts";
 
 // the private gas constants of the Core (src/Core.sol 224 to 236), restated
 export const COMPOSE_GAS = 13_700_000n;
+// the most gas the Core's refreshReference door counts for the caller payment (Core.REFRESH_GAS)
+export const REFRESH_GAS = 200_000n;
 export const REDEEM_GAS = 1_500_000n;
 export const BUYBACK_GAS = 600_000n;
 export const BUYLISTING_GAS = 1_500_000n;
@@ -21,6 +23,7 @@ export const GAS_GUESS: { [d in Door]: bigint } = {
   collectEscrow: 120_000n,
   book: 100_000n,
   redeemStatement: 1_500_000n,
+  refreshReference: 60_000n,
 };
 
 export interface Settings {
@@ -68,6 +71,16 @@ export interface State {
   balanceModule: Address;
   // the held statements with controller.atFloor(sid) true
   atFloor: bigint[];
+  // the value switch (decision 148): the controller, the Core's valueModeOn, whether the eth bid reverts NoQuote now, the
+  // controller's reference sample time (0 before the pool key), the reference staleness bound (0 is never usable) and
+  // the least seconds between two refreshes
+  controller: Address;
+  valueModeOn: boolean;
+  noQuote: boolean;
+  referencePrice: bigint;
+  referenceTime: bigint;
+  referenceMaxStale: bigint;
+  referenceMinSeconds: bigint;
 }
 
 export interface Listing {
@@ -90,7 +103,9 @@ export interface Gas {
 
 export interface Intended {
   door: Door;
-  functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement";
+  functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference";
+  // the contract the call goes to: the Core (every door, including the refreshReference door that forwards to the controller)
+  target?: "controller";
   args: readonly unknown[];
   // the gas the decision assumed; the executor replaces it with the simulation's measure and calls `recheck`
   gas: bigint;
@@ -207,8 +222,20 @@ export function observe(seen: ReadonlyMap<string, bigint>, sweepable: string[], 
   return next;
 }
 
+// whether a reference refresh is due: the controller holds a reference (the pool key is set), the reference can be
+// usable (referenceMaxStale nonzero), and referenceMinSeconds has passed since the last sample. the contract gates the
+// refresh at referenceMinSeconds, so a call before then does nothing. referenceMinSeconds is the cadence that produces a
+// full step (step / rate), so one call per cadence both tracks the market and keeps the reference fresh
+export function refreshReferenceDue(s: State): { ok: boolean; reason: string } {
+  if (s.referencePrice === 0n) return { ok: false, reason: "no reference: the balance pool key is not set" };
+  if (s.referenceMaxStale === 0n) return { ok: false, reason: "referenceMaxStale is 0, the reference is never usable" };
+  const due = s.referenceTime + s.referenceMinSeconds;
+  if (s.timestamp < due) return { ok: false, reason: `reference sampled at ${s.referenceTime}, next refresh at ${due}` };
+  return { ok: true, reason: "referenceMinSeconds since the last sample" };
+}
+
 // every call the keeper would make at this state, in priority order: buyListing (best gap first), buyback, compose,
-// collectEscrow, book, redeemStatement. returns the updated staleness map
+// collectEscrow, book, redeemStatement, observe. returns the updated staleness map
 export function decide(
   s: State,
   listings: Listing[],
@@ -234,7 +261,9 @@ export function decide(
 
   // 1. buyListing
   const sweepable: { l: Listing; key: string; payment: bigint; cost: bigint }[] = [];
-  if (on("buyListing") && !s.retired && s.potRoom === 0n) {
+  if (on("buyListing") && !s.retired && s.valueModeOn && s.noQuote) {
+    skips.push({ door: "buyListing", reason: "NoQuote: the controller's balance token quote is unusable, the eth bid waits for it" });
+  } else if (on("buyListing") && !s.retired && s.potRoom === 0n) {
     skips.push({ door: "buyListing", reason: `ReserveHeld: the pot ${s.potWithPending} is at or under the reserve ${s.reserve}, acquisitions wait for fees` });
   } else if (on("buyListing") && !s.retired && ceiling("buyListing")) {
     const pol = p.doors.buyListing;
@@ -346,6 +375,23 @@ export function decide(
     }
   }
 
+  // 7. refreshReference: the Core door forwards to the controller and pays the caller like compose when a refresh runs,
+  // so the keeper keeps the reference tracking the market. paid, profit gated
+  if (on("refreshReference")) {
+    const r = refreshReferenceDue(s);
+    if (!r.ok) skips.push({ door: "refreshReference", reason: r.reason });
+    else if (ceiling("refreshReference")) {
+      const pol = p.doors.refreshReference;
+      const payment = callerPayment(s, GAS_GUESS.refreshReference, REFRESH_GAS, worstBaseFee(gas, pol));
+      const cost = ownCost(GAS_GUESS.refreshReference, gas, pol);
+      if (!profitable(payment, cost, p.margin)) {
+        skips.push({ door: "refreshReference", reason: `unprofitable: payment ${payment} under cost ${cost} plus margin` });
+      } else {
+        calls.push({ door: "refreshReference", functionName: "refreshReference", args: [], gas: GAS_GUESS.refreshReference, payment, cost, key: "refreshReference", note: { referenceTime: s.referenceTime, referenceMinSeconds: s.referenceMinSeconds } });
+      }
+    }
+  }
+
   return { calls, skips, seen: nextSeen };
 }
 
@@ -371,10 +417,14 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
     case "redeemStatement":
       payment = callerPayment(s, gasUsed, REDEEM_GAS, b);
       break;
+    case "refreshReference":
+      payment = callerPayment(s, gasUsed, REFRESH_GAS, b);
+      break;
     case "collectEscrow":
       return { ok: s.escrowBalance >= cost, payment, cost };
     case "book":
       return { ok: true, payment, cost };
   }
+  // compose and refreshReference are paid through the caller fee: they go only when the Core pays at least the cost
   return { ok: profitable(payment, cost, p.margin), payment, cost };
 }

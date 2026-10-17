@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { runSpendCapStudy } from './market.mjs';
-import { Core, SpendBucket, balanceConversion, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, stepVolume, W } from './engine.js';
+import { Core, SpendBucket, balanceConversion, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, quoteViolation, QUOTE, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, stepVolume, W } from './engine.js';
 
 let n = 0;
 const near = (a, b, tol, msg) => {
@@ -774,6 +774,65 @@ const R0 = 6.668e15;
   ok(!a.atFloor(st, span - 1) && a.atFloor(st, span), 'curve rule: eligible at decayHours of age'); a.setSettings({ markupBps: 10000 }, 0); ok(a.atFloor(st, 0), 'curve rule: a start at par is eligible at once'); n += 2;
   const ae = fresh({}, 10); ae.setSettings({ ageEligibilityOn: true }, 0); const ast = { cost: 1, t0: 0 }, aspan = ae.c.decayHours * H;
   ok(!ae.atFloor(ast, aspan - 1) && ae.atFloor(ast, aspan), 'age only: eligible at decayHours of age'); ae.setSettings({ markupBps: 10000 }, 0); ok(ae.atFloor(ast, 0), 'age only: a start at par is eligible at once'); n += 2;
+}
+
+// promise: packet C (decision 148): the protected price moves its reference at the bounded rate and quotes the worse side of
+// spot and reference within the tolerance; value mode prices the eth bid off the shared instance times the buy value, a fill
+// drops the shared instance, valueOf is the sale value with the floor rate and cost terms dropped, an unusable quote bids and
+// sells nothing, and only the switch and the bid turning on reset the shared instance
+{
+  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 450); assert.equal(QUOTE.referenceMaxStale, 0); n += 3; // the launch config: off, owner inputs pending
+  assert.equal(quoteViolation({ ...QUOTE, referenceStepBps: 10001 }), 'referenceStepBps'); assert.equal(quoteViolation({ ...QUOTE, tolBps: 10000 }), 'tolBps'); assert.equal(quoteViolation(QUOTE), null); n += 3;
+  const BPS = 10000, U = 0.001 / 100; // eth per point at the unit price
+  const Q = { referenceRateBpsPerHour: 100, referenceStepBps: 200, tolBps: 500, referenceMaxStale: 3600, referenceMinSeconds: 0, balancePoolSet: true, balanceBidCapBps: 11000, balanceBidMarginBps: 1000 };
+  const mk = (over = {}) => { const c = fresh({ ...Q, ...over }, 10); c.setBalanceModule(0, U); c.balancePot = 10; return c; };
+  // the reference: set to the spot with the pool key, then at most min(rate * elapsed, referenceStep) toward the spot per update
+  const r = mk();
+  near(r.refMult, 1, 1e-12, 'the reference starts at the spot'); r.movePool(2);
+  r.refreshReference(1800); near(r.refMult, 1.005, 1e-12, 'half an hour at 100 bps an hour'); r.refreshReference(1800); near(r.refMult, 1.005, 1e-12, 'a repeat in the same second gains nothing');
+  r.refreshReference(1800 + 10 * H); near(r.refMult, 1.005 * 1.02, 1e-12, 'one update moves at most referenceStepBps'); n += 3;
+  // the protected value: the buy side the lower of spot and reference plus tol, the sale side the higher of spot and reference less tol
+  near(r.valuePerPoint(false, 1800 + 10 * H).value, U * 1.0251 * 1.05, 1e-9, 'a spot pushed up buys at the reference plus tol');
+  near(r.valuePerPoint(true, 1800 + 10 * H).value, U * 2, 1e-12, 'and sells at the spot');
+  r.movePool(0.5); near(r.valuePerPoint(true, 1800 + 10 * H).value, U * 1.0251 * 0.95, 1e-9, 'a spot pushed down sells at the reference less tol');
+  near(r.valuePerPoint(false, 1800 + 10 * H).value, U * 0.5, 1e-12, 'and buys at the spot');
+  ok(!r.valuePerPoint(false, 1800 + 10 * H + 3601).ok, 'a reference older than referenceMaxStale is unusable');
+  ok(!mk({ referenceMaxStale: 0 }).valuePerPoint(false, 0).ok, 'referenceMaxStale 0 is never usable'); ok(!mk({ minLiquidity: 1, poolLiquidity: 0 }).valuePerPoint(false, 0).ok, 'a thin pool is unusable');
+  // the switch: valueModeOn opens the shared instance at the floor; the eth bid is the instance times 100 points of the buy value
+  const v = mk({ rateCap: 1e18 });
+  v.balRate = 10800; v.setSettings({ valueModeOn: true, balanceBidOn: true }, 60);
+  near(v.balRate, 9000, 1e-12, 'the switch resets the shared instance to the floor');
+  near(v.ethRate(60), 0.9 * U * 100 * W, 1e-9, 'the eth bid at the floor is 9000 bps of 100 points of value');
+  near(v.ethRate(60 + 30 * 60), Math.min(9000 * Math.pow(1.01, 30), v._balCeil(60 + 30 * 60)) / BPS * U * 100 * W, 1e-6, 'the shared instance climbs in value mode');
+  near(v.balAvailBps(), 11000, 1e-12, 'clamped to the cap, not to the funds'); n++;
+  // a fill drops the shared instance and leaves the eth instance
+  const ethState = v.priceRate(120), before = v.balPriceState(120), paid = v.sellForEth(120, 100);
+  ok(paid > 0, 'value mode pays'); near(v.balRate, before * (1 - v.s.dropPerCreditPct / 100), 1e-9, 'the fill drops the shared instance');
+  near(v.priceRate(120), ethState, 1e-12, 'the eth instance is left'); n++;
+  // valueOf in value mode: the sale value, no floor rate term; the reference and the credit floor drop the cost
+  near(v.valueOf(440, 120), 440 * U, 1e-12, 'valueOf is points at the sale value');
+  near(v.reference({ cost: 5, rating: 440 }, 120), 440 * U * v.floorMultBps() / BPS, 1e-12, 'the reference drops the cost term');
+  near(v.creditFloor({ pts: 440, cost: 0.001, t0: 0 }, 120), 440 * U * v.floorMultBps() / BPS, 1e-12, 'the credit floor drops the cost term above the Core floor');
+  near(v.lowestPrice({ cost: 0, rating: 440, t0: 0 }, 120), 440 * U * v.floorMultBps() / BPS, 1e-12, 'the curve rests at the reference');
+  // an unusable quote: no eth bid, no sale, the balance route still fills at a 1 wei basis
+  const stale = 120 + 2 * H; ok(!v.valuePerPoint(false, stale).ok, 'stale');
+  assert.equal(v.ethRate(stale), 0); assert.equal(v.sellForEth(stale, 100), 0); n += 2;
+  const xb = v.xBuyCredit(100, stale); ok(xb && xb.cost === 1e-18, 'the balance route fills at a 1 wei basis while the quote fails');
+  ok(v.buy(v.compose(0.001, 0, 440), stale) !== null && v.refTime === stale, 'a sale door observes first, so a stale reference is fresh again');
+  v.moduleReports(0); assert.equal(v.buy(v.compose(0.001, 0, 440), stale), null); n++; // NoQuote: no unit read
+  // a currency switch or a settings change leaves the shared instance; only the switch and the bid turning on reset it
+  const k = mk({ rateCap: 1e18 }); k.setSettings({ valueModeOn: true, balanceBidOn: true }, 0); k.balRate = 10500;
+  k.setSettings({ climbPerMin: 0.5 }, 0); near(k.balRate, 10500, 1e-12, 'a settings change leaves it');
+  k.setSettings({ balanceBidOn: false }, 0); near(k.balRate, 10500, 1e-12, 'the balance door off leaves it');
+  k.setSettings({ balanceBidOn: true }, 0); near(k.balRate, 9000, 1e-12, 'the balance door turning on resets it');
+  k.balRate = 10500; k.setBalanceModule(0, U); near(k.balRate, 10500, 1e-12, 'a module change in value mode leaves it');
+  // the eth rate is bounded by rateCap and by the room
+  const capped = mk({ rateCap: 1e14 }); capped.setSettings({ valueModeOn: true }, 0); near(capped.ethRate(0), 1e14, 1e-12, 'rateCap bounds a hostile value'); n++;
+  // a whole run switches on day 2 and keeps buying
+  const run = simL({ days: 4, balanceDay: 1, balancePoolSet: true, ...Q, schedule: [{ day: 2, patch: { valueModeOn: true, balanceBidOn: true, balanceBidCapBps: 11000 } }] });
+  const day3 = run.S.spent.slice(2 * 24, 4 * 24).reduce((a, b) => a + (b || 0), 0);
+  ok(run.core.s.valueModeOn && day3 > 0, 'a run switched to value mode on day 2 keeps spending the pot');
+  ok(run.core.refMult > 0 && run.core.valuePerPoint(false, 4 * 24 * H).ok, 'the keeper observes, so the quote stays usable');
 }
 
 // buyback slice and the caller payment (docs/DECISIONS.md 61): the caller is paid 270,000 gas at min(basefee, keeperMaxBaseFee) plus keeperFee out of the slice.

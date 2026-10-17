@@ -55,22 +55,22 @@ contract FlowTest is Fixture {
         SettingsFields.set(s, i, v);
     }
 
-    function _lo() internal pure returns (uint256[36] memory) {
+    function _lo() internal pure returns (uint256[37] memory) {
         return SettingsFields.lo();
     }
 
-    function _hi() internal pure returns (uint256[36] memory) {
+    function _hi() internal pure returns (uint256[37] memory) {
         return SettingsFields.hi();
     }
 
-    function _names() internal pure returns (bytes32[36] memory) {
+    function _names() internal pure returns (bytes32[37] memory) {
         return SettingsFields.names();
     }
 
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
-        uint256[36] memory lo = _lo();
-        uint256[36] memory hi = _hi();
+        uint256[37] memory lo = _lo();
+        uint256[37] memory hi = _hi();
         for (uint256 i; i < N; ++i) {
             uint256 x = uint256(keccak256(abi.encode(seed, i)));
             uint256 a = lo[i];
@@ -139,8 +139,8 @@ contract FlowTest is Fixture {
 
     // promise: INTEGRATION BadSetting: bounds are inclusive
     function test_settings_everyBoundEdgeIsAccepted() public {
-        uint256[36] memory lo = _lo();
-        uint256[36] memory hi = _hi();
+        uint256[37] memory lo = _lo();
+        uint256[37] memory hi = _hi();
         _markupToTheBound();
         _potTo(100 ether);
         for (uint256 i; i < N; ++i) {
@@ -159,9 +159,17 @@ contract FlowTest is Fixture {
                 _set(s, i, v);
                 uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
                 if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);
+                // value mode requires the eth spend cap active (under 10,000, decision 157)
+                if (s.valueModeOn && s.spendCapBps >= 10_000) s.spendCapBps = 9_999;
                 _owner(s);
                 vm.warp(block.timestamp + 61);
-                assertLe(core.ethRate(), s.rateCap, "rate stays inside its configured cap");
+                if (s.valueModeOn) {
+                    // the value switch with no usable quote prices nothing: the eth bid reverts until the owner sets it
+                    vm.expectRevert(ICore.NoQuote.selector);
+                    core.ethRate();
+                } else {
+                    assertLe(core.ethRate(), s.rateCap, "rate stays inside its configured cap");
+                }
                 core.balanceRate();
                 core.climbMultiplier();
                 assertEq(_get(core.settings(), i), v, "edge stored");
@@ -171,9 +179,9 @@ contract FlowTest is Fixture {
 
     // promise: INTEGRATION BadSetting
     function test_settings_everyBoundViolationReverts() public {
-        uint256[36] memory lo = _lo();
-        uint256[36] memory hi = _hi();
-        bytes32[36] memory names = _names();
+        uint256[37] memory lo = _lo();
+        uint256[37] memory hi = _hi();
+        bytes32[37] memory names = _names();
         for (uint256 i; i < N; ++i) {
             // the two switches take 0 or 1, nothing is out of bounds
             if (i == 11 || i == 12) continue;

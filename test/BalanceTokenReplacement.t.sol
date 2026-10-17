@@ -268,7 +268,7 @@ contract BalanceTokenReplacementTest is Fixture {
         });
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
-        ctl.setBalancePoolKey(badCk);
+        ctl.setBalancePoolKey(badCk, 0);
         // a key on the new token is accepted and prices valueOf above the rate floor
         uint256 points = RATE_SCORE;
         uint256 rateValue = ctl.valueOf(points);
@@ -288,7 +288,7 @@ contract BalanceTokenReplacementTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setBalancePoolKey(goodCk);
+        ctl.setBalancePoolKey(goodCk, spotOf(uint160((uint256(1) << 96) / 1000)));
         assertGt(ctl.valueOf(points), rateValue, "the new token pool key prices valueOf");
     }
 
@@ -313,7 +313,7 @@ contract BalanceTokenReplacementTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setBalancePoolKey(ck);
+        ctl.setBalancePoolKey(ck, spotOf(uint160((uint256(1) << 96) / 1000)));
         uint256 poolValue = ctl.valueOf(points);
         uint256 poolPrice = ctl.priceOf(sid);
         bool poolFloor = ctl.atFloor(sid);

@@ -29,10 +29,10 @@ contract BalanceValueFloorTest is Fixture {
             hooks: IHooks(address(0))
         });
         PM.initialize(vk, sp);
-        _setKey(address(0), address(xt), fee, tickSpacing);
+        _setKey(address(0), address(xt), fee, tickSpacing, spotOf(sp));
     }
 
-    function _setKey(address c0, address c1, uint24 fee, int24 tickSpacing) private {
+    function _setKey(address c0, address c1, uint24 fee, int24 tickSpacing, uint256 expectedSpot) private {
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(c0),
             currency1: IControllerV1.Currency.wrap(c1),
@@ -41,7 +41,7 @@ contract BalanceValueFloorTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setBalancePoolKey(k);
+        ctl.setBalancePoolKey(k, expectedSpot);
     }
 
     /// the pool term in wei of `points` at sqrt price `sp` and unit `unit`, native eth currency0
@@ -186,7 +186,7 @@ contract BalanceValueFloorTest is Fixture {
         });
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
-        ctl.setBalancePoolKey(k);
+        ctl.setBalancePoolKey(k, 0);
         assertFalse(ctl.balancePoolKeySet(), "the key stays unset");
     }
 
@@ -203,7 +203,7 @@ contract BalanceValueFloorTest is Fixture {
             hooks: address(0)
         });
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
-        ctl.setBalancePoolKey(noEth);
+        ctl.setBalancePoolKey(noEth, 0);
         IControllerV1.PoolKey memory noToken = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
             currency1: IControllerV1.Currency.wrap(other),
@@ -212,7 +212,7 @@ contract BalanceValueFloorTest is Fixture {
             hooks: address(0)
         });
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
-        ctl.setBalancePoolKey(noToken);
+        ctl.setBalancePoolKey(noToken, 0);
         vm.stopPrank();
     }
 
@@ -227,6 +227,6 @@ contract BalanceValueFloorTest is Fixture {
             hooks: address(0)
         });
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setBalancePoolKey(k);
+        ctl.setBalancePoolKey(k, 0);
     }
 }

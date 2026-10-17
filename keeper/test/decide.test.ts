@@ -12,6 +12,7 @@ import {
   GAS_GUESS,
   listingKey,
   observe,
+  refreshReferenceDue,
   recheck,
   worstBaseFee,
   type Listing,
@@ -59,6 +60,13 @@ function state(over: Partial<State> = {}): State {
     pageReady: false,
     balanceModule: zeroAddress,
     atFloor: [],
+    controller: "0x00000000000000000000000000000000000000c1" as Address,
+    valueModeOn: false,
+    noQuote: false,
+    referencePrice: 0n,
+    referenceTime: 0n,
+    referenceMaxStale: 0n,
+    referenceMinSeconds: 600n,
     ...over,
   };
 }
@@ -203,6 +211,38 @@ test("listing: the reserve bounds the sweep, not the processing", () => {
   assert.ok(doorsOf(atReserve).includes("compose"), "compose still pays from the whole pot");
   const covered = decide(state({ potWithPending: parseEther("0.11"), potRoom: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
   assert.match(reason(covered, "buyListing"), /PotTooSmall: price above ethPot less the reserve/);
+});
+
+test("listing: in value mode an unusable quote skips the sweep with NoQuote, processing still runs", () => {
+  const p = policy({}, 0);
+  const halted = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(halted).filter((d) => d === "buyListing"), []);
+  assert.match(reason(halted, "buyListing"), /NoQuote/);
+  assert.ok(doorsOf(halted).includes("compose"), "compose does not read the quote");
+  const live = decide(state({ valueModeOn: true, noQuote: false }), [listing()], gas("1"), p, new Map());
+  assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps as before");
+});
+
+// ------------------------------------------------------------------ refreshReference
+
+test("refreshReference: due referenceMinSeconds after the last sample, never before the pool key or with referenceMaxStale 0", () => {
+  const p = policy();
+  const base = { referencePrice: 49n * 10n ** 16n, referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n };
+  assert.match(refreshReferenceDue(state({ ...base, referencePrice: 0n })).reason, /pool key is not set/);
+  assert.match(refreshReferenceDue(state({ ...base, referenceMaxStale: 0n })).reason, /never usable/);
+  const early = decide(state({ ...base, timestamp: 4_000n + 599n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(early), []);
+  assert.match(reason(early, "refreshReference"), /next refresh at 4600/);
+  const due = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(due), ["refreshReference"]);
+  const call = due.calls[0];
+  assert.equal(call.target, undefined, "the Core door, not the controller");
+  assert.ok(call.payment > 0n, "the Core pays the caller fee like compose");
+  assert.equal(recheck(call, state({ ...base, timestamp: 4_000n + 600n }), undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true, "the paid door clears the recheck at the caller fee");
+  const unpaid = decide(state({ ...base, timestamp: 4_000n + 600n, settings: { ...state().settings, callerFee: 0n, callerMaxBaseFee: 0n } }), [], gas("1"), p, new Map());
+  assert.match(reason(unpaid, "refreshReference"), /unprofitable/);
+  const high = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("4"), p, new Map());
+  assert.match(reason(high, "refreshReference"), /above the door ceiling/);
 });
 
 test("listing: the best gap goes first (Activity.s.sol rule), and every sweep precedes the buyback", () => {

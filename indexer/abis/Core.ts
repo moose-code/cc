@@ -461,6 +461,11 @@ export const coreAbi = [
             "name": "returnLockSeconds",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "valueModeOn",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -1984,6 +1989,11 @@ export const coreAbi = [
             "name": "returnLockSeconds",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "valueModeOn",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -2193,6 +2203,11 @@ export const coreAbi = [
             "name": "returnLockSeconds",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "valueModeOn",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -3196,6 +3211,11 @@ export const coreAbi = [
             "name": "returnLockSeconds",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "valueModeOn",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -3279,6 +3299,31 @@ export const coreAbi = [
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ValueRateFill",
+    "inputs": [
+      {
+        "name": "spent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "pot",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -3466,6 +3511,11 @@ export const coreAbi = [
   {
     "type": "error",
     "name": "NoCreditRescue",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoQuote",
     "inputs": []
   },
   {

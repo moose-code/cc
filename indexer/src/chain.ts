@@ -103,7 +103,8 @@ export async function snapshot(ctx: Ctx, block: { number: bigint; timestamp: big
     ethPot: need<bigint>(0),
     ethToBuyback: need<bigint>(1),
     ethRedeemBurn: need<bigint>(2),
-    ethRate: need<bigint>(3),
+    // in value mode ethRate reverts NoQuote while the controller's quote is unusable: no eth bid, recorded as 0
+    ethRate: r[3].status === "success" ? (r[3].result as bigint) : 0n,
     floorRate: need<bigint>(4),
     balanceRate: need<bigint>(5),
     coreEthBalance: need<bigint>(6),
@@ -275,6 +276,32 @@ export async function readController(ctx: Ctx, address: Hex) {
     balanceFee: Number(poolKey[2]),
     balanceTickSpacing: Number(poolKey[3]),
     balanceHooks: lc(poolKey[4]),
+    ...(await readQuote(ctx, address)),
+  };
+}
+
+/** The protected price state of a controller at the event block; a controller without it leaves the columns null. */
+async function readQuote(ctx: Ctx, address: Hex) {
+  const k = { address, abi: controllerAbi } as const;
+  const [quote, referencePrice, referenceTime] = await ctx.client.multicall({
+    ...mc,
+    allowFailure: true,
+    contracts: [
+      { ...k, functionName: "quote" },
+      { ...k, functionName: "referencePrice" },
+      { ...k, functionName: "referenceTime" },
+    ],
+  });
+  const q = quote.status === "success" ? (quote.result as readonly [number, number, number, number, number, bigint]) : null;
+  return {
+    referenceRateBpsPerHour: q ? BigInt(q[0]) : null,
+    referenceStepBps: q ? Number(q[1]) : null,
+    referenceTolBps: q ? Number(q[2]) : null,
+    referenceMaxStale: q ? BigInt(q[3]) : null,
+    referenceMinSeconds: q ? BigInt(q[4]) : null,
+    referenceMinLiquidity: q ? q[5] : null,
+    referencePrice: referencePrice.status === "success" ? (referencePrice.result as bigint) : null,
+    referenceTime: referenceTime.status === "success" ? BigInt(referenceTime.result as number) : null,
   };
 }
 

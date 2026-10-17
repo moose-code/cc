@@ -7,6 +7,8 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {
@@ -760,7 +762,8 @@ abstract contract Fixture is Test, ProdDeployer {
             tickSpacing: 60,
             hooks: IHooks(address(0))
         });
-        PM.initialize(vk, uint160((uint256(1) << 96) * 1000));
+        uint160 sp = uint160((uint256(1) << 96) * 1000);
+        PM.initialize(vk, sp);
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
             currency1: IControllerV1.Currency.wrap(token),
@@ -769,7 +772,13 @@ abstract contract Fixture is Test, ProdDeployer {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setBalancePoolKey(k);
+        ctl.setBalancePoolKey(k, spotOf(sp));
+    }
+
+    /// the eth spot of sqrt price `sp`, wei per 1e18 base units (native eth currency0), the value `setBalancePoolKey`
+    /// expects. mirrors the controller's `_spot`
+    function spotOf(uint160 sp) internal pure returns (uint256) {
+        return FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, sp), FixedPoint96.Q96, sp);
     }
 
     /// @notice warps until the controller's curve price of a statement has reached its floor, which makes it eligible

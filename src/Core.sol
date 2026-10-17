@@ -136,6 +136,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     // inside the Core
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
+    /// an eth door or bid view in value mode while the controller's bounded `valuePerPoint` read fails (raised by
+    /// CoreLib, declared here for the abi)
+    error NoQuote();
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
@@ -158,6 +161,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// one credit filled into the balance token bid: the balance token paid, the balance rate (bps of par) after this
     /// credit's drop, and the module available left for the rest of the batch. mirrors EthRateFill
     event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
+    /// one eth fill in value mode: the eth paid, the shared instance rate (bps of par) after this credit's drop, and the
+    /// pot left (emitted by CoreLib, declared here for the abi). mirrors EthRateFill
+    event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
     /// `price` is the controller's `priceOf(sid)` at the compose, 0 when the read fails
     event Composed(
         uint256 indexed sid, uint256[80] ids, uint8 format, uint256 cost, uint256 price, address indexed caller
@@ -376,6 +382,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// books the eth above the tracked pots as fee income. anyone may call
     function book() external nonReentrant {
         _book();
+    }
+
+    /// forwards to the controller's reference refresh and, when it updated the reference (the cadence had elapsed), pays
+    /// the caller like compose, bounded by the pot and the caller base-fee ceiling. anyone may call; the keeper calls
+    /// this door. the body is `CoreLib.refreshReference`, kept there for the Core code size; the controller's own
+    /// `refreshReference` stays public and unpaid
+    function refreshReference() external nonReentrant {
+        _toLib();
     }
 
     /// adds `msg.value` to the pot. the eth above the tracked pots is booked first, so `msg.value` is never counted as
@@ -712,7 +726,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             .min(room - value);
         _spend(value + paid, score);
         _push(id, value + paid);
-        emit ListingBought(id, adapter, msg.sender, value, paid, s.rateAtCheckpoint);
+        // the fill drop lands on the shared instance in value mode and on the eth instance outside it, so report the
+        // rate the fill actually moved: the shared rate (bps of par) in value mode, the eth checkpoint rate otherwise
+        uint256 rate = cfg.valueModeOn ? s.balance.rateAtCheckpoint : s.rateAtCheckpoint;
+        emit ListingBought(id, adapter, msg.sender, value, paid, rate);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
 
@@ -1375,14 +1392,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.everBalanceTarget[token] = true;
         if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
         if (s.allowedAdapter[token]) delete s.allowedAdapter[token];
-        // the instance does not climb while no usable module is set, so a module set while the bid is on opens the
-        // instance at the floor with a fresh clock, not at a rate carried from before
-        if (s.settings.balanceBidOn) _resetBalanceToFloor();
+        // outside value mode the instance does not climb while no usable module is set, so a module set while the bid is
+        // on opens it at the floor with a fresh clock; in value mode it carries the eth bid and stays (CoreLib)
+        _resetBalanceToFloor();
         emit BalanceModuleSet(module, token, unit);
     }
 
-    /// resets the balance bid instance to the floor `10_000 - balanceBidMarginBps` with a fresh clock. mirrors the
-    /// library reset used by `setSettings`, for the module set path which runs in the Core
+    /// on a module set, resets the balance bid instance to the floor `10_000 - balanceBidMarginBps` with a fresh clock
+    /// while the bid is on outside value mode. mirrors the library reset used by `setSettings`
     function _resetBalanceToFloor() private {
         CoreLib.resetBalanceToFloor();
     }

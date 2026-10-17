@@ -45,7 +45,7 @@ contract SetSettings is Script {
     error NotOwner(address owner, address signer);
 
     string internal constant TUPLE =
-        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32)";
+        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool)";
 
     struct ControllerChanges {
         Sale sale;
@@ -254,7 +254,7 @@ contract SetSettings is Script {
                 _set(s, keys[k], vm.parseJsonUint(json, string.concat(".", keys[k])));
             }
         }
-        bytes32[36] memory names = SettingsFields.names();
+        bytes32[37] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             string memory name = _name(names[i]);
             (bool has, uint256 v) = _single(name);
@@ -263,7 +263,7 @@ contract SetSettings is Script {
     }
 
     function _set(Settings memory s, string memory name, uint256 v) internal pure {
-        bytes32[36] memory names = SettingsFields.names();
+        bytes32[37] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             if (keccak256(bytes(_name(names[i]))) != keccak256(bytes(name))) continue;
             SettingsFields.set(s, i, v);
@@ -289,9 +289,9 @@ contract SetSettings is Script {
         console.log(
             "settings: field | live | new | bounds (a * marks a change; recoveryClimbPerMinBps >= climbPerMinBps, the two switches are 0 or 1)"
         );
-        uint256[36] memory lo = SettingsFields.lo();
-        uint256[36] memory hi = SettingsFields.hi();
-        bytes32[36] memory names = SettingsFields.names();
+        uint256[37] memory lo = SettingsFields.lo();
+        uint256[37] memory hi = SettingsFields.hi();
+        bytes32[37] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             uint256 x = SettingsFields.get(a, i);
             uint256 y = SettingsFields.get(b, i);

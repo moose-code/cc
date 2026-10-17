@@ -17,6 +17,16 @@ interface IController {
     /// the asking price of statement `sid` now. the core reads it once per compose for the `Composed` event, and a
     /// failed read is logged as 0
     function priceOf(uint256 sid) external view returns (uint256);
+    /// the wei value of one point (`POINT_UNIT` score units, `POINT_UNIT * unitPerPoint` balance token base units) at the
+    /// protected price of the balance token: the buy price `min(spot, reference * (10_000 + tolBps) / 10_000)` for
+    /// `forSale` false, rounded down, the sale price `max(spot, reference * (10_000 - tolBps) / 10_000)` for true, rounded
+    /// up. `ok` is false, and `value` 0, while the quote is unusable (no pool key or module, a stale reference, pool
+    /// liquidity under the minimum, a failed unit read). the core reads it in value mode, with a bounded call that fails
+    /// closed to `NoQuote`
+    function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
+    /// moves the reference toward the pool spot under its cadence, rate and step gates; true when it updated the
+    /// reference. the Core's `refreshReference` door forwards to it and pays the caller only when it returns true
+    function refreshReference() external returns (bool);
 }
 
 interface IBalanceModule {
@@ -144,8 +154,8 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
 /// split and `pointsPerPage`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`, `spendCapBps`, `bucketSeconds`,
-/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei` and `returnLockSeconds`. docs/SPEC.md section 3
-/// has the meaning of every field
+/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei`, `returnLockSeconds` and `valueModeOn`.
+/// docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of a bid rate on a fill, bps of the rate before the credit, as `dropPer100PointsBps * score / (100 points in score units)`, bounded at 10_000; shared by the eth and balance bids
@@ -240,6 +250,10 @@ struct Settings {
     /// seconds every intake door refuses a credit the engine sold through `sellCreditTo`, from the sale. 0 refuses it in
     /// the second of the sale only
     uint32 returnLockSeconds;
+    /// the value switch: the eth bid is the shared balance instance times the controller's protected value per point,
+    /// every eth fill drops that instance, and the controller prices sales on the value with the floor rate and cost
+    /// terms dropped. turning it on resets the shared instance to its floor
+    bool valueModeOn;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -273,6 +287,25 @@ struct CreditSale {
     uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
+}
+
+/// the reference price settings of the controller (decision 148), set at once by `setQuote`. the controller keeps a
+/// reference price of the balance token that `refreshReference()` and its sale doors move toward the pool spot by at most
+/// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update
+struct Quote {
+    /// the most the reference moves toward the spot per hour, bps of the reference
+    uint32 referenceRateBpsPerHour;
+    /// the most one update moves the reference, bps of the reference. 0 to 10_000
+    uint16 referenceStepBps;
+    /// the band around the reference: buys price off `min(spot, reference * (10_000 + tolBps) / 10_000)`, sales off
+    /// `max(spot, reference * (10_000 - tolBps) / 10_000)`. 0 to 9_999
+    uint16 tolBps;
+    /// seconds after the last update the reference stays usable. 0 keeps the reference price unusable
+    uint32 referenceMaxStale;
+    /// least seconds between two reference refreshes. a refresh runs only when the last sample is older than this
+    uint32 referenceMinSeconds;
+    /// the least pool liquidity of a usable reference price
+    uint128 minLiquidity;
 }
 
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
@@ -374,7 +407,8 @@ library Mainnet {
             idleStepSeconds: 600,
             sniperSeconds: 1800,
             reserveWei: 0.1 ether,
-            returnLockSeconds: 21_600
+            returnLockSeconds: 21_600,
+            valueModeOn: false
         });
     }
 
@@ -406,6 +440,21 @@ library Mainnet {
             window: 4 hours,
             spreadBps: 1_000,
             startBps: 15_000
+        });
+    }
+
+    /// the launch reference price settings: the 4.5 percent band (loop closure bound, decision 153) and a 600 second refresh
+    /// cadence. the rate, the step, the staleness and the liquidity minimum are owner inputs set once the balance token
+    /// pool exists and its depth is known; a `referenceMaxStale` of 0 keeps the reference price unusable, so value mode
+    /// fails closed to `NoQuote` until they are set
+    function defaultQuote() internal pure returns (Quote memory) {
+        return Quote({
+            referenceRateBpsPerHour: 0,
+            referenceStepBps: 0,
+            tolBps: 450,
+            referenceMaxStale: 0,
+            referenceMinSeconds: 600,
+            minLiquidity: 0
         });
     }
 

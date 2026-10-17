@@ -46,6 +46,7 @@ interface ICore {
     error NoCode(address who);
     error NoCredit();
     error NoCreditRescue();
+    error NoQuote();
     error NoSuccessor();
     error NotEligible();
     error NotForSale();
@@ -126,6 +127,7 @@ interface ICore {
     );
     event SuccessorLocked();
     event SuccessorSet(address successor);
+    event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
 
     receive() external payable;
 
@@ -197,6 +199,7 @@ interface ICore {
     function rateAtCheckpoint() external view returns (uint256);
     function ratingOf(uint256 sid) external view returns (uint256);
     function redeemStatement(uint256 sid) external;
+    function refreshReference() external;
     function releaseRedeemBurn(uint256 amount) external;
     function removeAdapter(address a) external;
     function rescueCoin(address, uint256) external;

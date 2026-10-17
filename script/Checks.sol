@@ -74,17 +74,17 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x77b64e8325b0c874955c2e0ef099383715cadcc5797e744d20a5a088c601eada;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x563be39ef94b978dcd30504b5192fe4314f527a7fff8c6f9028aebe2ad1437c9;
+    bytes32 internal constant BUILD_HASH_CORE = 0x0b6643f150ed620c8fc7511ae9add795f81e51bfbb336dd959635fe67d24176b;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xd301d93d25b07d7c36feeccb36f137eae9b784d7028a9f8321a08f5b253c552b;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
-        0xcb7e53a3cbb6c4ce2643807e83675748058b3645659226adb47fd6e13cf5c037;
+        0x545e5ac240bf8a7338a2e869237cccdf7703fddeed3ae6e7606e9194ce2d632f;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
         0xf5c8fd4b675f717f11908ff47d000431035956c15a5f38d74b63a3d40310d30c;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
         0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x21bc6e3d0b34d0e43e48bdc78e106393a18ba34e6cc9dc81a722844d60b12ce6;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x00635a6bd92d4a079fcaa1a88adb7d7c9ed69c361cbe9f745d4c1e829e7781c0;
+        0xe54162719a0ccd5139c5f5ca1a31f9231cf980bd88b68cb560fe4f2d5b20e294;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -181,8 +181,32 @@ abstract contract LaunchChecks is PostflightChecks {
             "sale settings inside the bounds",
             badSale == 0,
             badSale == 0
-                ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost"
+                ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost, reference referenceStepBps tolBps"
                 : string(abi.encodePacked("out of bounds: ", badSale))
+        );
+        // the reference price settings (decision 154): tolBps and referenceMinSeconds are launch values, the other three
+        // are owner inputs set once the balance token pool exists and its depth is known. at 0 the reference price is
+        // unusable, so value mode fails closed to NoQuote; the launch keeps value mode off, so the row warns and never fails
+        _warn(
+            "warn: reference price inputs pending the balance token pool",
+            c.quote.referenceRateBpsPerHour != 0 && c.quote.referenceStepBps != 0 && c.quote.referenceMaxStale != 0
+                && c.quote.minLiquidity != 0,
+            string.concat(
+                "tolBps ",
+                vm.toString(c.quote.tolBps),
+                "; referenceRateBpsPerHour ",
+                vm.toString(c.quote.referenceRateBpsPerHour),
+                " referenceStepBps ",
+                vm.toString(c.quote.referenceStepBps),
+                " referenceMaxStale ",
+                vm.toString(c.quote.referenceMaxStale),
+                " referenceMinSeconds ",
+                vm.toString(c.quote.referenceMinSeconds),
+                " minLiquidity ",
+                vm.toString(c.quote.minLiquidity),
+                " are set with setQuote before the switch; valueModeOn ",
+                c.settings.valueModeOn ? "true" : "false"
+            )
         );
         bytes32 badCredit = creditViolation(c);
         _check(
