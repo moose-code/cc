@@ -189,6 +189,10 @@ library CoreLib {
     /// gas of one queued compose and one queued redemption the reserve prices at `callerMaxBaseFee`
     uint256 internal constant COMPOSE_QUEUE_GAS = 9_000_000;
     uint256 internal constant REDEEM_QUEUE_GAS = 600_000;
+    /// the work before the count in `refreshReference` with the transaction base cost, and the most gas its caller
+    /// payment counts
+    uint256 internal constant REFRESH_OVERHEAD_GAS = 50_000;
+    uint256 internal constant REFRESH_GAS = 200_000;
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
 
@@ -212,8 +216,6 @@ library CoreLib {
     error ReturnLocked(uint256 id, uint256 until);
     /// an eth bid read in value mode while the controller's value read fails, answers short, zero or not ok
     error NoQuote();
-    /// a door ran in value mode while the reference quote was unusable: the eth bid fell back to the last good rate
-    event ValuePricingDegraded();
     /// one eth fill in value mode: the eth paid, the shared instance rate (bps of par) after this credit's drop, and the
     /// pot left. mirrors `EthRateFill`
     event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
@@ -486,13 +488,31 @@ library CoreLib {
             // and the switch off reset resumes from it. a down quote leaves the previous good rate in place
             (uint256 vr, bool okv) = _valueRate(c);
             if (okv) c.rateAtCheckpoint = vr;
-            // a door ran while the quote was unusable: the eth bid falls back to the kept rate (decision 159, C02)
-            else emit ValuePricingDegraded();
         } else {
             (c.rateAtCheckpoint,,) = _ethClimb(c);
         }
         // forge-lint: disable-next-line(unsafe-typecast)
         c.checkpointTime = uint64(block.timestamp);
+    }
+
+    /// @notice the keeper's reference refresh door: forwards to the controller's refresh and, when it ran, pays the
+    /// caller like compose, bounded by the pot and the caller base-fee ceiling. the Core books the pending fee income
+    /// before forwarding here, so the payment comes from the pot share of that income (decision 159, C02). runs in the
+    /// Core's storage context by delegatecall (the `_toLib` door forwards to it)
+    function refreshReference() external {
+        uint256 gasStart = gasleft();
+        State storage c = state();
+        address ctrl = c.controller;
+        if (ctrl == address(0)) return;
+        if (!IController(ctrl).refreshReference()) return;
+        Settings storage cfg = c.settings;
+        if (cfg.callerMaxBaseFee == 0 && cfg.callerFee == 0) return;
+        // the Core already booked the pending income into the pot; pay from it, which lowers the pot the next eth read
+        // clamps against, as compose does
+        uint256 pay = ((gasStart - gasleft() + REFRESH_OVERHEAD_GAS).min(REFRESH_GAS) * block.basefee.min(cfg.callerMaxBaseFee) + cfg.callerFee).min(c.ethPot);
+        if (pay == 0) return;
+        c.ethPot -= pay;
+        SafeTransferLib.safeTransferETH(msg.sender, pay);
     }
 
     /// @notice the eth bid rate now, wei per 100 points: the price state lowered to the clamp, `ethPot` plus the pending
@@ -506,17 +526,6 @@ library CoreLib {
             return read;
         }
         return _valueRateOrLast(c).min(_ethPagesPot(c).zeroFloorSub(_reserve(c)));
-    }
-
-    /// @notice the eth bid for one credit of a batch, read from the already-checkpointed rate with the live pot clamp
-    /// and without re-climbing. the eth sell door checkpoints once before the batch, so within the batch the stored rate
-    /// is climbed to now and each fill's drop walks it down; this equals `ethRate()` within that batch. it saves the per
-    /// credit ceiling climb of the mode-off sell path (decision 159, C08). the Core's `_sellForEth` reads it per credit
-    function ethBidFromCheckpoint() external view returns (uint256) {
-        State storage c = state();
-        uint256 clamp = _ethPagesPot(c).zeroFloorSub(_reserve(c));
-        if (!c.settings.valueModeOn) return c.rateAtCheckpoint.min(clamp);
-        return _valueRateOrLast(c).min(clamp);
     }
 
     /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode the value rate, falling back
@@ -1209,47 +1218,29 @@ library CoreLib {
         (rate,) = _balanceRead();
     }
 
-    /// @notice the executable balance token payout for a score of `score` stored units now: the advertised payout when
-    /// the module can pay it, else 0. the Core forwards its `balanceBidForScore(score)`
+    /// @notice the executable balance token payout for a score of `score` stored units now: the floor-advertised payout
+    /// when the module can pay it, else 0. the Core forwards its `balanceBidForScore(score)`
     function balanceBidForScore(uint256 score) external view returns (uint256) {
-        (uint256 payout, bool canFill) = _balanceQuote(score);
-        return canFill ? payout : 0;
+        return _balancePayout(score);
     }
 
-    /// @notice the executable balance token payout for credit `id` now: the advertised payout when the module can pay it,
-    /// else 0. a module too short to pay this credit's floor reads 0 here, so the view never advertises a payout the fill
-    /// refuses; `balanceBidStatus` exposes the gross quote and the fillable flag (decision 159, C05). the Core forwards
-    /// its `balanceBidOf(id)`
+    /// @notice the executable balance token payout for credit `id` now: the floor-advertised payout when the module can
+    /// pay it, else 0. a module too short to pay this credit's floor reads 0 here, so the view never advertises a payout
+    /// the fill refuses (decision 159, C05). the Core forwards its `balanceBidOf(id)`
     function balanceBidOf(uint256 id) external view returns (uint256) {
-        (uint256 payout, bool canFill) = _balanceQuote(scoreOf(id));
-        return canFill ? payout : 0;
+        return _balancePayout(scoreOf(id));
     }
 
-    /// @notice the gross balance token quote for credit `id` and whether the module can fill it now. `payout` is the
-    /// advertised payout (the rate held at or above the floor); `canFill` is false when `sellForBalance` would revert
-    /// for this one credit, that is when the available-clamped rate is below the floor or the paid amount exceeds the
-    /// module's `available()`. the web and the keeper read it to show an unpayable quote without acting on it. the Core
-    /// forwards its `balanceBidStatus(id)`
-    function balanceBidStatus(uint256 id) external view returns (uint256 payout, bool canFill) {
-        return _balanceQuote(scoreOf(id));
-    }
-
-    /// the gross balance token payout for `score` stored units and whether the module can fill it now. the advertised
-    /// payout holds the rate at or above the floor `10_000 - balanceBidMarginBps`; `canFill` mirrors the single credit
-    /// revert conditions of `_fillBalance`: the available-clamped rate at or above the floor and the paid amount at most
-    /// the module `available()`. (0, false) with no module or a failed unit read
-    function _balanceQuote(uint256 score) private view returns (uint256 payout, bool canFill) {
-        State storage c = state();
-        address module = c.balanceModule;
-        if (module == address(0)) return (0, false);
+    /// the balance token payout for `score` stored units: `score * unit * max(rate, floorBps) / 10_000`, 0 when the
+    /// module cannot fill this credit. the fill (`_fillBalance`) reverts when the available-clamped rate is below the
+    /// floor or the paid amount exceeds `available()`; the view mirrors those conditions and returns 0 instead of a
+    /// payout the fill refuses. 0 with no module or a failed unit read
+    function _balancePayout(uint256 score) private view returns (uint256) {
         (uint256 rate, uint256 unit) = _balanceRead();
-        if (unit == 0) return (0, false);
-        uint256 floorBps = BPS - c.settings.balanceBidMarginBps;
-        uint256 advRate = rate < floorBps ? floorBps : rate;
-        payout = score * unit * advRate / BPS;
-        uint256 paid = score * unit * rate / BPS;
-        uint256 avail = _availableView(module);
-        canFill = rate >= floorBps && paid != 0 && paid <= avail;
+        if (unit == 0) return 0;
+        uint256 pay = score * unit * rate / BPS;
+        if (rate < BPS - state().settings.balanceBidMarginBps || pay > _availableView(state().balanceModule)) return 0;
+        return pay;
     }
 
     /// the balance bid rate (bps of par) and the live unit. with the bid off or no usable module the instance does not

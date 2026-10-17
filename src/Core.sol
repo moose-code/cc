@@ -146,9 +146,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// `_book` booked `amount` of fee income (pot plus redeem-burn shares) and pushed `toPayee` to the payee
     event FeesAdded(uint256 amount, uint256 toPayee);
-    /// a door ran in value mode while the reference quote was unusable: the eth bid fell back to the last good rate
-    /// (raised by CoreLib, declared here for the abi)
-    event ValuePricingDegraded();
     /// `fund` added `amount` to the pot
     event Funded(address indexed from, uint256 amount);
     /// `collectEscrow` claimed `amount` from the fee escrow into the pot
@@ -249,10 +246,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant REDEEM_OVERHEAD_GAS = 50_000;
     /// the most gas of a redemption the caller payment counts, so a gas burning module cannot inflate it
     uint256 private constant REDEEM_GAS = 1_500_000;
-    /// gas of the work the `refreshReference` caller payment counts, with the transaction base cost
-    uint256 private constant REFRESH_OVERHEAD_GAS = 50_000;
-    /// the most gas of a refresh the caller payment counts, so a gas burning controller cannot inflate it
-    uint256 private constant REFRESH_GAS = 200_000;
     /// gas of the work after the end of `buyback` that its refund counts, with the transaction base cost
     uint256 private constant BUYBACK_OVERHEAD_GAS = 60_000;
     /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
@@ -393,18 +386,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _book();
     }
 
-    /// books the pending fee income, forwards to the controller's reference refresh and, when it updated the reference
-    /// (the cadence had elapsed), pays the caller on the exact compose basis (`_payCaller`), bounded by the booked pot
-    /// and the caller base-fee ceiling. anyone may call; the keeper calls this door. booking first means the caller is
-    /// paid from the pot share of the pending income the keeper's gate already counted (decision 159, C02). the
-    /// controller's own `refreshReference` stays public and unpaid
+    /// books the pending fee income, then forwards to `CoreLib.refreshReference`, which calls the controller's refresh
+    /// and, when it updated the reference, pays the caller from the booked pot like compose. booking first means the
+    /// caller is paid from the pot share of the pending income the keeper's gate already counted (decision 159, C02).
+    /// anyone may call; the keeper calls this door. the controller's own `refreshReference` stays public and unpaid
     function refreshReference() external nonReentrant {
-        uint256 gasStart = gasleft();
         _book();
-        address ctrl = s.controller;
-        if (ctrl == address(0)) return;
-        if (!IController(ctrl).refreshReference()) return;
-        _payCaller(gasStart, REFRESH_OVERHEAD_GAS, REFRESH_GAS);
+        _toLib();
     }
 
     /// adds `msg.value` to the pot. the eth above the tracked pots is booked first, so `msg.value` is never counted as
@@ -553,15 +541,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.balanceBidForScore(score);
     }
 
-    /// the executable balance token payout for credit id now: the advertised payout when the module can pay it, else 0
+    /// the executable balance token payout for credit id now: the floor payout when the module can pay it, else 0, so
+    /// the view never advertises a bid the fill refuses (decision 159, C05)
     function balanceBidOf(uint256 id) external view returns (uint256) {
         return CoreLib.balanceBidOf(id);
-    }
-
-    /// the gross balance token quote for credit id and whether the module can fill it now. `canFill` is false when
-    /// `sellForBalance` would revert for this one credit; the web and keeper read it to surface an unpayable quote
-    function balanceBidStatus(uint256 id) external view returns (uint256 payout, bool canFill) {
-        return CoreLib.balanceBidStatus(id);
     }
 
     /// the ETH purchase budget of the current bucket: the bucket id, its budget and the wei spent in it. a bucket with no
@@ -575,9 +558,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         CoreLib.checkpoint();
     }
 
-    /// books a spend of x from the pot for a credit of score `score`: rate drop scaled by `score / RATE_SCORE`, fill
-    /// time. the caller checkpoints the eth instance to now once before the batch, so the drop walks down from the
-    /// climbed rate; a batch does not re-climb per credit (one climb per door, decision 159, C08)
+    /// books a spend of x from the pot for a credit of score `score`. the eth sell door checkpoints the eth instance to
+    /// now once before the batch, so the drop walks down from the climbed rate without a per-credit re-climb (C08)
     function _spend(uint256 x, uint256 score) private {
         CoreLib.spend(x, score);
     }
@@ -694,8 +676,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             uint256 id = _owned(ids[i]);
             CoreLib.checkReturn(s, id, msg.sender);
             uint256 score = _scoreOf(id);
-            // read the bid from the rate checkpointed once before the loop, so the batch does not re-climb per credit
-            uint256 bid = CoreLib.ethBidFromCheckpoint();
+            uint256 bid = _bid();
             // the pot is at or under the reserve, so the bid reads zero: a named refusal, not ZeroAmount from the spend
             if (bid == 0) revert PotTooSmall();
             uint256 pay = bid.mulDiv(score, RATE_SCORE);
@@ -1245,12 +1226,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// sends `amount` of a stray ERC20 `token` the core holds to `to`. owner only and guarded. it refuses every
-    /// forbidden target: the coin (recovered through `rescueCoin`), Credits, Statements, the core itself, the hook, the
-    /// managers, and the current and every past balance token and module (the `everBalanceTarget` set), so a balance
-    /// token reserve is never moved out of its module path. it never touches tracked eth, which is not an ERC20. a
-    /// balance token sent directly to the core is recovered with this, not stranded (decision 159, C06). logs
-    /// `TokenRescued`
-    function rescueToken(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+    /// forbidden target (the coin, recovered through `rescueCoin`, Credits, Statements, the core, the hook, the managers,
+    /// and the current and every past balance token and module), so a balance token reserve is never moved out of its
+    /// module path. it never touches tracked eth, which is not an ERC20. a balance token sent directly to the core is
+    /// recovered with this, not stranded (decision 159, C06). logs `TokenRescued`. no reentrancy guard: it is owner only,
+    /// transfers a token the Core does not track, and does nothing after the transfer, so a token callback changes
+    /// nothing here and any Core door it re-enters is itself guarded
+    function rescueToken(address token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
         if (_forbidden(token)) revert ForbiddenTarget();
         SafeTransferLib.safeTransfer(token, to, amount);

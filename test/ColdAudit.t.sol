@@ -255,22 +255,17 @@ contract ColdAuditTest is Fixture {
         emit log_named_uint("statement buy charged wei", charged);
     }
 
-    // promise: balanceBidOf reads 0 when the module cannot pay the floor, balanceBidStatus exposes the gross quote and
-    // the unfillable flag, and the fill still reverts (decision 159, C05)
-    function test_thinModuleBalanceBidReadsZeroButStatusShowsGross() public {
+    // promise: balanceBidOf reads 0 when the module cannot pay the credit's floor, and the fill still reverts (C05)
+    function test_thinModuleBalanceBidReadsZero() public {
         _enterPhase2();
         uint256 id = _credits(seller, 1)[0];
         _unitScore(id);
         mod.setAvailable(1e15);
         assertEq(core.balanceBidOf(id), 0, "the view reads 0 for a payout the module cannot fill");
-        (uint256 payout, bool canFill) = core.balanceBidStatus(id);
-        assertEq(payout, 9e15, "the status still exposes the 90 percent floor quote");
-        assertFalse(canFill, "the status marks it unfillable");
-        assertLt(mod.available(), payout, "the module committed less than the quoted payout");
+        assertLt(mod.available(), 9e15, "the module committed less than the 90 percent floor payout");
         vm.prank(seller);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(_one(id));
-        emit log_named_uint("unpayable gross balance quote", payout);
         emit log_named_uint("available balance tokens", mod.available());
     }
 
