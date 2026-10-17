@@ -298,6 +298,7 @@ contract E2EReal is Scenario {
         require(token.balanceOf(A1) - before == balBid, "phase6: balance fill not balanceBidOf");
         console.log("phase6: balance sell credit", id);
         console.log("phase6: balanceBidOf / paid", balBid, token.balanceOf(A1) - before);
+        console.log("phase6: buyToArtistBps", core.settings().buyToArtistBps);
     }
 
     // ---------------------------------------------------- phase 6 production: Jack's pinned contracts (the artifact)

@@ -16,6 +16,10 @@ interface IStatementBalanceToken {
     function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256);
 }
 
+interface IERC20Transfer {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+
 interface IStatementSource {
     function approve(address to, uint256 id) external;
     function creditScoreOf(uint256 id) external view returns (uint256);
@@ -46,7 +50,16 @@ contract StatementBalanceModule is IBalanceModule {
     error InvalidSuccessor();
     error RedeemedBelowRating();
 
+    /// gas kept back from a payment transfer so an unpaid amount can still be recorded: two storage writes and an event.
+    uint256 internal constant ACCRUE_RESERVE = 60_000;
+
+    /// balance token owed to an address whose transfer from `pay` did not complete. excluded from `available()`.
+    mapping(address => uint256) public owed;
+    uint256 public totalOwed;
+
     event ReserveMigrated(address indexed successor, address indexed module, uint256 amount);
+    event PaymentAccrued(address indexed to, uint256 amount);
+    event OwedClaimed(address indexed to, uint256 amount);
 
     constructor(address core_, address balanceToken_) {
         if (core_.code.length == 0 || balanceToken_.code.length == 0) revert InvalidConfiguration();
@@ -78,20 +91,57 @@ contract StatementBalanceModule is IBalanceModule {
     }
 
     /// returns 0 until upstream retirement is complete and the opening block is reached, then the module's token
-    /// balance. `totalRetired` is 0 or `launchRetirement`: `retireLaunchSupply` assigns it once, behind a
+    /// balance less `totalOwed`. `totalRetired` is 0 or `launchRetirement`: `retireLaunchSupply` assigns it once, behind a
     /// `totalRetired != 0` revert.
     function available() public view override returns (uint256) {
         IStatementBalanceToken token = IStatementBalanceToken(balanceToken);
         if (token.totalRetired() != token.launchRetirement() || block.number < token.transfersOpenBlock()) return 0;
-        return SafeTransferLib.balanceOf(balanceToken, address(this));
+        return _unowedBalance();
     }
 
+    function _unowedBalance() private view returns (uint256) {
+        uint256 bal = SafeTransferLib.balanceOf(balanceToken, address(this));
+        uint256 debt = totalOwed;
+        return bal > debt ? bal - debt : 0;
+    }
+
+    /// transfers `amount` with all gas except `ACCRUE_RESERVE`, then records the shortfall in the module's balance
+    /// (`amount` less the balance decrease) in `owed[to]` for `claim`. the token's return value is not read: a transfer
+    /// that reverts, runs out of gas, returns false, returns no data or moves less than `amount` accrues exactly the
+    /// undelivered part. the token's transfer callbacks can exceed the gas the Core forwards for the artist royalty. the
+    /// Core checks the seller's balance after paying the seller and reverts if it did not rise.
     function pay(address to, uint256 amount) external override onlyCore {
         if (amount > available()) revert InsufficientAvailable();
-        SafeTransferLib.safeTransfer(balanceToken, to, amount);
+        uint256 before = SafeTransferLib.balanceOf(balanceToken, address(this));
+        uint256 g = gasleft();
+        if (g > ACCRUE_RESERVE) {
+            (bool sent,) =
+                balanceToken.call{gas: g - ACCRUE_RESERVE}(abi.encodeCall(IERC20Transfer.transfer, (to, amount)));
+            sent;
+        }
+        uint256 afterBal = SafeTransferLib.balanceOf(balanceToken, address(this));
+        uint256 delivered = before > afterBal ? before - afterBal : 0;
+        if (delivered < amount) {
+            uint256 short = amount - delivered;
+            owed[to] += short;
+            totalOwed += short;
+            emit PaymentAccrued(to, short);
+        }
+    }
+
+    /// pays `owed[to]` to `to` with all gas. anyone may call.
+    function claim(address to) external returns (uint256 amount) {
+        amount = owed[to];
+        owed[to] = 0;
+        totalOwed -= amount;
+        if (amount != 0) {
+            SafeTransferLib.safeTransfer(balanceToken, to, amount);
+            emit OwedClaimed(to, amount);
+        }
     }
 
     /// anyone may move the retired Core's reserve to its successor's currently bound module, including later proceeds.
+    /// the moved amount excludes `totalOwed`, which stays in this module for `claim`.
     function migrateReserve() external returns (uint256 amount) {
         IStatementBalanceCore source = IStatementBalanceCore(core);
         if (!source.retired()) revert CoreNotRetired();
@@ -103,7 +153,7 @@ contract StatementBalanceModule is IBalanceModule {
         if (destination.code.length == 0 || destination == address(this)) revert InvalidSuccessor();
         IStatementBalanceBinding target = IStatementBalanceBinding(destination);
         if (target.core() != successor || target.balanceToken() != balanceToken) revert InvalidSuccessor();
-        amount = SafeTransferLib.balanceOf(balanceToken, address(this));
+        amount = _unowedBalance();
         if (amount > available()) revert InsufficientAvailable();
         if (amount != 0) SafeTransferLib.safeTransfer(balanceToken, destination, amount);
         emit ReserveMigrated(successor, destination, amount);

@@ -11,13 +11,18 @@ interface IStatementBalanceModule {
     error OnlyCore();
     error RedeemedBelowRating();
 
+    event OwedClaimed(address indexed to, uint256 amount);
+    event PaymentAccrued(address indexed to, uint256 amount);
     event ReserveMigrated(address indexed successor, address indexed module, uint256 amount);
 
     function available() external view returns (uint256);
     function balanceToken() external view returns (address);
+    function claim(address to) external returns (uint256 amount);
     function core() external view returns (address);
     function migrateReserve() external returns (uint256 amount);
+    function owed(address) external view returns (uint256);
     function pay(address to, uint256 amount) external;
     function redeem(uint256 statementId) external returns (uint256 out);
+    function totalOwed() external view returns (uint256);
     function unitPerPoint() external view returns (uint256);
 }
