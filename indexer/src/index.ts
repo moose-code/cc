@@ -331,8 +331,10 @@ ponder.on("Core:RateSet", async ({ event, context }) => {
 
 ponder.on("Core:BalanceRateSet", async ({ event, context }) => {
   await coreEvent(context, event, "BalanceRateSet");
-  const cur = await ensureEngine(context);
-  await settingValue(context, event, "core", "BalanceRateSet", { balanceRate: cur.balanceRate }, { rateBps: event.args.rateBps });
+  // BalanceRateSet reports value mode's shared instance reset to the floor, not the posted balance bid rate: the
+  // balance bid is 10_000 - balanceDiscountBps and lives in the balanceRate column, sourced from SettingsSet and the
+  // snapshot read (decision 164). record this under a separate shared-rate key so it does not conflate with that column
+  await settingValue(context, event, "core", "BalanceRateSet", null, { sharedRateBps: Number(event.args.rateBps) });
 });
 
 ponder.on("Core:CreditCostToPotBpsSet", async ({ event, context }) => {

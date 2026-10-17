@@ -75,8 +75,9 @@ contract PerPointTest is Fixture {
         uint256 ref = RATE_SCORE;
         core.adopt(_one(id));
         (, uint256 cost,) = core.creditInfo(id);
-        uint256 want = price * _scoreOf(id) / ref;
+        uint256 pay = price * _scoreOf(id) / ref;
+        uint256 want = pay + pay * core.settings().buyToArtistBps / 10_000;
         if (want == 0) want = 1;
-        assertEq(cost, want, "the adopt basis is the price state scaled by score");
+        assertEq(cost, want, "the adopt basis is the price state scaled by score plus the artist royalty");
     }
 }

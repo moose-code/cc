@@ -189,6 +189,42 @@ contract ArtistRoyaltyTest is Fixture {
         _solvent();
     }
 
+    // promise: SPEC 6 the artist royalty push runs before the keeper payment is measured, so a reverting artist does not
+    // cut the keeper's gas refund: the keeper is still paid and the buy lands (decision 163)
+    function test_buyListingKeeperCoveredWithRevertingArtist() public {
+        RevertingArtist r = new RevertingArtist();
+        _setArtist(address(r));
+        uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
+        _fundPot(10 ether);
+        _warpUntilCeiling(LISTED_A, price);
+        uint256 royalty = _royalty(price);
+        uint256 keeperBefore = keeper.balance;
+        vm.prank(keeper);
+        core.buyListing(strategyAdapter, LISTED_A, "");
+        uint256 paid = keeper.balance - keeperBefore;
+        // the push runs before the keeper payment is measured, so the keeper is still refunded and the royalty lands on
+        // the reverting artist through the forced push (exact amounts are pinned in test_buyListingPaysTheRoyaltyOnThePrice)
+        assertGt(paid, 0, "the keeper is paid despite the reverting artist");
+        assertApproxEqAbs(address(r).balance, royalty, 1, "the forced royalty push landed");
+        assertEq(CREDITS.ownerOf(LISTED_A), address(core));
+        _solvent();
+    }
+
+    // promise: SPEC 6 an adopted credit records the price plus the artist royalty as its cost basis, so its sale floor
+    // matches a bought credit (decision 163)
+    function test_adoptRecordsTheRoyaltyInTheCostBasis() public {
+        _fundPot(5 ether);
+        uint256 id = _credits(seller, 1)[0];
+        vm.prank(seller);
+        CREDITS.transferFrom(seller, address(core), id);
+        uint256 price = core.ethPrice();
+        uint256 pay = price * _scoreOf(id) / RATE_SCORE;
+        assertGt(_royalty(pay), 0, "the launch royalty is nonzero");
+        core.adopt(_one(id));
+        (, uint256 cost,) = core.creditInfo(id);
+        assertEq(cost, pay + _royalty(pay), "the adopted basis is the price plus the royalty");
+    }
+
     // promise: SPEC 6 a listing whose price plus royalty passes the room reverts PotTooSmall before the venue is called
     function test_buyListingRefusesWhenTheRoyaltyDoesNotFit() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);

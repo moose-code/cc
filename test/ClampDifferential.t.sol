@@ -59,13 +59,18 @@ contract ClampDifferentialTest is Fixture {
         // new rule: the eth floor is the pages pot less the reserve
         assertEq(core.floorRate(), clampNew, "the eth floor is the pages pot less the reserve");
 
-        // new rule: a 100-point credit the engine adopts books at the same clamp. adopt books the pending income first,
-        // so its pages pot equals the booked pot, and the clamp is that pot less the reserve
+        // new rule: a 100-point credit the engine adopts books at the clamped price state plus the artist royalty, as a
+        // bought credit does (decision 163), so its sale floor matches. adopt books the pending income first, so its
+        // pages pot equals the booked pot, and the price state is that pot less the reserve over 1 + buyToArtistBps
         uint256[] memory ids = _credits(address(core), 1);
         _mockScore(ids[0], RATE_SCORE);
         core.adopt(ids);
         (, uint256 cost,) = core.creditInfo(ids[0]);
-        assertEq(cost, clampNew, "the adopted cost basis is the pages pot less the reserve");
+        assertEq(
+            cost,
+            clampNew + clampNew * core.settings().buyToArtistBps / 10_000,
+            "the adopted basis is the clamped price plus the royalty"
+        );
 
         // main's booked-pot rule: the clamp was ethPot with no reserve held back, which after the book equals the pages
         // pot. so main would price both reads at pagesPot; the delta is the reserve plus the royalty's share of the room

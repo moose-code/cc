@@ -11,6 +11,7 @@ import {
   decide,
   GAS_GUESS,
   listingKey,
+  listingPayment,
   observe,
   refreshReferenceDue,
   recheck,
@@ -211,7 +212,21 @@ test("listing: the reserve bounds the sweep, not the processing", () => {
   assert.match(reason(atReserve, "buyListing"), /ReserveHeld/);
   assert.ok(doorsOf(atReserve).includes("compose"), "compose still pays from the whole pot");
   const covered = decide(state({ potWithPending: parseEther("0.11"), potRoom: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
-  assert.match(reason(covered, "buyListing"), /PotTooSmall: price above ethPot less the reserve/);
+  assert.match(reason(covered, "buyListing"), /PotTooSmall: price plus its artist royalty above ethPot less the reserve/);
+});
+
+// promise: the artist royalty on a listing rides on top: listingPayment refuses a listing whose price plus royalty
+// passes the room, and the room caps the keeper payment at room - price - royalty (decision 163)
+test("listing: the artist royalty is part of the room bound and the payment cap", () => {
+  const s = state();
+  const l = listing(); // price 0.01, bid 0.012; royalty 250 bps is 0.00025
+  const royalty = (l.price * 250n) / 10_000n;
+  // price plus royalty just over the room: no payment
+  const tight = { ...s, potRoom: l.price + royalty - 1n };
+  assert.equal(listingPayment(tight, l, GAS_GUESS.buyListing, parseGwei("1")), 0n);
+  // the room less price less royalty is the binding cap, below the gap and the gas refund
+  const capped = { ...s, potRoom: l.price + royalty + 10n ** 13n };
+  assert.equal(listingPayment(capped, l, GAS_GUESS.buyListing, parseGwei("1")), 10n ** 13n);
 });
 
 // promise: a lapsed value quote degrades the eth bid instead of halting it, so the keeper still sweeps (decision 159, C02)

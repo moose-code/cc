@@ -577,6 +577,56 @@ abstract contract InvariantsBase is InvariantFixture {
         vm.revertToState(snap);
     }
 
+    /// 21b. view equals stored for the balance bid: `balanceBidOf(id)` read in a block equals the balance token a
+    /// single-credit `sellForBalance` pays the seller in that same block (decision 164). the posted bid does not climb
+    /// or drop, so the quote and the fill agree whenever the module can pay the payout and its royalty.
+    // promise: 21b the balance bid quoted equals the balance token the next fill pays
+    function invariant_21b_balanceBidEqualsNextFill() public {
+        if (core.retired() || !core.settings().balanceBidOn || core.balanceModule() == address(0)) return;
+        uint256 snap = vm.snapshotState();
+        (address holder, uint256 id) = _balanceSellable();
+        if (holder == address(0)) {
+            vm.revertToState(snap);
+            return;
+        }
+        uint256 quoted = core.balanceBidOf(id);
+        address token = core.balanceToken();
+        uint256 balBefore = _balanceOf(token, holder);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.startPrank(holder);
+        CREDITS.setApprovalForAll(address(core), true);
+        (bool ok, bytes memory why) = address(core).call(abi.encodeWithSignature("sellForBalance(uint256[])", ids));
+        vm.stopPrank();
+        if (ok) {
+            assertEq(
+                _balanceOf(token, holder) - balBefore,
+                quoted,
+                string.concat("balance fill paid differs from balanceBidOf quoted in the same block, id ", vm.toString(id))
+            );
+        } else {
+            // a credit the engine sold inside its return lock is refused by the lock, and a module that cannot pay the
+            // payout and its royalty by `PotTooSmall`; neither is a quote against fill divergence
+            assertTrue(
+                bytes4(why) == ICore.ReturnLocked.selector || bytes4(why) == ICore.PotTooSmall.selector,
+                string.concat("sellForBalance refused a sellable credit, selector ", vm.toString(bytes4(why)))
+            );
+        }
+        vm.revertToState(snap);
+    }
+
+    /// a credit an actor holds whose posted balance bid is nonzero: the module can pay its payout and the royalty
+    function _balanceSellable() internal view returns (address holder, uint256 id) {
+        uint256 n = handler.actorCount();
+        for (uint256 a; a < n; ++a) {
+            address actor = handler.actors(a);
+            uint256[] memory held = CREDITS.tokensOf(actor);
+            for (uint256 j; j < held.length && j < 4; ++j) {
+                if (core.balanceBidOf(held[j]) != 0) return (actor, held[j]);
+            }
+        }
+    }
+
     /// the eth price state ceiling now: `ceilBps` of the fill anchor grown by `idleLoosenBps` scaled by the pot
     /// multiplier `m` per 10 idle minutes, capped by `rateCap` (decision 128)
     function _ethCap(uint256 pagesPot) internal view returns (uint256) {

@@ -21,6 +21,7 @@ export interface EthReplay {
   ceilBps: bigint;
   rateCap: bigint;
   scorePer100Points: bigint; // score units in 100 points (SCORE_PER_100_POINTS; the selfchecks pass smaller values)
+  buyToArtistBps: bigint; // the artist royalty on every purchase, bps of the payout, paid on top (decision 163)
 }
 
 // Total eth sellForEth pays for the credits `scores` (their scores, in order)
@@ -44,10 +45,13 @@ export function replayEthFills(scores: bigint[], a: EthReplay): bigint[] {
   let bucket = a.bucket;
   const fills: bigint[] = [];
   for (const score of scores) {
-    const read = r < left ? r : left;
+    // the bid read clamps to the pot left over 1 + buyToArtistBps / 10000 (Core._bidRoom), and the pot pays the payout
+    // plus its royalty, so a pot-bound quote equals what the seller receives (decision 163)
+    const bidRoom = (left * 10000n) / (10000n + a.buyToArtistBps);
+    const read = r < bidRoom ? r : bidRoom;
     const x = (read * score) / a.scorePer100Points;
     fills.push(x);
-    left -= x;
+    left -= x + (x * a.buyToArtistBps) / 10000n;
     if (bucket !== a.nowBucket || r < (start * a.dropFloorBps) / 10000n) {
       bucket = a.nowBucket;
       start = r;
@@ -98,6 +102,7 @@ export interface ValueReplay {
   dropPer100PointsBps: bigint;
   dropFloorBps: bigint;
   floorBps: bigint; // 10000 - balanceBidMarginBps
+  buyToArtistBps: bigint; // the artist royalty on every purchase, bps of the payout, paid on top (decision 163)
 }
 
 // Total eth sellForEth pays in value mode (decision 148) for the credits `scores` (in order) in one call. Each credit
@@ -117,10 +122,13 @@ export function replayValueFills(scores: bigint[], a: ValueReplay): bigint[] {
   for (const score of scores) {
     let rate = (r * a.value * 100n) / 10000n;
     if (rate > a.rateCap) rate = a.rateCap;
-    const read = rate < left ? rate : left;
+    // the bid read clamps to the pot left over 1 + buyToArtistBps / 10000 (Core._bidRoom), and the pot pays the payout
+    // plus its royalty, so a pot-bound quote equals what the seller receives (decision 163)
+    const bidRoom = (left * 10000n) / (10000n + a.buyToArtistBps);
+    const read = rate < bidRoom ? rate : bidRoom;
     const x = (read * score) / a.scorePer100Points;
     fills.push(x);
-    left -= x;
+    left -= x + (x * a.buyToArtistBps) / 10000n;
     const denom = 10000n * a.scorePer100Points;
     const fallNum = a.dropPer100PointsBps * score;
     let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;

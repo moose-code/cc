@@ -31,8 +31,8 @@ contract AuditDaylightTest is Fixture {
         super.setUp();
     }
 
-    function _floor() internal view returns (uint256) {
-        return 10_000 - core.settings().balanceBidMarginBps;
+    function _posted() internal view returns (uint256) {
+        return 10_000 - core.settings().balanceDiscountBps;
     }
 
     function _enableBid() internal {
@@ -47,32 +47,30 @@ contract AuditDaylightTest is Fixture {
         t.mint(address(m), 1e24);
     }
 
-    // promise: M1 with the bid on and no module set the balance rate does not climb and reports the floor, and a module
-    // set later opens the instance at the floor, not at a rate climbed while unbacked
-    function test_balanceBidDoesNotClimbWithoutModule() public {
+    // promise: M1 the balance rate is the posted 10_000 - balanceDiscountBps whatever the module state and whatever time
+    // passes: no climb while idle, no module read (decision 164)
+    function test_balanceRateIsPostedWithoutModule() public {
         _enableBid();
-        assertEq(core.balanceRate(), _floor(), "no module: the rate is the floor");
+        assertEq(core.balanceRate(), _posted(), "no module: the rate is the posted discount");
         _warp(30 minutes);
-        assertEq(core.balanceRate(), _floor(), "no module: the instance did not climb");
+        assertEq(core.balanceRate(), _posted(), "no module: the posted rate did not climb");
         _setBalanceModule(address(_module()));
-        assertEq(core.balanceRate(), _floor(), "a module set while the bid is on opens at the floor");
+        assertEq(core.balanceRate(), _posted(), "a module set leaves the posted rate unchanged");
     }
 
-    // promise: M1 a module whose unit read fails does not climb and reports the floor, and after the read recovers the
-    // rate is the floor, not a rate climbed through the failure
-    function test_balanceBidResetsToFloorAfterUnitFailureRecovers() public {
+    // promise: M1 the posted balance rate is unchanged by a failing unit read: it never reads the module or the instance
+    function test_balanceRatePostedThroughUnitFailure() public {
         MockBalanceModule m = _module();
         _setBalanceModule(address(m));
         _enableBid();
-        assertEq(core.balanceRate(), _floor(), "a fresh module opens at the floor");
+        assertEq(core.balanceRate(), _posted(), "a fresh module: the rate is the posted discount");
         m.setRevertUnit(true);
-        assertEq(core.balanceRate(), _floor(), "failed unit read: the rate is the floor");
+        assertEq(core.balanceRate(), _posted(), "failed unit read: the posted rate is unchanged");
         _warp(30 minutes);
-        assertEq(core.balanceRate(), _floor(), "failed unit read: the instance did not climb");
-        // a checkpoint while the module is unusable pins the instance to the floor with a fresh clock
+        assertEq(core.balanceRate(), _posted(), "failed unit read: the posted rate did not climb");
         _setSettings(core.settings());
         m.setRevertUnit(false);
-        assertEq(core.balanceRate(), _floor(), "after the unit read recovers the rate is the floor");
+        assertEq(core.balanceRate(), _posted(), "after the unit read recovers the posted rate is unchanged");
     }
 
     // promise: M2 setController refuses an EOA

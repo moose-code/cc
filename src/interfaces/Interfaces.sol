@@ -192,7 +192,8 @@ struct Settings {
     /// a redemption must raise the balance token balance by at least `rating * unitPerPoint * (10_000 - redeemSlippageBps)
     /// / 10_000`, bps
     uint16 redeemSlippageBps;
-    /// the floor and opening value of the balance bid rate is `10_000 - balanceBidMarginBps`, bps of par
+    /// value mode only: the floor and opening value of the shared eth instance is `10_000 - balanceBidMarginBps`, bps of
+    /// par. the posted balance bid does not read it
     uint16 balanceBidMarginBps;
     /// share of `ethRedeemBurn` moved into the coin buyback on each redemption, bps
     uint16 redeemBurnBps;
@@ -237,7 +238,8 @@ struct Settings {
     uint16 spendCapBps;
     /// seconds per shared purchase-budget and bid-drop bucket
     uint32 bucketSeconds;
-    /// maximum balance bid rate, bps of par, at least 10,000
+    /// value mode only: the cap of the shared eth instance, bps of par, at least 10,000. the posted balance bid does not
+    /// read it
     uint32 balanceBidCapBps;
     /// seconds per full ceiling-loosening step; per-minute climb units remain 60 seconds
     uint32 idleStepSeconds;

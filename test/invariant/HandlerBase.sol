@@ -2468,7 +2468,9 @@ abstract contract HandlerBase is Test {
         uint256 price = _priceNow(p.rs.st);
         p.costs = new uint256[](ids.length);
         for (uint256 k; k < ids.length; ++k) {
-            p.costs[k] = FullMath.mulDiv(price, _scoreOf(ids[k]), RATE_SCORE).max(1);
+            // the adopted basis is the price state scaled by score plus the artist royalty, as a bought credit (decision 163)
+            uint256 pay = FullMath.mulDiv(price, _scoreOf(ids[k]), RATE_SCORE);
+            p.costs[k] = (pay + pay * p.rs.st.buyToArtistBps / 10_000).max(1);
         }
         (p.anchor0, p.floor0, p.bucket0) = _anchorState();
     }

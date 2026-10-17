@@ -281,8 +281,10 @@ export function decide(
         continue;
       }
       if (l.price > l.bid) continue;
-      if (l.price > s.potRoom) {
-        skips.push({ door: "buyListing", key, reason: "PotTooSmall: price above ethPot less the reserve" });
+      // the pot pays the price plus its artist royalty, so the room bounds price + royalty (Core.buyListing, decision 163)
+      const royalty = (l.price * BigInt(s.settings.buyToArtistBps)) / 10_000n;
+      if (l.price + royalty > s.potRoom) {
+        skips.push({ door: "buyListing", key, reason: "PotTooSmall: price plus its artist royalty above ethPot less the reserve" });
         continue;
       }
       const payment = listingPayment(s, l, GAS_GUESS.buyListing, b);
@@ -291,7 +293,7 @@ export function decide(
         skips.push({ door: "buyListing", key, reason: `unprofitable: payment ${payment} under cost ${cost} plus margin` });
         continue;
       }
-      const waitUntil = spendBlocked(s, l.price + payment);
+      const waitUntil = spendBlocked(s, l.price + royalty + payment);
       if (waitUntil !== undefined) {
         skips.push({ door: "buyListing", key, reason: `SpendCapReached: bucket budget ${s.spend.budget} has ${s.spend.spent} spent, next bucket at ${waitUntil}` });
         continue;

@@ -120,7 +120,7 @@ One row per snapshot block (section 5.2) with the snapshot fields. Drives charts
 
 ### 6.4 `setting_change`
 
-One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `PausedSet`, `PayeeSet`, `ArtistSet`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet`, lock events, ownership events, controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`, `QuoteSet`): `name`, `before` json, `after` json. Answers "what was X at block B" without archive calls.
+One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `PausedSet`, `PayeeSet`, `ArtistSet`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet`, lock events, ownership events, controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`, `QuoteSet`): `name`, `before` json, `after` json. Answers "what was X at block B" without archive calls. `BalanceRateSet` records value mode's shared instance reset under a `sharedRateBps` key, not the posted balance bid rate: the posted rate is `10,000 - balanceDiscountBps` in the `balanceRate` column, sourced from `SettingsSet` and the snapshot read (decision 164). The handler change needs a full reindex to drop the old `balanceRate` before/after rows this event wrote.
 
 ### 6.5 `controller`
 

@@ -90,9 +90,10 @@ struct State {
     Settings settings;
     /// the eth bid anchor state, four words
     CoreLib.Anchor anchor;
-    /// the balance token bid price state, a `Rate`: its own stored rate, checkpoint, fill time and anchor. the rate is
-    /// bps of par, bounded to [10_000 - balanceBidMarginBps, balanceBidCapBps] and clamped to the module's available(); the climb
-    /// and drop are the eth bid's, shared through CoreLib
+    /// value mode's shared eth instance, a `Rate`: its own stored rate, checkpoint, fill time and anchor. the rate is
+    /// bps of par, bounded to [10_000 - balanceBidMarginBps, balanceBidCapBps] and clamped to the module's available(),
+    /// and in value mode it is the eth bid's price state, read by `sharedRate()`. the posted balance bid does not read
+    /// or move it (decision 164). the climb and drop are the eth bid's, shared through CoreLib
     CoreLib.Rate balance;
     /// the last `sellCreditTo` per credit id, the buyer packed in the high 160 bits and the sale time in the low 96,
     /// kept after the credit leaves the pile. every intake door (`sellForEth`, `sellForBalance`, `buyListing`,
@@ -193,6 +194,9 @@ library CoreLib {
     /// payment counts
     uint256 internal constant REFRESH_OVERHEAD_GAS = 50_000;
     uint256 internal constant REFRESH_GAS = 200_000;
+    /// gas bound for the non-blocking artist royalty `pay` on the balance route, enough for the module bookkeeping and an
+    /// ERC20 transfer with a blacklist check, so a hostile artist or token cannot grief the seller's sale
+    uint256 internal constant ARTIST_PAY_GAS = 200_000;
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
 
@@ -233,7 +237,8 @@ library CoreLib {
     event BalanceFill(uint256 paid, uint256 toArtist, uint256 available);
     error BadSetting(bytes32 field);
     event SettingsSet(Settings settings);
-    /// the balance bid rate was reset to `rateBps` (bps of par): the floor, on a margin raise or the bid turning on
+    /// value mode's shared eth instance was reset to `rateBps` (bps of par), its floor, on a margin raise or the value
+    /// switch turning on. the posted balance bid does not use this instance
     event BalanceRateSet(uint256 rateBps);
     error BadSwap();
     error ZeroAddress();
@@ -768,7 +773,8 @@ library CoreLib {
     }
 
     /// @notice the rate after one credit of score `score` is bought with the price state `price` of anchor `a`.
-    /// `absFloor` is a lower bound on the result: 0 for the eth bid, `10_000 - balanceBidMarginBps` for the balance bid
+    /// `absFloor` is a lower bound on the result: 0 for the eth bid, `10_000 - balanceBidMarginBps` for value mode's
+    /// shared eth instance
     function _drop(Anchor storage a, uint256 price, uint256 nowTs, uint256 score, uint256 absFloor)
         private
         returns (uint256)
@@ -894,7 +900,8 @@ library CoreLib {
 
     /// @notice puts credits the Core holds without a record into the eth pile, anyone may call. The cost basis of a
     /// credit is the price state at `block.timestamp` (`climb`, before the clamp, no checkpoint is written) times the
-    /// credit's score over 100 points, at least 1 wei. The price state is what the engine pays with a funded
+    /// credit's score over 100 points, plus the artist royalty `buyToArtistBps` the eth bid would pay, at least 1 wei,
+    /// so the sale floor matches a bought credit (decision 163). The price state is what the engine pays with a funded
     /// pot, so statements built from adopted credits are priced at that level; the clamp of a thin pot would book a
     /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
     /// eth pile grows: the rate state and the pots keep their values. `acquiredAt` is the current
@@ -911,7 +918,10 @@ library CoreLib {
             if (c.credits[id].inPile) revert InPile();
             if (CREDITS.ownerOf(id) != address(this)) revert NotHolder();
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
-            uint256 cost = price.mulDiv(score, RATE_SCORE).max(1);
+            // record the price plus its artist royalty, as a bought credit does, so the adopted credit's sale floor
+            // covers the royalty the eth bid would have paid (decision 163)
+            uint256 pay = price.mulDiv(score, RATE_SCORE);
+            uint256 cost = (pay + pay * c.settings.buyToArtistBps / BPS).max(1);
             push(c.pile, c.credits, id, cost);
             emit CreditAdopted(id, cost);
         }
@@ -1045,13 +1055,14 @@ library CoreLib {
         }
     }
 
-    /// the caller of an owner function the Core forwarded here: `msg.sender` is the caller of the Core
     /// the Core's forbidden list, read through its `isForbidden` view (the base set and every module or token a
     /// `setBalanceModule` has ever selected)
     function _forbidden(address t) private view returns (bool) {
         return ICoinOf(address(this)).isForbidden(t);
     }
 
+    /// reverts unless the caller of the owner function the Core forwarded here is the owner; `msg.sender` is the Core's
+    /// caller because the Core delegatecalls the library
     function _onlyOwner() private view {
         if (msg.sender != state().owner) revert OnlyOwner();
     }
@@ -1131,9 +1142,11 @@ library CoreLib {
     /// no climb, no drop, no floor rate check. `unit` is the module's `unitPerPoint()` read in the call. runs only
     /// while `balanceBidOn`. the artist is paid `buyToArtistBps` of each payout on top (decision 163), in balance token
     /// through a second module `pay`. the module holds the balance token: the running total of the payouts and the
-    /// royalties must not exceed the module's live `available()` (`PotTooSmall`), so neither `pay` can fail on funds.
+    /// royalties must not exceed the module's live `available()` (`PotTooSmall`), so the funds for both are present.
     /// the module pays the seller with one `pay(seller, total)`, and the seller's holding must rise by at least `total`
-    /// (`BadModule`). the credit enters the single pile with an eth cost basis of `floorRate * score / RATE_SCORE`, at
+    /// (`BadModule`). the artist royalty `pay` runs under a gas bound and a revert leaves the amount in the module (paid
+    /// to the artist on a later fill or recovered by the owner), so a hostile artist or token cannot block the sale.
+    /// the credit enters the single pile with an eth cost basis of `floorRate * score / RATE_SCORE`, at
     /// least 1 wei (the Core's eth `floorRate()`). a failing, short or zero live unit read reverts the whole bid
     /// (`BadModule`)
     function _sellForBalance(uint256[] calldata ids, uint256 minOut) private {
@@ -1151,7 +1164,14 @@ library CoreLib {
         uint256 heldBefore = SafeTransferLib.balanceOf(token, msg.sender);
         IBalanceModule(module).pay(msg.sender, total);
         if (SafeTransferLib.balanceOf(token, msg.sender).zeroFloorSub(heldBefore) < total) revert BadModule();
-        if (artistTotal != 0) IBalanceModule(module).pay(c.artist, artistTotal);
+        // the artist royalty runs under a gas bound; a revert or a blacklisting token leaves the amount in the module,
+        // so a hostile artist or token cannot block the sale. the stranded royalty is paid to the artist on a later fill
+        // or recovered by the owner through the module (decision 163)
+        if (artistTotal != 0) {
+            (bool okPay,) =
+                module.call{gas: ARTIST_PAY_GAS}(abi.encodeCall(IBalanceModule.pay, (c.artist, artistTotal)));
+            okPay;
+        }
     }
 
     /// climbs the balance instance to now with clamp `clampTo`, cap balanceBidCapBps and pages pot `pagesPot` and stores the

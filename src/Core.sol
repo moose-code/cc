@@ -182,7 +182,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller);
     event SettingsSet(Settings settings);
     event RateSet(uint256 rate);
-    /// the balance bid rate was reset to `rateBps` (bps of par): the floor, on a margin raise or the bid turning on
+    /// value mode's shared eth instance was reset to `rateBps` (bps of par), its floor, on a margin raise or the value
+    /// switch turning on. the posted balance bid does not use this instance (emitted by CoreLib, declared here for the abi)
     event BalanceRateSet(uint256 rateBps);
     event StatementRedeemed(uint256 indexed sid, uint256 received);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
@@ -524,6 +525,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the price state now, wei per 100 points: `rateAtCheckpoint` climbed lazily and bounded by the ceiling and
     /// `rateCap`, before the clamp that `ethRate` applies. the climb also stops at the pot, so with an empty pot the
     /// price state does not climb. the cost basis of an adopted credit is this price times its score over 100 points
+    /// plus the artist royalty the eth bid would pay
     function ethPrice() external view returns (uint256) {
         return CoreLib.ethPrice();
     }
@@ -752,6 +754,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
         if (address(this).balance + value < ethBefore) revert BadCost();
 
+        // push the artist royalty before measuring the keeper payment, so the push gas is counted in the refund
+        _pushSaleCuts(toArtist, 0);
         // the per credit bid can exceed the room for a score above 100 points; the keeper payment is capped so
         // `value + paid` is at most the bid and `value + toArtist + paid` at most `ethPot` less the reserve
         Settings storage cfg = s.settings;
@@ -765,7 +769,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 rate = cfg.valueModeOn ? s.balance.rateAtCheckpoint : s.rateAtCheckpoint;
         emit ListingBought(id, adapter, msg.sender, value, paid, rate, toArtist);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
-        _pushSaleCuts(toArtist, 0);
     }
 
     /// reads the quote of `adapter` for `id`: the call target, the eth value, the calldata, and the listing offerer the
