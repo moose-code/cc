@@ -308,6 +308,9 @@ contract BidRuleTest is Fixture {
     /// into `ethPot`, so the eth rate is continuous across `book` and the climb continues from the same price
     function test_bookDoesNotJumpTheClimb() public {
         _with(_openCeiling);
+        Settings memory cfg = core.settings();
+        cfg.feeToRedeemBurnBps = 1_000;
+        _setSettings(cfg);
         vm.deal(address(core), 5 ether);
         vm.prank(owner);
         core.setRate(START);

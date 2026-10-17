@@ -7,7 +7,7 @@ import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 
 /// the balance bid never pays below its floor. when the module's available() is under the floor par of a credit, the
 /// per-credit rate clamp falls below the floor `10_000 - balanceBidMarginBps`; `sellForBalance` refuses the fill with
-/// `PotTooSmall` and `balanceBidOf(id)` reports the floor payout, never a sub-floor number and never 0
+/// `PotTooSmall` and `balanceBidOf(id)` reports 0 instead of an unpayable floor payout
 contract BalanceFloorTest is Fixture {
     address internal user;
 
@@ -21,7 +21,7 @@ contract BalanceFloorTest is Fixture {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    // promise: SPEC 1 the balance bid refuses a fill whose available-clamped rate is below the floor
+    // promise: an unpayable balance bid reads 0 and the fill refuses below the floor
     function test_sellForBalanceRefusesBelowFloor() public {
         uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
         uint256 refScore = RATE_SCORE;
@@ -30,8 +30,8 @@ contract BalanceFloorTest is Fixture {
 
         uint256[] memory ids = _credits(user, 1);
         uint256 floorPay = _score(ids[0]) * UNIT * floorBps / 10_000;
-        assertEq(core.balanceBidOf(ids[0]), floorPay, "balanceBidOf reports the floor payout");
-        assertGt(core.balanceBidOf(ids[0]), 0, "never 0 for a credit the module cannot pay the floor for");
+        assertGt(floorPay, mod.available(), "the module cannot pay this credit's floor");
+        assertEq(core.balanceBidOf(ids[0]), 0, "an unpayable bid is not advertised");
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("PotTooSmall()"));
