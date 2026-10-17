@@ -107,16 +107,20 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
   });
   // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
   // the whole snapshot. defaults to 1x (10_000 bps) when the Core does not answer
-  const [climbMultiplierRes] = await client.multicall({
+  // and the reserve (the eth the pot keeps for processing), a tolerant read that defaults to 0 for a Core without it
+  const [climbMultiplierRes, reserveRes] = await client.multicall({
     ...mc,
     blockNumber,
     allowFailure: true,
-    contracts: [{ ...c, functionName: "climbMultiplier" }] as const,
+    contracts: [{ ...c, functionName: "climbMultiplier" }, { ...c, functionName: "reserve" }] as const,
   });
   const climbMultiplier = climbMultiplierRes.status === "success" ? (climbMultiplierRes.result as bigint) : 10_000n;
+  const reserve = reserveRes.status === "success" ? (reserveRes.result as bigint) : 0n;
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
   const pending = pendingIncome(coreEth, ethPot, ethToBuyback, ethRedeemBurn, payeeOn, settings.payeePpm, settings.feeToRedeemBurnBps);
   const potWithPending = ethPot + pending.toPot;
+  // the most the bids may spend: the pot with the pending share less the reserve, the clamp of Core.ethRate
+  const potRoom = potWithPending > reserve ? potWithPending - reserve : 0n;
   // the balance token is held by the module, not the Core: the pot of the bid is the module's available() holding
   // A failing module read leaves both undefined and the rest of the snapshot intact; consumers show the balance side
   // as unavailable (the Core treats a failing module as a closed balance bid).
@@ -157,7 +161,7 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { ...k, functionName: "decayHours" },
       { ...k, functionName: "anchorBps" },
       { ...k, functionName: "startBps" },
-      { ...k, functionName: "creditFloorBps" },
+      { ...k, functionName: "floorMultBps" },
       { ...k, functionName: "creditStartBps" },
       { address: STATEMENTS, abi: statementsAbi, functionName: "supply" },
     ] as const,
@@ -175,6 +179,10 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     climbMultiplier,
     ethPot,
     potWithPending,
+    // the eth the pot keeps for processing (Core.reserve): the larger of reserveWei and 1.5 times the queued compose and
+    // redeem caller payments. the bids read potRoom, the caller payments pay from the whole pot
+    reserve,
+    potRoom,
     // the unbooked fee income the Core holds above its pots, before the payee and redeem burn shares
     pendingIncome: pending.income,
     coreEth,
@@ -214,7 +222,8 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     statementMarkupBps: num(markupRes),
     statementStartCapBps: num(startCapRes),
     anchorBps: num(anchorRes), // running sale level in bps of the reference (10000 = no premium)
-    // Credit price curve (ControllerV1.creditPrice). floor = max(cost, valueOf(score)) * creditFloorBps / 10000;
+    // Credit price curve (ControllerV1.creditPrice). floor = max(cost, valueOf(score)) * creditFloorBps / 10000, where
+    // creditFloorBps is the controller's floorMultBps(): (10000 + creditSpreadBps) of the Core's balanceBidCapBps;
     // start = floor * creditStartBps / 10000. The price falls linearly from start at acquisition to floor at
     // creditWindow seconds, then rests at the floor.
     creditFloorBps: num(floorRes),

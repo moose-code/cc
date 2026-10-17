@@ -331,7 +331,7 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
 async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumber?: bigint): Promise<bigint[]> {
   const c = { address: core!, abi: coreAbi } as const;
   const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }), blockNumber });
-  const [[price, peak, ethPot, toBuyback, redeemBurn, payeeOn, st, held], startWord, bucketWord, scores] = await Promise.all([
+  const [[price, peak, ethPot, toBuyback, redeemBurn, payeeOn, st, held, reserve], startWord, bucketWord, scores] = await Promise.all([
     client.multicall({
       ...mc,
       blockNumber,
@@ -345,6 +345,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
         { ...c, functionName: "payeeOn" },
         { ...c, functionName: "settings" },
         { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [core!] },
+        { ...c, functionName: "reserve" },
       ] as const,
     }),
     word(1n),
@@ -352,10 +353,13 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
     creditScores(client, ids, blockNumber),
   ]);
   const { toPot } = pendingIncome(held, ethPot, toBuyback, redeemBurn, payeeOn, st.payeePpm, st.feeToRedeemBurnBps);
+  // the bids read the pot less the reserve (Core.room); a batch that carries the pile across a page raises the reserve
+  // by one queued compose, which this quote does not model
+  const pot = ethPot + toPot;
   return replayEthFills(scores, {
     price,
     peak,
-    pot: ethPot + toPot,
+    pot: pot > reserve ? pot - reserve : 0n,
     ...ethAnchorWords(BigInt(startWord ?? "0x0"), BigInt(bucketWord ?? "0x0"), BigInt(Math.floor(now)), BigInt(st.bucketSeconds)),
     dropPer100PointsBps: BigInt(st.dropPer100PointsBps),
     dropFloorBps: BigInt(st.dropFloorBps),
@@ -417,7 +421,7 @@ export function useScores(ids: bigint[]) {
 }
 
 // Credit price floor input: controller valueOf(score) per id, id to wei. Credit floor price =
-// max(cost, value) * snap.creditFloorBps / 10000 and start = floor * snap.creditStartBps / 10000 (see Snapshot).
+// max(cost, value) * snap.creditFloorBps / 10000 (the controller's floorMultBps) and start = floor * snap.creditStartBps / 10000 (see Snapshot).
 // Scores are cached (useScores). valueOf includes a pool value that moves, so the query is keyed on the snapshot's
 // last update and refreshes with the snapshot's 15 s cadence. A failed read leaves the id out of the map.
 export function useCreditValues(ids: bigint[]) {

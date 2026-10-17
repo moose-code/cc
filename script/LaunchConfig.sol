@@ -225,6 +225,9 @@ abstract contract ConfigReader is CommonBase {
         s.balanceBidCapBps = _u32(j, ".settings.balanceBidCapBps");
         s.idleStepSeconds = _u32(j, ".settings.idleStepSeconds");
         s.sniperSeconds = _u32(j, ".settings.sniperSeconds");
+        // forge-lint: disable-next-line(unsafe-typecast)
+        s.reserveWei = uint64(_uint(j, ".settings.reserveWei", type(uint64).max));
+        s.returnLockSeconds = _u32(j, ".settings.returnLockSeconds");
     }
 
     function _loadSale(LaunchConfig memory c, string memory j) private pure {
@@ -245,7 +248,7 @@ abstract contract ConfigReader is CommonBase {
             minCcToChoose: _u96(j, ".credit.minCcToChoose"),
             saleOn: vm.parseJsonBool(j, ".credit.saleOn"),
             window: _u32(j, ".credit.window"),
-            floorBps: _u16(j, ".credit.floorBps"),
+            spreadBps: _u16(j, ".credit.spreadBps"),
             startBps: _u32(j, ".credit.startBps")
         });
     }

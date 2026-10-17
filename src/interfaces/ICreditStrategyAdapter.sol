@@ -7,5 +7,8 @@ interface ICreditStrategyAdapter {
     error NotForSale();
 
     function STRATEGY() external view returns (address);
-    function price(uint256 id, bytes memory) external view returns (address target, uint256 value, bytes memory data);
+    function price(uint256 id, bytes memory)
+        external
+        view
+        returns (address target, uint256 value, bytes memory data, address offerer);
 }

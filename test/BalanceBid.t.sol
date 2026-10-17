@@ -99,15 +99,15 @@ contract BalanceBidTest is Fixture {
 
     // promise: SPEC 4 decision 128 variant d: the balance climb does not scale with available (only the loosening does)
     /// the balance instance shares the eth rule: the per minute climb is unscaled, so one page of available and four
-    /// pages climb the same (climbPerMinBps 100, 1 percent a minute). the multiplier scales the ceiling loosening,
+    /// pages climb the same (climbPerMinBps 200, 2 percent a minute). the multiplier scales the ceiling loosening,
     /// which the par cap (10_000) bounds in the narrow [floor, par] band
     function test_balanceClimbUnscaledByAvailable() public {
         uint256 floor = _floorBps();
         // one page at par is 80 * refScore * UNIT; available sized so availBpsRaw / (80 * floor) is 1 and 4 pages
         uint256 onePage = 80 * RATE_SCORE * UNIT * floor / 10_000;
-        assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_100 / 10_000, 1, "one page climbs at 1x");
+        assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_200 / 10_000, 1, "one page climbs at 1x");
         assertApproxEqAbs(
-            _balanceClimbAfterMinute(onePage * 4), floor * 10_100 / 10_000, 1, "four pages climb at the same 1x"
+            _balanceClimbAfterMinute(onePage * 4), floor * 10_200 / 10_000, 1, "four pages climb at the same 1x"
         );
     }
 

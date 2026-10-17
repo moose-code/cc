@@ -131,8 +131,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error Retired();
     /// `swapCredit`: the incoming credit's score is below the pile credit's score
     error ScoreTooLow(uint256 inId, uint256 outId);
-    /// a credit the engine sold through `sellCreditTo` in this block is offered back to an intake door
-    error SameBlockReturn(uint256 id);
+    // `ReturnLocked(id, until)`, a credit the engine sold through `sellCreditTo` offered back to an intake door by its
+    // buyer before the sale time plus `returnLockSeconds`, is `CoreLib.ReturnLocked`, raised by `CoreLib.checkReturn`
+    // inside the Core
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
 
@@ -222,8 +223,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant READ_GAS = 200_000;
     /// gas stipend of the forced pushes of the payee fee share and the artist and operator cuts of nft sales
     uint256 private constant PUSH_GAS = 50_000;
-    /// gas the controller's `atFloor` may use: its reads of the settings, `floorRate`, the module's `unitPerPoint` and the
-    /// pool `getSlot0`
+    /// gas the controller's `atFloor` may use: the launch curve rule reads the reference, the age only rule the start
+    /// and the statement age
     uint256 private constant AT_FLOOR_GAS = 400_000;
     /// words of the `deploymentInfo` answer the Core reads: the offset word and the fields up to `launchedAt`, the 9th
     uint256 private constant INFO_WORDS = 10;
@@ -415,14 +416,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         toRedeemBurn = income * cfg.feeToRedeemBurnBps / BPS;
     }
 
-    /// the pot share of the unbooked fee income the next `_book` adds. pending income is the Core balance minus the
-    /// booked pots minus `msg.value` of the current call, so reads during a payable door match the pot the door books
-    function _pendingPot() private view returns (uint256) {
-        uint256 income = _income(msg.value);
-        (uint256 toPayee, uint256 toRedeemBurn) = _split(income);
-        return income - toPayee - toRedeemBurn;
-    }
-
     /// books the fee income. the first action of every door that reads or moves a pot, with `msg.value` of the door
     /// excluded. the rate is checkpointed before the pot grows. the payee share starts with the first book at or after
     /// `launchedAt + s.settings.sniperSeconds` that has income, and that book shares nothing
@@ -458,32 +451,33 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// the eth bid rate right now, wei per 100 points: the price state climbed lazily, bounded by the ceiling and
-    /// `rateCap`, lowered to the pages pot (`ethPot` plus the share of the unbooked fee income the next `_book` adds). a
-    /// credit of score `score` is paid `ethRate() * score / RATE_SCORE`; `bidForScore` and `bidOf` apply the scaling
+    /// `rateCap`, lowered to the clamp (`ethPot` plus the share of the unbooked fee income the next `_book` adds, less
+    /// the reserve). a credit of score `score` is paid `ethRate() * score / RATE_SCORE`; `bidForScore` and `bidOf` apply
+    /// the scaling. the math is in `CoreLib.ethRate`
     function ethRate() external view returns (uint256) {
-        return _rateNow();
+        return _bid();
     }
 
     /// the eth bid for a score of `score` stored units now, wei: `ethRate() * score / RATE_SCORE`. the eth doors pay it
     function bidForScore(uint256 score) external view returns (uint256) {
-        return _rateNow().mulDiv(score, RATE_SCORE);
+        return _bid().mulDiv(score, RATE_SCORE);
     }
 
     /// the eth bid per point now, wei: `ethRate() / 100`
     function ethPerPoint() external view returns (uint256) {
-        return _rateNow() / 100;
+        return _bid() / 100;
     }
 
     /// the eth bid for credit `id` now, wei: `bidForScore(scoreOf(id))`. the number a seller, a keeper or the web uses
     /// for one credit
     function bidOf(uint256 id) external view returns (uint256) {
-        return _rateNow().mulDiv(_scoreOf(id), RATE_SCORE);
+        return _bid().mulDiv(_scoreOf(id), RATE_SCORE);
     }
 
-    /// the eth bid rate now, wei per 100 points: the climbed price state lowered to the pages pot
-    function _rateNow() private view returns (uint256) {
-        (uint256 price,) = _climb();
-        return price.min(s.ethPot + _pendingPot());
+    /// the eth the pot keeps for processing now, wei: the larger of `reserveWei` and 1.5 times the queued compose and
+    /// redeem caller payments. the bids read `ethPot` less it
+    function reserve() external view returns (uint256) {
+        return CoreLib.reserve();
     }
 
     /// the score of credit `id` from the CreditScore contract, the same source `sellForBalance` and `adopt` read.
@@ -492,26 +486,17 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    /// the eth rate of the booked pot now, wei per 100 points, for the doors, which book first. a door scales it by the
-    /// credit's score over 100 points
-    function _bid() private view returns (uint256 read) {
-        (, read) = _climb();
-    }
-
-    /// the price state and the eth rate now. the pot clamp is `s.ethPot` plus the pot share of the unbooked fee income
-    /// (`_pendingPot`), so the stored price climbs on fee income that has arrived before a `_book` folds it into the pot
-    function _climb() private view returns (uint256, uint256) {
-        return
-            CoreLib.climb(
-                s.rateAtCheckpoint, s.ethPot + _pendingPot(), s.lastFillTime, s.checkpointTime, block.timestamp
-            );
+    /// the eth rate now, wei per 100 points. the doors book first, so they read the rate of the booked pot; a door
+    /// scales it by the credit's score over 100 points
+    function _bid() private view returns (uint256) {
+        return CoreLib.ethRate();
     }
 
     /// the price state now, wei per 100 points: `rateAtCheckpoint` climbed lazily and bounded by the ceiling and
     /// `rateCap`, before the clamp that `ethRate` applies. the climb also stops at the pot, so with an empty pot the
     /// price state does not climb. the cost basis of an adopted credit is this price times its score over 100 points
-    function ethPrice() external view returns (uint256 price) {
-        (price,) = _climb();
+    function ethPrice() external view returns (uint256) {
+        return CoreLib.ethPrice();
     }
 
     /// wei per credit of the floor rate now: the larger of `ethPrice`, the price state climbed before the pot clamp,
@@ -519,9 +504,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
     /// floors read it. the math is in `CoreLib.floorRate`
     function floorRate() external view returns (uint256) {
-        return CoreLib.floorRate(
-            s.rateAtCheckpoint, s.ethPot + _pendingPot(), s.lastFillTime, s.checkpointTime, block.timestamp
-        );
+        return CoreLib.floorRate();
     }
 
     /// the pot scaled multiplier now, bps (10_000 is 1x): how many pages of `pointsPerPage` points the booked pot
@@ -550,12 +533,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// purchase yet reads zero spent and the budget `spendCapBps` of `ethPot` plus the pot share of the unbooked fee
     /// income the next `_book` adds, the pot the first purchase of the bucket books and snapshots
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent) {
-        return CoreLib.spendState(s.ethPot + _pendingPot());
+        return CoreLib.spendState();
     }
 
     function _checkpoint() private {
-        (s.rateAtCheckpoint,) = _climb();
-        s.checkpointTime = uint64(block.timestamp);
+        CoreLib.checkpoint();
     }
 
     /// checkpoints, then books a spend of x from the pot for a credit of score `score`: rate drop scaled by
@@ -672,9 +654,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = _owned(ids[i]);
-            if (s.creditSaleBlock[id] == block.number) revert SameBlockReturn(id);
+            CoreLib.checkReturn(s, id, msg.sender);
             uint256 score = _scoreOf(id);
-            uint256 pay = _bid().mulDiv(score, RATE_SCORE);
+            uint256 bid = _bid();
+            // the pot is at or under the reserve, so the bid reads zero: a named refusal, not ZeroAmount from the spend
+            if (bid == 0) revert PotTooSmall();
+            uint256 pay = bid.mulDiv(score, RATE_SCORE);
             _spend(pay, score);
             _push(id, pay);
             CREDITS.transferFrom(msg.sender, address(this), id);
@@ -688,24 +673,26 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// buys credit `id` from the listing that an approved adapter prices. the adapter answers the one call the Core
     /// makes (`target`, `value`, `data`) from the venue's own data, by a read capped at `QUOTE_GAS` gas and `QUOTE_MAX`
     /// bytes. `value` is at most the bid for this credit (`bidOf(id)`, `ethRate() * score / RATE_SCORE`) and at most
-    /// `ethPot`. the Core must own `id` after the call and its credit balance must have risen by one. the caller is paid
-    /// from `ethPot`: the gas of the call at the base fee, capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`, plus
-    /// `keeperFee`. the payment is at most the bid less `value`, so the pot pays at most `ethRate() * score / RATE_SCORE`
-    /// for the credit. reverts `Retired` after `migrate`
+    /// `ethPot` less the reserve. the Core must own `id` after the call and its credit balance must have risen by one. the
+    /// caller is paid from `ethPot`: the gas of the call at the base fee, capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`,
+    /// plus `keeperFee`. the payment is at most the bid less `value` and at most `ethPot` less the reserve less `value`, so
+    /// the pot pays at most `ethRate() * score / RATE_SCORE` for the credit. reverts `Retired` after `migrate`
     function buyListing(address adapter, uint256 id, bytes calldata params) external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
         if (!s.allowedAdapter[adapter]) revert AdapterNotAllowed();
         if (id == 0) revert ZeroId();
-        if (s.creditSaleBlock[id] == block.number) revert SameBlockReturn(id);
         if (CREDITS.ownerOf(id) == address(this)) revert AlreadyOwned();
-        (address target, uint256 value, bytes memory data) = _quote(adapter, id, params);
+        (address target, uint256 value, bytes memory data, address offerer) = _quote(adapter, id, params);
+        // the return lock reads the listing offerer: a credit the engine sold is refused while its buyer offers it back
+        CoreLib.checkReturn(s, id, offerer);
         if (_forbidden(target)) revert ForbiddenTarget();
         _checkpoint();
         uint256 score = _scoreOf(id);
         uint256 bid = _bid().mulDiv(score, RATE_SCORE);
         if (value == 0) revert ZeroAmount();
-        if (value > s.ethPot) revert PotTooSmall();
+        uint256 room = CoreLib.room();
+        if (value > room) revert PotTooSmall();
         if (value > bid) revert AboveBid();
 
         uint256 ethBefore = address(this).balance;
@@ -717,24 +704,25 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
         if (address(this).balance + value < ethBefore) revert BadCost();
 
-        // the per credit bid can exceed `ethPot` for a score above 100 points; the keeper payment is capped so
-        // `value + paid` is at most the bid and at most `ethPot`
+        // the per credit bid can exceed the room for a score above 100 points; the keeper payment is capped so
+        // `value + paid` is at most the bid and at most `ethPot` less the reserve
         Settings storage cfg = s.settings;
         uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, cfg.keeperMaxBaseFee, cfg.keeperFee)
             .min(bid - value)
-            .min(s.ethPot - value);
+            .min(room - value);
         _spend(value + paid, score);
         _push(id, value + paid);
         emit ListingBought(id, adapter, msg.sender, value, paid, s.rateAtCheckpoint);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
 
-    /// reads the quote of `adapter` for `id`. a revert, a gas cap overrun, an answer under three words or over
-    /// `QUOTE_MAX` bytes reverts `BadQuote`
+    /// reads the quote of `adapter` for `id`: the call target, the eth value, the calldata, and the listing offerer the
+    /// return lock reads. a revert, a gas cap overrun, an answer under four words or over `QUOTE_MAX` bytes reverts
+    /// `BadQuote`
     function _quote(address adapter, uint256 id, bytes calldata params)
         private
         view
-        returns (address target, uint256 value, bytes memory data)
+        returns (address target, uint256 value, bytes memory data, address offerer)
     {
         bytes memory input = abi.encodeCall(IListingAdapter.price, (id, params));
         bool ok;
@@ -742,7 +730,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         assembly ("memory-safe") {
             ok := staticcall(QUOTE_GAS, adapter, add(input, 0x20), mload(input), 0, 0)
             let n := returndatasize()
-            ok := and(ok, and(iszero(lt(n, 0x60)), iszero(gt(n, QUOTE_MAX))))
+            ok := and(ok, and(iszero(lt(n, 0x80)), iszero(gt(n, QUOTE_MAX))))
             if ok {
                 out := mload(0x40)
                 mstore(out, n)
@@ -751,7 +739,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             }
         }
         if (!ok) revert BadQuote();
-        (target, value, data) = abi.decode(out, (address, uint256, bytes));
+        (target, value, data, offerer) = abi.decode(out, (address, uint256, bytes, address));
     }
 
     /// sell credits into the balance token bid. the balance side only. reverts `Retired` after `migrate`. the body is
@@ -962,8 +950,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit StatementSoldTo(sid, buyer, msg.value, toBuyback, toArtist, toOperator);
     }
 
-    /// the controller sells pile credit `id` to `buyer` for `msg.value`. the payment is at least the credit's cost. the
-    /// artist and operator cuts come off the payment; `creditCostToPotBps` of the cost, at most the rest, goes to the
+    /// the controller sells pile credit `id` to `buyer` for `msg.value`. the payment is at least `saleFloorBps` of the
+    /// credit's cost. the artist and operator cuts come off the payment; `creditCostToPotBps` of the cost, at most the rest, goes to the
     /// pot and the remainder to the coin buyback, so the markup over cost funds a coin buy and burn. the controller
     /// refunds its own caller
     function sellCreditTo(uint256 id, address buyer) external payable nonReentrant {
@@ -973,10 +961,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         CoreLib.Credit storage c = s.credits[id];
         if (!c.inPile) revert NotInPile(id);
         uint256 cost = c.cost;
-        if (msg.value < cost) revert BelowFloor();
+        if (msg.value < cost * s.settings.saleFloorBps / BPS) revert BelowFloor();
         _pull(id);
-        // record the sale block so an intake door refuses this credit back in the same block (no round trip into a bid)
-        s.creditSaleBlock[id] = block.number;
+        // record the buyer in the high 160 bits and the sale time in the low 96, so every intake door refuses this
+        // credit while the same buyer offers it back within the return lock (no round trip into a bid)
+        s.creditSoldAt[id] = (uint256(uint160(buyer)) << 96) | uint96(block.timestamp);
         CREDITS.transferFrom(address(this), buyer, id);
         // the artist and operator cuts come off the payment; the credit cost basis share of the rest goes to the pot,
         // the remainder to the buyback. the pot share is at most the rest

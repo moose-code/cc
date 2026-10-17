@@ -43,10 +43,13 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// the part of the anchor above 10_000 halves every `anchorHalfLife`, continuously. the controller stores the anchor at
 /// its last change (`storedAnchorBps`, `anchorTime`) and evaluates the decay at the call. the price is computed from the
 /// current anchor at every call, so held statements follow it.
-/// `buy` sells a held statement at once at the asking price. `atFloor(sid)` is true once the statement's curve price has
-/// reached the floor.
-/// a pile credit sells at `max(cost, valueOf(score)) * creditFloorBps / 10_000` at the end of its window, from
-/// `creditStartBps` of that at its acquisition.
+/// `buy` sells a held statement at once at the asking price.
+/// a pile credit sells at `max(cost, valueOf(score)) * floorMultBps() / 10_000` at the end of its window, from
+/// `creditStartBps` of that at its acquisition. `floorMultBps()` is `(10_000 + creditSpreadBps)` of the Core's live
+/// `balanceBidCapBps`, at least 10_000, so the floor follows every change of the bid's hard cap.
+/// `atFloor(sid)` gates redemption. with `ageEligibilityOn` it is by age only: true once the start is at or below 10_000
+/// or the statement has aged `decayHours`. with `ageEligibilityOn` false (launch) it compares the curve price with its
+/// floor, reading the reference.
 /// the owner of the core can pause sales (`core.setPaused`). while paused the core reverts `Paused` in `sellTo` and
 /// `sellCreditTo`, so `buy` and `buyCredit` revert, and `priceOf` answers. the age of a statement is
 /// `core.statementAge`, which excludes every paused second, so the age of a held statement stops advancing for the
@@ -75,6 +78,7 @@ contract ControllerV1 is IController {
 
     event SaleSet(Sale sale);
     event CreditSaleSet(CreditSale credit);
+    event AgeEligibilitySet(bool on);
     event AnchorBpsSet(uint32 anchorBps);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
@@ -112,10 +116,15 @@ contract ControllerV1 is IController {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit must sit before compose
     /// may take it. 1 to uint32.max seconds
     uint32 public creditWindow;
-    /// the credit sale floor over the larger of the credit's cost and `valueOf(score)`, bps. 10_000 to uint16.max
-    uint16 public creditFloorBps;
+    /// the sale spread over the bid's hard cap, bps: the credit floor multiplier is `(10_000 + creditSpreadBps)` of the
+    /// Core's `balanceBidCapBps`. 0 to uint16.max
+    uint16 public creditSpreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 public creditStartBps;
+    /// when true, `atFloor` is by age only: the start at or below 10_000, or the statement aged `decayHours`, with no
+    /// reference read. when false, `atFloor` compares the curve price with its floor and reads the reference. launch
+    /// value false; the owner turns it on with the value switch (decision 155)
+    bool public ageEligibilityOn;
 
     constructor(address core, Sale memory sale, Credit memory credit) {
         CORE = ICoreViews(core);
@@ -125,7 +134,7 @@ contract ControllerV1 is IController {
         anchorTime = uint40(block.timestamp);
         _setCredit(
             CreditSale({
-                saleOn: credit.saleOn, window: credit.window, floorBps: credit.floorBps, startBps: credit.startBps
+                saleOn: credit.saleOn, window: credit.window, spreadBps: credit.spreadBps, startBps: credit.startBps
             })
         );
     }
@@ -192,19 +201,25 @@ contract ControllerV1 is IController {
 
     /// sets the credit sale settings at once. `saleOn` turns the credit sale window on or off: while on, pile credits
     /// are for sale through `buyCredit` and compose takes only credits past their window. `window` 1 to uint32.max seconds,
-    /// `floorBps` 10_000 to uint16.max, `startBps` 10_000 to uint32.max
+    /// `spreadBps` 0 to uint16.max, `startBps` 10_000 to uint32.max
     function setCredit(CreditSale calldata v) external onlyOwner {
         _setCredit(v);
         emit CreditSaleSet(v);
     }
 
+    /// switches redemption eligibility between the age only rule (true) and the reference curve rule (false). launch
+    /// value false; the owner turns it on with the value switch (decision 155)
+    function setAgeEligibilityOn(bool v) external onlyOwner {
+        ageEligibilityOn = v;
+        emit AgeEligibilitySet(v);
+    }
+
     function _setCredit(CreditSale memory v) private {
         if (!CreditBounds.windowOk(v.window)) revert BadSetting("creditWindow");
-        if (!CreditBounds.floorBpsOk(v.floorBps)) revert BadSetting("creditFloorBps");
         if (!CreditBounds.startBpsOk(v.startBps)) revert BadSetting("creditStartBps");
         creditSaleOn = v.saleOn;
         creditWindow = v.window;
-        creditFloorBps = v.floorBps;
+        creditSpreadBps = v.spreadBps;
         creditStartBps = v.startBps;
     }
 
@@ -259,10 +274,16 @@ contract ControllerV1 is IController {
         (price,,) = _quote(sid);
     }
 
-    /// true when the curve price of statement `sid` has reached the floor, `saleFloorBps` of the reference. the curve age
-    /// excludes paused seconds, so eligibility holds its value while sales are paused. the core reads it to gate a
-    /// balance side redemption
+    /// true when statement `sid` is eligible for redemption. with `ageEligibilityOn` the rule is age only: the start at
+    /// or below 10_000, or the statement aged `decayHours`, with no price or pool read, so eligibility never restarts on
+    /// a price move and never waits on a quote. with `ageEligibilityOn` false (the launch rule) the curve price is
+    /// compared with its floor, which reads the reference. the age excludes paused seconds, so eligibility holds its
+    /// value while sales are paused. reverts `NotForSale` for a statement the core does not hold. the core reads it to
+    /// gate a balance side redemption
     function atFloor(uint256 sid) external view returns (bool) {
+        if (ageEligibilityOn) {
+            return startBps() <= BPS || CORE.statementAge(sid) >= uint256(decayHours) * 1 hours;
+        }
         (bool held, uint256 cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
         uint256 ref = _reference(cost, CORE.ratingOf(sid));
@@ -287,7 +308,8 @@ contract ControllerV1 is IController {
     // ------------------------------------------------------------------ credit sale window
 
     /// the sale price of pile credit `id` now, wei. the floor is the larger of the credit's cost and `valueOf` of its
-    /// score, times `creditFloorBps`. the start is the floor times `creditStartBps`. the price falls in
+    /// score, times `floorMultBps()`, and at least `saleFloorBps` of the cost, the Core's floor. the start is the floor
+    /// times `creditStartBps`. the price falls in
     /// a straight line from the start at the acquisition time to the floor at the acquisition time plus `creditWindow`,
     /// and rests at the floor after. reverts `NotForSale` for a credit not in the pile. answers whether or not the sale is on
     function creditPrice(uint256 id) public view returns (uint256 price) {
@@ -295,11 +317,22 @@ contract ControllerV1 is IController {
         if (!inPile) revert NotForSale();
         uint256 hi = valueOf(_scoreOf(id));
         if (cost > hi) hi = cost;
-        uint256 floor = hi * creditFloorBps / BPS;
+        uint256 floor = hi * floorMultBps() / BPS;
+        // never under the Core's floor of `sellCreditTo`, so the quote is always a price the Core takes
+        uint256 coreFloor = cost * _saleFloorBps() / BPS;
+        if (floor < coreFloor) floor = coreFloor;
         uint256 start = floor * creditStartBps / BPS;
         uint256 age = block.timestamp - acquiredAt;
         if (age >= creditWindow) return floor;
         price = start - (start - floor) * age / creditWindow;
+    }
+
+    /// the credit floor multiplier now, bps: `(10_000 + creditSpreadBps) * balanceBidCapBps / 10_000` with the Core's cap
+    /// read live, at least 10_000. the most the engine pays for a credit is the cap times its value, so a buy at the floor
+    /// and a sale back into the bid at its ceiling loses at least the spread
+    function floorMultBps() public view returns (uint256) {
+        uint256 m = (BPS + creditSpreadBps) * ICoreSale(address(CORE)).settings().balanceBidCapBps / BPS;
+        return m < BPS ? BPS : m;
     }
 
     /// the credit score of `id` from the credit score contract, `scoreOf(seed, paidAt)`, the score source of every Core

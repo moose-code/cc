@@ -11,7 +11,7 @@ interface ICore {
         uint96 minCcToChoose;
         bool saleOn;
         uint32 window;
-        uint16 floorBps;
+        uint16 spreadBps;
         uint32 startBps;
     }
 
@@ -65,7 +65,7 @@ interface ICore {
     error RedeemOff();
     error Reentrancy();
     error Retired();
-    error SameBlockReturn(uint256 id);
+    error ReturnLocked(uint256 id, uint256 until);
     error ScoreTooLow(uint256 inId, uint256 outId);
     error SliceTooSmall();
     error Slippage();
@@ -169,7 +169,7 @@ interface ICore {
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
     function ethPerPoint() external view returns (uint256);
     function ethPot() external view returns (uint256);
-    function ethPrice() external view returns (uint256 price);
+    function ethPrice() external view returns (uint256);
     function ethRate() external view returns (uint256);
     function ethRedeemBurn() external view returns (uint256);
     function ethToBuyback() external view returns (uint256);
@@ -201,6 +201,7 @@ interface ICore {
     function removeAdapter(address a) external;
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;
+    function reserve() external view returns (uint256);
     function retired() external view returns (bool);
     function sellCreditTo(uint256 id, address buyer) external payable;
     function sellForBalance(uint256[] memory ids) external;

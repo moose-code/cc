@@ -44,6 +44,8 @@ function state(over: Partial<State> = {}): State {
     spend: { bucket: 166n, budget: parseEther("0.1"), spent: 0n },
     ethPot: parseEther("10"),
     potWithPending: parseEther("10"),
+    reserve: parseEther("0.1"),
+    potRoom: parseEther("9.9"),
     pendingIncome: 0n,
     lastBookAt: 0n,
     ethToBuyback: 0n,
@@ -178,17 +180,29 @@ test("listing: the payment is min(gas refund + keeperFee, bid - price, ethPot - 
   assert.deepEqual(doorsOf(r), []);
   assert.match(reason(r, "buyListing"), /unprofitable: payment 100000000000000/);
   // the pot cap: a pot just above the price
-  const pot = decide(state({ potWithPending: parseEther("0.0101") }), [listing()], gas("1"), p, new Map());
+  const pot = decide(state({ potRoom: parseEther("0.0101") }), [listing()], gas("1"), p, new Map());
   assert.deepEqual(doorsOf(pot), []);
 });
 
 test("listing: above the bid or the pot, or not fillable, it is not swept", () => {
   const p = policy({}, 0);
   assert.deepEqual(doorsOf(decide(state(), [listing({ price: parseEther("0.013") })], gas("1"), p, new Map())), []);
-  const potShort = decide(state({ potWithPending: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
+  const potShort = decide(state({ potRoom: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
   assert.match(reason(potShort, "buyListing"), /PotTooSmall/);
   const cancelled = decide(state(), [listing({ valid: false, why: "order cancelled" })], gas("1"), p, new Map());
   assert.match(reason(cancelled, "buyListing"), /order cancelled/);
+});
+
+// promise: the keeper sweeps only within the pot less the reserve: a listing the whole pot covers but the room does not is
+// skipped, a pot at the reserve skips every listing with the reserve reason, and the caller payments still read the whole pot
+test("listing: the reserve bounds the sweep, not the processing", () => {
+  const p = policy({}, 0);
+  const atReserve = decide(state({ potWithPending: parseEther("0.1"), potRoom: 0n, pageReady: true }), [listing()], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(atReserve).filter((d) => d === "buyListing"), []);
+  assert.match(reason(atReserve, "buyListing"), /ReserveHeld/);
+  assert.ok(doorsOf(atReserve).includes("compose"), "compose still pays from the whole pot");
+  const covered = decide(state({ potWithPending: parseEther("0.11"), potRoom: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
+  assert.match(reason(covered, "buyListing"), /PotTooSmall: price above ethPot less the reserve/);
 });
 
 test("listing: the best gap goes first (Activity.s.sol rule), and every sweep precedes the buyback", () => {

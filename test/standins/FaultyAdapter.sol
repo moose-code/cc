@@ -15,7 +15,7 @@ contract FaultyAdapter is IListingAdapter {
         target = target_;
     }
 
-    function price(uint256, bytes calldata) external view returns (address, uint256, bytes memory) {
+    function price(uint256, bytes calldata) external view returns (address, uint256, bytes memory, address) {
         uint256 m = mode;
         if (m == 0) revert("faulty");
         if (m == 1) {
@@ -24,7 +24,7 @@ contract FaultyAdapter is IListingAdapter {
                 return(0, 32)
             }
         }
-        if (m == 2) return (address(0xBEEF), 1, new bytes(10_000));
+        if (m == 2) return (address(0xBEEF), 1, new bytes(10_000), address(0xBEEF));
         if (m == 3) {
             while (true) {}
         }
@@ -33,7 +33,7 @@ contract FaultyAdapter is IListingAdapter {
             (bool ok,) = address(this).staticcall(abi.encodeCall(this.write, ()));
             require(ok, "static write");
         }
-        return (target, 1, "");
+        return (target, 1, "", target);
     }
 
     function write() external {

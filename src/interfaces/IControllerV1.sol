@@ -13,7 +13,7 @@ interface IControllerV1 {
         uint96 minCcToChoose;
         bool saleOn;
         uint32 window;
-        uint16 floorBps;
+        uint16 spreadBps;
         uint32 startBps;
     }
 
@@ -32,6 +32,7 @@ interface IControllerV1 {
     error Reentrant();
     error Underpaid();
 
+    event AgeEligibilitySet(bool on);
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
@@ -40,6 +41,7 @@ interface IControllerV1 {
     event SaleSet(Sale sale);
 
     function CORE() external view returns (address);
+    function ageEligibilityOn() external view returns (bool);
     function anchorBps() external view returns (uint32);
     function anchorHalfLife() external view returns (uint32);
     function anchorMinCost() external view returns (uint128);
@@ -54,18 +56,20 @@ interface IControllerV1 {
     function buy(uint256 sid) external payable;
     function buyCredit(uint256 id) external payable;
     function buyCredits(uint256[] memory ids) external payable;
-    function creditFloorBps() external view returns (uint16);
     function creditPrice(uint256 id) external view returns (uint256 price);
     function creditSaleOn() external view returns (bool);
+    function creditSpreadBps() external view returns (uint16);
     function creditStartBps() external view returns (uint32);
     function creditWindow() external view returns (uint32);
     function decayHours() external view returns (uint16);
+    function floorMultBps() external view returns (uint256);
     function markupBps() external view returns (uint16);
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function pastWindow(uint64 acquiredAt) external view returns (bool);
     function pointRate() external view returns (uint256);
     function priceOf(uint256 sid) external view returns (uint256 price);
     function referenceOf(uint256 sid) external view returns (uint256);
+    function setAgeEligibilityOn(bool v) external;
     function setAnchorBps(uint32 v) external;
     function setBalancePoolKey(PoolKey memory key) external;
     function setCredit(CreditSale memory v) external;

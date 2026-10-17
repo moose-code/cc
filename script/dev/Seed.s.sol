@@ -110,7 +110,7 @@ contract Seed is Script {
         );
         ctl.setCredit(
             CreditSale({
-                saleOn: true, window: ctl.creditWindow(), floorBps: ctl.creditFloorBps(), startBps: ctl.creditStartBps()
+                saleOn: true, window: ctl.creditWindow(), spreadBps: ctl.creditSpreadBps(), startBps: ctl.creditStartBps()
             })
         );
         core.setChosenComposeOn(true);

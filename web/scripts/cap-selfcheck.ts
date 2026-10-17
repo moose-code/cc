@@ -7,10 +7,11 @@ import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance, type EthRepl
 // promise: every Settings field decodes in contract order without losing width at the maximum.
 const settings = getAbiItem({ abi: coreAbi, name: "settings" });
 const fields = settings.outputs[0].components;
-assert.equal(fields.length, 34);
+assert.equal(fields.length, 36);
 assert.deepEqual(fields.slice(28).map(({ name, type }) => [name, type]), [
   ["climbMultiplierCapBps", "uint16"], ["spendCapBps", "uint16"], ["bucketSeconds", "uint32"],
   ["balanceBidCapBps", "uint32"], ["idleStepSeconds", "uint32"], ["sniperSeconds", "uint32"],
+  ["reserveWei", "uint64"], ["returnLockSeconds", "uint32"],
 ]);
 const maxValues = fields.map(({ type }) => type === "bool" ? true : (1n << BigInt(type.slice(4))) - 1n);
 const data = encodeAbiParameters([{ type: "tuple", components: fields }], [maxValues] as any);
@@ -33,6 +34,14 @@ assert.equal(replayEth([1000n, 1000n], { ...quote, nowBucket: 8n }), 1000n + 990
 
 // promise: a raised balance cap does not raise the floor above par minus the margin.
 assert.equal(replayBalance([10n, 10n], { rate: 100000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 10000n, dropFloorBps: 0n, floorBps: 9000n }), 10000n + 900n);
+
+// promise: the return lock error names the wait for decoded and selector-only transaction failures.
+{
+  const lockData = encodeErrorResult({ abi: coreAbi, errorName: "ReturnLocked", args: [7n, 86400n] });
+  assert.equal(lockData.slice(0, 10), "0x8dd81991");
+  assert.match(txError({ shortMessage: "reverted", data: { errorName: "ReturnLocked" } }), /return lock/);
+  assert.match(txError({ shortMessage: "reverted with the following signature: 0x8dd81991" }), /return lock/);
+}
 
 // promise: the cap error names the next action for decoded and selector-only transaction failures.
 const capError = encodeErrorResult({ abi: coreAbi, errorName: "SpendCapReached", args: [100n, 1n, 100n] });

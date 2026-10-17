@@ -48,6 +48,10 @@ export interface State {
   ethPot: bigint;
   // ethPot plus the pot share of the unbooked income that the door's own `_book` adds first
   potWithPending: bigint;
+  // Core.reserve(): the eth the pot keeps for processing. the caller payments still pay from the whole pot
+  reserve: bigint;
+  // potWithPending less the reserve: the most a buyListing may spend (the clamp of Core.ethRate after the book)
+  potRoom: bigint;
   pendingIncome: bigint;
   // timestamp of the last book the keeper sent, 0 until it sends one
   lastBookAt: bigint;
@@ -133,12 +137,12 @@ export function profitable(payment: bigint, cost: bigint, margin: bigint): boole
   return payment >= cost + margin;
 }
 
-// Core.buyListing: min(min(counted, BUYLISTING_GAS) * min(basefee, keeperMaxBaseFee) + keeperFee, bid - price, ethPot - price),
-// the pot read after the door's book
+// Core.buyListing: min(min(counted, BUYLISTING_GAS) * min(basefee, keeperMaxBaseFee) + keeperFee, bid - price,
+// room - price), where the room is the pot read after the door's book less the reserve (Core.room)
 export function listingPayment(s: State, l: Listing, gasUsed: bigint, b: bigint): bigint {
-  if (l.price > l.bid || l.price > s.potWithPending) return 0n;
+  if (l.price > l.bid || l.price > s.potRoom) return 0n;
   const refund = min(gasUsed, BUYLISTING_GAS) * min(b, s.settings.keeperMaxBaseFee) + s.settings.keeperFee;
-  return min(refund, l.bid - l.price, s.potWithPending - l.price);
+  return min(refund, l.bid - l.price, s.potRoom - l.price);
 }
 
 // Core.buyback guards and payment at base fee `b`. the swap budget is `slice - maxPay`; the fee is scaled by the eth
@@ -230,7 +234,9 @@ export function decide(
 
   // 1. buyListing
   const sweepable: { l: Listing; key: string; payment: bigint; cost: bigint }[] = [];
-  if (on("buyListing") && !s.retired && ceiling("buyListing")) {
+  if (on("buyListing") && !s.retired && s.potRoom === 0n) {
+    skips.push({ door: "buyListing", reason: `ReserveHeld: the pot ${s.potWithPending} is at or under the reserve ${s.reserve}, acquisitions wait for fees` });
+  } else if (on("buyListing") && !s.retired && ceiling("buyListing")) {
     const pol = p.doors.buyListing;
     const b = worstBaseFee(gas, pol);
     for (const l of listings) {
@@ -240,8 +246,8 @@ export function decide(
         continue;
       }
       if (l.price > l.bid) continue;
-      if (l.price > s.potWithPending) {
-        skips.push({ door: "buyListing", key, reason: "PotTooSmall: price above ethPot" });
+      if (l.price > s.potRoom) {
+        skips.push({ door: "buyListing", key, reason: "PotTooSmall: price above ethPot less the reserve" });
         continue;
       }
       const payment = listingPayment(s, l, GAS_GUESS.buyListing, b);

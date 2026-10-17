@@ -109,6 +109,8 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     spend: { bucket: spendState[0], budget: spendState[1], spent: spendState[2] },
     ethPot: snap.ethPot,
     potWithPending: snap.potWithPending,
+    reserve: snap.reserve,
+    potRoom: snap.potRoom,
     pendingIncome: snap.pendingIncome,
     lastBookAt: 0n,
     ethToBuyback: snap.ethToBuyback,

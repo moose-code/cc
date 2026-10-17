@@ -171,6 +171,9 @@ abstract contract Fixture is Test, ProdDeployer {
         Settings memory cfg = Mainnet.defaultSettings();
         // General fixtures exercise their own promises; budget tests retain launch enforcement explicitly.
         cfg.spendCapBps = 10_000;
+        // the general suites size their pots to the bid; the reserve floor is 0 here and test/Reserve.t.sol runs the
+        // launch value. the queued part of the reserve stays live
+        cfg.reserveWei = 0;
         return cfg;
     }
 
@@ -460,9 +463,9 @@ abstract contract Fixture is Test, ProdDeployer {
     }
 
     /// @notice the smallest pot at which the clamp of the eth rate is not below the stored rate:
-    /// the stored rate
+    /// the stored rate plus the reserve
     function _unclampedPot() internal view returns (uint256) {
-        return core.rateAtCheckpoint();
+        return core.rateAtCheckpoint() + core.reserve();
     }
 
     /// @notice fills the eth pile with `n` fresh credits in the order returned, funding the pot first when needed. each
@@ -586,6 +589,20 @@ abstract contract Fixture is Test, ProdDeployer {
         core.setSettings(s);
     }
 
+    /// @notice the owner sets the return lock: every intake door refuses a credit sold through `sellCreditTo` for `secs`
+    /// seconds from the sale, at least in the second of the sale
+    function _setReturnLock(uint32 secs) internal {
+        Settings memory s = core.settings();
+        s.returnLockSeconds = secs;
+        _setSettings(s);
+    }
+
+    /// @notice the next block, one second later: past a return lock of 0
+    function _nextSecond() internal {
+        vm.roll(block.number + 1);
+        vm.warp(block.timestamp + 1);
+    }
+
     /// @notice the sale settings of the controller as a struct
     function _sale() internal view returns (Sale memory s) {
         s = Sale({
@@ -603,7 +620,7 @@ abstract contract Fixture is Test, ProdDeployer {
         c = CreditSale({
             saleOn: ctl.creditSaleOn(),
             window: ctl.creditWindow(),
-            floorBps: ctl.creditFloorBps(),
+            spreadBps: ctl.creditSpreadBps(),
             startBps: ctl.creditStartBps()
         });
     }
