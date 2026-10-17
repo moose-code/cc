@@ -655,6 +655,13 @@ contract ValueModeTest is ValueBase {
         // push the pool spot to 3.55x the reference and leave the reference unsettled: one refresh per block moves it at
         // most one step, so the ask stays priced off the lagging reference while the spot leads it
         _swapToSpot(ctl.referencePrice() * 355 / 100);
+        // let the prior-block sample catch the pushed spot (the sale price the engine realizes tokens at) while the
+        // reference walks up one step a block and stays well below it: the spot leads the reference
+        for (uint256 i; i < 3; ++i) {
+            _nextSecond();
+            ctl.refreshReference();
+        }
+        _nextSecond();
         (uint256 paid, uint256 back) = _trip(ids[0], true);
         _assertLoses(paid, back, "balance with the spot far above the reference");
     }
