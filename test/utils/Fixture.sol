@@ -179,6 +179,14 @@ abstract contract Fixture is Test, ProdDeployer {
         return cfg;
     }
 
+    function _fixtureRateStart() internal pure virtual returns (uint256) {
+        return OPEN_RATE;
+    }
+
+    function _fixtureCreditSaleOn() internal pure virtual returns (bool) {
+        return false;
+    }
+
     /// @dev the gas of the last external call as a transaction, before the refund, and the refund. forge reports the call
     /// net of the refund (up to 20 percent of the gross, EIP-3529), the Core meters the gross with `gasleft`. decoded by
     /// position, so a forge-std struct with more fields than the installed forge answers does not matter
@@ -236,14 +244,14 @@ abstract contract Fixture is Test, ProdDeployer {
 
         lc = defaultConfig();
         // the core tests are written against this opening bid, whatever the launch default is
-        lc.rateStart = OPEN_RATE;
+        lc.rateStart = _fixtureRateStart();
         lc.settings = _settings();
         lc.owner = owner;
         lc.creator = creator;
         lc.artist = creator;
         // the core tests compose right after the fill, so they start with the credit sale window off. the launch value is
         // on (test/Config.t.sol pins it) and the sale tests switch it on
-        lc.credit.saleOn = false;
+        lc.credit.saleOn = _fixtureCreditSaleOn();
         lc.payee = _user("payee");
         lc.name = "Fixture Coin";
         lc.symbol = "FIXT";
