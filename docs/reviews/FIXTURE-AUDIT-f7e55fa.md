@@ -63,3 +63,35 @@ Class 4, keeper gating
 18. `bid` computed by the Core. Home: keeper/test/e2e/doors.e2e.ts. Case: take `bid` from `core.bidOf` after hook-only funding, omit `setRate`, require a sweep within a bounded number of ticks.
 19. Gates acting together: listing delay 120 s, margin, base fee ceiling, `SliceTooSmall`, `NotReady`. Home: keeper/test/decide.test.ts. Case: a 24 hour tick series on a fixed state; the idle hours match an expected list with one reason per door.
 20. Sim and e2e share the class 1 and 4 blind spot. Homes: sim/engine.js and script/dev/Scenario.s.sol. Cases: sim `bookEveryHours` parameter with an unbooked pending counter, and keeper delay and margin in `engineBuys`; Scenario stage `cold-fill` after `warp 2000` (one buy, no book, `warp 3600`, `sellForEth`, no `setRate`) for PHASE=pre and post.
+
+## Status: the harness that now covers each gap
+
+Snapshot after the real-world harness work (test/ValueMode.t.sol on a real pool, the launch day buyers and phase 2
+scenarios, and the keeper-on-hook-income e2e). "covers" means a kept suite exercises the path from a cold start; a
+cell naming a suite without a qualifier is the pre-existing home the audit pointed at, now carrying the case.
+
+| # | Gap | Harness that covers it |
+|---|---|---|
+| 1 | Hook income on an empty pot, then time | test/LaunchDay.t.sol `test_bidClimbsFromUnbookedIncomeWithNoSellersOrListings` |
+| 2 | Drip during idle loosening and the multiplier | test/BidRule.t.sol (unbooked drip across the idle hours); test/LaunchDay.t.sol trickle |
+| 3 | Escrow claimed by a stranger lands as income | test/V2Port.t.sol `test_strangerEscrowClaimLandsAsIncomeForTheNextBook` |
+| 4 | Forced ETH as the only income with pot 0 | test/FeeShare.t.sol (forced eth counted as income by book) |
+| 5 | Token donation to the balance module while the bid climbs | test/BalanceBid.t.sol (available rises, next sellForBalance uses it) |
+| 6 | Invariant harness books before every action | test/invariant/ (unbooked swap action and a settle skip in HandlerBase) |
+| 7 | First fill from the opening rate on a hook-fed thin pot | test/LaunchDay.t.sol `test_launchDayKeeperIsTheOnlyEngineCaller` (the organic sells) |
+| 8 | First book latching the payee share through a door | test/LaunchDay.t.sol (keeper book); test/LaunchDay.t.sol `LaunchDayBuyersTest` (first book latch) |
+| 9 | First balance fill with a thin module holding | test/BalanceBid.t.sol (thin holding clamps the rate below par) |
+| 10 | First redeem through the real module and real Statements | test/UpstreamBalance.t.sol; test/LaunchDayPhase2.t.sol `test_phase2DayWithProductionModule` (both gated on the pinned artifact) |
+| 11 | First swapCredit at the launch fee (10,000 CC) | test/CreditSwap.t.sol (launch `swapFeeCc`) |
+| 12 | First statement sale at launch settings | test/Sale.t.sol; test/LaunchDay.t.sol `LaunchDayBuyersTest` (statement buyers at the decayed price, day 2 and day 5) |
+| 13 | Recovery and peak halving at launch drop | test/Recovery.t.sol |
+| 14 | Rate after one fill with a pot that keeps growing | test/ClampDifferential.t.sol (clamp against pot plus pending) |
+| 15 | Statement anchor decay with no buyer for 8 days | test/Sale.t.sol `SaleAnchorTest` |
+| 16 | Fill after idle time without the setRate restatement | test/LaunchDayPhase2.t.sol and test/LaunchDay.t.sol `LaunchDayBuyersTest` (bid climbs idle between events, next fill pays the view) |
+| 17 | Only the keeper acts, payee latched, pot 0, income pending | keeper/test/e2e/launch.e2e.ts (hook income only, no fund, keeper book then sweep) |
+| 18 | `bid` computed by the Core | keeper/test/e2e/launch.e2e.ts (bid from `core.bidOf` after hook-only funding, no setRate) |
+| 19 | Gates acting together over a 24 hour tick series | keeper/test/decide.test.ts |
+| 20 | Sim and e2e share the class 1 and 4 blind spot | keeper/test/e2e/launch.e2e.ts (keeper on real hook income with no fund); sim remains open |
+
+Open: the sim side of gap 20 (`sim/engine.js` has no unbooked pending counter) is not closed by this work; the keeper
+e2e now exercises the same blind spot on the real stack.
