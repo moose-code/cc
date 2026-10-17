@@ -443,9 +443,10 @@ contract RedeemRepayTest is RedeemBase {
 
     // promise: SPEC 1 releaseRedeemBurn moves the reserve into ethToBuyback (inv 5)
     function test_releaseRedeemBurnMovesExactlyAndHoldsSolvency() public {
+        _redeemBurnOn();
         _fundPot(2 ether);
         uint256 reserve = core.ethRedeemBurn();
-        assertGt(reserve, 0, "the reserve fills from fees at launch");
+        assertGt(reserve, 0, "the reserve fills from fees with the redeem burn share on");
         uint256 tb = core.ethToBuyback();
         uint256 pot = core.ethPot();
         uint256 bal = address(core).balance;
@@ -461,6 +462,7 @@ contract RedeemRepayTest is RedeemBase {
 
     // promise: INTEGRATION ZeroAmount on releaseRedeemBurn
     function test_releaseRedeemBurnCapsAtReserveAndRefusesEmpty() public {
+        _redeemBurnOn();
         _fundPot(2 ether);
         uint256 reserve = core.ethRedeemBurn();
         uint256 tb = core.ethToBuyback();
