@@ -127,9 +127,10 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     controller: snap.controller,
     valueModeOn: snap.value.on,
     noQuote: snap.noQuote,
-    refPrice: snap.value.refPrice ?? 0n,
-    refTime: BigInt(snap.value.refTime ?? 0),
-    maxStale: BigInt(snap.value.quote?.maxStale ?? 0),
+    referencePrice: snap.value.referencePrice ?? 0n,
+    referenceTime: BigInt(snap.value.referenceTime ?? 0),
+    referenceMaxStale: BigInt(snap.value.quote?.referenceMaxStale ?? 0),
+    referenceMinSeconds: BigInt(snap.value.quote?.referenceMinSeconds ?? 0),
   };
   return { state, snap };
 }

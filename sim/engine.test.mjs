@@ -781,23 +781,23 @@ const R0 = 6.668e15;
 // drops the shared instance, valueOf is the sale value with the floor rate and cost terms dropped, an unusable quote bids and
 // sells nothing, and only the switch and the bid turning on reset the shared instance
 {
-  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 500); assert.equal(QUOTE.maxStale, 0); n += 3; // the launch config: off, owner inputs pending
-  assert.equal(quoteViolation({ ...QUOTE, maxStepBps: 10001 }), 'maxStepBps'); assert.equal(quoteViolation({ ...QUOTE, tolBps: 10000 }), 'tolBps'); assert.equal(quoteViolation(QUOTE), null); n += 3;
+  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 500); assert.equal(QUOTE.referenceMaxStale, 0); n += 3; // the launch config: off, owner inputs pending
+  assert.equal(quoteViolation({ ...QUOTE, referenceStepBps: 10001 }), 'referenceStepBps'); assert.equal(quoteViolation({ ...QUOTE, tolBps: 10000 }), 'tolBps'); assert.equal(quoteViolation(QUOTE), null); n += 3;
   const BPS = 10000, U = 0.001 / 100; // eth per point at the unit price
-  const Q = { rateBpsPerHour: 100, maxStepBps: 200, tolBps: 500, maxStale: 3600, balancePoolSet: true, balanceBidCapBps: 11000, balanceBidMarginBps: 1000 };
+  const Q = { referenceRateBpsPerHour: 100, referenceStepBps: 200, tolBps: 500, referenceMaxStale: 3600, referenceMinSeconds: 0, balancePoolSet: true, balanceBidCapBps: 11000, balanceBidMarginBps: 1000 };
   const mk = (over = {}) => { const c = fresh({ ...Q, ...over }, 10); c.setBalanceModule(0, U); c.balancePot = 10; return c; };
-  // the reference: set to the spot with the pool key, then at most min(rate * elapsed, maxStep) toward the spot per update
+  // the reference: set to the spot with the pool key, then at most min(rate * elapsed, referenceStep) toward the spot per update
   const r = mk();
   near(r.refMult, 1, 1e-12, 'the reference starts at the spot'); r.movePool(2);
-  r.observe(1800); near(r.refMult, 1.005, 1e-12, 'half an hour at 100 bps an hour'); r.observe(1800); near(r.refMult, 1.005, 1e-12, 'a repeat in the same second gains nothing');
-  r.observe(1800 + 10 * H); near(r.refMult, 1.005 * 1.02, 1e-12, 'one update moves at most maxStepBps'); n += 3;
+  r.refreshReference(1800); near(r.refMult, 1.005, 1e-12, 'half an hour at 100 bps an hour'); r.refreshReference(1800); near(r.refMult, 1.005, 1e-12, 'a repeat in the same second gains nothing');
+  r.refreshReference(1800 + 10 * H); near(r.refMult, 1.005 * 1.02, 1e-12, 'one update moves at most referenceStepBps'); n += 3;
   // the protected value: the buy side the lower of spot and reference plus tol, the sale side the higher of spot and reference less tol
   near(r.valuePerPoint(false, 1800 + 10 * H).value, U * 1.0251 * 1.05, 1e-9, 'a spot pushed up buys at the reference plus tol');
   near(r.valuePerPoint(true, 1800 + 10 * H).value, U * 2, 1e-12, 'and sells at the spot');
   r.movePool(0.5); near(r.valuePerPoint(true, 1800 + 10 * H).value, U * 1.0251 * 0.95, 1e-9, 'a spot pushed down sells at the reference less tol');
   near(r.valuePerPoint(false, 1800 + 10 * H).value, U * 0.5, 1e-12, 'and buys at the spot');
-  ok(!r.valuePerPoint(false, 1800 + 10 * H + 3601).ok, 'a reference older than maxStale is unusable');
-  ok(!mk({ maxStale: 0 }).valuePerPoint(false, 0).ok, 'maxStale 0 is never usable'); ok(!mk({ minLiquidity: 1, poolLiquidity: 0 }).valuePerPoint(false, 0).ok, 'a thin pool is unusable');
+  ok(!r.valuePerPoint(false, 1800 + 10 * H + 3601).ok, 'a reference older than referenceMaxStale is unusable');
+  ok(!mk({ referenceMaxStale: 0 }).valuePerPoint(false, 0).ok, 'referenceMaxStale 0 is never usable'); ok(!mk({ minLiquidity: 1, poolLiquidity: 0 }).valuePerPoint(false, 0).ok, 'a thin pool is unusable');
   // the switch: valueModeOn opens the shared instance at the floor; the eth bid is the instance times 100 points of the buy value
   const v = mk({ rateCap: 1e18 });
   v.balRate = 10800; v.setSettings({ valueModeOn: true, balanceBidOn: true }, 60);

@@ -305,16 +305,17 @@ abstract contract PostflightChecks is PostflightPool {
                 "creditSaleOn creditWindow creditSpreadBps creditStartBps"
             );
         }
-        (uint32 rate, uint16 step, uint16 tol, uint32 stale, uint128 liq) = k.quote();
-        bool quoteSame = rate == c.quote.rateBpsPerHour && step == c.quote.maxStepBps && tol == c.quote.tolBps
-            && stale == c.quote.maxStale && liq == c.quote.minLiquidity;
+        (uint32 rate, uint16 step, uint16 tol, uint32 stale, uint32 minSec, uint128 liq) = k.quote();
+        bool quoteSame = rate == c.quote.referenceRateBpsPerHour && step == c.quote.referenceStepBps
+            && tol == c.quote.tolBps && stale == c.quote.referenceMaxStale && minSec == c.quote.referenceMinSeconds
+            && liq == c.quote.minLiquidity;
         if (_settingsChanged()) {
-            _warn("warn: value quote equals the config", quoteSame, "SETTINGS_CHANGED=1, the owner changed it since launch");
+            _warn("warn: reference price settings equal the config", quoteSame, "SETTINGS_CHANGED=1, the owner changed it since launch");
         } else {
             _check(
-                "controller: value quote equals the config",
+                "controller: reference price settings equal the config",
                 quoteSame,
-                "rateBpsPerHour maxStepBps tolBps maxStale minLiquidity"
+                "referenceRateBpsPerHour referenceStepBps tolBps referenceMaxStale referenceMinSeconds minLiquidity"
             );
         }
     }

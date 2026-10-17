@@ -7,8 +7,8 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAddress, parseEther, parseGwei, type Address } from "viem";
 
-export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "observe";
-export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "observe"];
+export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference";
+export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "refreshReference"];
 
 // the owner key never signs a keeper transaction (decision 57)
 export const OWNER: Address = "0xCB43078C32423F5348Cab5885911C3B5faE217F9";
@@ -141,7 +141,7 @@ const DOOR_DEFAULT_TIP: { [d in Door]: string } = {
   collectEscrow: "0.05",
   book: "0.05",
   redeemStatement: "0.05",
-  observe: "0.05",
+  refreshReference: "0.05",
 };
 
 const DOOR_DEFAULT_BASEFEE: { [d in Door]: string } = {
@@ -151,7 +151,7 @@ const DOOR_DEFAULT_BASEFEE: { [d in Door]: string } = {
   collectEscrow: "3",
   book: "3",
   redeemStatement: "3",
-  observe: "3",
+  refreshReference: "3",
 };
 
 export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRecord): Config {

@@ -149,17 +149,17 @@ export const controllerAbi = parseAbi([
   "function floorMultBps() view returns (uint256)",
   "function creditStartBps() view returns (uint32)",
   // the protected price (decision 148): the rate limited reference of the balance token, the pool spot it follows, the
-  // quote settings, and the value of one point at the protected buy (false) or sale (true) price
-  "function refPrice() view returns (uint256)",
-  "function refTime() view returns (uint40)",
+  // reference price settings, and the value of one point at the protected buy (false) or sale (true) price
+  "function referencePrice() view returns (uint256)",
+  "function referenceTime() view returns (uint40)",
   "function spotPrice() view returns (uint256 spot, bool ok)",
-  "function quote() view returns (uint32 rateBpsPerHour, uint16 maxStepBps, uint16 tolBps, uint32 maxStale, uint128 minLiquidity)",
+  "function quote() view returns (uint32 referenceRateBpsPerHour, uint16 referenceStepBps, uint16 tolBps, uint32 referenceMaxStale, uint32 referenceMinSeconds, uint128 minLiquidity)",
   "function valuePerPoint(bool forSale) view returns (uint256 value, bool ok)",
   // actions
   "function buy(uint256 sid) payable",
   "function buyCredit(uint256 id) payable",
   "function buyCredits(uint256[] ids) payable",
-  "function observe()",
+  "function refreshReference()",
   "error NoQuote()",
 ]);
 

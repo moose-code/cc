@@ -9,7 +9,7 @@ import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {ValueBase} from "../ValueMode.t.sol";
 
 /// @notice the actors of the value mode suite: they sell credits into the eth and the balance bid, buy pile credits and
-/// statements from the controller, move the pool spot, call `observe()` and let time pass. every action records what
+/// statements from the controller, move the pool spot, call `refreshReference()` and let time pass. every action records what
 /// the invariants need: the payment against the bid read just before, the payment against the room, the core's eth
 /// outflow against the payment, a statement sale against its hard floor, and a credit bought from the engine and sold
 /// straight back against the spread
@@ -178,7 +178,7 @@ contract ValueHandler is Test {
         uint256[] memory page = core.pilePage(0, n < 40 ? n : 40);
         uint256 id = page[seed % page.length];
         (uint256 k, address a) = _actor(seed >> 8);
-        ctl.observe();
+        ctl.refreshReference();
         uint256 price;
         try ctl.creditPrice(id) returns (uint256 p) {
             price = p;
@@ -232,9 +232,9 @@ contract ValueHandler is Test {
         ++epoch;
     }
 
-    function observe() external {
-        ++calls["observe"];
-        ctl.observe();
+    function refreshReference() external {
+        ++calls["refreshReference"];
+        ctl.refreshReference();
     }
 
     function warp(uint256 seed) external {
@@ -254,8 +254,8 @@ contract InvariantsValue is ValueBase {
 
     function setUp() public override {
         super.setUp();
-        // the quote of `ValueBase`: a maxStale of a day, so the handler's warps of at most three hours leave it usable
-        // between observes, and a run of warps without one halts the eth routes, which the refusals allow
+        // the quote of `ValueBase`: a referenceMaxStale of a day, so the handler's warps of at most three hours leave it usable
+        // between refreshes, and a run of warps without one halts the eth routes, which the refusals allow
         _composeOnce();
         _valueOn();
         _setReturnLock(0);
@@ -274,7 +274,7 @@ contract InvariantsValue is ValueBase {
         sel[2] = ValueHandler.buyCredit.selector;
         sel[3] = ValueHandler.buyStatement.selector;
         sel[4] = ValueHandler.moveSpot.selector;
-        sel[5] = ValueHandler.observe.selector;
+        sel[5] = ValueHandler.refreshReference.selector;
         sel[6] = ValueHandler.warp.selector;
         targetSelector(FuzzSelector({addr: address(h), selectors: sel}));
     }

@@ -63,10 +63,10 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// (a stale key after an owner module replacement), with no balance module set, on a failed, zero or above
 /// `uint128.max` unit read, or on a zero pool read.
 /// the protected price (decision 148): the controller keeps a reference price of the balance token, set to the pool spot
-/// by `setBalancePoolKey` and moved toward the spot by `observe()` and the sale doors by at most
-/// `min(rateBpsPerHour * elapsed / 3600, maxStepBps)` bps of the reference per update. buys price off
+/// by `setBalancePoolKey` and moved toward the spot by `refreshReference()` and the sale doors by at most
+/// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update. buys price off
 /// `min(spot, reference * (10_000 + tolBps) / 10_000)`, sales off `max(spot, reference * (10_000 - tolBps) / 10_000)`;
-/// the quote is usable while the reference is at most `maxStale` old, the pool holds at least `minLiquidity` and the
+/// the reference price is usable while it is at most `referenceMaxStale` old, the pool holds at least `minLiquidity` and the
 /// unit read succeeds. in value mode (the Core's `valueModeOn`) `valueOf` is the sale price value with the floor rate and
 /// cost terms dropped, a statement's reference is that value times `floorMultBps()` and its curve rests at 10_000 of it,
 /// and the price views and the sale doors revert `NoQuote` while the quote is unusable
@@ -96,8 +96,8 @@ contract ControllerV1 is IController {
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
     event QuoteSet(Quote quote);
-    /// an update of the reference: the reference after it and the spot it moved toward, wei per 1e18 base units
-    event Observed(uint256 refPrice, uint256 spot);
+    /// a refresh of the reference price: the reference after it and the spot it moved toward, wei per 1e18 base units
+    event ReferenceRefreshed(uint256 referencePrice, uint256 spot);
 
     ICoreViews public immutable CORE;
 
@@ -141,12 +141,12 @@ contract ControllerV1 is IController {
     /// value false; the owner turns it on with the value switch (decision 155)
     bool public ageEligibilityOn;
 
-    /// the protected price settings (decision 148)
+    /// the reference price settings (decision 148)
     Quote public quote;
     /// the reference price of the balance token, wei per 1e18 base units, 0 until the pool key is set
-    uint256 public refPrice;
-    /// when `refPrice` was last updated
-    uint40 public refTime;
+    uint256 public referencePrice;
+    /// the sample time of `referencePrice`: the moment the stored reference was sampled from the spot
+    uint40 public referenceTime;
 
     constructor(address core, Sale memory sale, Credit memory credit, Quote memory quote_) {
         CORE = ICoreViews(core);
@@ -223,13 +223,13 @@ contract ControllerV1 is IController {
         _setRef(spot, spot);
     }
 
-    /// sets the protected price settings at once. `maxStepBps` 0 to 10_000, `tolBps` 0 to 9_999
+    /// sets the reference price settings at once. `referenceStepBps` 0 to 10_000, `tolBps` 0 to 9_999
     function setQuote(Quote calldata v) external onlyOwner {
         _setQuote(v);
     }
 
     function _setQuote(Quote memory v) private {
-        if (v.maxStepBps > BPS) revert BadSetting("maxStepBps");
+        if (v.referenceStepBps > BPS) revert BadSetting("referenceStepBps");
         if (v.tolBps >= BPS) revert BadSetting("tolBps");
         quote = v;
         emit QuoteSet(v);
@@ -237,31 +237,40 @@ contract ControllerV1 is IController {
 
     // ------------------------------------------------------------------ the protected price
 
-    /// moves the reference toward the pool spot by at most `min(rateBpsPerHour * elapsed / 3600, maxStepBps)` bps of the
-    /// reference and records the time. anyone may call; the sale doors call it first. no move with no pool key or a zero
-    /// spot. repeated calls gain nothing beyond the rate: each moves at most the rate times its own elapsed time
-    function observe() public {
-        if (refPrice == 0) return;
+    /// moves the reference toward the pool spot by at most
+    /// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference. anyone may call; the sale
+    /// doors call it first. no move with no reference, with `referenceMaxStale` zero (mode off), before
+    /// `referenceMinSeconds` has passed since the last sample, or on a zero spot. when the integer move floors to zero
+    /// the sample time is left unchanged, so a rate too small for a one bps move over the elapsed time still tracks
+    /// under frequent calls; a nonzero move resets the sample to now. repeated calls gain nothing beyond the rate
+    function refreshReference() public {
+        uint256 ref = referencePrice;
+        if (ref == 0) return;
+        Quote memory q = quote;
+        if (q.referenceMaxStale == 0) return;
+        uint256 elapsed = block.timestamp - referenceTime;
+        if (elapsed < q.referenceMinSeconds) return;
         (uint256 spot, bool ok) = _spot();
         if (!ok) return;
-        uint256 ref = refPrice;
-        Quote memory q = quote;
-        uint256 move = uint256(q.rateBpsPerHour) * (block.timestamp - refTime) / 1 hours;
-        if (move > q.maxStepBps) move = q.maxStepBps;
+        uint256 move = uint256(q.referenceRateBpsPerHour) * elapsed / 1 hours;
+        if (move > q.referenceStepBps) move = q.referenceStepBps;
+        // a move that floors to zero leaves the sample untouched, so the sub bps time keeps accumulating until the next
+        // call clears one bps; the reference is not pinned when the per call interval is short against the rate
+        if (move == 0) return;
         uint256 hi = ref * (BPS + move) / BPS;
         uint256 lo = ref * (BPS - move) / BPS;
         _setRef(spot > hi ? hi : spot < lo ? lo : spot, spot);
     }
 
     function _setRef(uint256 ref, uint256 spot) private {
-        refPrice = ref;
+        referencePrice = ref;
         // forge-lint: disable-next-line(unsafe-typecast)
-        refTime = uint40(block.timestamp);
-        emit Observed(ref, spot);
+        referenceTime = uint40(block.timestamp);
+        emit ReferenceRefreshed(ref, spot);
     }
 
-    /// @notice the pool spot of the balance token, wei per 1e18 base units, the price `observe()` moves the reference
-    /// toward. the web shows it against `refPrice`. false as in `_spot`
+    /// @notice the pool spot of the balance token, wei per 1e18 base units, the price `refreshReference()` moves the
+    /// reference toward. the web shows it against `referencePrice`. false as in `_spot`
     function spotPrice() external view returns (uint256 spot, bool ok) {
         return _spot();
     }
@@ -273,12 +282,14 @@ contract ControllerV1 is IController {
     }
 
     /// the buy price, the sale price and the unit, wei per 1e18 base units and base units per score unit, and whether the
-    /// quote is usable: a reference set, at most `maxStale` old with `maxStale` nonzero, pool liquidity at least
+    /// reference price is usable: a reference set, at most `referenceMaxStale` old with it nonzero, pool liquidity at least
     /// `minLiquidity`, a spot and a unit read
     function _protected() private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
-        uint256 ref = refPrice;
+        uint256 ref = referencePrice;
         Quote memory q = quote;
-        if (ref == 0 || q.maxStale == 0 || block.timestamp - refTime > q.maxStale) return (0, 0, 0, false);
+        if (ref == 0 || q.referenceMaxStale == 0 || block.timestamp - referenceTime > q.referenceMaxStale) {
+            return (0, 0, 0, false);
+        }
         (uint256 spot, bool priced) = _spot();
         if (!priced) return (0, 0, 0, false);
         if (IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(balancePoolKey.toId()) < q.minLiquidity) {
@@ -420,7 +431,7 @@ contract ControllerV1 is IController {
     function buy(uint256 sid) external payable {
         if (_busy) revert Reentrant();
         _busy = true;
-        observe();
+        refreshReference();
         (uint256 price, uint256 cost, uint256 ref) = _quote(sid);
         if (msg.value < price) revert Underpaid();
         _moveAnchor(sid, price, cost, ref);
@@ -481,7 +492,7 @@ contract ControllerV1 is IController {
         if (!creditSaleOn) revert CreditSaleOff();
         if (_busy) revert Reentrant();
         _busy = true;
-        observe();
+        refreshReference();
         uint256 price = creditPrice(id);
         if (msg.value < price) revert Underpaid();
         ICoreSale(address(CORE)).sellCreditTo{value: price}(id, msg.sender);
@@ -497,7 +508,7 @@ contract ControllerV1 is IController {
         if (!creditSaleOn) revert CreditSaleOff();
         if (_busy) revert Reentrant();
         _busy = true;
-        observe();
+        refreshReference();
         uint256 n = ids.length;
         uint256 spent;
         for (uint256 i; i < n; ++i) {

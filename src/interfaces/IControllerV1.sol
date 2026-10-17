@@ -39,8 +39,8 @@ interface IControllerV1 {
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
     event Bought(uint256 indexed sid, address indexed buyer, uint256 price);
     event CreditSaleSet(CreditSale credit);
-    event Observed(uint256 refPrice, uint256 spot);
     event QuoteSet(Quote quote);
+    event ReferenceRefreshed(uint256 referencePrice, uint256 spot);
     event SaleSet(Sale sale);
 
     function CORE() external view returns (address);
@@ -68,17 +68,24 @@ interface IControllerV1 {
     function floorMultBps() external view returns (uint256);
     function markupBps() external view returns (uint16);
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    function observe() external;
     function pastWindow(uint64 acquiredAt) external view returns (bool);
     function pointRate() external view returns (uint256);
     function priceOf(uint256 sid) external view returns (uint256 price);
     function quote()
         external
         view
-        returns (uint32 rateBpsPerHour, uint16 maxStepBps, uint16 tolBps, uint32 maxStale, uint128 minLiquidity);
-    function refPrice() external view returns (uint256);
-    function refTime() external view returns (uint40);
+        returns (
+            uint32 referenceRateBpsPerHour,
+            uint16 referenceStepBps,
+            uint16 tolBps,
+            uint32 referenceMaxStale,
+            uint32 referenceMinSeconds,
+            uint128 minLiquidity
+        );
     function referenceOf(uint256 sid) external view returns (uint256);
+    function referencePrice() external view returns (uint256);
+    function referenceTime() external view returns (uint40);
+    function refreshReference() external;
     function setAgeEligibilityOn(bool v) external;
     function setAnchorBps(uint32 v) external;
     function setBalancePoolKey(PoolKey memory key) external;

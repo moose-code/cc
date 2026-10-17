@@ -94,12 +94,12 @@ export const controllerAbi = [
         "internalType": "struct Quote",
         "components": [
           {
-            "name": "rateBpsPerHour",
+            "name": "referenceRateBpsPerHour",
             "type": "uint32",
             "internalType": "uint32"
           },
           {
-            "name": "maxStepBps",
+            "name": "referenceStepBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -109,7 +109,12 @@ export const controllerAbi = [
             "internalType": "uint16"
           },
           {
-            "name": "maxStale",
+            "name": "referenceMaxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceMinSeconds",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -132,6 +137,19 @@ export const controllerAbi = [
         "name": "",
         "type": "address",
         "internalType": "contract ICoreViews"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ageEligibilityOn",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -440,13 +458,6 @@ export const controllerAbi = [
   },
   {
     "type": "function",
-    "name": "observe",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "pastWindow",
     "inputs": [
       {
@@ -502,12 +513,12 @@ export const controllerAbi = [
     "inputs": [],
     "outputs": [
       {
-        "name": "rateBpsPerHour",
+        "name": "referenceRateBpsPerHour",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "maxStepBps",
+        "name": "referenceStepBps",
         "type": "uint16",
         "internalType": "uint16"
       },
@@ -517,7 +528,12 @@ export const controllerAbi = [
         "internalType": "uint16"
       },
       {
-        "name": "maxStale",
+        "name": "referenceMaxStale",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "referenceMinSeconds",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -525,32 +541,6 @@ export const controllerAbi = [
         "name": "minLiquidity",
         "type": "uint128",
         "internalType": "uint128"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "refPrice",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "refTime",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint40",
-        "internalType": "uint40"
       }
     ],
     "stateMutability": "view"
@@ -573,6 +563,52 @@ export const controllerAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "referencePrice",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "referenceTime",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint40",
+        "internalType": "uint40"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refreshReference",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setAgeEligibilityOn",
+    "inputs": [
+      {
+        "name": "v",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -672,12 +708,12 @@ export const controllerAbi = [
         "internalType": "struct Quote",
         "components": [
           {
-            "name": "rateBpsPerHour",
+            "name": "referenceRateBpsPerHour",
             "type": "uint32",
             "internalType": "uint32"
           },
           {
-            "name": "maxStepBps",
+            "name": "referenceStepBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -687,7 +723,12 @@ export const controllerAbi = [
             "internalType": "uint16"
           },
           {
-            "name": "maxStale",
+            "name": "referenceMaxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceMinSeconds",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -849,6 +890,19 @@ export const controllerAbi = [
   },
   {
     "type": "event",
+    "name": "AgeEligibilitySet",
+    "inputs": [
+      {
+        "name": "on",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "AnchorBpsSet",
     "inputs": [
       {
@@ -984,25 +1038,6 @@ export const controllerAbi = [
   },
   {
     "type": "event",
-    "name": "Observed",
-    "inputs": [
-      {
-        "name": "refPrice",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "spot",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "QuoteSet",
     "inputs": [
       {
@@ -1012,12 +1047,12 @@ export const controllerAbi = [
         "internalType": "struct Quote",
         "components": [
           {
-            "name": "rateBpsPerHour",
+            "name": "referenceRateBpsPerHour",
             "type": "uint32",
             "internalType": "uint32"
           },
           {
-            "name": "maxStepBps",
+            "name": "referenceStepBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -1027,7 +1062,12 @@ export const controllerAbi = [
             "internalType": "uint16"
           },
           {
-            "name": "maxStale",
+            "name": "referenceMaxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceMinSeconds",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -1037,6 +1077,25 @@ export const controllerAbi = [
             "internalType": "uint128"
           }
         ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReferenceRefreshed",
+    "inputs": [
+      {
+        "name": "referencePrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "spot",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

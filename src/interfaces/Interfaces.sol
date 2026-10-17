@@ -286,20 +286,22 @@ struct CreditSale {
     uint32 startBps;
 }
 
-/// the protected price quote of the controller (decision 148), set at once by `setQuote`. the controller keeps a reference
-/// price of the balance token that `observe()` and its sale doors move toward the pool spot by at most
-/// `min(rateBpsPerHour * elapsed / 3600, maxStepBps)` bps of the reference per update
+/// the reference price settings of the controller (decision 148), set at once by `setQuote`. the controller keeps a
+/// reference price of the balance token that `refreshReference()` and its sale doors move toward the pool spot by at most
+/// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update
 struct Quote {
     /// the most the reference moves toward the spot per hour, bps of the reference
-    uint32 rateBpsPerHour;
+    uint32 referenceRateBpsPerHour;
     /// the most one update moves the reference, bps of the reference. 0 to 10_000
-    uint16 maxStepBps;
+    uint16 referenceStepBps;
     /// the band around the reference: buys price off `min(spot, reference * (10_000 + tolBps) / 10_000)`, sales off
     /// `max(spot, reference * (10_000 - tolBps) / 10_000)`. 0 to 9_999
     uint16 tolBps;
-    /// seconds after the last update the reference stays usable. 0 keeps the quote unusable
-    uint32 maxStale;
-    /// the least pool liquidity of a usable quote
+    /// seconds after the last update the reference stays usable. 0 keeps the reference price unusable
+    uint32 referenceMaxStale;
+    /// least seconds between two reference refreshes. a refresh runs only when the last sample is older than this
+    uint32 referenceMinSeconds;
+    /// the least pool liquidity of a usable reference price
     uint128 minLiquidity;
 }
 
@@ -438,11 +440,19 @@ library Mainnet {
         });
     }
 
-    /// the launch quote: the 5 percent band of decision 148 and the review. the rate, the step, the staleness and the
-    /// liquidity minimum are owner inputs set once the balance token pool exists and its depth is known; a `maxStale` of 0
-    /// keeps the quote unusable, so value mode fails closed to `NoQuote` until they are set
+    /// the launch reference price settings: the 5 percent band of decision 148 and the review, and a 600 second refresh
+    /// cadence. the rate, the step, the staleness and the liquidity minimum are owner inputs set once the balance token
+    /// pool exists and its depth is known; a `referenceMaxStale` of 0 keeps the reference price unusable, so value mode
+    /// fails closed to `NoQuote` until they are set
     function defaultQuote() internal pure returns (Quote memory) {
-        return Quote({rateBpsPerHour: 0, maxStepBps: 0, tolBps: 500, maxStale: 0, minLiquidity: 0});
+        return Quote({
+            referenceRateBpsPerHour: 0,
+            referenceStepBps: 0,
+            tolBps: 500,
+            referenceMaxStale: 0,
+            referenceMinSeconds: 600,
+            minLiquidity: 0
+        });
     }
 
     /// the default stack: the fixed parts of mainnet. the v2 members (hook, factory, locker, escrow) are zero and are

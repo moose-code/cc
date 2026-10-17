@@ -21,7 +21,7 @@ export const GAS_GUESS: { [d in Door]: bigint } = {
   collectEscrow: 120_000n,
   book: 100_000n,
   redeemStatement: 1_500_000n,
-  observe: 60_000n,
+  refreshReference: 60_000n,
 };
 
 export interface Settings {
@@ -70,13 +70,15 @@ export interface State {
   // the held statements with controller.atFloor(sid) true
   atFloor: bigint[];
   // the value switch (decision 148): the controller, the Core's valueModeOn, whether the eth bid reverts NoQuote now, the
-  // controller's reference time (0 before the pool key) and the quote's maxStale (0 is never usable)
+  // controller's reference sample time (0 before the pool key), the reference staleness bound (0 is never usable) and
+  // the least seconds between two refreshes
   controller: Address;
   valueModeOn: boolean;
   noQuote: boolean;
-  refPrice: bigint;
-  refTime: bigint;
-  maxStale: bigint;
+  referencePrice: bigint;
+  referenceTime: bigint;
+  referenceMaxStale: bigint;
+  referenceMinSeconds: bigint;
 }
 
 export interface Listing {
@@ -99,8 +101,8 @@ export interface Gas {
 
 export interface Intended {
   door: Door;
-  functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "observe";
-  // the contract the call goes to: the Core, or the controller for observe
+  functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference";
+  // the contract the call goes to: the Core, or the controller for refreshReference
   target?: "controller";
   args: readonly unknown[];
   // the gas the decision assumed; the executor replaces it with the simulation's measure and calls `recheck`
@@ -218,16 +220,16 @@ export function observe(seen: ReadonlyMap<string, bigint>, sweepable: string[], 
   return next;
 }
 
-// whether the observe tick is due: the controller holds a reference (the pool key is set), the quote can be usable
-// (maxStale nonzero), and half of maxStale has passed since the last update, so the reference stays fresh with one
-// call per half window whatever the sale doors do. an update moves the reference at most the rate times its own
-// elapsed time, so calling it more often gains nothing
-export function observeDue(s: State): { ok: boolean; reason: string } {
-  if (s.refPrice === 0n) return { ok: false, reason: "no reference: the balance pool key is not set" };
-  if (s.maxStale === 0n) return { ok: false, reason: "quote maxStale is 0, the quote is never usable" };
-  const due = s.refTime + s.maxStale / 2n;
-  if (s.timestamp < due) return { ok: false, reason: `reference updated at ${s.refTime}, next tick at ${due}` };
-  return { ok: true, reason: "half of maxStale since the last update" };
+// whether a reference refresh is due: the controller holds a reference (the pool key is set), the reference can be
+// usable (referenceMaxStale nonzero), and referenceMinSeconds has passed since the last sample. the contract gates the
+// refresh at referenceMinSeconds, so a call before then does nothing. referenceMinSeconds is the cadence that produces a
+// full step (step / rate), so one call per cadence both tracks the market and keeps the reference fresh
+export function refreshReferenceDue(s: State): { ok: boolean; reason: string } {
+  if (s.referencePrice === 0n) return { ok: false, reason: "no reference: the balance pool key is not set" };
+  if (s.referenceMaxStale === 0n) return { ok: false, reason: "referenceMaxStale is 0, the reference is never usable" };
+  const due = s.referenceTime + s.referenceMinSeconds;
+  if (s.timestamp < due) return { ok: false, reason: `reference sampled at ${s.referenceTime}, next refresh at ${due}` };
+  return { ok: true, reason: "referenceMinSeconds since the last sample" };
 }
 
 // every call the keeper would make at this state, in priority order: buyListing (best gap first), buyback, compose,
@@ -371,13 +373,14 @@ export function decide(
     }
   }
 
-  // 7. observe: unpaid; keeps the controller's reference of the balance token fresh so the quote stays usable
-  if (on("observe")) {
-    const r = observeDue(s);
-    if (!r.ok) skips.push({ door: "observe", reason: r.reason });
-    else if (ceiling("observe")) {
-      const cost = ownCost(GAS_GUESS.observe, gas, p.doors.observe);
-      calls.push({ door: "observe", functionName: "observe", target: "controller", args: [], gas: GAS_GUESS.observe, payment: 0n, cost, key: "observe", note: { refTime: s.refTime, maxStale: s.maxStale } });
+  // 7. refreshReference: keeps the controller's reference of the balance token tracking the market so the reference
+  // price stays usable
+  if (on("refreshReference")) {
+    const r = refreshReferenceDue(s);
+    if (!r.ok) skips.push({ door: "refreshReference", reason: r.reason });
+    else if (ceiling("refreshReference")) {
+      const cost = ownCost(GAS_GUESS.refreshReference, gas, p.doors.refreshReference);
+      calls.push({ door: "refreshReference", functionName: "refreshReference", target: "controller", args: [], gas: GAS_GUESS.refreshReference, payment: 0n, cost, key: "refreshReference", note: { referenceTime: s.referenceTime, referenceMinSeconds: s.referenceMinSeconds } });
     }
   }
 
@@ -409,7 +412,7 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
     case "collectEscrow":
       return { ok: s.escrowBalance >= cost, payment, cost };
     case "book":
-    case "observe":
+    case "refreshReference":
       return { ok: true, payment, cost };
   }
   return { ok: profitable(payment, cost, p.margin), payment, cost };

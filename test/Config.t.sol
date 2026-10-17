@@ -117,7 +117,7 @@ contract ConfigTest is Fixture {
         assertFalse(f.settings.valueModeOn);
         assertEq(abi.encode(f.quote), abi.encode(Mainnet.defaultQuote()), "the quote block is the launch quote");
         assertEq(f.quote.tolBps, 500);
-        assertEq(f.quote.maxStale, 0);
+        assertEq(f.quote.referenceMaxStale, 0);
         assertEq(f.sale.anchorMoveBps, 0);
         assertEq(f.payee, v2.owner);
         // the stack addresses of the shipped file are the record of the live stack, the factory owner is the config owner

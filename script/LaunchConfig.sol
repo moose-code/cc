@@ -65,9 +65,9 @@ struct LaunchConfig {
     Settings settings;
     /// the sale settings of the controller at launch (its constructor argument). owner adjustable afterwards
     Sale sale;
-    /// the protected price quote of the controller at launch (its constructor argument): `tolBps` 500 and the rate, the
-    /// step, the staleness and the liquidity minimum owner inputs at 0 until the balance token pool exists (decision 154).
-    /// owner adjustable afterwards with `setQuote`
+    /// the reference price settings of the controller at launch (its constructor argument): `tolBps` 500 and
+    /// `referenceMinSeconds` 600, with the rate, the step, the staleness and the liquidity minimum owner inputs at 0
+    /// until the balance token pool exists (decision 154). owner adjustable afterwards with `setQuote`
     Quote quote;
     /// the credit settings of the Core and the controller at launch (their constructor argument). owner adjustable
     /// afterwards
@@ -251,10 +251,11 @@ abstract contract ConfigReader is CommonBase {
 
     function _loadQuote(LaunchConfig memory c, string memory j) private pure {
         c.quote = Quote({
-            rateBpsPerHour: _u32(j, ".quote.rateBpsPerHour"),
-            maxStepBps: _u16(j, ".quote.maxStepBps"),
+            referenceRateBpsPerHour: _u32(j, ".quote.referenceRateBpsPerHour"),
+            referenceStepBps: _u16(j, ".quote.referenceStepBps"),
             tolBps: _u16(j, ".quote.tolBps"),
-            maxStale: _u32(j, ".quote.maxStale"),
+            referenceMaxStale: _u32(j, ".quote.referenceMaxStale"),
+            referenceMinSeconds: _u32(j, ".quote.referenceMinSeconds"),
             minLiquidity: _u128(j, ".quote.minLiquidity")
         });
     }
@@ -365,7 +366,7 @@ abstract contract ConfigReader is CommonBase {
         if (k.decayHours < 1) return "decayHours";
         if (k.anchorHalfLife < 1) return "anchorHalfLife";
         if (k.anchorMoveBps > 10_000) return "anchorMoveBps";
-        if (c.quote.maxStepBps > 10_000) return "maxStepBps";
+        if (c.quote.referenceStepBps > 10_000) return "referenceStepBps";
         if (c.quote.tolBps >= 10_000) return "tolBps";
         return bytes32(0);
     }

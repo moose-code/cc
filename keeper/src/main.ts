@@ -103,7 +103,7 @@ export class Keeper {
     // the quote alert: in value mode an unusable quote halts the eth bid and the engine's sales until the reference is
     // fresh and the pool reads; the balance bid, compose and redemption keep running
     if (state.valueModeOn && state.noQuote && !state.retired) {
-      await alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token quote is unusable, the eth routes wait", { refTime: state.refTime, maxStale: state.maxStale });
+      await alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token reference price is unusable, the eth routes wait", { referenceTime: state.referenceTime, referenceMaxStale: state.referenceMaxStale });
     }
     // the reserve alert: a pot at or under the reserve halts every acquisition until fee income refills it; processing
     // (compose, redeem, buyback) keeps paying from the whole pot

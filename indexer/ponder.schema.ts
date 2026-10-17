@@ -148,16 +148,17 @@ export const controller = onchainTable("controller", (t) => ({
   balanceFee: t.integer(),
   balanceTickSpacing: t.integer(),
   balanceHooks: t.hex(),
-  // the protected price (decision 148): the quote settings (QuoteSet) and the reference of the balance token with the
-  // pool spot it moved toward, wei per 1e18 base units, at the last Observed
-  quoteRateBpsPerHour: t.bigint(),
-  quoteMaxStepBps: t.integer(),
-  quoteTolBps: t.integer(),
-  quoteMaxStale: t.bigint(),
-  quoteMinLiquidity: t.bigint(),
-  refPrice: t.bigint(),
-  refSpot: t.bigint(),
-  refTime: t.bigint(),
+  // the reference price (decision 148): the reference price settings (QuoteSet) and the reference of the balance token
+  // with the pool spot it moved toward, wei per 1e18 base units, at the last ReferenceRefreshed
+  referenceRateBpsPerHour: t.bigint(),
+  referenceStepBps: t.integer(),
+  referenceTolBps: t.integer(),
+  referenceMaxStale: t.bigint(),
+  referenceMinSeconds: t.bigint(),
+  referenceMinLiquidity: t.bigint(),
+  referencePrice: t.bigint(),
+  referenceSpot: t.bigint(),
+  referenceTime: t.bigint(),
 }));
 
 /**

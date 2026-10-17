@@ -101,16 +101,18 @@ export const CREDIT_KEYS = Object.keys(CREDIT);
 export const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditSpreadBps: 'spreadBps', creditStartBps: 'startBps' };
 // the config credit block also holds royaltyRecipient, an address the model has no use for
 // the controller's protected price settings (script/config/mainnet.json quote block, the Quote struct, ControllerV1.setQuote, decision 148).
-// the reference moves toward the pool spot by at most min(rateBpsPerHour * elapsed / 3600, maxStepBps) bps per update; buys
-// price off min(spot, reference * (10000 + tolBps) / 10000), sales off max(spot, reference * (10000 - tolBps) / 10000); the quote is
-// usable while the reference is at most maxStale old (maxStale 0 is never usable) and the pool holds minLiquidity. the launch
-// config leaves rateBpsPerHour, maxStepBps, maxStale and minLiquidity at 0, owner inputs set before the switch
+// the reference moves toward the pool spot by at most min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps) bps
+// per update; buys price off min(spot, reference * (10000 + tolBps) / 10000), sales off max(spot, reference * (10000 - tolBps) / 10000);
+// the reference price is usable while it is at most referenceMaxStale old (referenceMaxStale 0 is never usable) and the pool holds
+// minLiquidity. a refresh runs only when the last sample is older than referenceMinSeconds. the launch config leaves
+// referenceRateBpsPerHour, referenceStepBps, referenceMaxStale and minLiquidity at 0, owner inputs set before the switch
 const _q = LAUNCH_RAW.quote;
 export const QUOTE = {
-  rateBpsPerHour: _q.rateBpsPerHour,
-  maxStepBps: _q.maxStepBps,
+  referenceRateBpsPerHour: _q.referenceRateBpsPerHour,
+  referenceStepBps: _q.referenceStepBps,
   tolBps: _q.tolBps,
-  maxStale: _q.maxStale,
+  referenceMaxStale: _q.referenceMaxStale,
+  referenceMinSeconds: _q.referenceMinSeconds,
   minLiquidity: +_q.minLiquidity,
 };
 export const QUOTE_KEYS = Object.keys(QUOTE);
@@ -139,10 +141,10 @@ export function askBps(c, start, age, floor) {
 }
 // ControllerV1.setQuote bounds: the name of the first quote field out of bounds, or null
 export function quoteViolation(q) {
-  for (const [k, bits] of [['rateBpsPerHour', 32], ['maxStepBps', 16], ['tolBps', 16], ['maxStale', 32], ['minLiquidity', 128]]) {
+  for (const [k, bits] of [['referenceRateBpsPerHour', 32], ['referenceStepBps', 16], ['tolBps', 16], ['referenceMaxStale', 32], ['referenceMinSeconds', 32], ['minLiquidity', 128]]) {
     if (!uint(q[k], bits)) return k;
   }
-  if (q.maxStepBps > BPS) return 'maxStepBps';
+  if (q.referenceStepBps > BPS) return 'referenceStepBps';
   if (q.tolBps >= BPS) return 'tolBps';
   return null;
 }
@@ -714,22 +716,25 @@ export class Core {
   // ---- the protected price (ControllerV1, decision 148). spot and reference are multiples of the price the unit assumes
   // ControllerV1.setBalancePoolKey: the reference starts at the spot
   setPoolKey(now) { this.refMult = this.poolMult; this.refTime = now; }
-  // the pool price moves (the market); the reference follows only through observe
+  // the pool price moves (the market); the reference follows only through refreshReference
   movePool(mult) { this.poolMult = mult; }
-  // ControllerV1.observe: moves the reference toward the spot by at most min(rateBpsPerHour * elapsed / 3600, maxStepBps) bps
-  // of the reference and records the time. no move before the pool key is set
-  observe(now) {
+  // ControllerV1.refreshReference: moves the reference toward the spot by at most
+  // min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps) bps of the reference and records the time. no move
+  // before the pool key is set, with referenceMaxStale 0 (mode off), or before referenceMinSeconds has passed
+  refreshReference(now) {
     if (!(this.refMult > 0)) return;
-    const move = Math.min((this.q.rateBpsPerHour * (now - this.refTime)) / 3600, this.q.maxStepBps) / BPS;
+    if (this.q.referenceMaxStale === 0) return;
+    if (now - this.refTime < this.q.referenceMinSeconds) return;
+    const move = Math.min((this.q.referenceRateBpsPerHour * (now - this.refTime)) / 3600, this.q.referenceStepBps) / BPS;
     const hi = this.refMult * (1 + move), lo = this.refMult * (1 - move);
     this.refMult = Math.min(Math.max(this.poolMult, lo), hi); this.refTime = now;
   }
   // ControllerV1.valuePerPoint: eth per point at the protected buy price (forSale false) or sale price (forSale true), and
-  // whether the quote is usable: the reference set and at most maxStale old (maxStale nonzero), the pool liquidity at least
-  // minLiquidity and a usable module
+  // whether the reference price is usable: the reference set and at most referenceMaxStale old (referenceMaxStale nonzero),
+  // the pool liquidity at least minLiquidity and a usable module
   valuePerPoint(forSale, now) {
     const q = this.q, ref = this.refMult;
-    if (!(ref > 0) || q.maxStale === 0 || now - this.refTime > q.maxStale || this.p.poolLiquidity < q.minLiquidity || !this.balanceUsable() || !(this.poolMult > 0)) return { value: 0, ok: false };
+    if (!(ref > 0) || q.referenceMaxStale === 0 || now - this.refTime > q.referenceMaxStale || this.p.poolLiquidity < q.minLiquidity || !this.balanceUsable() || !(this.poolMult > 0)) return { value: 0, ok: false };
     const spot = this.poolMult, up = ref * (BPS + q.tolBps) / BPS, down = ref * (BPS - q.tolBps) / BPS;
     return { value: this.xpLive * (forSale ? Math.max(spot, down) : Math.min(spot, up)), ok: true };
   }
@@ -807,7 +812,7 @@ export class Core {
   // costs less than anchorMinCost (or has a zero reference). returns the booking, or null when the Core would revert
   buy(st, now) {
     if (this.isPaused()) return null;
-    this.observe(now);
+    this.refreshReference(now);
     if (!this.quoteOk(now)) return null; // NoQuote
     const price = this.curvePrice(st, now);
     const res = this.sellTo(st, price, now);
@@ -859,7 +864,7 @@ export class Core {
   // ControllerV1.buyCredit: the buyer pays creditPrice, the controller forwards it to sellCreditTo (decision 123, no royalty). null while the sale is off or sales are paused, or when the Core would revert
   buyCredit(cr, now) {
     if (!this.cr.creditSaleOn || this.isPaused()) return null;
-    this.observe(now);
+    this.refreshReference(now);
     if (!this.quoteOk(now)) return null; // NoQuote
     const price = this.creditPrice(cr, now), res = this.sellCreditTo(cr, price, now);
     if (!res) return null;
@@ -1530,7 +1535,7 @@ export function simulate(userParams = {}) {
     } else core.addFees(fee, mid);
     T.fees += fee; T.vol += V;
     if (!core.moduleSet && t1 >= balanceAt) { core.setBalanceModule(t1, p.xpPerPoint); if (p.balanceDayMode != null) core.setSettings({ redeemOn: p.balanceDayMode >= 1, balanceBidOn: p.balanceDayMode === 2 }, t1); }
-    core.observe(t1); // the keeper's observe door moves the reference each step (no move before the pool key)
+    core.refreshReference(t1); // the keeper refresh door moves the reference each step (no move before the pool key)
     // credit market: the engine's own buying lifts the flat price, the lift decays
     lnM *= Math.pow(0.5, dt / (p.impactHalfLifeHours * 3600));
     const Pe = peff(t1), r0 = core.ethRate(t1);

@@ -65,10 +65,11 @@
     "anchorMoveBps": 0
   },
   "quote": {
-    "rateBpsPerHour": 0,
-    "maxStepBps": 0,
+    "referenceRateBpsPerHour": 0,
+    "referenceStepBps": 0,
     "tolBps": 500,
-    "maxStale": 0,
+    "referenceMaxStale": 0,
+    "referenceMinSeconds": 600,
     "minLiquidity": 0
   },
   "credit": {

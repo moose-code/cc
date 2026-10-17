@@ -45,7 +45,7 @@ abstract contract ValueBase is Fixture {
         });
         vm.prank(owner);
         ctl.setBalancePoolKey(k);
-        _setQuote(Quote({rateBpsPerHour: 1_000, maxStepBps: 1_000, tolBps: 500, maxStale: 1 days, minLiquidity: 1e18}));
+        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 1_000, tolBps: 500, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18}));
         mod.setAvailable(1e30);
     }
 
@@ -110,56 +110,105 @@ abstract contract ValueBase is Fixture {
 contract ValueReferenceTest is ValueBase {
     // promise: SPEC 8 setBalancePoolKey starts the reference at the spot, in the owner's transaction
     function test_referenceStartsAtTheSpot() public view {
-        assertEq(ctl.refPrice(), _spotOf(SP));
-        assertEq(ctl.refTime(), block.timestamp);
+        assertEq(ctl.referencePrice(), _spotOf(SP));
+        assertEq(ctl.referenceTime(), block.timestamp);
     }
 
-    // promise: SPEC 8 an update moves the reference toward the spot by at most rateBpsPerHour times the elapsed time
+    // promise: SPEC 8 an update moves the reference toward the spot by at most referenceRateBpsPerHour times the elapsed time
     function test_observeMovesAtMostTheRate() public {
-        uint256 ref0 = ctl.refPrice();
+        uint256 ref0 = ctl.referencePrice();
         _poolState(_sqrtOf(ref0 * 2), LIQ); // the spot doubles
         vm.warp(block.timestamp + 30 minutes);
-        ctl.observe();
-        assertEq(ctl.refPrice(), ref0 * 10_500 / 10_000, "half an hour at 1,000 bps an hour moves 5 percent");
+        ctl.refreshReference();
+        assertEq(ctl.referencePrice(), ref0 * 10_500 / 10_000, "half an hour at 1,000 bps an hour moves 5 percent");
         vm.warp(block.timestamp + 1 hours);
-        ctl.observe();
-        assertEq(ctl.refPrice(), ref0 * 10_500 / 10_000 * 11_000 / 10_000, "a full hour moves 10 percent more");
+        ctl.refreshReference();
+        assertEq(ctl.referencePrice(), ref0 * 10_500 / 10_000 * 11_000 / 10_000, "a full hour moves 10 percent more");
     }
 
-    // promise: SPEC 8 a long idle gains one step, the maxStepBps bound
+    // promise: SPEC 8 a long idle gains one step, the referenceStepBps bound
     function test_longIdleGainsOneStep() public {
-        uint256 ref0 = ctl.refPrice();
+        uint256 ref0 = ctl.referencePrice();
         _poolState(_sqrtOf(ref0 / 2), LIQ); // the spot halves
         vm.warp(block.timestamp + 20 hours);
-        ctl.observe();
-        assertEq(ctl.refPrice(), ref0 * 9_000 / 10_000, "twenty idle hours move one step of 10 percent");
+        ctl.refreshReference();
+        assertEq(ctl.referencePrice(), ref0 * 9_000 / 10_000, "twenty idle hours move one step of 10 percent");
     }
 
     // promise: SPEC 8 repeated updates gain nothing beyond the rate: a block by block spam over an hour stays within the
     // compounded rate of one update over the same hour
     function test_spamGainsNothingBeyondTheRate() public {
-        uint256 ref0 = ctl.refPrice();
+        uint256 ref0 = ctl.referencePrice();
         _poolState(_sqrtOf(ref0 * 2), LIQ);
         uint256 snap = vm.snapshotState();
         for (uint256 i; i < 300; ++i) {
             vm.warp(block.timestamp + 12);
             vm.roll(block.number + 1);
-            ctl.observe();
-            ctl.observe(); // a second call in the same second moves nothing
+            ctl.refreshReference();
+            ctl.refreshReference(); // a second call in the same second moves nothing
         }
-        uint256 spammed = ctl.refPrice();
+        uint256 spammed = ctl.referencePrice();
         vm.revertToState(snap);
         vm.warp(block.timestamp + 3_600);
-        ctl.observe();
-        uint256 once = ctl.refPrice();
+        ctl.refreshReference();
+        uint256 once = ctl.referencePrice();
         assertEq(once, ref0 * 11_000 / 10_000, "one update after an hour");
         // 300 steps of 3.33 bps compound to at most e^(0.1) of the reference, 0.52 percent above one step of 10 percent
         assertLe(spammed, ref0 * 11_052 / 10_000, "the spam stays within the compounded rate");
     }
 
+    // promise: a rate too small for a one bps move over the call interval still tracks: the sample time advances only by
+    // the seconds that produced the integer move, so the reference is not pinned when the per call move floors to zero
+    function test_slowRateStillTracksUnderFrequentCalls() public {
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 100,
+                referenceStepBps: 1_000,
+                tolBps: 500,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 0,
+                minLiquidity: 1e18
+            })
+        );
+        uint256 ref0 = ctl.referencePrice();
+        _poolState(_sqrtOf(ref0 * 2), LIQ); // the spot doubles, so the move is always rate limited upward
+        // a call every 12 seconds: 100 bps an hour over 12 seconds is 0.33 bps, which floors to a zero integer move
+        for (uint256 i; i < 300; ++i) {
+            vm.warp(block.timestamp + 12);
+            ctl.refreshReference();
+        }
+        uint256 ref = ctl.referencePrice();
+        assertGt(ref, ref0, "the reference tracks despite each call flooring its move to zero");
+        // one hour at 100 bps an hour is about one percent, compounded in one bps steps
+        assertApproxEqRel(ref, ref0 * 10_100 / 10_000, 1e15, "an hour of 12 second calls moves about one percent");
+    }
+
+    // promise: SPEC 8 a refresh runs only when the last sample is older than referenceMinSeconds; a call before then is a
+    // no op, so the keeper pays once per cadence and the sale doors do not resample every block
+    function test_refreshGatedByReferenceMinSeconds() public {
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_000,
+                referenceStepBps: 1_000,
+                tolBps: 500,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 600,
+                minLiquidity: 1e18
+            })
+        );
+        uint256 ref0 = ctl.referencePrice();
+        _poolState(_sqrtOf(ref0 * 2), LIQ);
+        vm.warp(block.timestamp + 599);
+        ctl.refreshReference();
+        assertEq(ctl.referencePrice(), ref0, "no refresh before the cadence elapses");
+        vm.warp(block.timestamp + 1);
+        ctl.refreshReference();
+        assertGt(ctl.referencePrice(), ref0, "the refresh runs once the cadence has elapsed");
+    }
+
     // promise: SPEC 8 the protected prices: buys off min(spot, ref + tol), sales off max(spot, ref - tol)
     function test_protectedPricesAtSpotAboveAndBelow() public {
-        uint256 ref = ctl.refPrice();
+        uint256 ref = ctl.referencePrice();
         uint256 unitPoint = POINT_UNIT * UNIT;
         _poolState(_sqrtOf(ref * 2), LIQ); // spot far above the reference
         (uint256 buyHi,) = ctl.valuePerPoint(false);
@@ -174,14 +223,14 @@ contract ValueReferenceTest is ValueBase {
         assertLt(buyLo, sellLo, "the buy value stays under the sale value");
     }
 
-    // promise: SPEC 8 the quote is unusable beyond maxStale, under minLiquidity, with no module unit, or with maxStale 0
+    // promise: SPEC 8 the quote is unusable beyond referenceMaxStale, under minLiquidity, with no module unit, or with referenceMaxStale 0
     function test_unusableStates() public {
         (, bool ok) = ctl.valuePerPoint(false);
         assertTrue(ok, "fresh and deep");
         vm.warp(block.timestamp + 1 days + 1);
         (, ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "stale beyond maxStale");
-        ctl.observe();
+        assertFalse(ok, "stale beyond referenceMaxStale");
+        ctl.refreshReference();
         (, ok) = ctl.valuePerPoint(false);
         assertTrue(ok, "an update refreshes it");
         _poolState(SP, 1e18 - 1);
@@ -192,22 +241,22 @@ contract ValueReferenceTest is ValueBase {
         (, ok) = ctl.valuePerPoint(true);
         assertFalse(ok, "a failing unit read");
         mod.setRevertUnit(false);
-        _setQuote(Quote({rateBpsPerHour: 1_000, maxStepBps: 1_000, tolBps: 500, maxStale: 0, minLiquidity: 1e18}));
+        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 1_000, tolBps: 500, referenceMaxStale: 0, referenceMinSeconds: 0, minLiquidity: 1e18}));
         (, ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "maxStale 0, the launch placeholder, keeps it unusable");
+        assertFalse(ok, "referenceMaxStale 0, the launch placeholder, keeps it unusable");
     }
 
     // promise: INTEGRATION BadSetting on setQuote and OnlyOwner
     function test_setQuoteBounds() public {
         vm.startPrank(owner);
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("maxStepBps")));
-        ctl.setQuote(Quote({rateBpsPerHour: 1, maxStepBps: 10_001, tolBps: 0, maxStale: 1, minLiquidity: 0}));
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("referenceStepBps")));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 10_001, tolBps: 0, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("tolBps")));
-        ctl.setQuote(Quote({rateBpsPerHour: 1, maxStepBps: 10_000, tolBps: 10_000, maxStale: 1, minLiquidity: 0}));
-        ctl.setQuote(Quote({rateBpsPerHour: type(uint32).max, maxStepBps: 10_000, tolBps: 9_999, maxStale: type(uint32).max, minLiquidity: type(uint128).max}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 10_000, tolBps: 10_000, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: type(uint32).max, referenceStepBps: 10_000, tolBps: 9_999, referenceMaxStale: type(uint32).max, referenceMinSeconds: 0, minLiquidity: type(uint128).max}));
         vm.stopPrank();
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setQuote(Quote({rateBpsPerHour: 1, maxStepBps: 1, tolBps: 1, maxStale: 1, minLiquidity: 0}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 1, tolBps: 1, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
     }
 }
 
@@ -217,7 +266,7 @@ contract ValueModeTest is ValueBase {
         Settings memory s = core.settings();
         assertFalse(s.valueModeOn, "value mode off at launch");
         assertEq(lc.quote.tolBps, 500, "the launch band");
-        assertEq(lc.quote.maxStale, 0, "maxStale an owner input, unusable until set");
+        assertEq(lc.quote.referenceMaxStale, 0, "referenceMaxStale an owner input, unusable until set");
     }
 
     // promise: SPEC 4 the switch resets the shared instance to its floor and prices the eth bid off it
@@ -323,10 +372,10 @@ contract ValueModeTest is ValueBase {
         _setReturnLock(0);
         _setCreditSaleOn(true);
         _warp(ctl.creditWindow());
-        ctl.observe();
+        ctl.refreshReference();
         uint256 score = _scoreOf(id);
         (uint256 vSell,) = ctl.valuePerPoint(true);
-        assertEq(ctl.valueOf(score), FullMath.mulDivRoundingUp(score * UNIT, _spotOf(SP) > ctl.refPrice() * 9_500 / 10_000 ? _spotOf(SP) : ctl.refPrice() * 9_500 / 10_000, 1e18), "valueOf is the protected sale value");
+        assertEq(ctl.valueOf(score), FullMath.mulDivRoundingUp(score * UNIT, _spotOf(SP) > ctl.referencePrice() * 9_500 / 10_000 ? _spotOf(SP) : ctl.referencePrice() * 9_500 / 10_000, 1e18), "valueOf is the protected sale value");
         uint256 price = ctl.creditPrice(id);
         assertEq(price, ctl.valueOf(score) * ctl.floorMultBps() / 10_000, "the floor drops the cost term");
         assertEq(ctl.floorMultBps(), 11_220, "the spread of 200 over the hard cap of 11,000");
@@ -340,11 +389,11 @@ contract ValueModeTest is ValueBase {
     /// a buyer of the engine's credits that sells each one straight back
     address internal constant TRIPPER = address(0x7419);
 
-    /// buys pile credit `id` at its sale price through `buyCredit` after an `observe()`, then in the next second sells
+    /// buys pile credit `id` at its sale price through `buyCredit` after a `refreshReference()`, then in the next second sells
     /// it back through the eth door or the balance door. `back` is the eth received, or the balance token received
     /// valued at the pool spot
     function _trip(uint256 id, bool viaBalance) internal returns (uint256 paid, uint256 back) {
-        ctl.observe();
+        ctl.refreshReference();
         uint256 price = ctl.creditPrice(id);
         vm.deal(TRIPPER, price * 2);
         vm.prank(TRIPPER);
@@ -412,7 +461,7 @@ contract ValueModeTest is ValueBase {
         (paid, back) = _trip(ids[k++], true);
         _assertLoses(paid, back, "balance at the cap");
         // the spot pushed up and down against the reference, the reference following at its rate
-        uint256 ref = ctl.refPrice();
+        uint256 ref = ctl.referencePrice();
         uint160[2] memory moved = [_sqrtOf(ref * 3 / 2), _sqrtOf(ref * 6 / 10)];
         for (uint256 i; i < 2; ++i) {
             _poolState(moved[i], LIQ);
@@ -425,7 +474,7 @@ contract ValueModeTest is ValueBase {
         }
         // the reference stale after the buy: the eth door refuses, the balance door still loses the spread
         _poolState(SP, LIQ);
-        ctl.observe();
+        ctl.refreshReference();
         uint256 id = ids[k++];
         uint256 price = ctl.creditPrice(id);
         vm.deal(TRIPPER, price);
@@ -448,7 +497,7 @@ contract ValueModeTest is ValueBase {
         uint256 ref = ctl.valueOf(core.ratingOf(c.sid)) * ctl.floorMultBps() / 10_000;
         assertEq(ctl.referenceOf(c.sid), ref);
         vm.warp(block.timestamp + uint256(ctl.decayHours()) * 1 hours);
-        ctl.observe();
+        ctl.refreshReference();
         ref = ctl.valueOf(core.ratingOf(c.sid)) * ctl.floorMultBps() / 10_000;
         assertEq(ctl.priceOf(c.sid), ref, "the aged curve rests at the protected floor, not at saleFloorBps");
     }
@@ -457,15 +506,15 @@ contract ValueModeTest is ValueBase {
     function test_saleDoorsObserve() public {
         uint256 id = _fillEthPile(1)[0];
         _setCreditSaleOn(true);
-        uint256 ref0 = ctl.refPrice();
+        uint256 ref0 = ctl.referencePrice();
         _poolState(_sqrtOf(ref0 * 2), LIQ);
         vm.warp(block.timestamp + 1 hours);
         uint256 price = ctl.creditPrice(id);
         vm.deal(seller, price * 2);
         vm.prank(seller);
         ctl.buyCredit{value: price * 2}(id);
-        assertEq(ctl.refPrice(), ref0 * 11_000 / 10_000, "buyCredit moved the reference one hour of rate");
-        assertEq(ctl.refTime(), block.timestamp);
+        assertEq(ctl.referencePrice(), ref0 * 11_000 / 10_000, "buyCredit moved the reference one hour of rate");
+        assertEq(ctl.referenceTime(), block.timestamp);
     }
 
     // promise: INTEGRATION gas of the eth door with the extra value read: a one credit sellForEth in value mode costs at

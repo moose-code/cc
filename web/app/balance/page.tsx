@@ -29,12 +29,12 @@ export default function BalancePage() {
             : " · balance bid paused"}
         </p>
       )}
-      {snap?.value.refPrice !== undefined && snap.value.refPrice > 0n && (
+      {snap?.value.referencePrice !== undefined && snap.value.referencePrice > 0n && (
         // the protected price (decision 148): the controller's rate limited reference against the pool spot, eth per
         // whole token (1e18 base units). value mode prices the eth bid and the engine's sales off the two
         <p className="muted">
-          {BALANCE_SYMBOL} reference {eth(snap.value.refPrice, 6)} eth · spot {snap.value.spot === undefined ? "unavailable" : `${eth(snap.value.spot, 6)} eth`}
-          {snap.value.spot !== undefined && ` (${((Number(snap.value.spot) / Number(snap.value.refPrice) - 1) * 100).toFixed(1)}% from the reference)`}
+          {BALANCE_SYMBOL} reference {eth(snap.value.referencePrice, 6)} eth · spot {snap.value.spot === undefined ? "unavailable" : `${eth(snap.value.spot, 6)} eth`}
+          {snap.value.spot !== undefined && ` (${((Number(snap.value.spot) / Number(snap.value.referencePrice) - 1) * 100).toFixed(1)}% from the reference)`}
           {snap.value.on ? (snap.value.usable ? " · value mode on, quote usable" : " · value mode on, quote unavailable: eth sales wait") : " · value mode off"}
         </p>
       )}

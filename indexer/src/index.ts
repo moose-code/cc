@@ -488,19 +488,20 @@ ponder.on("Controller:QuoteSet", async ({ event, context }) => {
   await record(context, event, "controller", "QuoteSet");
   const q = event.args.quote;
   await controllerSetting(context, event, "QuoteSet", {
-    quoteRateBpsPerHour: BigInt(q.rateBpsPerHour),
-    quoteMaxStepBps: Number(q.maxStepBps),
-    quoteTolBps: Number(q.tolBps),
-    quoteMaxStale: BigInt(q.maxStale),
-    quoteMinLiquidity: q.minLiquidity,
+    referenceRateBpsPerHour: BigInt(q.referenceRateBpsPerHour),
+    referenceStepBps: Number(q.referenceStepBps),
+    referenceTolBps: Number(q.tolBps),
+    referenceMaxStale: BigInt(q.referenceMaxStale),
+    referenceMinSeconds: BigInt(q.referenceMinSeconds),
+    referenceMinLiquidity: q.minLiquidity,
   });
 });
 
-ponder.on("Controller:Observed", async ({ event, context }) => {
-  await record(context, event, "controller", "Observed");
+ponder.on("Controller:ReferenceRefreshed", async ({ event, context }) => {
+  await record(context, event, "controller", "ReferenceRefreshed");
   const id = lc(event.log.address);
-  if (!(await context.db.find(controller, { id }))) throw new Error(`Observed from controller ${id} before its ControllerSet`);
-  await context.db.update(controller, { id }).set({ refPrice: event.args.refPrice, refSpot: event.args.spot, refTime: event.block.timestamp });
+  if (!(await context.db.find(controller, { id }))) throw new Error(`ReferenceRefreshed from controller ${id} before its ControllerSet`);
+  await context.db.update(controller, { id }).set({ referencePrice: event.args.referencePrice, referenceSpot: event.args.spot, referenceTime: event.block.timestamp });
 });
 
 // ---- tokens ----------------------------------------------------------------------------------------------------

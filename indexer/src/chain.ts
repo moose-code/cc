@@ -283,24 +283,25 @@ export async function readController(ctx: Ctx, address: Hex) {
 /** The protected price state of a controller at the event block; a controller without it leaves the columns null. */
 async function readQuote(ctx: Ctx, address: Hex) {
   const k = { address, abi: controllerAbi } as const;
-  const [quote, refPrice, refTime] = await ctx.client.multicall({
+  const [quote, referencePrice, referenceTime] = await ctx.client.multicall({
     ...mc,
     allowFailure: true,
     contracts: [
       { ...k, functionName: "quote" },
-      { ...k, functionName: "refPrice" },
-      { ...k, functionName: "refTime" },
+      { ...k, functionName: "referencePrice" },
+      { ...k, functionName: "referenceTime" },
     ],
   });
-  const q = quote.status === "success" ? (quote.result as readonly [number, number, number, number, bigint]) : null;
+  const q = quote.status === "success" ? (quote.result as readonly [number, number, number, number, number, bigint]) : null;
   return {
-    quoteRateBpsPerHour: q ? BigInt(q[0]) : null,
-    quoteMaxStepBps: q ? Number(q[1]) : null,
-    quoteTolBps: q ? Number(q[2]) : null,
-    quoteMaxStale: q ? BigInt(q[3]) : null,
-    quoteMinLiquidity: q ? q[4] : null,
-    refPrice: refPrice.status === "success" ? (refPrice.result as bigint) : null,
-    refTime: refTime.status === "success" ? BigInt(refTime.result as number) : null,
+    referenceRateBpsPerHour: q ? BigInt(q[0]) : null,
+    referenceStepBps: q ? Number(q[1]) : null,
+    referenceTolBps: q ? Number(q[2]) : null,
+    referenceMaxStale: q ? BigInt(q[3]) : null,
+    referenceMinSeconds: q ? BigInt(q[4]) : null,
+    referenceMinLiquidity: q ? q[5] : null,
+    referencePrice: referencePrice.status === "success" ? (referencePrice.result as bigint) : null,
+    referenceTime: referenceTime.status === "success" ? BigInt(referenceTime.result as number) : null,
   };
 }
 

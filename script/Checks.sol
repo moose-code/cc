@@ -77,7 +77,7 @@ abstract contract LaunchChecks is PostflightChecks {
     bytes32 internal constant BUILD_HASH_CORE = 0xca5d7757052f6cabcd621c783dacd8358459d4e81a0c4036bccad8cc8e1778a2;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x05e2f5497a943013c37f74cce1518dcb211af77df4c3fb168c55320f65303e87;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
-        0x6c0157cd9818228e9b3d07011176929a2fd74f71f38157aa5e74fb3704894a95;
+        0x31fe00c9eacc8c06ae69ca0626ee6752262f6157d2c98a42db1a995bccf9a171;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
         0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
@@ -181,24 +181,27 @@ abstract contract LaunchChecks is PostflightChecks {
             "sale settings inside the bounds",
             badSale == 0,
             badSale == 0
-                ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost, quote maxStepBps tolBps"
+                ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost, reference referenceStepBps tolBps"
                 : string(abi.encodePacked("out of bounds: ", badSale))
         );
-        // the value quote (decision 154): tolBps is a launch value, the other four are owner inputs set once the balance
-        // token pool exists and its depth is known. at 0 the quote is unusable, so value mode fails closed to NoQuote; the
-        // launch keeps value mode off, so the row warns and never fails
+        // the reference price settings (decision 154): tolBps and referenceMinSeconds are launch values, the other three
+        // are owner inputs set once the balance token pool exists and its depth is known. at 0 the reference price is
+        // unusable, so value mode fails closed to NoQuote; the launch keeps value mode off, so the row warns and never fails
         _warn(
-            "warn: value quote inputs pending the balance token pool",
-            c.quote.rateBpsPerHour != 0 && c.quote.maxStepBps != 0 && c.quote.maxStale != 0 && c.quote.minLiquidity != 0,
+            "warn: reference price inputs pending the balance token pool",
+            c.quote.referenceRateBpsPerHour != 0 && c.quote.referenceStepBps != 0 && c.quote.referenceMaxStale != 0
+                && c.quote.minLiquidity != 0,
             string.concat(
                 "tolBps ",
                 vm.toString(c.quote.tolBps),
-                "; rateBpsPerHour ",
-                vm.toString(c.quote.rateBpsPerHour),
-                " maxStepBps ",
-                vm.toString(c.quote.maxStepBps),
-                " maxStale ",
-                vm.toString(c.quote.maxStale),
+                "; referenceRateBpsPerHour ",
+                vm.toString(c.quote.referenceRateBpsPerHour),
+                " referenceStepBps ",
+                vm.toString(c.quote.referenceStepBps),
+                " referenceMaxStale ",
+                vm.toString(c.quote.referenceMaxStale),
+                " referenceMinSeconds ",
+                vm.toString(c.quote.referenceMinSeconds),
                 " minLiquidity ",
                 vm.toString(c.quote.minLiquidity),
                 " are set with setQuote before the switch; valueModeOn ",

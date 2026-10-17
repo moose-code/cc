@@ -101,10 +101,10 @@ the ETH purchase cap applies to direct seller payouts and adapter listing price 
 value mode prices the eth bid off the shared balance instance times the controller's protected value of the balance token, and prices the engine's sales off the same value with the cost term dropped (SPEC section 4). it is off at launch and needs the balance side live. in order:
 
 1. the balance module is set and verified, the controller's `setSale` and `setCredit` are at the packet values (`spreadBps` 200), and the controller holds the balance pool key (`setBalancePoolKey`), which starts the reference at the pool spot.
-2. the owner chooses the quote inputs left at 0 in the config (`rateBpsPerHour`, `maxStepBps`, `maxStale`, `minLiquidity`; `tolBps` is 500) and sends them on the controller: `cast send $CONTROLLER "setQuote((uint32,uint16,uint16,uint32,uint128))" "(<rate>,<maxStep>,500,<maxStale>,<minLiquidity>)"`. preflight warns while they are pending.
-3. call `observe()` on the controller (anyone may) until `valuePerPoint(false)` answers `ok` true and `refPrice()` sits within `tolBps` of `spotPrice()`; the reference moves at most the rate times the elapsed time per call, so a reference far from the spot takes hours.
+2. the owner chooses the reference price inputs left at 0 in the config (`referenceRateBpsPerHour`, `referenceStepBps`, `referenceMaxStale`, `minLiquidity`; `tolBps` is 500 and `referenceMinSeconds` 600) and sends them on the controller: `cast send $CONTROLLER "setQuote((uint32,uint16,uint16,uint32,uint32,uint128))" "(<rate>,<step>,500,<maxStale>,600,<minLiquidity>)"`. the intended pool-time values are `referenceRateBpsPerHour` 1,200, `referenceStepBps` 200 and `referenceMinSeconds` 600, so the cadence is `referenceStepBps / referenceRateBpsPerHour` and one refresh per cadence moves one full step. preflight warns while the inputs are pending.
+3. call `refreshReference()` on the controller (anyone may) until `valuePerPoint(false)` answers `ok` true and `referencePrice()` sits within `tolBps` of `spotPrice()`; the reference moves at most the rate times the elapsed time per call and runs at most once per `referenceMinSeconds`, so a reference far from the spot takes hours.
 4. one `setSettings` with `valueModeOn` true, `balanceBidOn` true, `balanceBidCapBps` 11,000, `balanceBidMarginBps` 1,000, `climbPerMinBps` and `recoveryClimbPerMinBps` 100 and `saleFloorBps` 5,000: `CORE=$CORE SET_valueModeOn=1 SET_balanceBidOn=1 SET_balanceBidCapBps=11000 SET_balanceBidMarginBps=1000 SET_climbPerMinBps=100 SET_recoveryClimbPerMinBps=100 SET_saleFloorBps=5000 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL` (switches take 1 or 0), then the same with `SEND=1 --broadcast`. turning `valueModeOn` on resets the shared instance to the floor, so the eth bid opens at 90 percent of value.
-5. read back `ethRate()`, `balanceRate()` (9,000), `floorMultBps()` (11,220) and `creditPrice` of a pile credit; the keeper's `observe` door keeps the reference fresh from here (section 8), and the `quote` alert fires if it goes stale.
+5. read back `ethRate()`, `balanceRate()` (9,000), `floorMultBps()` (11,220) and `creditPrice` of a pile credit; the keeper's `refreshReference` door keeps the reference tracking from here (section 8), and the `quote` alert fires if it goes stale.
 
 while the quote is unusable `sellForEth`, `buyListing`, `ethRate` and the controller's sale doors revert `NoQuote`; `sellForBalance`, compose, redemption, the buyback and `book` keep running. to leave value mode send `setSettings` with `valueModeOn` false; the eth instance resumes from its stored state.
 
@@ -260,7 +260,7 @@ The record carries chain id 1, so the evm.now links of this node point at chain 
 | 4 | `collectEscrow()` | the fee escrow holds more for the Core than the gas of the claim |
 | 5 | `book()` | `launchedAt + settings.sniperSeconds` passed, `payeeOn` false, income pending: the book that latches the payee share |
 | 6 | `redeemStatement(sid)` | `atFloor(sid)`; logged only while no balance module is set (it reverts `NoBalanceModule`) |
-| 7 | `observe()` on the controller | the pool key is set, the quote's `maxStale` is nonzero and half of `maxStale` has passed since `refTime`; unpaid, about 60,000 gas. in value mode with the quote unusable every listing is skipped with `NoQuote` |
+| 7 | `refreshReference()` on the controller | the pool key is set, `referenceMaxStale` is nonzero and `referenceMinSeconds` has passed since the last sample (`referenceTime`); unpaid, about 60,000 gas. the pool-time cadence is `referenceStepBps / referenceRateBpsPerHour` (200 / 1,200 = 600 s), so one refresh per cadence moves one full step and keeps the reference both tracking and fresh. in value mode with the reference unusable every listing is skipped with `NoQuote` |
 
 ### environment
 
@@ -321,7 +321,7 @@ the keeper spends gas and is repaid by the Core on the paid doors; `book`, `coll
 | `budget` | the day's net loss reached `DAILY_BUDGET_ETH` | read the ledger; raise the budget or wait for the UTC day |
 | `balance` | the wallet is under `LOW_BALANCE_ETH` | top up |
 | `tick` | five ticks in a row failed to read the chain | check the rpcs |
-| `quote` | value mode is on and the controller's quote is unusable (the reference older than `maxStale`, the pool under `minLiquidity`, or no spot or unit read), so `ethRate` reverts `NoQuote` and the eth routes wait | check the `observe` door and the pool; call `observe()` by hand, or lower `minLiquidity` or raise `maxStale` with `setQuote` |
+| `quote` | value mode is on and the controller's reference price is unusable (the reference older than `referenceMaxStale`, the pool under `minLiquidity`, or no spot or unit read), so `ethRate` reverts `NoQuote` and the eth routes wait | check the `refreshReference` door and the pool; call `refreshReference()` by hand, or lower `minLiquidity` or raise `referenceMaxStale` with `setQuote` |
 | `reserve` | the pot (with the pending fee share) is at or under `reserve()`, so the eth bids read zero and the keeper skips every listing (`ReserveHeld`); compose, redeem and buyback still pay from the whole pot | wait for fee income, or lower `reserveWei` with `setSettings` if the floor is too high for the pot |
 
 ### manual override
