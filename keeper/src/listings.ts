@@ -196,6 +196,12 @@ export class Sources {
       log("warn", "opensea fetch failed, keeping the cached orders", { error: safeError(e) });
       return;
     }
+    // the order status read needs the hash; an order without one cannot be checked and is not watched
+    orders = orders.filter((x) => {
+      if (x.hash) return true;
+      log("warn", "seaport order has no hash, skipped", { id: String(x.id), offerer: x.params.offerer });
+      return false;
+    });
     this.seaport = orders.map((x) => ({
       venue: "seaport" as const,
       adapter: this.cfg.record.seaportAdapter,
@@ -224,18 +230,20 @@ export class Sources {
     const ws = [...pick(this.strategy), ...pick(this.seaport)];
     if (ws.length === 0) return [];
     const core = this.cfg.record.core;
-    // four reads per listing, typed loosely: the mixed abis exceed the compiler's instantiation depth
+    // three reads per listing plus the order status of a hashed one, typed loosely: the mixed abis exceed the
+    // compiler's instantiation depth
     const contracts: any[] = ws.flatMap((w) => [
       { address: core, abi: coreAbi, functionName: "bidOf", args: [w.id] },
       { address: w.adapter, abi: listingAdapterAbi, functionName: "price", args: [w.id, w.params] },
       { address: CREDITS, abi: creditsAbi, functionName: "ownerOf", args: [w.id] },
-      w.hash
-        ? { address: SEAPORT, abi: seaportAbi, functionName: "getOrderStatus", args: [w.hash] }
-        : { address: core, abi: coreAbi, functionName: "allowedAdapter", args: [w.adapter] },
+      ...(w.hash ? [{ address: SEAPORT, abi: seaportAbi, functionName: "getOrderStatus", args: [w.hash] }] : []),
     ]);
     const r = (await this.client.multicall({ ...mc, blockNumber, allowFailure: true, contracts })) as { status: string; result?: unknown }[];
-    return ws.map((w, i) => {
-      const [bidR, quoteR, ownerR, statusR] = r.slice(i * 4, i * 4 + 4);
+    let at = 0;
+    return ws.map((w) => {
+      const [bidR, quoteR, ownerR] = r.slice(at, at + 3);
+      const statusR = w.hash ? r[at + 3] : undefined;
+      at += w.hash ? 4 : 3;
       const l: Listing = { venue: w.venue, adapter: w.adapter, id: w.id, price: w.price, bid: 0n, params: w.params, valid: true };
       if (bidR.status !== "success") return { ...l, valid: false, why: "bidOf failed" };
       l.bid = bidR.result as bigint;
@@ -247,7 +255,7 @@ export class Sources {
       if (w.venue === "strategy" && owner?.toLowerCase() !== CREDIT_STRATEGY.toLowerCase()) return { ...l, valid: false, why: "the strategy no longer holds it" };
       if (w.venue === "seaport") {
         if (owner?.toLowerCase() !== w.offerer?.toLowerCase()) return { ...l, valid: false, why: "the offerer no longer holds it" };
-        if (statusR.status === "success") {
+        if (statusR?.status === "success") {
           const [, cancelled, filled, size] = statusR.result as readonly [boolean, boolean, bigint, bigint];
           if (cancelled) return { ...l, valid: false, why: "order cancelled" };
           if (size > 0n && filled >= size) return { ...l, valid: false, why: "order filled" };
