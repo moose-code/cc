@@ -8,6 +8,7 @@ import {
     Credit,
     CreditSale,
     Quote,
+    Settings,
     IController,
     ICoreViews,
     ICoreSale,
@@ -185,7 +186,9 @@ contract ControllerV1 is IController {
         if (v.markupBps < BPS) revert BadSetting("markupBps");
         // the sale floor can never be above the start: refuse a start below the core's current `saleFloorBps`. the read
         // is skipped while the core has no code yet, the constructor deployed before its core (the address is predicted)
-        if (address(CORE).code.length != 0 && v.markupBps < _saleFloorBps()) revert BadSetting("markupBps");
+        if (address(CORE).code.length != 0 && v.markupBps < ICoreSale(address(CORE)).settings().saleFloorBps) {
+            revert BadSetting("markupBps");
+        }
         if (v.startCapBps < v.markupBps) revert BadSetting("startCapBps");
         if (v.decayHours < 1) revert BadSetting("decayHours");
         if (v.anchorHalfLife < 1) revert BadSetting("anchorHalfLife");
@@ -350,9 +353,10 @@ contract ControllerV1 is IController {
             : FullMath.mulDiv(POINT_UNIT * unit, pBuy, 1e18);
     }
 
-    /// whether the Core's value switch is on
-    function _valueMode() private view returns (bool) {
-        return ICoreSale(address(CORE)).settings().valueModeOn;
+    /// the Core's settings, read once per door and threaded through the pricing path so a single call reads them once,
+    /// not the four to five times a per field read would (gas, mostly for the mode off doors)
+    function _cfg() private view returns (Settings memory) {
+        return ICoreSale(address(CORE)).settings();
     }
 
     // ------------------------------------------------------------------ credit sale settings, owner, at once
@@ -412,7 +416,11 @@ contract ControllerV1 is IController {
     /// base units at the protected sale price, rounded up, with the floor rate term dropped, and reverts `NoQuote` while
     /// the quote is unusable
     function valueOf(uint256 points) public view returns (uint256) {
-        if (_valueMode()) {
+        return _valueOf(points, _cfg());
+    }
+
+    function _valueOf(uint256 points, Settings memory cfg) private view returns (uint256) {
+        if (cfg.valueModeOn) {
             (, uint256 pSell, uint256 unit, bool ok) = _protected();
             if (!ok) revert NoQuote();
             return FullMath.mulDivRoundingUp(points * unit, pSell, 1e18);
@@ -427,21 +435,21 @@ contract ControllerV1 is IController {
     function referenceOf(uint256 sid) public view returns (uint256) {
         (bool held, uint256 cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
-        return _reference(cost, CORE.ratingOf(sid));
+        return _reference(cost, CORE.ratingOf(sid), _cfg());
     }
 
     /// the reference of a statement of `cost` and `rating`: the larger of its cost and `valueOf(rating)`; in value mode
     /// the protected floor `valueOf(rating) * floorMultBps() / 10_000`, the cost term dropped (decision 150)
-    function _reference(uint256 cost, uint256 rating) private view returns (uint256) {
-        uint256 value = valueOf(rating);
-        if (_valueMode()) return value * floorMultBps() / BPS;
+    function _reference(uint256 cost, uint256 rating, Settings memory cfg) private view returns (uint256) {
+        uint256 value = _valueOf(rating, cfg);
+        if (cfg.valueModeOn) return value * _floorMult(cfg) / BPS;
         return value > cost ? value : cost;
     }
 
     /// the asking price of statement `sid` now, read from the core: the curve on the reference, at least
     /// `saleFloorBps` of the reference, so the quote is always a price `sellTo` takes. answers while paused
     function priceOf(uint256 sid) public view returns (uint256 price) {
-        (price,,) = _quote(sid);
+        (price,,) = _quote(sid, _cfg());
     }
 
     /// true when statement `sid` is eligible for redemption. with `ageEligibilityOn` the rule is age only: the start at
@@ -456,8 +464,9 @@ contract ControllerV1 is IController {
         }
         (bool held, uint256 cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
-        uint256 ref = _reference(cost, CORE.ratingOf(sid));
-        uint256 floor = _saleFloorBps();
+        Settings memory cfg = _cfg();
+        uint256 ref = _reference(cost, CORE.ratingOf(sid), cfg);
+        uint256 floor = cfg.saleFloorBps;
         return _ask(ref, CORE.statementAge(sid), floor) <= ref * floor / BPS;
     }
 
@@ -467,7 +476,7 @@ contract ControllerV1 is IController {
         if (_busy) revert Reentrant();
         _busy = true;
         refreshReference();
-        (uint256 price, uint256 cost, uint256 ref) = _quote(sid);
+        (uint256 price, uint256 cost, uint256 ref) = _quote(sid, _cfg());
         if (msg.value < price) revert Underpaid();
         _moveAnchor(sid, price, cost, ref);
         ICoreSale(address(CORE)).sellTo{value: price}(sid, msg.sender);
@@ -484,13 +493,17 @@ contract ControllerV1 is IController {
     /// a straight line from the start at the acquisition time to the floor at the acquisition time plus `creditWindow`,
     /// and rests at the floor after. reverts `NotForSale` for a credit not in the pile. answers whether or not the sale is on
     function creditPrice(uint256 id) public view returns (uint256 price) {
+        return _creditPrice(id, _cfg());
+    }
+
+    function _creditPrice(uint256 id, Settings memory cfg) private view returns (uint256 price) {
         (bool inPile, uint256 cost, uint64 acquiredAt) = CORE.creditInfo(id);
         if (!inPile) revert NotForSale();
-        uint256 hi = valueOf(_scoreOf(id));
-        if (cost > hi && !_valueMode()) hi = cost;
-        uint256 floor = hi * floorMultBps() / BPS;
+        uint256 hi = _valueOf(_scoreOf(id), cfg);
+        if (cost > hi && !cfg.valueModeOn) hi = cost;
+        uint256 floor = hi * _floorMult(cfg) / BPS;
         // never under the Core's floor of `sellCreditTo`, so the quote is always a price the Core takes
-        uint256 coreFloor = cost * _saleFloorBps() / BPS;
+        uint256 coreFloor = cost * cfg.saleFloorBps / BPS;
         if (floor < coreFloor) floor = coreFloor;
         uint256 start = floor * creditStartBps / BPS;
         uint256 age = block.timestamp - acquiredAt;
@@ -502,7 +515,11 @@ contract ControllerV1 is IController {
     /// read live, at least 10_000. the most the engine pays for a credit is the cap times its value, so a buy at the floor
     /// and a sale back into the bid at its ceiling loses at least the spread
     function floorMultBps() public view returns (uint256) {
-        uint256 m = (BPS + creditSpreadBps) * ICoreSale(address(CORE)).settings().balanceBidCapBps / BPS;
+        return _floorMult(_cfg());
+    }
+
+    function _floorMult(Settings memory cfg) private view returns (uint256) {
+        uint256 m = (BPS + creditSpreadBps) * cfg.balanceBidCapBps / BPS;
         return m < BPS ? BPS : m;
     }
 
@@ -528,7 +545,7 @@ contract ControllerV1 is IController {
         if (_busy) revert Reentrant();
         _busy = true;
         refreshReference();
-        uint256 price = creditPrice(id);
+        uint256 price = _creditPrice(id, _cfg());
         if (msg.value < price) revert Underpaid();
         ICoreSale(address(CORE)).sellCreditTo{value: price}(id, msg.sender);
         if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
@@ -544,10 +561,11 @@ contract ControllerV1 is IController {
         if (_busy) revert Reentrant();
         _busy = true;
         refreshReference();
+        Settings memory cfg = _cfg();
         uint256 n = ids.length;
         uint256 spent;
         for (uint256 i; i < n; ++i) {
-            uint256 price = creditPrice(ids[i]);
+            uint256 price = _creditPrice(ids[i], cfg);
             spent += price;
             if (msg.value < spent) revert Underpaid();
             ICoreSale(address(CORE)).sellCreditTo{value: price}(ids[i], msg.sender);
@@ -558,17 +576,12 @@ contract ControllerV1 is IController {
 
     /// the curve price of statement `sid` in wei with its cost basis and its reference. the price is the age curve on the
     /// reference, at least `saleFloorBps` of the reference; in value mode at least the reference, the protected floor
-    function _quote(uint256 sid) private view returns (uint256 price, uint256 cost, uint256 ref) {
+    function _quote(uint256 sid, Settings memory cfg) private view returns (uint256 price, uint256 cost, uint256 ref) {
         bool held;
         (held, cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
-        ref = _reference(cost, CORE.ratingOf(sid));
-        price = _ask(ref, CORE.statementAge(sid), _valueMode() ? BPS : _saleFloorBps());
-    }
-
-    /// the core's `saleFloorBps`
-    function _saleFloorBps() private view returns (uint256) {
-        return ICoreSale(address(CORE)).settings().saleFloorBps;
+        ref = _reference(cost, CORE.ratingOf(sid), cfg);
+        price = _ask(ref, CORE.statementAge(sid), cfg.valueModeOn ? BPS : cfg.saleFloorBps);
     }
 
     /// the module's `unitPerPoint()` read with at most `UNIT_GAS`. copies at most 32 bytes of returndata, so a long answer
