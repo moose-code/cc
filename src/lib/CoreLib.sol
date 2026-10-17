@@ -189,6 +189,10 @@ library CoreLib {
     /// gas of one queued compose and one queued redemption the reserve prices at `callerMaxBaseFee`
     uint256 internal constant COMPOSE_QUEUE_GAS = 9_000_000;
     uint256 internal constant REDEEM_QUEUE_GAS = 600_000;
+    /// the work before the count in `refreshReference` with the transaction base cost, and the most gas its caller
+    /// payment counts
+    uint256 internal constant REFRESH_OVERHEAD_GAS = 50_000;
+    uint256 internal constant REFRESH_GAS = 200_000;
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
 
@@ -474,7 +478,10 @@ library CoreLib {
     /// @notice checkpoints the eth instance: stores the price state climbed to now and the time. the Core calls it before
     /// a pot grows or a rate is spent, so no climb is credited under a later pot
     function checkpoint() external {
-        State storage c = state();
+        _checkpointNow(state());
+    }
+
+    function _checkpointNow(State storage c) private {
         if (c.settings.valueModeOn) {
             // value mode prices the eth bid off the shared instance, so the eth instance is idle. keep its stored rate as
             // the last good value mode eth rate: the balance sale cost basis reads it when the quote is momentarily down,
@@ -486,6 +493,25 @@ library CoreLib {
         }
         // forge-lint: disable-next-line(unsafe-typecast)
         c.checkpointTime = uint64(block.timestamp);
+    }
+
+    /// @notice the keeper's reference refresh door, moved here to keep the Core under the code size limit: forwards to
+    /// the controller's refresh and, when it ran, pays the caller like compose, bounded by the pot and the caller base
+    /// fee ceiling. runs in the Core's storage context by delegatecall (the `_toLib` door forwards to it)
+    function refreshReference() external {
+        uint256 gasStart = gasleft();
+        State storage c = state();
+        address ctrl = c.controller;
+        if (ctrl == address(0)) return;
+        if (!IController(ctrl).refreshReference()) return;
+        Settings storage cfg = c.settings;
+        if (cfg.callerMaxBaseFee == 0 && cfg.callerFee == 0) return;
+        // the door does not grow the pot, so no checkpoint is needed before the payment; paying lowers the pot the next
+        // eth read clamps against, which is correct
+        uint256 pay = ((gasStart - gasleft() + REFRESH_OVERHEAD_GAS).min(REFRESH_GAS) * block.basefee.min(cfg.callerMaxBaseFee) + cfg.callerFee).min(c.ethPot);
+        if (pay == 0) return;
+        c.ethPot -= pay;
+        SafeTransferLib.safeTransferETH(msg.sender, pay);
     }
 
     /// @notice the eth bid rate now, wei per 100 points: the price state lowered to the clamp, `ethPot` plus the pending

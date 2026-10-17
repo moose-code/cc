@@ -1045,12 +1045,15 @@ abstract contract HandlerOwner is HandlerBase {
         } else if (which == 5) {
             target = v1;
             cur = c.creditSpreadBps();
-            // the spread takes any uint16, so every drawn value is valid
             uint256 v = _f(seed, 0, 30_000, cur);
             CreditSale memory cs = _creditSaleOf(c);
             cs.spreadBps = uint16(v);
             data = abi.encodeCall(IControllerV1.setCredit, (cs));
-            valid = true;
+            // the loop closure bound (decision 157): the spread must cover the reference band at the current tolerance,
+            // so a spread below `(10_000 + tol) * 10_000 / (10_000 - tol) - 10_000` reverts BadSetting
+            (,, uint16 tol,,,) = c.quote();
+            uint256 req = ((10_000 + uint256(tol)) * 10_000 + (10_000 - uint256(tol)) - 1) / (10_000 - uint256(tol)) - 10_000;
+            valid = v >= req;
             want = v;
         } else if (which == 6) {
             target = v1;

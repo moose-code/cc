@@ -244,10 +244,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant REDEEM_OVERHEAD_GAS = 50_000;
     /// the most gas of a redemption the caller payment counts, so a gas burning module cannot inflate it
     uint256 private constant REDEEM_GAS = 1_500_000;
-    /// gas of the work before the count in `refreshReference` (the controller call and the metering), with the
-    /// transaction base cost, and the most gas the caller payment counts
-    uint256 private constant REFRESH_OVERHEAD_GAS = 50_000;
-    uint256 private constant REFRESH_GAS = 200_000;
     /// gas of the work after the end of `buyback` that its refund counts, with the transaction base cost
     uint256 private constant BUYBACK_OVERHEAD_GAS = 60_000;
     /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
@@ -390,12 +386,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// forwards to the controller's reference refresh and, when it updated the reference (the cadence had elapsed), pays
     /// the caller like compose, bounded by the pot and the caller base-fee ceiling. anyone may call; the keeper calls
-    /// this door. the controller's own `refreshReference` stays public and unpaid
+    /// this door. the body is `CoreLib.refreshReference`, kept there for the Core code size; the controller's own
+    /// `refreshReference` stays public and unpaid
     function refreshReference() external nonReentrant {
-        uint256 gasStart = gasleft();
-        address ctrl = s.controller;
-        if (ctrl == address(0)) return;
-        if (IController(ctrl).refreshReference()) _payCaller(gasStart, REFRESH_OVERHEAD_GAS, REFRESH_GAS);
+        _toLib();
     }
 
     /// adds `msg.value` to the pot. the eth above the tracked pots is booked first, so `msg.value` is never counted as
