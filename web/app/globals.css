@@ -563,10 +563,8 @@ a:hover {
   font-weight: 400;
   color: var(--muted);
 }
-/* pre-balance phase: the balance token is not deployed yet */
+/* pre-balance phase: the balance token is not deployed yet; the value size, faded */
 .stat-cell .value .stat-wait {
-  font-size: 13px;
-  font-weight: 400;
   color: var(--faint);
 }
 .stat-cell.ink-pot {

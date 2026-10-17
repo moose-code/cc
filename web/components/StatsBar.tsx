@@ -26,14 +26,14 @@ export function StatsBar() {
     <div className="stats">
       <Cell ink="m" label="credits held">
         {on ? commas(Number(snap.pileSize)) : "—"}
-        {on && s && <small>{commas(s.composed * STATEMENT_SIZE)} credits merged</small>}
+        {on && s && <small>{commas(s.composed * STATEMENT_SIZE)} composed</small>}
       </Cell>
       <Cell ink="y" label="statements held">
         {on ? commas(snap.held.length) : "—"}
-        {on && s && <small>{commas(s.composed)} statements created</small>}
+        {on && s && <small>{commas(s.composed)} created</small>}
       </Cell>
       <Cell ink="c" label={BALANCE_SYMBOL}>
-        {!on ? "—" : snap.balanceOn ? balance : <span className="stat-wait">waiting deployment</span>}
+        {!on ? "—" : snap.balanceOn ? balance : <span className="stat-wait">awaiting deployment</span>}
       </Cell>
       <Cell ink="k" label="$CC burned">
         {engineDeployed && s ? commas(s.ccBurned) : "—"}
