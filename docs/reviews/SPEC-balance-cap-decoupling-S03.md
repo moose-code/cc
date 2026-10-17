@@ -1,6 +1,6 @@
 # S03: decouple the balance cap from the eth pot clamp
 
-Status: proposal for the owner. No code. Value mode is off at launch; `ControllerV1` is replaceable, so the change lands there.
+Status: implemented, candidate A (decision 168). Value mode is off at launch; `ControllerV1` is replaceable, so the change lands there.
 
 ## Current formula
 
