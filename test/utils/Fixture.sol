@@ -599,6 +599,14 @@ abstract contract Fixture is Test, ProdDeployer {
         core.setSettings(s);
     }
 
+    /// @notice sets the redeem burn pot share to 1,000 bps (phase 2 value, decision 155). launch is 0, so the
+    /// reserve stays empty; tests that exercise the reserve turn the share on first
+    function _redeemBurnOn() internal {
+        Settings memory s = core.settings();
+        s.feeToRedeemBurnBps = 1_000;
+        _setSettings(s);
+    }
+
     /// @notice the owner sets the return lock: every intake door refuses a credit sold through `sellCreditTo` for `secs`
     /// seconds from the sale, at least in the second of the sale
     function _setReturnLock(uint32 secs) internal {

@@ -603,6 +603,33 @@ contract ValueModeTest is ValueBase {
         }
     }
 
+    // promise: SPEC 10 a balance round trip loses the spread even when the live pool spot leads the reference
+    // SKIPPED reproducer of a contract bug (decision 159 C01 class). CoreLib._balancePayout pays
+    // `score * unit * balanceRate / BPS` in balance tokens at par, with no clamp to the protected reference
+    // `valuePerPoint(false)` that the eth bid (bidOf) uses. when the live pool spot sits far above the rate-limited
+    // reference, a credit bought off the reference-protected ask and sold straight into the balance bid returns tokens
+    // realizable at the live spot, so the round trip gains the spot/reference gap, which the spread does not cover. the
+    // eth round trip loses the spread, the balance round trip gains. test_roundTripsLoseTheSpread settles the reference
+    // to the moved spot before each trip (_settleReference), so it never reaches this state. shrunk from the
+    // InvariantsValue invariant_v20 counterexample (CI run 39046569753): spot 1.9108e18, reference 0.5145e18 (3.55x),
+    // credit bought for 0.025119 eth, balance payout 0.030983 xt realizable at the spot for 0.059202 eth, net +0.034083.
+    // fix: in value mode clamp the balance payout to the protected reference, the same valuePerPoint read the eth bid
+    // uses, so neither currency realizes the live spot when it has run ahead of the rate-limited reference.
+    function test_balanceRoundTripLosesWhenSpotLeadsReference() public {
+        vm.skip(true);
+        uint256[] memory ids = _fillEthPile(4);
+        _valueOn();
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(50 ether);
+        // push the pool spot to 3.55x the reference and leave the reference unsettled: one refresh per block moves it at
+        // most one step, so the ask stays priced off the lagging reference while the balance bid realizes the live spot
+        _swapToSpot(ctl.referencePrice() * 355 / 100);
+        (uint256 paid, uint256 back) = _trip(ids[0], true);
+        _assertLoses(paid, back, "balance with the spot far above the reference");
+    }
+
     // promise: SPEC 8 a statement's reference in value mode is valueOf(rating) times floorMultBps, its curve rests there
     function test_statementPricesOffTheProtectedFloor() public {
         Composed memory c = _composeOnce();

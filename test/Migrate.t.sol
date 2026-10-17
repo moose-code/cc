@@ -432,6 +432,7 @@ contract MigrateTest is Fixture {
 
     // promise: SPEC 1 a retired Core books the fees that still arrive
     function test_OK_aRetiredCoreStillBooksFeesAndSkims() public {
+        _redeemBurnOn();
         _fundPot(1 ether);
         _setSuccessor();
         _migrate(1000);
@@ -440,7 +441,7 @@ contract MigrateTest is Fixture {
         _buyCoin(funder, 3 ether);
         assertGt(core.ethPot(), 0, "fees were not booked to the pot");
         assertEq(core.ethToBuyback(), retained, "fees reached the buyback pot");
-        assertGt(core.ethRedeemBurn(), 0, "fees were not booked to the reserve");
+        assertGt(core.ethRedeemBurn(), 0, "fees were not booked to the reserve with the share on");
         uint256 pot = core.ethPot();
         vm.deal(address(core), address(core).balance + 1 ether);
         core.book();
