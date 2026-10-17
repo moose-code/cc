@@ -1499,7 +1499,15 @@ abstract contract HandlerBase is Test {
             _failed(p.pull.bal0, p.pull.pot0, p.pull.rate0, "sellForEth");
             _refusedAbovePot(why);
             rs = p.pull.rs0;
-            if (!overshoot && !dup && !(bytes4(why) == ICore.ZeroAmount.selector && _hasZeroSpend(ids, rs.st, p))) {
+            // a zero-spend batch is refused: ZeroAmount when a later credit's pay rounds to zero, PotTooSmall when the
+            // reserve holds the whole pot so the bid itself reads zero
+            if (
+                !overshoot && !dup
+                    && !(
+                        (bytes4(why) == ICore.ZeroAmount.selector || bytes4(why) == ICore.PotTooSmall.selector)
+                            && _hasZeroSpend(ids, rs.st, p)
+                    )
+            ) {
                 _unexpected(a, why);
             }
         }

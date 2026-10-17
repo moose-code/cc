@@ -124,7 +124,7 @@ One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCos
 
 ### 6.5 `controller`
 
-`address`, `setBlock`, `active`, sale params (`markupBps`, `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`), credit sale params (`saleOn`, `window`, `spreadBps`, `startBps`), `anchorBps` (stored value and its block), `balancePoolKey` fields, the reference price settings (`referenceRateBpsPerHour`, `referenceStepBps`, `referenceTolBps`, `referenceMaxStale`, `referenceMinSeconds`, `referenceMinLiquidity`, from `QuoteSet`), and the reference at the last `ReferenceRefreshed` (`referencePrice`, `referenceSpot`, `referenceTime`, decisions 148 and 156).
+`address`, `setBlock`, `active`, sale params (`markupBps`, `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`), credit sale params (`saleOn`, `window`, `spreadBps`, `startBps`), `anchorBps` (stored value and its block), `balancePoolKey` fields, the reference price settings (`referenceRateBpsPerHour`, `referenceStepBps`, `referenceTolBps`, `referenceMaxStale`, `referenceMinSeconds`, `referenceMinLiquidity`, from `QuoteSet`), and the reference at the last `ReferenceRefreshed` (`referencePrice`, `referenceSpot`, `referenceTime`, decisions 148 and 157).
 
 ### 6.6 `credit`
 
@@ -266,7 +266,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
 | reserve and the room the bids read (packet B, decision 154) | L `Core.reserve()` in the snapshot; D `potRoom` = `potWithPending` less the reserve, the clamp of the eth bid and the cap of a listing sweep |
 | value mode and the quote (packet C, decision 148) | L snapshot: `settings.valueModeOn`; `noQuote` when value mode is on and `ethRate` reverts `NoQuote` (the snapshot then reads the eth bid as 0); controller `valuePerPoint(false)` and `valuePerPoint(true)` for `value.usable` and the per point values; also I `controller.quote*` (QuoteSet) |
-| balance token reference against spot (packet C, decisions 148 and 156) | L controller `referencePrice()`, `referenceTime()`, `spotPrice()` and `quote()` in the snapshot (`value.referencePrice`, `value.spot`); shown on the balance page; also I `controller.referencePrice`, `referenceSpot`, `referenceTime` at the last `ReferenceRefreshed` |
+| balance token reference against spot (packet C, decisions 148 and 157) | L controller `referencePrice()`, `referenceTime()`, `spotPrice()` and `quote()` in the snapshot (`value.referencePrice`, `value.spot`); shown on the balance page; also I `controller.referencePrice`, `referenceSpot`, `referenceTime` at the last `ReferenceRefreshed` |
 | ETH/USD | L Chainlink |
 | rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
 | header bid at refScore | L snapshot `ethRate` |
