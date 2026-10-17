@@ -21,7 +21,7 @@ contract BalanceFloorTest is Fixture {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    // promise: SPEC 1 the balance bid refuses a fill whose available-clamped rate is below the floor
+    // promise: SPEC 1 decision 159: balanceBidOf reads 0 while the module cannot pay the floor, and the fill reverts PotTooSmall
     function test_sellForBalanceRefusesBelowFloor() public {
         uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
         uint256 refScore = RATE_SCORE;
@@ -29,9 +29,7 @@ contract BalanceFloorTest is Fixture {
         mod.setAvailable(refScore * UNIT * floorBps / 10_000 / 2);
 
         uint256[] memory ids = _credits(user, 1);
-        uint256 floorPay = _score(ids[0]) * UNIT * floorBps / 10_000;
-        assertEq(core.balanceBidOf(ids[0]), floorPay, "balanceBidOf reports the floor payout");
-        assertGt(core.balanceBidOf(ids[0]), 0, "never 0 for a credit the module cannot pay the floor for");
+        assertEq(core.balanceBidOf(ids[0]), 0, "balanceBidOf reads 0 while the module cannot pay the floor");
 
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSignature("PotTooSmall()"));
