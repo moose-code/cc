@@ -199,6 +199,7 @@ interface ICore {
     function rateAtCheckpoint() external view returns (uint256);
     function ratingOf(uint256 sid) external view returns (uint256);
     function redeemStatement(uint256 sid) external;
+    function refreshReference() external;
     function releaseRedeemBurn(uint256 amount) external;
     function removeAdapter(address a) external;
     function rescueCoin(address, uint256) external;

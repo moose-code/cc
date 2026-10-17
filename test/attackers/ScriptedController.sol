@@ -58,6 +58,11 @@ contract ScriptedController is IController {
         return (0, false);
     }
 
+    /// no reference to refresh
+    function refreshReference() external pure returns (bool) {
+        return false;
+    }
+
     /// sets the page answer.
     function setPage(bool ready, uint256[80] calldata ids, uint8 format) external {
         pageReady = ready;

@@ -85,7 +85,7 @@ interface IControllerV1 {
     function referenceOf(uint256 sid) external view returns (uint256);
     function referencePrice() external view returns (uint256);
     function referenceTime() external view returns (uint40);
-    function refreshReference() external;
+    function refreshReference() external returns (bool);
     function setAgeEligibilityOn(bool v) external;
     function setAnchorBps(uint32 v) external;
     function setBalancePoolKey(PoolKey memory key, uint256 expectedSpot) external;

@@ -24,6 +24,9 @@ interface IController {
     /// liquidity under the minimum, a failed unit read). the core reads it in value mode, with a bounded call that fails
     /// closed to `NoQuote`
     function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
+    /// moves the reference toward the pool spot under its cadence, rate and step gates; true when it updated the
+    /// reference. the Core's `refreshReference` door forwards to it and pays the caller only when it returns true
+    function refreshReference() external returns (bool);
 }
 
 interface IBalanceModule {

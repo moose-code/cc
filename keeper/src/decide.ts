@@ -9,6 +9,8 @@ import type { Door, DoorPolicy } from "./config.ts";
 
 // the private gas constants of the Core (src/Core.sol 224 to 236), restated
 export const COMPOSE_GAS = 13_700_000n;
+// the most gas the Core's refreshReference door counts for the caller payment (Core.REFRESH_GAS)
+export const REFRESH_GAS = 200_000n;
 export const REDEEM_GAS = 1_500_000n;
 export const BUYBACK_GAS = 600_000n;
 export const BUYLISTING_GAS = 1_500_000n;
@@ -102,7 +104,7 @@ export interface Gas {
 export interface Intended {
   door: Door;
   functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference";
-  // the contract the call goes to: the Core, or the controller for refreshReference
+  // the contract the call goes to: the Core (every door, including the refreshReference door that forwards to the controller)
   target?: "controller";
   args: readonly unknown[];
   // the gas the decision assumed; the executor replaces it with the simulation's measure and calls `recheck`
@@ -373,14 +375,20 @@ export function decide(
     }
   }
 
-  // 7. refreshReference: keeps the controller's reference of the balance token tracking the market so the reference
-  // price stays usable
+  // 7. refreshReference: the Core door forwards to the controller and pays the caller like compose when a refresh runs,
+  // so the keeper keeps the reference tracking the market. paid, profit gated
   if (on("refreshReference")) {
     const r = refreshReferenceDue(s);
     if (!r.ok) skips.push({ door: "refreshReference", reason: r.reason });
     else if (ceiling("refreshReference")) {
-      const cost = ownCost(GAS_GUESS.refreshReference, gas, p.doors.refreshReference);
-      calls.push({ door: "refreshReference", functionName: "refreshReference", target: "controller", args: [], gas: GAS_GUESS.refreshReference, payment: 0n, cost, key: "refreshReference", note: { referenceTime: s.referenceTime, referenceMinSeconds: s.referenceMinSeconds } });
+      const pol = p.doors.refreshReference;
+      const payment = callerPayment(s, GAS_GUESS.refreshReference, REFRESH_GAS, worstBaseFee(gas, pol));
+      const cost = ownCost(GAS_GUESS.refreshReference, gas, pol);
+      if (!profitable(payment, cost, p.margin)) {
+        skips.push({ door: "refreshReference", reason: `unprofitable: payment ${payment} under cost ${cost} plus margin` });
+      } else {
+        calls.push({ door: "refreshReference", functionName: "refreshReference", args: [], gas: GAS_GUESS.refreshReference, payment, cost, key: "refreshReference", note: { referenceTime: s.referenceTime, referenceMinSeconds: s.referenceMinSeconds } });
+      }
     }
   }
 
@@ -412,8 +420,8 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
     case "collectEscrow":
       return { ok: s.escrowBalance >= cost, payment, cost };
     case "book":
-    case "refreshReference":
       return { ok: true, payment, cost };
   }
+  // compose and refreshReference are paid through the caller fee: they go only when the Core pays at least the cost
   return { ok: profitable(payment, cost, p.margin), payment, cost };
 }

@@ -273,24 +273,26 @@ contract ControllerV1 is IController {
     /// doors call it first. no move with no reference, with `referenceMaxStale` zero (mode off), before
     /// `referenceMinSeconds` has passed since the last sample, or on a zero spot. when the integer move floors to zero
     /// the sample time is left unchanged, so a rate too small for a one bps move over the elapsed time still tracks
-    /// under frequent calls; a nonzero move resets the sample to now. repeated calls gain nothing beyond the rate
-    function refreshReference() public {
+    /// under frequent calls; a nonzero move resets the sample to now. repeated calls gain nothing beyond the rate.
+    /// returns true when it updated the reference, so the Core's `refreshReference` door pays the caller only for work
+    function refreshReference() public returns (bool) {
         uint256 ref = referencePrice;
-        if (ref == 0) return;
+        if (ref == 0) return false;
         Quote memory q = quote;
-        if (q.referenceMaxStale == 0) return;
+        if (q.referenceMaxStale == 0) return false;
         uint256 elapsed = block.timestamp - referenceTime;
-        if (elapsed < q.referenceMinSeconds) return;
+        if (elapsed < q.referenceMinSeconds) return false;
         (uint256 spot, bool ok) = _spot();
-        if (!ok) return;
+        if (!ok) return false;
         uint256 move = uint256(q.referenceRateBpsPerHour) * elapsed / 1 hours;
         if (move > q.referenceStepBps) move = q.referenceStepBps;
         // a move that floors to zero leaves the sample untouched, so the sub bps time keeps accumulating until the next
         // call clears one bps; the reference is not pinned when the per call interval is short against the rate
-        if (move == 0) return;
+        if (move == 0) return false;
         uint256 hi = ref * (BPS + move) / BPS;
         uint256 lo = ref * (BPS - move) / BPS;
         _setRef(spot > hi ? hi : spot < lo ? lo : spot, spot);
+        return true;
     }
 
     function _setRef(uint256 ref, uint256 spot) private {

@@ -236,9 +236,11 @@ test("refreshReference: due referenceMinSeconds after the last sample, never bef
   const due = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("1"), p, new Map());
   assert.deepEqual(doorsOf(due), ["refreshReference"]);
   const call = due.calls[0];
-  assert.equal(call.target, "controller");
-  assert.equal(call.payment, 0n);
-  assert.equal(recheck(call, state(base), undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true, "an unpaid door clears the recheck");
+  assert.equal(call.target, undefined, "the Core door, not the controller");
+  assert.ok(call.payment > 0n, "the Core pays the caller fee like compose");
+  assert.equal(recheck(call, state({ ...base, timestamp: 4_000n + 600n }), undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true, "the paid door clears the recheck at the caller fee");
+  const unpaid = decide(state({ ...base, timestamp: 4_000n + 600n, settings: { ...state().settings, callerFee: 0n, callerMaxBaseFee: 0n } }), [], gas("1"), p, new Map());
+  assert.match(reason(unpaid, "refreshReference"), /unprofitable/);
   const high = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("4"), p, new Map());
   assert.match(reason(high, "refreshReference"), /above the door ceiling/);
 });
