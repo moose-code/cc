@@ -508,6 +508,17 @@ library CoreLib {
         return _valueRateOrLast(c).min(_ethPagesPot(c).zeroFloorSub(_reserve(c)));
     }
 
+    /// @notice the eth bid for one credit of a batch, read from the already-checkpointed rate with the live pot clamp
+    /// and without re-climbing. the eth sell door checkpoints once before the batch, so within the batch the stored rate
+    /// is climbed to now and each fill's drop walks it down; this equals `ethRate()` within that batch. it saves the per
+    /// credit ceiling climb of the mode-off sell path (decision 159, C08). the Core's `_sellForEth` reads it per credit
+    function ethBidFromCheckpoint() external view returns (uint256) {
+        State storage c = state();
+        uint256 clamp = _ethPagesPot(c).zeroFloorSub(_reserve(c));
+        if (!c.settings.valueModeOn) return c.rateAtCheckpoint.min(clamp);
+        return _valueRateOrLast(c).min(clamp);
+    }
+
     /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode the value rate, falling back
     /// to the last good value rate while the quote is unusable. the Core forwards its `ethPrice()`
     function ethPrice() external view returns (uint256) {

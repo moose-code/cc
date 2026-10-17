@@ -127,6 +127,8 @@ interface ICore {
     );
     event SuccessorLocked();
     event SuccessorSet(address successor);
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
+    event ValuePricingDegraded();
     event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
 
     receive() external payable;
@@ -148,6 +150,7 @@ interface ICore {
     function artist() external view returns (address);
     function balanceBidForScore(uint256 score) external view returns (uint256);
     function balanceBidOf(uint256 id) external view returns (uint256);
+    function balanceBidStatus(uint256 id) external view returns (uint256 payout, bool canFill);
     function balanceModule() external view returns (address);
     function balanceModuleLocked() external view returns (bool);
     function balanceRate() external view returns (uint256);
@@ -204,6 +207,7 @@ interface ICore {
     function removeAdapter(address a) external;
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;
+    function rescueToken(address token, address to, uint256 amount) external;
     function reserve() external view returns (uint256);
     function retired() external view returns (bool);
     function sellCreditTo(uint256 id, address buyer) external payable;

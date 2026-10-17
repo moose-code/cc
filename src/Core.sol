@@ -694,7 +694,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             uint256 id = _owned(ids[i]);
             CoreLib.checkReturn(s, id, msg.sender);
             uint256 score = _scoreOf(id);
-            uint256 bid = _bid();
+            // read the bid from the rate checkpointed once before the loop, so the batch does not re-climb per credit
+            uint256 bid = CoreLib.ethBidFromCheckpoint();
             // the pot is at or under the reserve, so the bid reads zero: a named refusal, not ZeroAmount from the spend
             if (bid == 0) revert PotTooSmall();
             uint256 pay = bid.mulDiv(score, RATE_SCORE);
