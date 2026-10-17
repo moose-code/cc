@@ -139,6 +139,19 @@ contract BuildIdentityTest is Fixture {
         _identical(lib, "CoreLib", LIB_RUNTIME);
     }
 
+    /// the deployed code size limit of EIP-170
+    uint256 internal constant EIP170_LIMIT = 24_576;
+
+    // promise: Core and CoreLib stay under the EIP-170 deployed code size limit, with the margin reported
+    function test_coreAndCoreLibFitEip170() public {
+        emit log_named_uint("Core runtime bytes", CORE_RUNTIME);
+        emit log_named_uint("Core margin under EIP-170", EIP170_LIMIT - CORE_RUNTIME);
+        emit log_named_uint("CoreLib runtime bytes", LIB_RUNTIME);
+        emit log_named_uint("CoreLib margin under EIP-170", EIP170_LIMIT - LIB_RUNTIME);
+        assertLt(CORE_RUNTIME, EIP170_LIMIT, "Core exceeds the EIP-170 code size limit");
+        assertLt(LIB_RUNTIME, EIP170_LIMIT, "CoreLib exceeds the EIP-170 code size limit");
+    }
+
     /// @dev the comparison is not vacuous: one flipped byte in code that is not an immutable or a link slot fails it
     // promise: the comparison is not vacuous: one flipped byte in code that is not an immutable or a link slot fails it
     function test_aSingleChangedByteIsDetected() public {
