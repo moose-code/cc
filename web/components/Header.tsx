@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAcquireCandidate } from "@/lib/useAcquire";
+import { useSnapshot } from "@/lib/live";
 import { useEns } from "@/lib/ens";
 import { commas, eth, shortAddr } from "@/lib/format";
 import { usePotPage } from "./EngineFeed";
@@ -82,15 +83,10 @@ function WalletButton() {
                 wrong network
               </button>
             ) : (
-              <>
-                <Link href="/sell" className="ulink wallet-sell">
-                  sell yours →
-                </Link>
-                <button className="btn-outline" onClick={openAccountModal}>
-                  <i className="sq" />
-                  <AccountName address={account.address} />
-                </button>
-              </>
+              <button className="btn-outline" onClick={openAccountModal}>
+                <i className="sq" />
+                <AccountName address={account.address} />
+              </button>
             )}
           </div>
         );
@@ -106,12 +102,12 @@ function AccountName({ address }: { address: string }) {
 
 // The points the pot covers, the bid per 100 points and the next-listing bar, beside the wallet on every page.
 function PotPage() {
-  const { pts, per100 } = usePotPage();
+  const { pts, per1 } = usePotPage();
   return (
     <div className="hdr-next">
       <span className="hdr-next-label">pot covers</span>
       <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
-      {per100 && <span className="hdr-next-bid">· bid {per100} ETH / 100 pts</span>}
+      {per1 && <span className="hdr-next-bid">· current bid {per1} ETH / 1 pt</span>}
       <NextListing />
     </div>
   );
@@ -140,16 +136,19 @@ function NextListing() {
 
 function NextListingBar() {
   const { top } = useAcquireCandidate();
+  const { data: snap } = useSnapshot();
   const n = top.find((t) => BigInt(t.bid) < BigInt(t.price)) ?? top[0];
   if (!n) return null;
   const price = BigInt(n.price);
   const bid = BigInt(n.bid);
   const fill = price > 0n ? Math.min(1, Number((bid * 1000n) / price) / 1000) : 0;
   const on = Math.round(fill * NL_CELLS);
+  // this listing's ask per rating point: price / points, where points = bid * 100 / ethRate
+  const perPoint = snap && snap.ethRate > 0n && bid > 0n ? `${eth((price * snap.ethRate) / (bid * 100n), 7)} ETH / point` : null;
   return (
     <span
       className="hdr-nl"
-      title={`credit #${n.id} · listed ${eth(price)} ETH · engine bids ${eth(bid)} ETH (${n.source})`}
+      title={perPoint ? `credit #${n.id} · ${eth(price)} ETH · ${perPoint}` : `credit #${n.id} · listed ${eth(price)} ETH (${n.source})`}
     >
       <span className="hdr-next-label">next credit</span>
       <span className="hdr-nl-bar" aria-hidden>

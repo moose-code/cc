@@ -62,13 +62,13 @@ export function Tween({ wei }: { wei: bigint | undefined }) {
 }
 
 
-// Pot figures for the header. `pts` is the points the pot (with pending income) buys at the rate; `per100` the rate,
-// eth per 100 points.
+// Pot figures for the header. `pts` is the points the pot (with pending income) buys at the rate; `per1` the rate,
+// eth per single point (ethRate is wei per 100 points).
 export function usePotPage() {
   const { data: snap } = useSnapshot();
   const pts = snap ? potPoints(snap.potWithPending, snap.ethRate) : undefined;
-  const per100 = snap ? eth(snap.ethRate, 5) : undefined;
-  return { pts, per100 };
+  const per1 = snap ? eth(snap.ethRate / 100n, 7) : undefined;
+  return { pts, per1 };
 }
 
 export function EngineProgress() {
