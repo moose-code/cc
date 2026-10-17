@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Settings, Quote, RATE_SCORE, POINT_UNIT} from "../src/interfaces/Interfaces.sol";
+import {Settings, Quote, CreditSale, RATE_SCORE, POINT_UNIT} from "../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -91,6 +91,13 @@ abstract contract ValueBase is Fixture {
         s.balanceBidCapBps = 11_000;
         s.saleFloorBps = 5_000;
         _setSettings(s);
+        // the switch also lowers the credit spread to the value mode 200 and turns on age only eligibility (decision 155)
+        vm.startPrank(owner);
+        ctl.setCredit(
+            CreditSale({saleOn: ctl.creditSaleOn(), window: ctl.creditWindow(), spreadBps: 200, startBps: ctl.creditStartBps()})
+        );
+        ctl.setAgeEligibilityOn(true);
+        vm.stopPrank();
     }
 
     /// the eth bid the value mode prices for 100 points at the shared rate `bps`: `bps * valuePerPoint(false) * 100 / 10_000`
