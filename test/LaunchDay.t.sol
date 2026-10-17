@@ -26,6 +26,20 @@ import {OrderComponents} from "./utils/SeaportTypes.sol";
 abstract contract LaunchDayBase is SeaportBase {
     using FixedPointMathLib for uint256;
 
+    uint256 internal constant LAUNCH_RATE = 4_900_000_000_000_000;
+
+    function _fixtureRateStart() internal pure override returns (uint256) {
+        return LAUNCH_RATE;
+    }
+
+    function _fixtureCreditSaleOn() internal pure override returns (bool) {
+        return true;
+    }
+
+    function _settings() internal view override returns (Settings memory) {
+        return Mainnet.defaultSettings();
+    }
+
     /// @dev the keeper's buyListing gas guess (keeper/src/decide.ts GAS_GUESS.buyListing), restated
     uint256 internal constant GAS_GUESS_BUYLISTING = 520_000;
     /// @dev the keeper's listing staleness delay, seconds (keeper/src/config listingDelaySec)
@@ -63,7 +77,14 @@ abstract contract LaunchDayBase is SeaportBase {
     uint256 internal launchedAt;
     bool internal payeeLatchedByBook;
     uint64 internal payeeLatchTime;
+    uint64 internal lastBookTime;
+    uint256 internal postLatchBooks;
     uint256 internal statementsBefore;
+    uint256[25] internal hourRate;
+    uint256[25] internal hourBooked;
+    uint256[25] internal hourPending;
+    uint256[25] internal hourPile;
+    uint256 internal hourSamples;
 
     // the two organic sellers' credits, provisioned in setUp so their real scores are cached before the day runs
     uint256 internal sell2h;
@@ -127,7 +148,7 @@ abstract contract LaunchDayBase is SeaportBase {
     }
 
     /// @dev one keeper evaluation at a block: it fires exactly the calls the gates clear, from the keeper address, and
-    /// nothing else. the doors that clear in this scenario are buyListing and the payee-latch book; the buyback,
+    /// nothing else. the doors that clear in this scenario are buyListing and books; the buyback,
     /// compose, collectEscrow and redeemStatement gates are evaluated and skip (no buyback pot, under 80 credits, no
     /// escrow credit, no statements), the same skips keeper/src/decide.ts would log
     function _keeperTick() internal {
@@ -163,12 +184,19 @@ abstract contract LaunchDayBase is SeaportBase {
             return;
         }
 
-        // 5. book: only the book that latches the payee share is the keeper's; every other door books on its own
+        // 5. book: latch after the sniper window, then book pending income above the keeper's 0.01 ETH threshold
+        // after its 600-second spacing. Both rules come from keeper/src/decide.ts.
         if (!core.payeeOn() && launchedAt != 0 && block.timestamp >= launchedAt + s.sniperSeconds && _pending() != 0) {
             payeeLatchedByBook = true;
             payeeLatchTime = uint64(block.timestamp);
             vm.prank(keeper);
             core.book();
+            lastBookTime = uint64(block.timestamp);
+        } else if (core.payeeOn() && _pending() > 0.01 ether && block.timestamp - lastBookTime > 600) {
+            vm.prank(keeper);
+            core.book();
+            lastBookTime = uint64(block.timestamp);
+            postLatchBooks++;
         }
 
         // 2/3/4/6 are evaluated for fidelity and skip in this scenario:
@@ -197,6 +225,15 @@ abstract contract LaunchDayBase is SeaportBase {
                 lastTrickle = block.timestamp;
             }
             _keeperTick();
+            uint256 age = block.timestamp - launchTime;
+            if (age >= 1 hours && age <= 24 hours && age % 1 hours == 0) {
+                uint256 h = age / 1 hours;
+                hourRate[h] = core.ethRate();
+                hourBooked[h] = core.ethPot();
+                hourPending[h] = _pending();
+                hourPile[h] = core.pileSize();
+                hourSamples++;
+            }
         }
     }
 
@@ -225,6 +262,29 @@ abstract contract LaunchDayBase is SeaportBase {
                 params: _basicData(c),
                 score: RATE_SCORE,
                 underBidTarget: underBidTarget,
+                filled: false,
+                sweepSince: 0,
+                sweepAtBuy: 0,
+                stepAtBuy: 0,
+                boughtAt: 0
+            })
+        );
+    }
+
+    /// @dev a signed Seaport order using the Credit's actual onchain score, for the first-page keeper stress path
+    function _placeSeaportRealScore(uint256 price) internal {
+        uint256 id = _credits(maker, 1)[0];
+        vm.prank(maker);
+        CREDITS.setApprovalForAll(address(SEAPORT), true);
+        OrderComponents memory c = _open(id, price, 0);
+        lst.push(
+            Listing({
+                adapter: seaportAdapter,
+                id: id,
+                price: price,
+                params: _basicData(c),
+                score: _scoreOf(id),
+                underBidTarget: false,
                 filled: false,
                 sweepSince: 0,
                 sweepAtBuy: 0,
@@ -293,7 +353,9 @@ abstract contract LaunchDayBase is SeaportBase {
         uint256 r = core.ethRate();
         // the promise is a strict climb only across a fill-free interval; a fill drops the rate, so across one only the
         // clamp and solvency are asserted
-        if (!fillSinceCheck) assertGt(r, prevCheckRate, string.concat(tag, ": the bid climbs while nothing fills"));
+        if (!fillSinceCheck && prevCheckRate < core.settings().rateCap) {
+            assertGt(r, prevCheckRate, string.concat(tag, ": the bid climbs while nothing fills"));
+        }
         Settings memory s = core.settings();
         assertLe(
             r, core.ethPot() + _pendingPot(s), string.concat(tag, ": the bid rides the pot plus the pending pot share")
@@ -320,11 +382,13 @@ contract LaunchDayTest is LaunchDayBase {
         assertEq(core.ethPot(), 0, "nothing booked at launch");
         assertEq(address(core).balance, 0, "the fresh engine holds no eth");
         assertEq(core.ethRate(), 0, "an empty pot clamps the live bid to 0 until income arrives");
-        assertEq(core.RATE_START(), OPEN_RATE, "the stored opening rate the bid climbs from");
+        assertEq(core.RATE_START(), LAUNCH_RATE, "the stored opening rate the bid climbs from");
+        assertEq(core.settings().reserveWei, 0.1 ether, "the launch reserve is active");
+        assertTrue(ctl.creditSaleOn(), "the launch credit sale is on");
         statementsBefore = STATEMENTS.supply();
         // the opening rate is the reference the live bid climbs from once income exists; the 5 min checkpoint must clear
         // it, which without the fix it never does
-        prevCheckRate = OPEN_RATE;
+        prevCheckRate = LAUNCH_RATE;
 
         // the strategy listings sit on the book from the start: one reachable as the rate climbs (35377, 0.036 eth, a
         // high score), two above the launch cap (28352, 18683) the keeper keeps skipping
@@ -343,8 +407,8 @@ contract LaunchDayTest is LaunchDayBase {
 
         // place the Seaport orders just after 5 min: two under the opening bid (must fill), one near the cap (sits above
         // the bid). they are sweepable at once; the keeper buys them LISTING_DELAY later
-        _placeSeaport(OPEN_RATE * 85 / 100, true);
-        _placeSeaport(OPEN_RATE * 82 / 100, true);
+        _placeSeaport(LAUNCH_RATE * 85 / 100, true);
+        _placeSeaport(LAUNCH_RATE * 82 / 100, true);
         _placeSeaport(uint256(core.settings().rateCap) * 95 / 100, false);
 
         // to 30 min, 12 s blocks: the keeper sweeps the two under-bid orders near 8 min, then books to latch the payee
@@ -374,6 +438,16 @@ contract LaunchDayTest is LaunchDayBase {
         // to 24 h, 5 min blocks: nothing new lists or sells, the keeper is idle, the bid rides the idle loosening up
         _advance(launchTime + 86400, 300, true);
         _checkpoint("24 h");
+        assertEq(hourSamples, 24, "every launch hour has a keeper-driven state sample");
+        for (uint256 h = 1; h <= 24; ++h) {
+            emit log_named_uint("launch hour", h);
+            emit log_named_uint("eth bid wei per 100 points", hourRate[h]);
+            emit log_named_uint("booked pot wei", hourBooked[h]);
+            emit log_named_uint("pending hook income wei", hourPending[h]);
+            emit log_named_uint("pile credits", hourPile[h]);
+        }
+        assertGt(postLatchBooks, 0, "the keeper also books income after the latch");
+        console.log("post-latch keeper books in 24 h:", postLatchBooks);
 
         // compose needs an 80 credit page; the day put far fewer in the pile, so the keeper correctly never composed
         uint256 pile = core.pileSize();
@@ -413,7 +487,7 @@ contract LaunchDayTest is LaunchDayBase {
         assertEq(core.ethPot(), 0, "nothing booked at launch");
         assertEq(address(core).balance, 0, "the fresh engine holds no eth");
         assertEq(core.ethRate(), 0, "an empty pot clamps the live bid to 0 until income arrives");
-        assertEq(core.RATE_START(), OPEN_RATE, "the stored opening rate the bid climbs from");
+        assertEq(core.RATE_START(), LAUNCH_RATE, "the stored opening rate the bid climbs from");
 
         // minute one: a fee burst through the real pool, left unbooked (no door, no book, no fund)
         _advance(launchTime + 60, 12, false);
@@ -428,7 +502,7 @@ contract LaunchDayTest is LaunchDayBase {
         // the opening rate, so the first assertGt fails
         _advance(launchTime + 300, 12, false);
         uint256 r5 = core.ethRate();
-        assertGt(r5, OPEN_RATE, "5 min: the bid climbed above the opening rate on the unbooked income");
+        assertGt(r5, LAUNCH_RATE, "5 min: the bid climbed above the opening rate on the unbooked income");
 
         _advance(launchTime + 900, 12, false);
         uint256 r15 = core.ethRate();
@@ -441,6 +515,47 @@ contract LaunchDayTest is LaunchDayBase {
         // the whole climb happened with an empty booked pot: the defect is the clamp to this pot
         assertEq(core.ethPot(), 0, "no door booked in the first 30 minutes");
         assertLe(r29, core.ethPot() + _pendingPot(core.settings()), "the climb stayed inside the pending pot clamp");
+    }
+
+    // promise: a real Seaport ask exactly at the capped bid is legal but supplies no gap to pay the keeper, so the
+    // keeper's profit gate leaves it idle even after the listing delay
+    function test_equalAskAtCappedBidRemainsIdleForTheKeeper() public {
+        _buyCoin(funder, 3 ether);
+        vm.warp(launchTime + 24 hours);
+        uint256 bid = core.ethRate();
+        assertEq(bid, core.settings().rateCap, "the bid has reached its hard cap");
+        _placeSeaport(bid, false);
+        _advance(launchTime + 24 hours + 10 minutes, 12, false);
+        assertFalse(lst[0].filled, "zero gap never clears the keeper's gas and margin gate");
+        assertEq(lst[0].sweepSince, 0, "the keeper never begins the listing delay");
+        assertEq(core.pileSize(), 0, "no purchase entered the pile");
+        emit log_named_uint("equal ask and capped bid wei", bid);
+    }
+
+    // promise: after a keeper fills one real Seaport page from hook-funded income, the first keeper compose can make
+    // a Statement once the launch credit sale window has elapsed
+    function test_firstComposeFromKeeperBoughtRealSeaportPage() public {
+        _buyCoin(funder, 3 ether);
+        uint256 supplyBefore = STATEMENTS.supply();
+        for (uint256 i; i < 80; ++i) {
+            _placeSeaportRealScore(1);
+            Listing storage l = lst[i];
+            assertGt(core.bidOf(l.id), l.price + 0.0003 ether, "a real-score listing pays the keeper");
+            vm.prank(keeper);
+            core.buyListing(l.adapter, l.id, l.params);
+            vm.roll(block.number + 1);
+            vm.warp(block.timestamp + 12);
+        }
+        assertEq(core.pileSize(), 80, "the keeper bought one complete page");
+        (bool ready,,) = ctl.nextPage();
+        assertFalse(ready, "launch credit sales hold fresh Credits through their window");
+        vm.warp(block.timestamp + ctl.creditWindow());
+        (ready,,) = ctl.nextPage();
+        assertTrue(ready, "the first page is eligible after the sale window");
+        vm.prank(keeper);
+        core.compose();
+        assertEq(STATEMENTS.supply(), supplyBefore + 1);
+        assertEq(core.pileSize(), 0);
     }
 }
 
