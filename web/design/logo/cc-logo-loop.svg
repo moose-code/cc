@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="CC engine">
+  <title>CC engine</title>
+  <!--
+    Standalone loop of the CC logo (web/components/CCLogo.tsx). Three 58x58 CMY squares on a four-corner track
+    (TL 6,6 - TR 36,6 - BR 36,36 - BL 6,36), each stepping one corner clockwise every 1.6s with a 0.7s eased move.
+    Rest frame: C at TL, M at TR, Y at BR, BL empty. Overlaps mix with multiply on light, screen on dark.
+  -->
+  <style>
+    svg { isolation: isolate; }
+    rect { mix-blend-mode: multiply; }
+    .c { fill: #00a3e0; transform: translate(6px, 6px);  animation: ccloop 6.4s linear infinite; }
+    .m { fill: #e5007e; transform: translate(36px, 6px); animation: ccloop 6.4s linear infinite -1.6s; }
+    .y { fill: #ffd400; transform: translate(36px, 36px); animation: ccloop 6.4s linear infinite -3.2s; }
+
+    /* one full clockwise loop: hold 0.9s, then a 0.7s eased move, per 1.6s step */
+    @keyframes ccloop {
+      0%       { transform: translate(6px, 6px); }
+      14.0625% { transform: translate(6px, 6px);   animation-timing-function: cubic-bezier(.6, 0, .3, 1); }
+      25%      { transform: translate(36px, 6px); }
+      39.0625% { transform: translate(36px, 6px);  animation-timing-function: cubic-bezier(.6, 0, .3, 1); }
+      50%      { transform: translate(36px, 36px); }
+      64.0625% { transform: translate(36px, 36px); animation-timing-function: cubic-bezier(.6, 0, .3, 1); }
+      75%      { transform: translate(6px, 36px); }
+      89.0625% { transform: translate(6px, 36px);  animation-timing-function: cubic-bezier(.6, 0, .3, 1); }
+      100%     { transform: translate(6px, 6px); }
+    }
+
+    @media (prefers-color-scheme: dark)   { rect { mix-blend-mode: screen; } }
+    @media (prefers-reduced-motion: reduce) { rect { animation: none; } }
+  </style>
+  <rect class="c" width="58" height="58" />
+  <rect class="m" width="58" height="58" />
+  <rect class="y" width="58" height="58" />
+</svg>
