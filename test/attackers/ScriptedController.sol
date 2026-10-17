@@ -58,6 +58,11 @@ contract ScriptedController is IController {
         return (0, false);
     }
 
+    /// no quote: the balance payout stays at par
+    function balanceClampFor(uint256, uint256) external pure returns (uint256, bool) {
+        return (0, false);
+    }
+
     /// no reference to refresh
     function refreshReference() external pure returns (bool) {
         return false;

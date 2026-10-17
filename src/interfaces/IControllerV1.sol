@@ -51,6 +51,7 @@ interface IControllerV1 {
     function anchorMoveBps() external view returns (uint16);
     function anchorTime() external view returns (uint40);
     function atFloor(uint256 sid) external view returns (bool);
+    function balanceClampFor(uint256 score, uint256 posted) external view returns (uint256 paid, bool ok);
     function balancePoolKey()
         external
         view

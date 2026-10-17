@@ -77,7 +77,15 @@ export interface BalanceReplay {
   dropPer100PointsBps: bigint; // kept for the callers' shape; the posted bid does not drop
   dropFloorBps: bigint;
   floorBps: bigint;
+  // value mode clamp (decision 165): the posted payout is lowered to the eth bid for the score valued in tokens at the
+  // protected sale price. set these three only in value mode with a usable quote; left unset the payout is par
+  valueModeOn?: boolean;
+  ethRate?: bigint; // Core.ethRate() in value mode: the eth bid, wei per 100 points, already rateCap and pot clamped
+  valueSell?: bigint; // controller.valuePerPoint(true): wei per point at the protected sale price
 }
+
+// score units in one point: the balance payout cap divides the eth bid by the sale price per token, vSell / POINT_UNIT
+const POINT_UNIT = 10000n;
 
 // Total balance token sellForBalance pays for the credits `scores` in one call: score * unit * rate / 10000 each, flat.
 // The posted bid does not drop on a fill and does not climb (decision 164), so the order does not matter. The
@@ -88,9 +96,18 @@ export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
   return replayBalanceFills(scores, a).reduce((t, x) => t + x, 0n);
 }
 
-// What each credit of the batch pays in the balance token, in sell order; replayBalance is their sum.
+// What each credit of the batch pays in the balance token, in sell order; replayBalance is their sum. In value mode the
+// posted payout is lowered to the eth bid for the score valued in tokens at the protected sale price per token, so a
+// filled payout is worth at most the eth bid when the engine sells the tokens (decision 165, Core.balanceClampFor):
+// cap = bidForScore * POINT_UNIT * unit / valueSell, bidForScore = ethRate * score / scorePer100Points.
 export function replayBalanceFills(scores: bigint[], a: BalanceReplay): bigint[] {
-  return scores.map((score) => (score * a.unit * a.rate) / 10000n);
+  return scores.map((score) => {
+    const posted = (score * a.unit * a.rate) / 10000n;
+    if (!a.valueModeOn || a.ethRate === undefined || a.valueSell === undefined || a.valueSell === 0n) return posted;
+    const bidForScore = (a.ethRate * score) / a.scorePer100Points;
+    const cap = (bidForScore * POINT_UNIT * a.unit) / a.valueSell;
+    return posted < cap ? posted : cap;
+  });
 }
 
 export interface ValueReplay {

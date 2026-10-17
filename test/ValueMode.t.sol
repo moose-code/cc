@@ -637,19 +637,15 @@ contract ValueModeTest is ValueBase {
     }
 
     // promise: SPEC 10 a balance round trip loses the spread even when the live pool spot leads the reference
-    // SKIPPED reproducer of a contract bug (decision 159 C01 class). CoreLib._balancePayout pays
-    // `score * unit * balanceRate / BPS` in balance tokens at par, with no clamp to the protected reference
-    // `valuePerPoint(false)` that the eth bid (bidOf) uses. when the live pool spot sits far above the rate-limited
-    // reference, a credit bought off the reference-protected ask and sold straight into the balance bid returns tokens
-    // realizable at the live spot, so the round trip gains the spot/reference gap, which the spread does not cover. the
-    // eth round trip loses the spread, the balance round trip gains. test_roundTripsLoseTheSpread settles the reference
-    // to the moved spot before each trip (_settleReference), so it never reaches this state. shrunk from the
-    // InvariantsValue invariant_v20 counterexample (CI run 39046569753): spot 1.9108e18, reference 0.5145e18 (3.55x),
-    // credit bought for 0.025119 eth, balance payout 0.030983 xt realizable at the spot for 0.059202 eth, net +0.034083.
-    // fix: in value mode clamp the balance payout to the protected reference, the same valuePerPoint read the eth bid
-    // uses, so neither currency realizes the live spot when it has run ahead of the rate-limited reference.
+    // in value mode the balance payout is lowered to the controller's `balanceClampFor`: the eth bid for the score
+    // valued in tokens at the protected sale price per token (`max(prior-block spot, reference - tol)`), so a filled
+    // payout is worth at most the eth bid when the engine sells the tokens (decision 165). without the clamp a credit
+    // bought off the reference-protected ask and sold straight into the balance bid returned tokens realizable at the
+    // live spot, gaining the spot over reference gap the spread does not cover. shrunk from the InvariantsValue
+    // invariant_v20 counterexample (CI run 39046569753): spot 1.9108e18, reference 0.5145e18 (3.55x), credit bought for
+    // 0.025119 eth, par payout 0.030983 xt realizable at the spot for 0.059202 eth, net +0.034083. the clamp caps the
+    // payout at 0.01666 eth over pSell 1.9108, worth the eth bid at spot, so the round trip loses.
     function test_balanceRoundTripLosesWhenSpotLeadsReference() public {
-        vm.skip(true);
         uint256[] memory ids = _fillEthPile(4);
         _valueOn();
         _setReturnLock(0);
@@ -657,10 +653,25 @@ contract ValueModeTest is ValueBase {
         _warp(ctl.creditWindow());
         _fundPot(50 ether);
         // push the pool spot to 3.55x the reference and leave the reference unsettled: one refresh per block moves it at
-        // most one step, so the ask stays priced off the lagging reference while the balance bid realizes the live spot
+        // most one step, so the ask stays priced off the lagging reference while the spot leads it
         _swapToSpot(ctl.referencePrice() * 355 / 100);
+        // let the prior-block sample catch the pushed spot (the sale price the engine realizes tokens at) while the
+        // reference walks up one step a block and stays well below it: the spot leads the reference
+        for (uint256 i; i < 3; ++i) {
+            _nextSecond();
+            ctl.refreshReference();
+        }
+        _nextSecond();
         (uint256 paid, uint256 back) = _trip(ids[0], true);
         _assertLoses(paid, back, "balance with the spot far above the reference");
+    }
+
+    // promise: SPEC 10 outside value mode the balance payout is par, the clamp does not apply (decision 165). a usable
+    // reference quote is set by the fixture, so the clamp would lower the payout if it ran; with value mode off it does not
+    function test_balancePayoutIsParOutsideValueMode() public view {
+        uint256 score = 433 * POINT_UNIT;
+        uint256 par = score * _moduleUnit() * core.balanceRate() / 10_000;
+        assertEq(core.balanceBidForScore(score), par, "the balance payout is par outside value mode");
     }
 
     // promise: SPEC 8 a statement's reference in value mode is valueOf(rating) times floorMultBps, its curve rests there

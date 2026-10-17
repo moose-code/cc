@@ -428,6 +428,20 @@ contract ControllerV1 is IController {
             : FullMath.mulDiv(POINT_UNIT * unit, pBuy, 1e18);
     }
 
+    /// the `posted` balance payout for a credit of `score` stored units lowered to its value mode cap, balance base
+    /// units: the smaller of `posted` and the eth bid for the score valued in tokens at the protected sale price per
+    /// token (`pSell / 1e18` wei), where `pSell` is `max(prior-block sampled spot, reference * (10_000 - tolBps) /
+    /// 10_000)`. paying tokens is the engine selling tokens, so a filled payout is worth at most the eth bid when sold
+    /// and a round trip cannot extract a spot that leads the reference (decision 165). `ok` is false while the reference
+    /// is unusable; the Core then keeps `posted`, since the sale doors revert `NoQuote` and no round trip opens
+    function balanceClampFor(uint256 score, uint256 posted) external view returns (uint256 paid, bool ok) {
+        uint256 pSell;
+        (, pSell,, ok) = _protected(false);
+        if (!ok || pSell == 0) return (0, false);
+        uint256 cap = FullMath.mulDiv(CORE.bidForScore(score), 1e18, pSell);
+        paid = posted < cap ? posted : cap;
+    }
+
     /// the Core's settings, read once per door and threaded through the pricing path so a single call reads them once,
     /// not the four to five times a per field read would (gas, mostly for the mode off doors)
     function _cfg() private view returns (Settings memory) {

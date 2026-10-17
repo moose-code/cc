@@ -56,9 +56,9 @@ export default function SellPage() {
   // gives the same figure while the multicall loads
   const { data: bids } = useBidsOf(wallet.map((c) => BigInt(c.id)), now);
   const bidForId = (c: Credit): bigint => bids?.[c.id.toString()] ?? (bid * c.score) / SCORE_PER_100_POINTS;
-  // the per-credit balance payout, score * unitPerPoint * balanceRate / 10_000, from the indexed scores and the
-  // snapshot rate and unit (no extra poll)
-  const balanceForId = (c: Credit): bigint => (balanceBid ? (c.score * (snap?.balanceUnit ?? 0n) * (snap?.balanceRate ?? 0n)) / 10000n : 0n);
+  // the per-credit balance payout from the indexed scores and the snapshot, through balanceFills so it carries the
+  // value mode clamp to the protected sale price (decision 165); the posted par rate outside value mode
+  const balanceForId = (c: Credit): bigint => (balanceBid && snap ? (balanceFills(snap, [c.score])[0] ?? 0n) : 0n);
 
   // the offer is the bid times the score, so offer order is score order; ties by id
   const list = useMemo(() => {
