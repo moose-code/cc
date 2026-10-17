@@ -9,18 +9,14 @@ import {CreditIds} from "./utils/CreditIds.sol";
 import {CoinRenderer} from "../src/CoinRenderer.sol";
 import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {LaunchConfig} from "../script/LaunchConfig.sol";
-
-interface IContractUri {
-    function contractURI() external view returns (string memory);
-}
 
 interface IStatementArt {
     function svg(bytes21[80] memory seeds, uint64[80] memory timestamps) external pure returns (string memory);
 }
 
-/// the coin's metadata renderer, deployed and set by the launch: the pile as a page, whole under 80, sampled per block
-/// above, drawn by the live code
+/// the pile renderer: the pile as a page, whole under 80, sampled per block above, drawn by the live code. the launch
+/// deploys the LogoCoinRenderer (see LogoCoinRenderer.t.sol); this spec deploys a CoinRenderer bound to the fixture
+/// Core, so it holds whichever renderer the launch names
 contract CoinRendererTest is Fixture {
     /// Statements.art() at the fork block, the drawing the live statements use
     IStatementArt private constant LIVE_ART = IStatementArt(0x82D2000f7C7Bc14FCFAD82Dca47620eC017269f1);
@@ -31,16 +27,9 @@ contract CoinRendererTest is Fixture {
 
     function setUp() public override {
         super.setUp();
-        r = CoinRenderer(renderer);
-    }
-
-    function test_theLaunchNamesTheRendererInTheTokenConfig() public view {
-        assertEq(address(r.core()), address(core), "core");
-        assertEq(r.owner(), lc.owner, "owner");
-        assertEq(renderer, rendererAddress(lc), "create2 address of the owner and the salt");
-        assertEq(coin.metadataRenderer(), renderer, "named at launch");
-        assertEq(coin.tokenURI(), r.contractURI(address(coin)), "the coin serves the renderer's uri");
-        assertEq(coin.tokenURI(), IContractUri(address(coin)).contractURI(), "tokenURI and contractURI agree");
+        r = new CoinRenderer(lc.owner);
+        vm.prank(lc.owner);
+        r.setCore(ICore(payable(address(core))));
     }
 
     // promise: the Core is bound once, by the owner
@@ -57,14 +46,6 @@ contract CoinRendererTest is Fixture {
         vm.stopPrank();
         vm.expectRevert(ICoinRenderer.ZeroCore.selector);
         new CoinRenderer(lc.owner).image();
-    }
-
-    // promise: the renderer address is a function of the owner and the salt and does not depend on the Core
-    function test_theRendererAddressIsAFunctionOfTheConfig() public view {
-        LaunchConfig memory c = lc;
-        assertEq(rendererAddress(c), renderer);
-        c.salt = keccak256("another salt");
-        assertTrue(rendererAddress(c) != renderer, "another salt, another renderer");
     }
 
     function _cells(string memory svg) private pure returns (uint256 n) {

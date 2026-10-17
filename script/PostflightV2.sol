@@ -222,8 +222,8 @@ abstract contract PostflightV2 is SystemBuilder, Report, ArtifactIdentity {
         address at = rendererAddress(c);
         if (at.code.length != 0) {
             _check(
-                "renderer: runtime code is the compiled CoinRenderer",
-                runtimeMatchesArtifact(at, "CoinRenderer"),
+                "renderer: runtime code is the compiled LogoCoinRenderer",
+                runtimeMatchesArtifact(at, "LogoCoinRenderer"),
                 vm.toString(at)
             );
             (bool ok, address bound) = _addr(at, abi.encodeCall(ICoinRenderer.core, ()));

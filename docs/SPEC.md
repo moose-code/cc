@@ -37,7 +37,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | behavior | the balance side: redeem at the floor by rating, buy by score at a rising bid, burn from the reserve; the module holds the token and redemptions keep filling it, so the bid off is the accumulate mode; `redeemOn` is on at launch and `balanceBidOn` is off until the module is set | 82, 84, 86, 107, 117, 122 |
 | behavior | the credit sale window is on at launch and chosen composition is off; both are owner switches | 88, 89, 119 |
 | behavior | a holder swaps a pile credit for one it owns of equal or higher score through `swapCredit`, for a `swapFeeCc` coin fee it burns | 118 |
-| behavior | the coin's `contractURI` draws the pile as a Statement page, 8 by 10: the whole pile in pile order up to 80 credits, above that 80 sampled by `prevrandao` each block. `CoinRenderer`, created by the launch and named in the coin's token config | 54, 127 |
+| behavior | the coin's `contractURI` image is the animated CC logo, a fixed onchain SVG (`LogoCoinRenderer`, created by the launch and named in the coin's token config). `CoinRenderer`, which draws the pile as a Statement page (8 by 10, the whole pile in pile order up to 80 credits, above that 80 sampled by `prevrandao` each block), stays in the tree for the owner to swap back | 54, 127, 160 |
 | behavior | system compose picks a random format or takes one; holders of `minCcToChoose` CC restyle held statements | 113 |
 | behavior | the composer of every statement is recorded | 111 |
 | behavior | the owner pauses sales; a pause holds every statement's age | 81, 97 |
@@ -60,7 +60,8 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | CoreLib | the Core's linked library, run by delegatecall in the Core's storage: the settings write, the bid math, the swap, the balance bid, `adopt`, `rescueCoin`, `rescueNft`, the successor and `migrate`. it exists because the Core's runtime is near the 24,576 byte limit |
 | ControllerV1 | pricing policy: the statement curve and anchor, the credit sale prices, `pointRate` and `valueOf`, the pool key. swappable and lockable by the owner |
 | SeaportBasicAdapter, CreditStrategyAdapter | read only pricers for `buyListing`, one per venue, approved by the owner |
-| CoinRenderer | the coin's metadata: `contractURI` returns the coin's name, symbol and description with the pile drawn as a Statement page. a view contract over the Core and Credits, created by the launch and named in the coin's token config; the Core is bound once with `setCore` |
+| LogoCoinRenderer | the coin's metadata deployed at launch (decision 160): `contractURI` returns the coin's name, symbol and description with the image a fixed onchain animated CC logo SVG. the renderer surface, constructor, `setCore` and `contractURI` match `CoinRenderer`; the image is a contract constant and no chain state is read, so `core` is bound only to satisfy the surface. created by the launch and named in the coin's token config |
+| CoinRenderer | the pile renderer, in the tree for the owner to swap in later: `contractURI` returns the coin's name, symbol and description with the pile drawn as a Statement page. a view contract over the Core and Credits; the Core is bound once with `setCore` |
 
 storage: the Core declares one variable, `State internal s`, at slot 0, and the library reads the same struct type at slot 0. test/CoreLayout.t.sol compares every field with raw storage words. a new state variable is appended at the end of `State`.
 

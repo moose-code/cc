@@ -353,7 +353,7 @@ if [ "$VERIFY" = 1 ]; then
   verify "$(jq -r .controller "$RECORD")" src/ControllerV1.sol:ControllerV1 "$(carg 'verify: controller constructor args')" "$LIBFLAG"
   verify "$(jq -r .seaportAdapter "$RECORD")" src/adapters/SeaportBasicAdapter.sol:SeaportBasicAdapter "$(carg 'verify: seaport adapter constructor args')" "$LIBFLAG"
   verify "$(jq -r .strategyAdapter "$RECORD")" src/adapters/CreditStrategyAdapter.sol:CreditStrategyAdapter "" "$LIBFLAG"
-  verify "$(jq -r .renderer "$RECORD")" src/CoinRenderer.sol:CoinRenderer "$(cast abi-encode 'constructor(address)' "$CFG_OWNER")" "$LIBFLAG"
+  verify "$(jq -r .renderer "$RECORD")" src/LogoCoinRenderer.sol:LogoCoinRenderer "$(cast abi-encode 'constructor(address)' "$CFG_OWNER")" "$LIBFLAG"
   verify "$LIB" src/lib/CoreLib.sol:CoreLib
   [ "$NVERIFY" = 0 ] || die "$NVERIFY verification(s) failed. the record is written; rerun the failed forge verify-contract commands (docs/RUNBOOK.md section 3)"
 fi
