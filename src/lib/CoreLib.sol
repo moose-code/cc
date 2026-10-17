@@ -552,22 +552,39 @@ library CoreLib {
     /// the value mode eth rate, wei per 100 points: the shared instance climbed to now (clamped to the cap, not to the
     /// funds) times 100 times the controller's value per point at the buy price, over 10_000, at most `rateCap`. `ok` is
     /// false while the controller's bounded read fails, answers short, answers a false flag or a zero value. a hostile
-    /// controller quoting a huge value pays at most `rateCap`; the balance route never reads the quote
+    /// controller quoting a huge value pays at most `rateCap`
     function _valueRate(State storage c) private view returns (uint256 rate, bool ok) {
-        bytes memory input = abi.encodeCall(IController.valuePerPoint, (false));
-        address ctrl = c.controller;
         uint256 v;
+        (v, ok) = _quoteRead(abi.encodeCall(IController.valuePerPoint, (false)));
+        if (!ok || v == 0) return (0, false);
+        // the cap keeps the product inside 256 bits; any value above it pays `rateCap` anyway
+        if (v > type(uint128).max) v = type(uint128).max;
+        (uint256 bps,) = _balanceRead();
+        rate = (bps * v * 100 / BPS).min(c.settings.rateCap);
+    }
+
+    /// a bounded static read of a controller view returning (uint256, bool): the value in the first word, a true flag in
+    /// the second. `ok` is false on a failed call, a short answer or a false flag. at most `QUOTE_GAS` gas, so a hostile
+    /// controller cannot consume the caller's gas or revert the door
+    function _quoteRead(bytes memory input) private view returns (uint256 v, bool ok) {
+        address ctrl = state().controller;
         assembly ("memory-safe") {
             ok := staticcall(QUOTE_GAS, ctrl, add(input, 0x20), mload(input), 0, 0x40)
             ok := and(ok, iszero(lt(returndatasize(), 0x40)))
             v := mload(0)
             ok := and(ok, eq(mload(0x20), 1))
         }
-        if (!ok || v == 0) return (0, false);
-        // the cap keeps the product inside 256 bits; any value above it pays `rateCap` anyway
-        if (v > type(uint128).max) v = type(uint128).max;
-        (uint256 bps,) = _balanceRead();
-        rate = (bps * v * 100 / BPS).min(c.settings.rateCap);
+    }
+
+    /// the posted balance payout `pay` for `score` stored units lowered to the controller's `balanceClampFor`: the eth
+    /// bid for the score valued in tokens at the protected sale price, so a filled payout is worth at most the eth bid
+    /// when the engine sells the tokens and a round trip cannot extract a spot that leads the reference (decision 165).
+    /// the callers apply it only in value mode. while the reference is unusable the payout stays as posted; an unusable
+    /// reference also closes the sale doors (`NoQuote`), so no round trip opens
+    function _clampPayout(uint256 score, uint256 pay) private view returns (uint256) {
+        if (!state().settings.valueModeOn) return pay;
+        (uint256 out, bool ok) = _quoteRead(abi.encodeCall(IController.balanceClampFor, (score, pay)));
+        return ok ? out : pay;
     }
 
     /// @notice the eth the pot keeps for processing now, wei. the Core forwards its `reserve()`
@@ -1179,7 +1196,7 @@ library CoreLib {
             // the paid rate never falls below the floor: a module too short to pay the floor closes the bid
             uint256 rate = bal.rateAtCheckpoint.min(availBps);
             if (rate < floorBps) revert PotTooSmall();
-            uint256 paid = score * unit * rate / BPS;
+            uint256 paid = _clampPayout(score, score * unit * rate / BPS);
             if (paid == 0) revert ZeroAmount();
             total += paid;
             if (total > avail) revert PotTooSmall();
@@ -1232,15 +1249,19 @@ library CoreLib {
         return _balancePayout(scoreOf(id));
     }
 
-    /// the balance token payout for `score` stored units: `score * unit * max(rate, floorBps) / 10_000`, 0 when the
-    /// module cannot fill this credit. the fill (`_fillBalance`) reverts when the available-clamped rate is below the
-    /// floor or the paid amount exceeds `available()`; the view mirrors those conditions and returns 0 instead of a
+    /// the balance token payout for `score` stored units: `score * unit * max(rate, floorBps) / 10_000`, in value mode
+    /// clamped to the controller's `balanceClampFor`, 0 when the module cannot fill this credit. the fill
+    /// (`_fillBalance`) reverts when the available-clamped rate is below the floor or the paid amount exceeds
+    /// `available()` and applies the same value mode clamp; the view mirrors those conditions and returns 0 instead of a
     /// payout the fill refuses. 0 with no module or a failed unit read
     function _balancePayout(uint256 score) private view returns (uint256) {
+        State storage c = state();
         (uint256 rate, uint256 unit) = _balanceRead();
         if (unit == 0) return 0;
-        uint256 pay = score * unit * rate / BPS;
-        if (rate < BPS - state().settings.balanceBidMarginBps || pay > _availableView(state().balanceModule)) return 0;
+        if (rate < BPS - c.settings.balanceBidMarginBps) return 0;
+        // report the clamped payout the fill pays, not par (decision 165)
+        uint256 pay = _clampPayout(score, score * unit * rate / BPS);
+        if (pay > _availableView(c.balanceModule)) return 0;
         return pay;
     }
 

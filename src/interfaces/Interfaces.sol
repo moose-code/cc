@@ -24,6 +24,11 @@ interface IController {
     /// liquidity under the minimum, a failed unit read). the core reads it in value mode, with a bounded call that fails
     /// closed to `NoQuote`
     function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
+    /// the `posted` balance payout for a credit of `score` stored units lowered to its value mode cap, balance base
+    /// units: the smaller of `posted` and the eth bid for the score valued in tokens at the protected sale price per
+    /// token, so a filled payout is worth at most the eth bid when the engine sells the tokens. `ok` is false while the
+    /// quote is unusable, where the core keeps `posted`. the core reads it in value mode with a bounded call
+    function balanceClampFor(uint256 score, uint256 posted) external view returns (uint256 paid, bool ok);
     /// moves the reference toward the pool spot under its cadence, rate and step gates; true when it updated the
     /// reference. the Core's `refreshReference` door forwards to it and pays the caller only when it returns true
     function refreshReference() external returns (bool);
