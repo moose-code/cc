@@ -374,7 +374,9 @@ contract ControllerV1 is IController {
         uint256 lA = liqSampleA;
         uint256 lB = liqSampleB;
         // forge-lint: disable-next-line(unsafe-typecast)
-        if (project && uint48(block.number) != lastRefreshBlock && block.timestamp - t >= q.referenceMinSeconds) {
+        bool aThisBlock = uint48(block.number) == lastRefreshBlock;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (project && !aThisBlock && block.timestamp - t >= q.referenceMinSeconds) {
             (uint256 spot, bool priced) = _spot();
             if (priced && spot != 0) {
                 uint256 move = uint256(q.referenceRateBpsPerHour) * (block.timestamp - t) / 1 hours;
@@ -388,13 +390,14 @@ contract ControllerV1 is IController {
                     sA = spot;
                     lA = _sampleLiq();
                     t = block.timestamp;
+                    aThisBlock = true;
                 }
             }
         }
         if (block.timestamp - t > q.referenceMaxStale) return (0, 0, 0, false);
         if (lA < q.minLiquidity || lB < q.minLiquidity) return (0, 0, 0, false);
         // the clamp spot is a prior block's sample: the previous one when the latest was taken this block
-        uint256 spotNow = t == block.timestamp ? sB : sA;
+        uint256 spotNow = aThisBlock ? sB : sA;
         address module = CORE.balanceModule();
         if (module == address(0)) return (0, 0, 0, false);
         (unit, ok) = _liveUnit(module);
