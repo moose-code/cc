@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {console} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
-import {Mainnet, Settings, CreditSale} from "../../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, Mainnet, Settings, CreditSale} from "../../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Halving} from "../../src/lib/Halving.sol";
 import {IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
@@ -294,7 +294,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 16. the eth bid stays open while the core has not migrated. when a held credit's bid (`bidOf`) is not zero and the
-    /// pot covers it, a one credit `sellForEth` by its holder succeeds. the check runs after every action
+    /// pot less the reserve covers it, a one credit `sellForEth` by its holder succeeds. the check runs after every action
     /// under a snapshot that is reverted, so the state is unchanged. it starts with the book of the fee income that
     /// every `sellForEth` makes first, so the price is the one the sale itself reads.
     // promise: 16 the bid never closes
@@ -302,7 +302,9 @@ abstract contract InvariantsBase is InvariantFixture {
         if (core.retired()) return;
         uint256 snap = vm.snapshotState();
         try core.book() {} catch {}
-        (address holder, uint256 id) = _sellable(core.ethPot());
+        uint256 pot = core.ethPot();
+        uint256 res = core.reserve();
+        (address holder, uint256 id) = _sellable(pot > res ? pot - res : 0);
         if (holder == address(0)) {
             vm.revertToState(snap);
             return;
@@ -320,9 +322,9 @@ abstract contract InvariantsBase is InvariantFixture {
         (bool ok, bytes memory why) = address(core).call(abi.encodeWithSignature("sellForEth(uint256[])", ids));
         vm.stopPrank();
         vm.revertToState(snap);
-        // a credit the engine sold this block is refused by the same block return guard, not a closed bid
+        // a credit the engine sold within the return lock is refused by the lock, not a closed bid
         assertTrue(
-            ok || bytes4(why) == ICore.SameBlockReturn.selector
+            ok || bytes4(why) == ICore.ReturnLocked.selector
                 || (bytes4(why) == ICore.SpendCapReached.selector && capRefusal),
             string.concat("sellForEth refused a credit whose price the pot covers, selector ", vm.toString(bytes4(why)))
         );
@@ -505,20 +507,24 @@ abstract contract InvariantsBase is InvariantFixture {
     /// 19. the price state and the read stay inside the bounds the settings and the state give, with no model of the
     /// climb. the read never exceeds the price state. the price state never exceeds `rateCap` and the ceiling, which is
     /// `ceilBps` of `max(last fill rate, peak now)` grown by `idleLoosenBps` per full 10 minutes since the last fill,
-    /// where the peak is `peakRate` halved over the time since `peakTime`. the read is the price state lowered to the pot.
+    /// where the peak is `peakRate` halved over the time since `peakTime`. the read is the price state lowered to the pot
+    /// less the reserve, so it never exceeds what a purchase may spend.
     // promise: 19 bid bounds
     function invariant_19_bidBounds() public view {
         uint256 rate = core.ethRate();
         uint256 price = core.ethPrice();
         assertLe(rate, price, "the read is above the price state");
         uint256 pot = core.ethPot();
+        uint256 res = core.reserve();
         uint256 pending = address(core).balance - pot - core.ethToBuyback() - core.ethRedeemBurn();
         assertLe(price, _ethCap(pot + pending), "the price state is above the rate cap and the ceiling");
-        assertLe(rate, pot + pending, "the read is above the pot and the pending income");
+        assertLe(rate, pot + pending > res ? pot + pending - res : 0, "the read is above the pot and the pending income less the reserve");
         if (pending == 0) {
-            assertEq(rate, price < pot ? price : pot, "the read is not the price state lowered to the pot");
+            uint256 room = pot > res ? pot - res : 0;
+            assertEq(rate, price < room ? price : room, "the read is not the price state lowered to the pot less the reserve");
         } else {
-            assertGe(rate, price < pot ? price : pot, "the read is below the price state lowered to the booked pot");
+            uint256 bookedRoom = pot > res ? pot - res : 0;
+            assertGe(rate, price < bookedRoom ? price : bookedRoom, "the read is below the price state lowered to the booked pot less the reserve");
         }
     }
 
@@ -527,6 +533,47 @@ abstract contract InvariantsBase is InvariantFixture {
     // promise: 20 the purchase budget is respected after the first purchase of the bucket
     function invariant_20_purchaseBudgetIsRespected() public view {
         assertEq(handler.gCapViolations(), 0, "successful purchase exceeded the independently tracked bucket budget");
+    }
+
+    /// 21. view equals stored for the eth bid: `bidOf(id)` read in a block equals the eth a single-credit `sellForEth`
+    /// pays in that same block. every door books the unbooked fee income as its first step and checkpoints with the pot
+    /// clamp the view reads, so a bid quoted while income waits unbooked, or after idle time, is the bid the fill pays.
+    /// checked under a reverted snapshot after every action, so the preceding time warps and value arrivals are in the
+    /// state. covers the class where a quote and the value the next call uses disagree once value arrives with no call
+    // promise: 21 the eth bid quoted equals the eth the next fill pays
+    function invariant_21_ethBidEqualsNextFill() public {
+        if (core.retired()) return;
+        uint256 snap = vm.snapshotState();
+        (address holder, uint256 id) = _sellable(core.ethPot());
+        if (holder == address(0)) {
+            vm.revertToState(snap);
+            return;
+        }
+        uint256 quoted = core.bidOf(id);
+        uint256 balBefore = holder.balance;
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.startPrank(holder);
+        CREDITS.setApprovalForAll(address(core), true);
+        (bool ok, bytes memory why) = address(core).call(abi.encodeWithSignature("sellForEth(uint256[])", ids));
+        vm.stopPrank();
+        if (ok) {
+            assertEq(
+                holder.balance - balBefore,
+                quoted,
+                string.concat("eth fill paid differs from bidOf quoted in the same block, id ", vm.toString(id))
+            );
+        } else {
+            // a credit the engine sold inside its return lock is refused by the lock, a later purchase of a
+            // capped bucket by its exhausted budget, and a credit whose bid passes the pot less the reserve by
+            // `PotTooSmall`; none is a quote against fill divergence
+            assertTrue(
+                bytes4(why) == ICore.ReturnLocked.selector || bytes4(why) == ICore.SpendCapReached.selector
+                    || bytes4(why) == ICore.PotTooSmall.selector,
+                string.concat("sellForEth refused a sellable credit, selector ", vm.toString(bytes4(why)))
+            );
+        }
+        vm.revertToState(snap);
     }
 
     /// the eth price state ceiling now: `ceilBps` of the fill anchor grown by `idleLoosenBps` scaled by the pot
@@ -669,7 +716,8 @@ abstract contract InvariantsBase is InvariantFixture {
         else if (a == 38) handler.buyCredits(w, x, y);
         else if (a == 39) handler.composeChosen(w, x);
         else if (a == 40) handler.creditSettings(w, x);
-        else handler.setHeldFormat(w, x);
+        else if (a == 41) handler.setHeldFormat(w, x);
+        else handler.buyCoinNoBook(w, x, y);
     }
 
     uint256 internal _nonce;
@@ -739,6 +787,9 @@ abstract contract InvariantsBase is InvariantFixture {
         if (a == 34 || a == 39) return false;
         // slot 30 is reserved: the former standalone payee claim, folded into the book under the push model
         if (a == 30) return false;
+        // buyCoinNoBook (a buy left unbooked, then a warp over the pending income, then a book) is exercised by the
+        // random campaign, not the deterministic smoke
+        if (a == 42) return false;
         // changeUnit moves the module's unit, so it only lands in the balance side
         if (a == 35) return handler.phase2();
         // the sale and owner door actions run only in the suites that list them
@@ -792,12 +843,9 @@ abstract contract InvariantsBase is InvariantFixture {
         // fund the pot with fee income so the pot covers a real listing's ask (the per credit bid is paid from the pot,
         // and a credit above 100 points bids more than the per-100-point rate)
         for (uint256 k; k < 20; ++k) _try(0, 30);
-        // the real listings need the ceiling to clear the price, so warp until one passes, funding the pot each round
-        for (uint256 i; i < 40 && !_try(3, 20); ++i) {
-            handler.warp(uint256(keccak256(abi.encode("w", i))) / 10 * 10 + 1);
-            for (uint256 k; k < 3; ++k) _try(0, 20);
-        }
-        assertTrue(handler.successes(3) > 0, "no real listing was bought");
+        // the best real listing needs a bid of at least its ask. when the bid is short the owner lifts the rate to the
+        // one that pays the ask with 2 percent to spare (bid = rate * score / 1_000_000), within the rate cap
+        _clearBestListing();
         // each try draws a controller seed. under the hostile controller a try ends in a compose when the page the
         // controller answers is ready and valid (2 of 14 page modes, 1/7) and the handler gate passes (1/2); the
         // compose then succeeds when the in frame attacks and the statement price answers leave it alone (0.43 of
@@ -881,6 +929,29 @@ abstract contract InvariantsBase is InvariantFixture {
         }
         assertEq(core.payee(), handler.gPayee(), "the payee is the one the owner set last");
         handler.book(1, 0);
+    }
+
+    /// buys the best candidate listing through the handler, with the rate lifted first when its bid is below its ask
+    function _clearBestListing() internal {
+        uint256 id = bestCandidate;
+        uint256 ask = ICreditStrategy(Mainnet.CREDIT_STRATEGY).nftForSale(id);
+        if (ask != 0 && core.bidOf(id) < ask) {
+            uint256 rate = ask * 1_000_000 / _score(id) * 102 / 100;
+            uint256 cap = core.settings().rateCap;
+            handler.setRateExact(rate < cap ? rate : cap);
+        }
+        for (uint256 i; i < 5 && handler.successes(3) == 0; ++i) _try(3, 20);
+        assertTrue(
+            handler.successes(3) > 0,
+            string.concat(
+                "no real listing was bought: best ask ",
+                vm.toString(ask),
+                " bid ",
+                vm.toString(core.bidOf(id)),
+                " rate ",
+                vm.toString(core.ethRate())
+            )
+        );
     }
 
     /// the owner's calls: valid settings across the bounds, refused ones, the rate and the other doors

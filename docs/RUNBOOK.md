@@ -40,8 +40,8 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 | block | rows |
 |---|---|
 | the bid | `rateStart` (market price on launch day of 100 points, wei), `rateCap` (3 times it), `pointsPerPage` 35,200 (80 credits times the census 440), `climbMultiplierCapBps` 40,000, `spendCapBps` 10,000 (off), `bucketSeconds` 60, `idleStepSeconds` 600 and the other bid settings |
-| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 12, anchor half life 604,800, anchor min cost 0.1 eth, `anchorMoveBps` 5,000) |
-| the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `floorBps` 11,000, `startBps` 30,000 (`pointsPerPage` is a bid setting above) |
+| the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 4, anchor half life 604,800, anchor min cost 0.1 eth, `anchorMoveBps` 0) |
+| the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `spreadBps` 1,000 (the floor is 11,000 of the reference at the cap of 10,000, today's 1.1x; decision 155 keeps 1,000 at launch, 200 at the value switch of decision 153), `startBps` 15,000 (`pointsPerPage` is a bid setting above) |
 | the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
 | the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 1,000, `balanceBidCapBps` 10,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
 | the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0.0003 eth, `callerMaxBaseFee` 3 gwei (decision 138) |
@@ -70,7 +70,7 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 | the adapters | `addAdapter(address)`, `removeAdapter(address)`, `lockAdapters()`; on the Seaport adapter `setAllowedRecipient(address,bool)`. in the first days watch `buyListing` reverts for `RecipientNotAllowed` and add the recipient that Credits listings carry |
 | the credit sale window | on at launch; `setCredit` with `saleOn` false closes it and true reopens it; read `creditPrice(id)` back |
 | chosen composition | `setChosenComposeOn(bool)`, `setMinCcToChoose(uint96)` (also the gate of `setHeldFormat`) |
-| the balance side | once the balance module is written and verified: `setBalanceModule(address)` (replaceable until `lockBalanceModule()`), then `setSettings` with `balanceBidOn` (`redeemOn` is true at launch), then on the controller `setBalancePoolKey((address,address,uint24,int24,address))` with native eth as currency0 and the balance token as currency1 once its pool is live. when the balance token's auction is announced: `setPaused(true)`, reprice with the live settings, `setPaused(false)` |
+| the balance side | once the balance module is written and verified: `setBalanceModule(address)` (replaceable until `lockBalanceModule()`), then `setSettings` with `balanceBidOn` (`redeemOn` is true at launch), then on the controller `setBalancePoolKey((address,address,uint24,int24,address),uint256)` with native eth as currency0, the balance token as currency1 and the expected eth spot (wei per 1e18 base units, a live spot more than `tolBps` from it reverts) once its pool is live. when the balance token's auction is announced: `setPaused(true)`, reprice with the live settings, `setPaused(false)` |
 | the reserve | `releaseRedeemBurn(uint256)` moves reserve eth into the buyback pot |
 | composing | `compose()`, `compose(uint8)` or `composeChosen` when nobody else does; switch the payment on with `callerFee` and `callerMaxBaseFee` if pages sit |
 | the coin | `coin.lockRecipients()` (script/Lock.s.sol: postflight, then the lock) seals the bounty recipient and ends fee stream migration; take it together with `lockSuccessor`. `lockAllowlist()`, `unrestrict()`, `renounceAdmin()`, `setMetadataRenderer`, `updateImage`, `updateDescription` are the coin admin's |
@@ -78,7 +78,7 @@ all by the owner, effective at once. the settings scripts dry run unless `SEND=1
 
 ### editing economic settings
 
-`Settings` has 34 fields in five storage slots. the original 29 include `climbMultiplierCapBps`; the last five are `spendCapBps` (uint16), `bucketSeconds`, `balanceBidCapBps`, `idleStepSeconds` and `sniperSeconds` (uint32 each). the controller's six-field `Sale` appends `anchorMoveBps` (uint16). update integrations to these tuples before using the new contracts; INTEGRATION section 13 gives the ABI order.
+`Settings` has 37 fields in five storage slots. the original 29 include `climbMultiplierCapBps`; then `spendCapBps` (uint16), `bucketSeconds`, `balanceBidCapBps`, `idleStepSeconds` and `sniperSeconds` (uint32 each), `reserveWei` (uint64), `returnLockSeconds` (uint32) and `valueModeOn` (bool). the controller's six-field `Sale` appends `anchorMoveBps` (uint16). update integrations to these tuples before using the new contracts; INTEGRATION section 13 gives the ABI order.
 
 preview a patch without sending:
 
@@ -86,7 +86,7 @@ preview a patch without sending:
 CORE=$CORE CONTROLLER=$CONTROLLER SET_spendCapBps=100 SET_bucketSeconds=60 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL
 ```
 
-`SetSettings` prepares the complete batch from live structs before executing any setter, and validates the exact setter order as the owner inside a temporary EVM snapshot, then restores every simulated write. it prints the Core before/after table and calldata, plus controller calldata when changed. with `CONTROLLER` set, sale fields use `SET_markupBps`, `SET_startCapBps`, `SET_decayHours`, `SET_anchorHalfLife`, `SET_anchorMinCost`, `SET_anchorMoveBps`; credit fields use `SET_saleOn=0|1`, `SET_window`, `SET_floorBps`, `SET_startBps`. the JSON patch applies to Core fields only. unspecified fields keep their live values, single-field environment values override JSON, unknown fields and values wider than their ABI types are refused.
+`SetSettings` prepares the complete batch from live structs before executing any setter, and validates the exact setter order as the owner inside a temporary EVM snapshot, then restores every simulated write. it prints the Core before/after table and calldata, plus controller calldata when changed. with `CONTROLLER` set, sale fields use `SET_markupBps`, `SET_startCapBps`, `SET_decayHours`, `SET_anchorHalfLife`, `SET_anchorMinCost`, `SET_anchorMoveBps`; credit fields use `SET_saleOn=0|1`, `SET_window`, `SET_spreadBps`, `SET_startBps`. the JSON patch applies to Core fields only. unspecified fields keep their live values, single-field environment values override JSON, unknown fields and values wider than their ABI types are refused.
 
 the setter order is `setSale` first when its new markup satisfies the old Core floor, then changed `setSettings`, optional nonzero `SET_RATE`, a deferred `setSale` when lowering markup requires the new Core floor first, then changed `setCredit`. the final Core floor must fit the final markup. raising the Core floor and markup together therefore raises markup first; lowering both past the old floor lowers the Core floor first. `SET_RATE=0` skips the rate setter. a rate cap below the live bid or price state prints a warning because the bid falls when applied.
 
@@ -96,6 +96,18 @@ the ETH purchase cap applies to direct seller payouts and adapter listing price 
 
 `settings.sniperSeconds` controls only the one-way payee latch relative to the factory's launch timestamp. changing it cannot undo `payeeOn`, and `setSettings` books income under the old settings before applying the new ones. it does not change `launch.sniperSeconds`, the external pool's launch skim schedule. the two launch defaults are both 1,800 seconds; read the live Core setting for later book timing.
 
+### the value switch (decision 148)
+
+value mode prices the eth bid off the shared balance instance times the controller's protected value of the balance token, and prices the engine's sales off the same value with the cost term dropped (SPEC section 4). it is off at launch and needs the balance side live. in order:
+
+1. the balance module is set and verified, the controller's `setSale` and `setCredit` hold a credit `spreadBps` that satisfies the loop closure bound at the chosen `tolBps` (decision 157: `spreadBps >= (10,000 + tolBps) * 10,000 / (10,000 - tolBps) - 10,000`, so `spreadBps` 1,000 needs `tolBps <= 476`), and the controller holds the balance pool key (`setBalancePoolKey`), which starts the reference at the pool spot.
+2. the owner chooses the reference price inputs left at 0 in the config (`referenceRateBpsPerHour`, `referenceStepBps`, `referenceMaxStale`, `minLiquidity`; `tolBps` is 450 and `referenceMinSeconds` 600) and sends them on the controller: `cast send $CONTROLLER "setQuote((uint32,uint16,uint16,uint32,uint32,uint128))" "(<rate>,<step>,450,<maxStale>,600,<minLiquidity>)"`. the intended pool-time values are `referenceRateBpsPerHour` 1,200, `referenceStepBps` 200 and `referenceMinSeconds` 600, so the cadence is `referenceStepBps / referenceRateBpsPerHour` and one refresh per cadence moves one full step. `setQuote` requires the rate, step and staleness all set or all zero, the loop closure bound at the credit spread, and `(10,000 + step)(10,000 + tolBps)(10,000 - balanceBidMarginBps) < 10,000^3`. preflight warns while the inputs are pending.
+3. call `refreshReference()` on the controller (anyone may) until `valuePerPoint(false)` answers `ok` true and `referencePrice()` sits within `tolBps` of `spotPrice()`; the reference moves at most the rate times the elapsed time per call and runs at most once per `referenceMinSeconds`, so a reference far from the spot takes hours.
+4. one `setSettings` with `valueModeOn` true, `balanceBidOn` true, `balanceBidCapBps` 11,000, `balanceBidMarginBps` 1,000, `climbPerMinBps` and `recoveryClimbPerMinBps` 100, `saleFloorBps` 5,000 and `spendCapBps` under 10,000 (value mode requires the eth spend cap active, decision 157): `CORE=$CORE SET_valueModeOn=1 SET_balanceBidOn=1 SET_balanceBidCapBps=11000 SET_balanceBidMarginBps=1000 SET_climbPerMinBps=100 SET_recoveryClimbPerMinBps=100 SET_saleFloorBps=5000 SET_spendCapBps=9999 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL` (switches take 1 or 0), then the same with `SEND=1 --broadcast`. turning `valueModeOn` on resets the shared instance to the floor, so the eth bid opens at 90 percent of value; turning it off resets the eth instance to the shared rate so the eth bid cannot reopen at the cap.
+5. read back `ethRate()`, `balanceRate()` (9,000), `floorMultBps()` (11,220) and `creditPrice` of a pile credit; the keeper's `refreshReference` door keeps the reference tracking from here (section 8), and the `quote` alert fires if it goes stale.
+
+while the quote is unusable `sellForEth`, `buyListing`, `ethRate` and the controller's sale doors revert `NoQuote`; `sellForBalance`, compose, redemption, the buyback and `book` keep running. to leave value mode send `setSettings` with `valueModeOn` false; the eth instance resumes from its stored state.
+
 ### bounds and coupled checks
 
 bounds use the declared unsigned integer width where no narrower limit follows. uint16 max is 65,535, uint32 max is 4,294,967,295. the defaults stay the launch values; wider bounds make owner choices possible and do not promise sensible economics for every combination.
@@ -103,7 +115,7 @@ bounds use the declared unsigned integer width where no narrower limit follows. 
 - `dropPer100PointsBps` is 1 to 9,999; `dropFloorBps`, `saleToBuybackBps`, `recoveryGapBps`, `redeemSlippageBps`, `balanceBidMarginBps`, `redeemBurnBps`, `feeToRedeemBurnBps` and `creditCostToPotBps` are 0 to 10,000. artist plus operator sale cuts must total strictly less than 10,000; an artist cut also requires a nonzero artist. `payeePpm` is 0 to 1,000,000.
 - `climbPerMinBps` and `idleLoosenBps` are 1 to uint16 max; `recoveryClimbPerMinBps` is at least `climbPerMinBps` and at most uint16 max. `ceilBps` and `climbMultiplierCapBps` are 10,000 to uint16 max. `saleFloorBps` is 0 to uint16 max and no higher than controller markup. `buybackDelay` is 1 to uint16 max blocks. `peakHalfLife`, `pointsPerPage`, `bucketSeconds` and `idleStepSeconds` are 1 to uint32 max; `sniperSeconds` is 0 to uint32 max. `balanceBidCapBps` is 10,000 to uint32 max; raising it leaves the floor at `10,000 - balanceBidMarginBps`. `spendCapBps` is 1 to 10,000, with 10,000 the bypass value.
 - `rateStart`, `rateCap` and `setRate` accept 1 to uint64 max wei; `setRate` must also fit live `rateCap`. `buybackSlice` is 1 to uint128 max wei and at least `2 * (600,000 * keeperMaxBaseFee + keeperFee)`. `keeperFee` and `callerFee` are 0 to uint64 max, their base-fee ceilings 0 to uint48 max, and `swapFeeCc` is 0 to uint96 max base units. caller payments remain capped at the pot; listing keeper payment remains capped at the bid gap and pot left.
-- sale markup is 10,000 to uint16 max, at least the Core floor and at most `startCapBps`; `startCapBps` is markup to uint32 max; `decayHours` is 1 to uint16 max; `anchorHalfLife` is 1 to uint32 max seconds; `anchorMinCost` is 0 to uint128 max; `anchorMoveBps` is 0 to 10,000 (launch 5,000). zero anchor movement leaves the sale anchor clock unchanged. credit window is 1 to uint32 max seconds, credit floor is 10,000 to uint16 max, and credit start is 10,000 to uint32 max.
+- sale markup is 10,000 to uint16 max, at least the Core floor and at most `startCapBps`; `startCapBps` is markup to uint32 max; `decayHours` is 1 to uint16 max; `anchorHalfLife` is 1 to uint32 max seconds; `anchorMinCost` is 0 to uint128 max; `anchorMoveBps` is 0 to 10,000 (launch 0). zero anchor movement leaves the sale anchor clock unchanged. credit window is 1 to uint32 max seconds, credit floor is 10,000 to uint16 max, and credit start is 10,000 to uint32 max.
 
 ### the lock table
 
@@ -136,7 +148,7 @@ the owner keeper (`keeper/`, section 8) runs every duty from launch (decision 13
 
 ### a dump that walks the bid down, and statements above the floor
 
-at launch settings the bid climbs 2 percent a minute below and above the recovery level (`recoveryClimbPerMinBps` and `climbPerMinBps` are both 200). the ETH purchase budget also limits how much a dump can sell per bucket; time until fills resume depends on that budget and the fixed bucket boundary. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
+at launch settings the bid climbs 2 percent a minute below and above the recovery level (`recoveryClimbPerMinBps` and `climbPerMinBps` are both 200, decisions 151 and 155). the ETH purchase budget also limits how much a dump can sell per bucket; time until fills resume depends on that budget and the fixed bucket boundary. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
 
 ### watching the buyback after a price fall
 
@@ -248,6 +260,7 @@ The record carries chain id 1, so the evm.now links of this node point at chain 
 | 4 | `collectEscrow()` | the fee escrow holds more for the Core than the gas of the claim |
 | 5 | `book()` | `launchedAt + settings.sniperSeconds` passed, `payeeOn` false, income pending: the book that latches the payee share |
 | 6 | `redeemStatement(sid)` | `atFloor(sid)`; logged only while no balance module is set (it reverts `NoBalanceModule`) |
+| 7 | `refreshReference()` on the controller | the pool key is set, `referenceMaxStale` is nonzero and `referenceMinSeconds` has passed since the last sample (`referenceTime`); unpaid, about 60,000 gas. the pool-time cadence is `referenceStepBps / referenceRateBpsPerHour` (200 / 1,200 = 600 s), so one refresh per cadence moves one full step and keeps the reference both tracking and fresh. in value mode with the reference unusable every listing is skipped with `NoQuote` |
 
 ### environment
 
@@ -264,6 +277,8 @@ every value is an environment variable; nothing secret is written to a file by t
 | `MARGIN_ETH` | 0.00005 | what a paid door must clear above its own cost |
 | `DAILY_BUDGET_ETH` | 0.2 | the net eth (gas spent minus Core payments) the wallet may lose per UTC day; a send whose gross cost does not fit waits |
 | `LISTING_DELAY_SEC` | 120 | decision 137 |
+| `BOOK_MIN_ETH` | 0.01 | once the payee share is latched, the keeper books when the pending income (Core balance above the booked pots) exceeds this |
+| `BOOK_MIN_SEC` | 600 | the keeper's last book must be older than this for the latched book above, so booked state follows income at a bounded gas cost |
 | `STRATEGY_IDS` | `Credits.tokensOf(strategy)` | the CreditStrategy ids to watch, or `off`; refreshed every `STRATEGY_REFRESH_SEC` (600). The default set is kept by delta from the Credits Transfer logs of the strategy (state file `STATE_DIR/strategy-inventory.json`), with a rolling re-read of 300 prices per refresh and a full read once a day |
 | `STRATEGY_FULL_READ` | | `1` reads the whole strategy inventory on every refresh (first start, or a node without log queries) |
 | `INDEXER_URL` | | indexer origin (https or local); seeds the strategy inventory on the first start from `strategy_listing` instead of `tokensOf` |
@@ -296,7 +311,7 @@ each line is one JSON object. `skip` names a door and why it waits; `dry run: wo
 
 ### funding and top up
 
-the keeper spends gas and is repaid by the Core on the paid doors; `book` and `collectEscrow` are unpaid. hold about 0.1 eth (a compose needs about 9 million gas of headroom, 0.045 eth at 5 gwei, repaid in the same transaction). the `balance` alert fires under `LOW_BALANCE_ETH`; top up with a plain send from any account. the ledger (`STATE_DIR/ledger-<day>.json`) shows the day's spend, receipts and count.
+the keeper spends gas and is repaid by the Core on the paid doors; `book`, `collectEscrow` and `observe` are unpaid. hold about 0.1 eth (a compose needs about 9 million gas of headroom, 0.045 eth at 5 gwei, repaid in the same transaction). the `balance` alert fires under `LOW_BALANCE_ETH`; top up with a plain send from any account. the ledger (`STATE_DIR/ledger-<day>.json`) shows the day's spend, receipts and count.
 
 ### alerts
 
@@ -306,6 +321,8 @@ the keeper spends gas and is repaid by the Core on the paid doors; `book` and `c
 | `budget` | the day's net loss reached `DAILY_BUDGET_ETH` | read the ledger; raise the budget or wait for the UTC day |
 | `balance` | the wallet is under `LOW_BALANCE_ETH` | top up |
 | `tick` | five ticks in a row failed to read the chain | check the rpcs |
+| `quote` | value mode is on and the controller's reference price is unusable (the reference older than `referenceMaxStale`, the pool under `minLiquidity`, or no spot or unit read), so `ethRate` reverts `NoQuote` and the eth routes wait | check the `refreshReference` door and the pool; call `refreshReference()` by hand, or lower `minLiquidity` or raise `referenceMaxStale` with `setQuote` |
+| `reserve` | the pot (with the pending fee share) is at or under `reserve()`, so the eth bids read zero and the keeper skips every listing (`ReserveHeld`); compose, redeem and buyback still pay from the whole pot | wait for fee income, or lower `reserveWei` with `setSettings` if the floor is too high for the pot |
 
 ### manual override
 
@@ -334,11 +351,11 @@ No deployment or activation is authorized by the implementation PR. Before activ
 The owner deploys `StatementBalanceModule(core, balanceToken)` and wires it in this order, one transaction each:
 
 1. `setBalanceModule(module)` on the Core. Read back `balanceModule`, `balanceToken` and `unitPerPoint`.
-2. `setBalancePoolKey((address,address,uint24,int24,address))` on the controller, with native eth as currency0, the balance token as currency1 and the confirmed pool parameters. Read back the key.
+2. `setBalancePoolKey((address,address,uint24,int24,address),uint256)` on the controller, with native eth as currency0, the balance token as currency1, the confirmed pool parameters and the expected eth spot (a live spot more than `tolBps` away reverts). Read back the key.
 3. `setSettings` with `balanceBidOn` once `available()` reads the module's token balance.
 
 `script/deploy.sh` (PR 35) ends at the postflight and the record, whose `balanceModule` and `balancePool` fields are null. Its post-launch step for this module is a wrapper change in a separate PR; until it lands the three calls above are the wiring.
 
 For successor migration, deploy a module bound to the successor Core and the same token and set it on the successor before retiring the old Core. After `Core.migrate`, anyone calls the old module's `migrateReserve()`; verify old and new holdings and the `ReserveMigrated` event. Repeat for statements redeemed by the old Core afterwards. The transfer succeeds once upstream retirement is complete and the opening block is reached. Resolve old-token reserves before locking the successor to a different currency. Binding getters do not authenticate code: verify the successor and its module before selecting them. This procedure is separate from the ETH and Credits migration.
 
-`test/UpstreamBalance.t.sol` runs Jack's contract from a locally prepared artifact (`python3 script/prepare-upstream-balance.py <credits checkout>`). The candidate workflow prepares it and sets `REQUIRE_UPSTREAM_BALANCE=true` when the repository secret `UPSTREAM_CREDITS_TOKEN` (read access to the upstream repository) is set. Without the secret the frozen-candidate run executes it locally with `REQUIRE_UPSTREAM_BALANCE=true`. Either way the result is recorded as an `upstream balance` row of the freeze table (docs/STATUS.md section 4). Every other run skips it when the artifact is absent.
+`test/UpstreamBalance.t.sol` and the production module variant of `test/LaunchDayPhase2.t.sol` run against Jack's contracts built from `jckbtchr-vv/credits` at commit `78f3a3132725af5c1fbfb1c1d5cf09b7ccb12e16`. `script/tools/upstream-balance.sh` clones that commit (read access from `GH_TOKEN`, else `UPSTREAM_CREDITS_TOKEN`, else `gh auth token`; the token goes to git on the command line and to no file), builds it with the upstream foundry config, verifies the pinned hashes (`AuctionLineageWithdrawals` creation code sha256 `980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08`; runtime keccak256 with immutables zeroed: `AuctionLineageWithdrawals` `0x9e1aadee37961a7775bed6663e4e9d1d4d745b798724cd878cb4848ff62e1efb`, `SurrenderedBalanceRenderer` `0xc8b64ac9f76c8e4afbb3cad2f840e077cec107ac16952f8d4bdd592a01b2df0b`, `LineageArtwork` `0xc5b019615fa141d8092130f38868036d154105b0b57a3301ce70f85087d128ea`) and writes the ignored `out/upstream-balance.json`. A different commit, source or hash fails the script. The candidate workflow runs the script with the repository secret `UPSTREAM_CREDITS_TOKEN` (read access to the upstream repository) and sets `REQUIRE_UPSTREAM_BALANCE=true`, so both tests fail instead of skip. A local frozen-candidate run executes the script and sets the same variable. The result is recorded as an `upstream balance` row of the freeze table (docs/STATUS.md section 4). Every other run skips both tests when the artifact is absent. A change of upstream source is a change of the pins in the script, the test expectations and this paragraph, reviewed together.

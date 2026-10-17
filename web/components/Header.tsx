@@ -81,10 +81,15 @@ function WalletButton() {
                 wrong network
               </button>
             ) : (
-              <button className="btn-outline" onClick={openAccountModal}>
-                <i className="sq" />
-                <AccountName address={account.address} />
-              </button>
+              <>
+                <Link href="/sell" className="ulink wallet-sell">
+                  sell yours →
+                </Link>
+                <button className="btn-outline" onClick={openAccountModal}>
+                  <i className="sq" />
+                  <AccountName address={account.address} />
+                </button>
+              </>
             )}
           </div>
         );

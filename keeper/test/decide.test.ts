@@ -12,6 +12,7 @@ import {
   GAS_GUESS,
   listingKey,
   observe,
+  refreshReferenceDue,
   recheck,
   worstBaseFee,
   type Listing,
@@ -44,7 +45,10 @@ function state(over: Partial<State> = {}): State {
     spend: { bucket: 166n, budget: parseEther("0.1"), spent: 0n },
     ethPot: parseEther("10"),
     potWithPending: parseEther("10"),
+    reserve: parseEther("0.1"),
+    potRoom: parseEther("9.9"),
     pendingIncome: 0n,
+    lastBookAt: 0n,
     ethToBuyback: 0n,
     payeeOn: true,
     paused: false,
@@ -56,6 +60,13 @@ function state(over: Partial<State> = {}): State {
     pageReady: false,
     balanceModule: zeroAddress,
     atFloor: [],
+    controller: "0x00000000000000000000000000000000000000c1" as Address,
+    valueModeOn: false,
+    noQuote: false,
+    referencePrice: 0n,
+    referenceTime: 0n,
+    referenceMaxStale: 0n,
+    referenceMinSeconds: 600n,
     ...over,
   };
 }
@@ -63,7 +74,7 @@ function state(over: Partial<State> = {}): State {
 function policy(over: Partial<{ [d in Door]: { maxBaseFee: bigint; tip: bigint } }> = {}, delay = 120): Policy {
   const doors = {} as Policy["doors"];
   for (const d of DOORS) doors[d] = { maxBaseFee: d === "buyListing" || d === "buyback" ? parseGwei("5") : parseGwei("3"), tip: parseGwei(d === "compose" ? "0.02" : "0.05") };
-  return { doors: { ...doors, ...over }, doorsOn: new Set(DOORS), margin: parseEther("0.00005"), listingDelaySec: delay };
+  return { doors: { ...doors, ...over }, doorsOn: new Set(DOORS), margin: parseEther("0.00005"), listingDelaySec: delay, bookMinWei: parseEther("0.01"), bookMinSec: 600 };
 }
 
 const gas = (g: string) => ({ baseFee: parseGwei(g) });
@@ -177,17 +188,92 @@ test("listing: the payment is min(gas refund + keeperFee, bid - price, ethPot - 
   assert.deepEqual(doorsOf(r), []);
   assert.match(reason(r, "buyListing"), /unprofitable: payment 100000000000000/);
   // the pot cap: a pot just above the price
-  const pot = decide(state({ potWithPending: parseEther("0.0101") }), [listing()], gas("1"), p, new Map());
+  const pot = decide(state({ potRoom: parseEther("0.0101") }), [listing()], gas("1"), p, new Map());
   assert.deepEqual(doorsOf(pot), []);
 });
 
 test("listing: above the bid or the pot, or not fillable, it is not swept", () => {
   const p = policy({}, 0);
   assert.deepEqual(doorsOf(decide(state(), [listing({ price: parseEther("0.013") })], gas("1"), p, new Map())), []);
-  const potShort = decide(state({ potWithPending: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
+  const potShort = decide(state({ potRoom: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
   assert.match(reason(potShort, "buyListing"), /PotTooSmall/);
   const cancelled = decide(state(), [listing({ valid: false, why: "order cancelled" })], gas("1"), p, new Map());
   assert.match(reason(cancelled, "buyListing"), /order cancelled/);
+});
+
+// promise: the keeper sweeps only within the pot less the reserve: a listing the whole pot covers but the room does not is
+// skipped, a pot at the reserve skips every listing with the reserve reason, and the caller payments still read the whole pot
+test("listing: the reserve bounds the sweep, not the processing", () => {
+  const p = policy({}, 0);
+  const atReserve = decide(state({ potWithPending: parseEther("0.1"), potRoom: 0n, pageReady: true }), [listing()], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(atReserve).filter((d) => d === "buyListing"), []);
+  assert.match(reason(atReserve, "buyListing"), /ReserveHeld/);
+  assert.ok(doorsOf(atReserve).includes("compose"), "compose still pays from the whole pot");
+  const covered = decide(state({ potWithPending: parseEther("0.11"), potRoom: parseEther("0.005") }), [listing()], gas("1"), p, new Map());
+  assert.match(reason(covered, "buyListing"), /PotTooSmall: price above ethPot less the reserve/);
+});
+
+test("listing: in value mode an unusable quote skips the sweep with NoQuote, processing still runs", () => {
+  const p = policy({}, 0);
+  const halted = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(halted).filter((d) => d === "buyListing"), []);
+  assert.match(reason(halted, "buyListing"), /NoQuote/);
+  assert.ok(doorsOf(halted).includes("compose"), "compose does not read the quote");
+  const live = decide(state({ valueModeOn: true, noQuote: false }), [listing()], gas("1"), p, new Map());
+  assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps as before");
+});
+
+// ------------------------------------------------------------------ refreshReference
+
+test("refreshReference: due referenceMinSeconds after the last sample, never before the pool key or with referenceMaxStale 0", () => {
+  const p = policy();
+  const base = { referencePrice: 49n * 10n ** 16n, referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n };
+  assert.match(refreshReferenceDue(state({ ...base, referencePrice: 0n })).reason, /pool key is not set/);
+  assert.match(refreshReferenceDue(state({ ...base, referenceMaxStale: 0n })).reason, /never usable/);
+  const early = decide(state({ ...base, timestamp: 4_000n + 599n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(early), []);
+  assert.match(reason(early, "refreshReference"), /next refresh at 4600/);
+  const due = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(due), ["refreshReference"]);
+  const call = due.calls[0];
+  assert.equal(call.target, undefined, "the Core door, not the controller");
+  assert.ok(call.payment > 0n, "the Core pays the caller fee like compose");
+  assert.equal(recheck(call, state({ ...base, timestamp: 4_000n + 600n }), undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true, "the paid door clears the recheck at the caller fee");
+  const unpaid = decide(state({ ...base, timestamp: 4_000n + 600n, settings: { ...state().settings, callerFee: 0n, callerMaxBaseFee: 0n } }), [], gas("1"), p, new Map());
+  assert.match(reason(unpaid, "refreshReference"), /unprofitable/);
+  const high = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("4"), p, new Map());
+  assert.match(reason(high, "refreshReference"), /above the door ceiling/);
+});
+
+// promise: a refresh intended with only unbooked hook income must be paid by the Core's booked-pot rule
+test("refreshReference: pending-only cold pot is projected as paid while the Core pays zero", () => {
+  const s = state({
+    timestamp: 1_600n,
+    launchedAt: 1_000n,
+    payeeOn: false,
+    ethPot: 0n,
+    pendingIncome: parseEther("0.00445"),
+    potWithPending: parseEther("0.004005"),
+    potRoom: 0n,
+    valueModeOn: true,
+    referencePrice: parseEther("0.49"),
+    referenceTime: 1_000n,
+    referenceMaxStale: 3_600n,
+    referenceMinSeconds: 600n,
+  });
+  const p = policy();
+  const r = decide(s, [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(r), ["refreshReference"]);
+  assert.match(reason(r, "book"), /anti sniper window/);
+  const intended = r.calls[0];
+  assert.ok(intended.payment > 0n);
+  assert.equal(recheck(intended, s, undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true);
+  assert.equal(s.ethPot, 0n, "CoreLib.refreshReference caps the actual payment at this empty booked pot");
+  const afterLatch = state({ ...s, payeeOn: true, ethPot: 1n, potWithPending: parseEther("0.000405") + 1n, pendingIncome: parseEther("0.00045"), lastBookAt: 1_000n });
+  const latched = decide(afterLatch, [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(latched), ["refreshReference"]);
+  assert.match(reason(latched, "book"), /not above/);
+  assert.ok(latched.calls[0].payment > 1n, "the keeper still projects a caller fee from pending income");
 });
 
 test("listing: the best gap goes first (Activity.s.sol rule), and every sweep precedes the buyback", () => {
@@ -289,4 +375,41 @@ test("paused: every door waits while the Core is paused", () => {
   assert.deepEqual(doorsOf(r), []);
   assert.equal(r.skips.length, DOORS.length);
   assert.match(reason(r, "compose"), /Paused/);
+});
+
+// ------------------------------------------------------------------ cold-start gaps from the fixture audit
+
+// a stalled launch: the payee share latched on the first post-window book, the pot is 0 and fee income is pending. a
+// door's own `_book` would fold the pending income into the pot and lift the bid, but no paid door clears (the pot is 0
+// so every listing is PotTooSmall and the bid cannot rise), and `decide` books only while `!payeeOn`. so the keeper
+// sends nothing and the bid stays stalled. the audit asks the decision layer to book here; it does not today.
+// KEEPER FINDING: bookLatches returns "already latched" once payeeOn, so the latched/pot-0/pending state never books.
+test("book: payee latched, pot 0, income pending — the decision layer still books", () => {
+  const s = state({ payeeOn: true, ethPot: 0n, potWithPending: 0n, pendingIncome: parseEther("0.2"), launchedAt: 1_000n, sniperSeconds: 1_800n, timestamp: 3_000n });
+  assert.deepEqual(doorsOf(decide(s, [], gas("1"), policy(), new Map())), ["book"]);
+});
+
+test("book: latched, the keeper books above BOOK_MIN_ETH once the last book is older than BOOK_MIN_SEC", () => {
+  const at = (over: Partial<State>) => doorsOf(decide(state({ payeeOn: true, timestamp: 10_000n, ...over }), [], gas("1"), policy(), new Map()));
+  assert.deepEqual(at({ pendingIncome: parseEther("0.0101"), lastBookAt: 9_399n }), ["book"]);
+  assert.deepEqual(at({ pendingIncome: parseEther("0.01") }), [], "income at the minimum does not book");
+  assert.deepEqual(at({ pendingIncome: parseEther("0.2"), lastBookAt: 9_400n }), [], "a book 600 seconds old does not repeat");
+});
+
+// the keeper's listing bid is `core.bidOf(id)` read on chain (src/listings.ts), which the Core derives as
+// `ethRate * score / RATE_SCORE`. this takes the bid from that derivation rather than a literal, and shows the sweep
+// turns on exactly where the derived bid covers the price.
+test("listing: the bid comes from a bidOf derivation (ethRate scaled by score), not a literal", () => {
+  const p = policy({}, 0);
+  const RATE_SCORE = 1_000_000n; // the per-100-points scale core.bidOf and src/listings.ts divide by
+  const ethRate = parseEther("0.002"); // wei per 100 points
+  const score = 6_000_000n; // the credit's score, 600 points
+  const bidOf = (ethRate * score) / RATE_SCORE; // core.bidOf(id)
+  assert.equal(bidOf, parseEther("0.012"), "the derivation reproduces the on-chain bid");
+  // a listing under the derived bid sweeps, one above it does not
+  const under = decide(state(), [listing({ bid: bidOf, price: parseEther("0.01") })], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(under), ["buyListing"]);
+  assert.deepEqual(under.calls[0].args, [SEAPORT_ADAPTER, 7n, "0x1234"]);
+  const over = decide(state(), [listing({ bid: bidOf, price: bidOf + 1n })], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(over), []);
 });

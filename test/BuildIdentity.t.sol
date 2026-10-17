@@ -20,11 +20,11 @@ import {ICore} from "../src/interfaces/ICore.sol";
 /// the generated interfaces are not part of the proof: `script/tools/gen-interfaces.sh --check` covers them, and the
 /// two library functions the abi does not list are pinned to the artifact selectors below.
 contract BuildIdentityTest is Fixture {
-    uint256 internal constant CORE_RUNTIME = 23773;
-    uint256 internal constant CONTROLLER_RUNTIME = 12011;
-    uint256 internal constant LIB_RUNTIME = 22131;
-    uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_558;
-    uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 508;
+    uint256 internal constant CORE_RUNTIME = 24273;
+    uint256 internal constant CONTROLLER_RUNTIME = 16337;
+    uint256 internal constant LIB_RUNTIME = 24525;
+    uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_536;
+    uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 534;
     uint256 internal constant RENDERER_RUNTIME = 8_241;
 
     function _json(string memory name) internal view returns (string memory) {
@@ -137,6 +137,19 @@ contract BuildIdentityTest is Fixture {
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0), "the core is linked to a compiled CoreLib");
         _identical(lib, "CoreLib", LIB_RUNTIME);
+    }
+
+    /// the deployed code size limit of EIP-170
+    uint256 internal constant EIP170_LIMIT = 24_576;
+
+    // promise: Core and CoreLib stay under the EIP-170 deployed code size limit, with the margin reported
+    function test_coreAndCoreLibFitEip170() public {
+        emit log_named_uint("Core runtime bytes", CORE_RUNTIME);
+        emit log_named_uint("Core margin under EIP-170", EIP170_LIMIT - CORE_RUNTIME);
+        emit log_named_uint("CoreLib runtime bytes", LIB_RUNTIME);
+        emit log_named_uint("CoreLib margin under EIP-170", EIP170_LIMIT - LIB_RUNTIME);
+        assertLt(CORE_RUNTIME, EIP170_LIMIT, "Core exceeds the EIP-170 code size limit");
+        assertLt(LIB_RUNTIME, EIP170_LIMIT, "CoreLib exceeds the EIP-170 code size limit");
     }
 
     /// @dev the comparison is not vacuous: one flipped byte in code that is not an immutable or a link slot fails it

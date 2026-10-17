@@ -5,8 +5,9 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {ICreditStrategy, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
+import {ICreditStrategy, ICreditScore, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
+import {CreditIds} from "../utils/CreditIds.sol";
 import {Fixture} from "../utils/Fixture.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
@@ -40,7 +41,9 @@ abstract contract InvariantFixture is Fixture {
     /// statements composed before the run
     uint256 internal constant COMPOSES = 4;
     /// real listings are read from the reserved tail of the recorded ids, which `_credits` never takes from
-    uint256 internal constant CANDIDATES = 40;
+    uint256 internal constant CANDIDATE_POOL = 200;
+    /// the candidate with the lowest ask per point, set by `_candidates`
+    uint256 internal bestCandidate;
 
     /// @dev the credit budget is kept in the balance side suites, which also sell 80 credits into the balance side, by
     /// giving the four actors 25 credits each
@@ -158,7 +161,7 @@ abstract contract InvariantFixture is Fixture {
                 tickSpacing: 60,
                 hooks: address(0)
             });
-            ctl.setBalancePoolKey(k);
+            ctl.setBalancePoolKey(k, 1e12);
         }
         // the hostile controller swap comes after the pool key is set on the real controller, so the key survives it
         if (hostile) core.setController(address(fuzz));
@@ -300,19 +303,21 @@ abstract contract InvariantFixture is Fixture {
         vm.deal(address(probeTarget), 100 ether);
     }
 
-    /// the cheapest real listings, so the bid reaches them first
+    /// the listings that clear first: the credits the strategy holds and lists among the last `CANDIDATE_POOL` recorded ids, ranked
+    /// by ask over score ascending, so the first candidates are the ones whose bid reaches the ask at the lowest rate.
+    /// the score is fixed at mint, so the order does not depend on the pot or the rate at this point
     function _candidates() internal {
-        uint256 n = CANDIDATES;
+        uint256 total = CreditIds.count();
+        uint256 n = total < CANDIDATE_POOL ? total : CANDIDATE_POOL;
         uint256[] memory ids = new uint256[](n);
         uint256[] memory key = new uint256[](n);
         for (uint256 i; i < n; ++i) {
-            uint256 id = _heldCredit(i);
+            uint256 id = CreditIds.at(total - 1 - i);
             ids[i] = id;
-            uint256 price = ICreditStrategy(Mainnet.CREDIT_STRATEGY).nftForSale(id);
-            // the price, larger is worse. unlisted ids sort last
-            key[i] = price == 0 ? type(uint256).max : price;
+            uint256 ask = _heldByStrategy(id) ? ICreditStrategy(Mainnet.CREDIT_STRATEGY).nftForSale(id) : 0;
+            // ask per point in 1e18 units, larger is worse. an id the strategy does not hold or list sorts last
+            key[i] = ask == 0 ? type(uint256).max : ask * 1e18 / _score(id);
         }
-        // keep the best 12 by selection
         uint256 keep = 12;
         uint256[] memory best = new uint256[](keep);
         for (uint256 k; k < keep; ++k) {
@@ -327,7 +332,12 @@ abstract contract InvariantFixture is Fixture {
             best[k] = ids[bi];
             key[bi] = type(uint256).max;
         }
+        bestCandidate = best[0];
         handler.setCandidates(best);
+    }
+
+    function _score(uint256 id) internal view returns (uint256) {
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
     /// tells the handler what the fixture already did, so the ghost model starts level with the core.
@@ -358,6 +368,7 @@ abstract contract InvariantFixture is Fixture {
         uint256 n;
         s[n++] = HandlerBase.buyCoin.selector;
         s[n++] = HandlerBase.buyCoin.selector;
+        s[n++] = HandlerBase.buyCoinNoBook.selector;
         s[n++] = HandlerBase.sellCoin.selector;
         s[n++] = HandlerBase.walletMove.selector;
         s[n++] = HandlerBase.sellForEth.selector;

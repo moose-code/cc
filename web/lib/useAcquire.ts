@@ -209,7 +209,9 @@ export function useAcquireCandidate() {
         ] as any, // mixed contracts; results are cast by position below
       });
       const val = <T,>(i: number) => (res[i].status === "success" ? ((res[i] as { result: unknown }).result as T) : undefined);
-      const pot = val<bigint>(0) ?? 0n;
+      // the room a purchase may spend: the live pot less the reserve of the snapshot (Core.room)
+      const potLive = val<bigint>(0) ?? 0n;
+      const pot = potLive > snap.reserve ? potLive - snap.reserve : 0n;
       const retired = val<boolean>(1) ?? true;
       const allowed: Record<Listing["source"], boolean> = { strategy: val<boolean>(2) ?? false, opensea: Boolean(seaportAdapter) && (val<boolean>(3) ?? false) };
 

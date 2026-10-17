@@ -102,7 +102,9 @@ library Prod {
     }
 
     function newController(address core, Sale memory sale, Credit memory credit) internal returns (IControllerV1) {
-        return IControllerV1(vm.deployCode("ControllerV1.sol:ControllerV1", abi.encode(core, sale, credit)));
+        return IControllerV1(
+            vm.deployCode("ControllerV1.sol:ControllerV1", abi.encode(core, sale, credit, Mainnet.defaultQuote()))
+        );
     }
 
     /// @dev sends `init` through the deterministic deployer with `salt`

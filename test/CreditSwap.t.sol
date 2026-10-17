@@ -92,6 +92,31 @@ contract CreditSwapTest is Fixture {
         assertEq(coin.balanceOf(address(core)), coreHeld, "the core keeps no coin");
     }
 
+    // promise: SPEC 6 swapCredit at the launch fee of 10,000 CC pulls and burns the whole fee
+    /// the launch value of swapFeeCc (script/config/mainnet.json), left as shipped rather than zeroed: a swap pulls
+    /// 10,000 CC from the caller and burns it on the coin
+    function test_feeAtTheLaunchValueOfTenThousandCc() public {
+        uint96 launchFee = 10_000e18;
+        assertEq(Mainnet.defaultSettings().swapFeeCc, launchFee, "the launch swap fee");
+        _setSwapFeeCc(launchFee);
+        (uint256 outId, uint256 inId) = _pair(100, 100);
+        _buyCoin(who, 20 ether);
+        uint256 held = coin.balanceOf(who);
+        assertGe(held, launchFee, "the caller holds the launch fee in coin");
+        uint256 supply = coin.totalSupply();
+        uint256 coreHeld = coin.balanceOf(address(core));
+
+        vm.prank(who);
+        coin.approve(address(core), launchFee);
+        vm.prank(who);
+        core.swapCredit(inId, outId);
+
+        assertEq(coin.balanceOf(who), held - launchFee, "the launch fee left the caller");
+        assertEq(coin.totalSupply(), supply - launchFee, "the launch fee was burned");
+        assertEq(coin.balanceOf(address(core)), coreHeld, "the core keeps no coin");
+        assertEq(core.pilePage(0, 1)[0], inId, "the swap still runs at the launch fee");
+    }
+
     // promise: SPEC 6 a zero fee skips the coin transfer
     function test_feeZeroBurnsNothing() public {
         _setSwapFeeCc(0);

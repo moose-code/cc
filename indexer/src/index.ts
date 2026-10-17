@@ -22,7 +22,7 @@ import { act, bump, bumpBalancePaid, idOf, lc, posOf, record, toJson, type At, t
 // ---- per-transaction memory ----------------------------------------------------------------------------------
 // Handlers run in log order, so facts that arrive earlier in a transaction are kept for the later event.
 
-/** The transaction of the latest EthRateFill. Each eth bid credit is preceded by one in its transaction. */
+/** The transaction of the latest EthRateFill or ValueRateFill. Each eth bid credit is preceded by one in its transaction. */
 let ethFill: string | null = null;
 /** The credit of the latest balance bid CreditBought, completed by the BalanceRateFill that follows it. */
 let balanceBuy: { tx: string; id: bigint; activityId: string } | null = null;
@@ -95,6 +95,13 @@ async function enterPile(
 
 ponder.on("Core:EthRateFill", async ({ event, context }) => {
   await coreEvent(context, event, "EthRateFill");
+  ethFill = event.transaction.hash;
+  await bump(context, event, { ethIntoCredits: event.args.spent });
+});
+
+// value mode (decision 148): an eth fill drops the shared balance instance and logs ValueRateFill in place of EthRateFill
+ponder.on("Core:ValueRateFill", async ({ event, context }) => {
+  await coreEvent(context, event, "ValueRateFill");
   ethFill = event.transaction.hash;
   await bump(context, event, { ethIntoCredits: event.args.spent });
 });
@@ -453,7 +460,7 @@ ponder.on("Controller:CreditSaleSet", async ({ event, context }) => {
   await controllerSetting(context, event, "CreditSaleSet", {
     saleOn: c.saleOn,
     window: BigInt(c.window),
-    floorBps: Number(c.floorBps),
+    spreadBps: Number(c.spreadBps),
     startBps: BigInt(c.startBps),
   });
 });
@@ -474,6 +481,27 @@ ponder.on("Controller:BalancePoolKeySet", async ({ event, context }) => {
     balanceTickSpacing: Number(a.tickSpacing),
     balanceHooks: lc(a.hooks),
   });
+});
+
+// the protected price (decision 148): the quote settings and the rate limited reference of the balance token
+ponder.on("Controller:QuoteSet", async ({ event, context }) => {
+  await record(context, event, "controller", "QuoteSet");
+  const q = event.args.quote;
+  await controllerSetting(context, event, "QuoteSet", {
+    referenceRateBpsPerHour: BigInt(q.referenceRateBpsPerHour),
+    referenceStepBps: Number(q.referenceStepBps),
+    referenceTolBps: Number(q.tolBps),
+    referenceMaxStale: BigInt(q.referenceMaxStale),
+    referenceMinSeconds: BigInt(q.referenceMinSeconds),
+    referenceMinLiquidity: q.minLiquidity,
+  });
+});
+
+ponder.on("Controller:ReferenceRefreshed", async ({ event, context }) => {
+  await record(context, event, "controller", "ReferenceRefreshed");
+  const id = lc(event.log.address);
+  if (!(await context.db.find(controller, { id }))) throw new Error(`ReferenceRefreshed from controller ${id} before its ControllerSet`);
+  await context.db.update(controller, { id }).set({ referencePrice: event.args.referencePrice, referenceSpot: event.args.spot, referenceTime: event.block.timestamp });
 });
 
 // ---- tokens ----------------------------------------------------------------------------------------------------

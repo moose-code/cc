@@ -219,6 +219,16 @@ contract GasCapTest is SeaportBase {
         _searchBatch("sellForEth (launch)", false);
     }
 
+    // promise: mode-off value pricing leaves the pre-packet 86-credit ETH batch within the mainnet transaction cap
+    function test_modeOffPrePacket86CreditEthBatchGasRegression() public {
+        assertFalse(core.settings().valueModeOn, "launch keeps value mode off");
+        _fundPot(30 ether);
+        _warp(1 hours + 1);
+        (, uint256 total) = _sellBatch(false, 86);
+        emit log_named_uint("mode-off 86-credit estimated tx gas", total);
+        assertGe(total, CAP, "the pre-packet 86-credit batch no longer fits the mainnet cap");
+    }
+
     // promise: SPEC 1 the balance bid batch fits the transaction cap; the module holds the token and pays the seller
     function test_gas_sellForBalance_batch() public {
         _enterPhase2();

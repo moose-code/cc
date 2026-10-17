@@ -1622,15 +1622,6 @@ button.tp-row:disabled {
 .detail {
   max-width: 920px;
 }
-.buybox-price {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.buybox-price .big {
-  font-size: 1.8rem;
-  font-weight: 600;
-}
 
 /* ---- row-list feed (credits) --------------------------------------------- */
 
@@ -1701,30 +1692,421 @@ button.tp-row:disabled {
   color: var(--ink);
 }
 
-/* ---- sell page ------------------------------------------------------------ */
+/* ---- sell page: credits on the left (cards up to 8, else a table), the batch in the rail --- */
 
-.sell-intro {
-  margin: 0 0 1.5rem;
-  max-width: 560px;
+.sell-refresh {
+  font-size: 12px;
+  color: var(--muted);
 }
-.sell-grid {
+.sell-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 24px 28px;
+}
+.sell-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+}
+.sell-bar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.sell-bar-title b {
+  font-size: 14px;
+  font-weight: 600;
+}
+.sell-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.sell-quick > button {
+  padding: 5px 10px;
+  background: none;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sell-quick > button:hover {
+  background: var(--surface);
+}
+.sell-quick .sort {
+  padding-left: 8px;
+}
+
+/* the offer explainer: one copy cell and three example ratings */
+.sell-how {
   display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 2rem;
-  align-items: start;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  font-size: 12px;
 }
-.bidcard {
+.sell-how > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 14px;
+}
+.sell-how > div + div {
+  border-left: 1px solid var(--hairline);
+}
+.sell-how p {
+  margin: 0;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.sell-how b {
+  font-size: 15px;
+  font-weight: 600;
+}
+.sell-how small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.sell-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--divider);
+  font-size: 13px;
+}
+.sell-empty p {
+  margin: 0;
+}
+
+/* checkbox mark: 14px in the table, 20px on a card; filled ink when on */
+.sell-chk {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  background: var(--surface);
+  border: 1px solid var(--ink);
+  color: var(--on-ink);
+  font-size: 9px;
+  line-height: 1;
+}
+.sell-chk.lg {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+}
+.sell-chk.on {
+  background: var(--ink);
+}
+
+/* cards: 4 columns, click anywhere toggles */
+.sell-cards {
   display: grid;
-  gap: 1rem;
-  padding: 1.25rem;
-  border: 1px solid var(--hairline);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
 }
-.sell-connect {
+.sell-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  cursor: pointer;
+  user-select: none;
+}
+.sell-card.on {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.sell-card-art {
+  position: relative;
+  padding: 10px;
+}
+.sell-card-art .art-frame {
+  display: block;
+}
+.sell-card-art .sell-chk {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+}
+.sell-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--hairline);
+  font-size: 12px;
+}
+.sell-card-cap {
+  font-size: 11px;
+  color: var(--muted);
+}
+.sell-card-offer {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.sell-card-offer b {
+  font-size: 22px;
+  font-weight: 600;
+}
+.sell-card-offer small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.sell-card-offer span {
+  margin-left: auto;
+  color: var(--muted);
+}
+.sell-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sell-card-batch {
+  padding-top: 8px;
+  border-top: 1px dashed var(--divider);
+}
+.sell .quiet {
+  color: var(--quiet);
+}
+.sell .off {
+  color: var(--disabled);
+}
+
+/* table: the whole row toggles; the balance column drops while the balance bid is off */
+.sell-table {
+  --sell-cols: 44px 40px minmax(0, 1fr) 90px 150px 150px 150px;
+  background: var(--surface);
+  border: 1px solid var(--structure);
+}
+.sell-table.no-bal {
+  --sell-cols: 44px 40px minmax(0, 1fr) 90px 150px 150px;
+}
+.sell-row {
   display: grid;
-  gap: 1rem;
-  padding: 1.5rem;
-  border: 1px solid var(--hairline);
+  grid-template-columns: var(--sell-cols);
+  align-items: center;
+  height: 44px;
+  padding-right: 16px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
 }
+.sell-row.on {
+  background: color-mix(in srgb, var(--surface) 70%, var(--paper));
+}
+.sell-row:hover {
+  background: color-mix(in srgb, var(--paper) 50%, var(--hairline));
+}
+.sell-row-head {
+  height: 36px;
+  border-bottom-color: var(--structure);
+  font-size: 11px;
+  color: var(--muted);
+  cursor: default;
+}
+.sell-row-head:hover {
+  background: none;
+}
+.sell-row-chk {
+  display: flex;
+  justify-content: center;
+}
+.sell-row-head .sell-row-chk {
+  cursor: pointer;
+}
+.sell-thumb .tile-credit {
+  width: 28px;
+  height: 28px;
+  outline: 1px solid var(--hairline);
+}
+.sell-row-id {
+  padding-left: 6px;
+}
+.sell-row .num {
+  text-align: right;
+  white-space: nowrap;
+}
+.sell-row-offer {
+  font-weight: 600;
+}
+.sell-row-offer small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.sell-table-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sell-pager {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--ink);
+}
+.sell-pager button {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.sell-pager button:disabled {
+  color: var(--disabled);
+  cursor: default;
+}
+
+/* rail: the batch total, its breakdown and the fills, sticky beside the list */
+.sell-rail-in {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px;
+}
+.sell-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sell-rail-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.sell-rail-head .seg {
+  font-size: 12px;
+}
+.sell-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--structure);
+  font-size: 12px;
+}
+.sell-hero > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.sell-hero b {
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+.sell-hero > div span {
+  font-size: 14px;
+  color: var(--muted);
+}
+.sell-break {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+.sell-break > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sell-break-total {
+  padding-top: 10px;
+  border-top: 1px dashed var(--divider);
+  font-weight: 600;
+}
+.sell-copy {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.sell-fills {
+  background: var(--surface);
+  border: 1px solid var(--divider);
+  font-size: 12px;
+}
+.sell-fill {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.sell-fill:last-child {
+  border-bottom: 0;
+}
+.sell-fill-head {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.sell-fill-more {
+  padding: 8px 12px;
+  color: var(--muted);
+}
+.sell-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sell-cta .action {
+  height: 44px;
+  gap: 10px;
+  font-size: 13px;
+}
+.sell-cta .action:not(:disabled)::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--m);
+}
+.sell-cta .action:disabled {
+  background: var(--hairline);
+  border-color: var(--hairline);
+  color: var(--disabled);
+}
+.sell-cta .caption {
+  margin: 0;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* the sell button of the connected wallet */
+.wallet-sell {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* compose page head row and its text button */
 .sell-head {
   display: flex;
   justify-content: space-between;
@@ -1744,55 +2126,61 @@ button.tp-row:disabled {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.sell-list {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--hairline);
-  margin-bottom: 1rem;
+
+@media (max-width: 1100px) {
+  .sell-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
-.sell-item {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-  width: 100%;
-  padding: 0.6rem 0.25rem;
-  border: 0;
-  border-bottom: 1px solid var(--hairline);
-  background: none;
-  font-family: var(--mono);
-  font-size: 14px;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
+@media (max-width: 860px) {
+  .sell-how {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .sell-how > div:first-child {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .sell-how > div:nth-child(2) {
+    border-left: 0;
+  }
+  .wallet-sell {
+    display: none;
+  }
 }
-.sell-item:hover {
-  background: var(--surface);
-}
-.sell-item.on {
-  background: var(--surface);
-}
-.sell-item .rl-id {
-  flex: 1;
-}
-.sell-check {
-  width: 20px;
-  text-align: center;
-  color: var(--ink);
-}
-.sell-summary {
-  display: grid;
-  gap: 0.4rem;
-  padding: 1rem 0;
-  border-top: 1px solid var(--hairline);
-  margin-bottom: 1rem;
-}
-.sell-summary .r {
-  display: flex;
-  justify-content: space-between;
-}
-.big-sm {
-  font-size: 1.2rem;
-  font-weight: 600;
+@media (max-width: 640px) {
+  .sell-main {
+    padding: 16px;
+  }
+  .sell-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .sell-card-offer b {
+    font-size: 18px;
+  }
+  .sell-card-offer span {
+    display: none;
+  }
+  .sell-rail-in {
+    padding: 20px 16px;
+  }
+  /* the table keeps checkbox, art, id, offer and batch */
+  .sell-table,
+  .sell-table.no-bal {
+    --sell-cols: 32px 36px minmax(0, 1fr) 96px 96px;
+  }
+  .sell-row {
+    padding-right: 8px;
+    font-size: 12px;
+  }
+  .sell-row-head .num {
+    white-space: normal;
+    line-height: 1.2;
+  }
+  .sell-row > :nth-child(4),
+  .sell-row > :nth-child(7) {
+    display: none;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1809,10 +2197,6 @@ button.tp-row:disabled {
   .rl-time {
     margin-left: auto;
     width: auto;
-  }
-  .sell-grid {
-    grid-template-columns: 1fr;
-    gap: 1.25rem;
   }
 }
 

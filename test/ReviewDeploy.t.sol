@@ -330,14 +330,21 @@ contract ReviewFundedTest is Fixture {
         return _launchCore(controller, lc.stack, rate, s);
     }
 
-    function _check(ICore c) internal view {
+    /// the pot less the reserve, the clamp of the read
+    function _room(ICore c) internal view returns (uint256) {
         uint256 pot = c.ethPot();
+        uint256 res = c.reserve();
+        return pot > res ? pot - res : 0;
+    }
+
+    function _check(ICore c) internal view {
+        uint256 room = _room(c);
         uint256 stored = c.rateAtCheckpoint();
         uint256 r = c.ethRate();
-        assertLe(r, pot, "the pot affords a credit at the live rate");
-        // the price state never climbs while the pot cannot afford a credit, and the read is the clamp
-        if (pot < stored) {
-            assertEq(r, pot, "the read is the clamp while unaffordable");
+        assertLe(r, room, "the pot less the reserve affords a credit at the live rate");
+        // the price state never climbs while the room cannot afford a credit, and the read is the clamp
+        if (room < stored) {
+            assertEq(r, room, "the read is the clamp while unaffordable");
         }
     }
 
@@ -354,11 +361,11 @@ contract ReviewFundedTest is Fixture {
                 _fees(c, bound(arg, 1e9, 20 ether));
             } else if (op == 1) {
                 uint256 r0 = c.ethRate();
-                uint256 pot = c.ethPot();
+                uint256 room = _room(c);
                 vm.warp(block.timestamp + bound(arg, 1, 400 hours));
                 uint256 r1 = c.ethRate();
                 assertGe(r1, r0, "the read fell without a fill");
-                assertLe(r1, r0 > pot ? r0 : pot, "climbed above the clamp");
+                assertLe(r1, r0 > room ? r0 : room, "climbed above the clamp");
             } else if (op == 2) {
                 uint256 id = _nextCredit();
                 vm.prank(Mainnet.CREDIT_STRATEGY);

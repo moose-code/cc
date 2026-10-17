@@ -12,7 +12,7 @@ export function ethAnchorWords(start: bigint, bucketWord: bigint, now: bigint, b
 export interface EthReplay {
   price: bigint; // ethPrice(): the price state at the first fill
   peak: bigint; // floorRate(): max(price state, remembered peak now)
-  pot: bigint; // ethPot plus the unbooked share the first book adds
+  pot: bigint; // ethPot plus the unbooked share the first book adds, less the reserve (Core.room)
   start: bigint; // anchor.minuteStartRate
   bucket: bigint; // anchor.minuteBucket
   nowBucket: bigint; // chain time / bucketSeconds
@@ -32,16 +32,21 @@ export interface EthReplay {
 // ceiling, ceilBps of max(fill price, peak) with no idle loosening in the same
 // block, and by rateCap (CoreLib.climb).
 export function replayEth(scores: bigint[], a: EthReplay): bigint {
+  return replayEthFills(scores, a).reduce((t, x) => t + x, 0n);
+}
+
+// What each credit of the batch pays, in sell order; replayEth is their sum.
+export function replayEthFills(scores: bigint[], a: EthReplay): bigint[] {
   let r = a.price;
   let peak = a.peak;
   let left = a.pot;
   let start = a.start;
   let bucket = a.bucket;
-  let total = 0n;
+  const fills: bigint[] = [];
   for (const score of scores) {
     const read = r < left ? r : left;
     const x = (read * score) / a.scorePer100Points;
-    total += x;
+    fills.push(x);
     left -= x;
     if (bucket !== a.nowBucket || r < (start * a.dropFloorBps) / 10000n) {
       bucket = a.nowBucket;
@@ -58,7 +63,7 @@ export function replayEth(scores: bigint[], a: EthReplay): bigint {
     if (cap > a.rateCap) cap = a.rateCap;
     r = next >= cap ? cap : next;
   }
-  return total;
+  return fills;
 }
 
 export interface BalanceReplay {
@@ -76,11 +81,16 @@ export interface BalanceReplay {
 // fills of the minute, so the minute start is the starting rate. The available() clamp is not replayed: with ample
 // available it does not bind, and a module too short to pay the floor reverts PotTooSmall, which no minOut can clear.
 export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
+  return replayBalanceFills(scores, a).reduce((t, x) => t + x, 0n);
+}
+
+// What each credit of the batch pays in the balance token, in sell order; replayBalance is their sum.
+export function replayBalanceFills(scores: bigint[], a: BalanceReplay): bigint[] {
   let r = a.rate;
   const start = a.rate;
-  let total = 0n;
+  const fills: bigint[] = [];
   for (const score of scores) {
-    total += (score * a.unit * r) / 10000n;
+    fills.push((score * a.unit * r) / 10000n);
     const denom = 10000n * a.scorePer100Points;
     const fallNum = a.dropPer100PointsBps * score;
     let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
@@ -89,5 +99,48 @@ export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
     if (dropped < a.floorBps) dropped = a.floorBps;
     r = dropped;
   }
-  return total;
+  return fills;
+}
+
+export interface ValueReplay {
+  rate: bigint; // balanceRate(): the shared instance now, bps of par
+  value: bigint; // controller.valuePerPoint(false): wei per point at the protected buy price
+  pot: bigint; // ethPot plus the unbooked share the first book adds, less the reserve (Core.room)
+  rateCap: bigint;
+  scorePer100Points: bigint;
+  dropPer100PointsBps: bigint;
+  dropFloorBps: bigint;
+  floorBps: bigint; // 10000 - balanceBidMarginBps
+}
+
+// Total eth sellForEth pays in value mode (decision 148) for the credits `scores` (in order) in one call. Each credit
+// pays min(rate * value * 100 / 10000, rateCap, pot left) * score / scorePer100Points (CoreLib._valueRate, Core.bidOf),
+// and the fill drops the shared instance as a balance fill does (replayBalance): one rounding, held at or above the
+// minute floor and the bid floor. The quote is the first fills of the minute, so the minute start is the starting rate.
+export function replayValue(scores: bigint[], a: ValueReplay): bigint {
+  return replayValueFills(scores, a).reduce((t, x) => t + x, 0n);
+}
+
+// What each credit of the batch pays in value mode, in sell order; replayValue is their sum.
+export function replayValueFills(scores: bigint[], a: ValueReplay): bigint[] {
+  let r = a.rate;
+  const start = a.rate;
+  let left = a.pot;
+  const fills: bigint[] = [];
+  for (const score of scores) {
+    let rate = (r * a.value * 100n) / 10000n;
+    if (rate > a.rateCap) rate = a.rateCap;
+    const read = rate < left ? rate : left;
+    const x = (read * score) / a.scorePer100Points;
+    fills.push(x);
+    left -= x;
+    const denom = 10000n * a.scorePer100Points;
+    const fallNum = a.dropPer100PointsBps * score;
+    let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
+    const mfloor = (start * a.dropFloorBps) / 10000n;
+    if (dropped < mfloor) dropped = mfloor;
+    if (dropped < a.floorBps) dropped = a.floorBps;
+    r = dropped;
+  }
+  return fills;
 }

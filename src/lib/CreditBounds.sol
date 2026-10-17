@@ -5,7 +5,7 @@ import {Credit} from "../interfaces/Interfaces.sol";
 
 /// the sanity bounds of the launch credit settings. internal only: the Core and the controller check them in their
 /// constructors and their setters, and the deploy scripts check the config against them, so there is one definition.
-/// the bounds stop typos and keep the sale prices above the credit cost
+/// the bounds stop typos and keep the credit start at or above its floor
 library CreditBounds {
     uint256 internal constant BPS = 10_000;
 
@@ -17,20 +17,15 @@ library CreditBounds {
         return v >= 1;
     }
 
-    function floorBpsOk(uint16 v) internal pure returns (bool) {
-        return v >= BPS;
-    }
-
     function startBpsOk(uint32 v) internal pure returns (bool) {
         return v >= BPS;
     }
 
     /// @notice the name of the first credit field out of bounds, or zero when every bounded field is inside its bounds.
-    /// `chosenComposeOn`, `minCcToChoose` and `saleOn` take any value
+    /// `chosenComposeOn`, `minCcToChoose`, `saleOn` and `spreadBps` take any value
     function firstViolation(Credit memory c) internal pure returns (bytes32) {
         if (!costToPotBpsOk(c.costToPotBps)) return "creditCostToPotBps";
         if (!windowOk(c.window)) return "creditWindow";
-        if (!floorBpsOk(c.floorBps)) return "creditFloorBps";
         if (!startBpsOk(c.startBps)) return "creditStartBps";
         return bytes32(0);
     }

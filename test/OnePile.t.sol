@@ -42,7 +42,7 @@ contract OnePileTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setBalancePoolKey(k);
+        ctl.setBalancePoolKey(k, spotOf(sp));
     }
 
     /// funds the balance pot and the eth pot so the balance bid has a pot to pay from and the eth bid reads nonzero

@@ -25,6 +25,7 @@ export const coreAbi = parseAbi([
   "function climbMultiplier() view returns (uint256)",
   "function spendState() view returns (uint64 bucket, uint128 budget, uint128 spent)",
   "function ethPot() view returns (uint256)",
+  "function reserve() view returns (uint256)",
   "function ethToBuyback() view returns (uint256)",
   "function ethRedeemBurn() view returns (uint256)",
   "function payee() view returns (address)",
@@ -39,7 +40,7 @@ export const coreAbi = parseAbi([
   "function statementAge(uint256 sid) view returns (uint256)",
   "function ratingOf(uint256 sid) view returns (uint256)",
   "function composerOf(uint256 sid) view returns (address)",
-  "function settings() view returns ((uint16 dropPer100PointsBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 pointsPerPage, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps, uint16 spendCapBps, uint32 bucketSeconds, uint32 balanceBidCapBps, uint32 idleStepSeconds, uint32 sniperSeconds))",
+  "function settings() view returns ((uint16 dropPer100PointsBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 pointsPerPage, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps, uint16 spendCapBps, uint32 bucketSeconds, uint32 balanceBidCapBps, uint32 idleStepSeconds, uint32 sniperSeconds, uint64 reserveWei, uint32 returnLockSeconds, bool valueModeOn))",
   "function paused() view returns (bool)",
   "function retired() view returns (bool)",
   "function chosenComposeOn() view returns (bool)",
@@ -91,6 +92,7 @@ export const coreAbi = parseAbi([
   "error InWindow(uint256 id)",
   "error NoBalanceModule()",
   "error NoCredit()",
+  "error NoQuote()",
   "error NotEligible()",
   "error NotForSale()",
   "error NotHeld()",
@@ -106,7 +108,7 @@ export const coreAbi = parseAbi([
   "error Reentrancy()",
   "error Reentrant()",
   "error Retired()",
-  "error SameBlockReturn(uint256 id)",
+  "error ReturnLocked(uint256 id, uint256 until)",
   "error SliceTooSmall()",
   "error Slippage()",
   "error BalanceTokenChanged()",
@@ -143,12 +145,22 @@ export const controllerAbi = parseAbi([
   "function decayHours() view returns (uint16)",
   "function anchorBps() view returns (uint32)",
   "function startBps() view returns (uint256)",
-  "function creditFloorBps() view returns (uint16)",
+  "function creditSpreadBps() view returns (uint16)",
+  "function floorMultBps() view returns (uint256)",
   "function creditStartBps() view returns (uint32)",
+  // the protected price (decision 148): the rate limited reference of the balance token, the pool spot it follows, the
+  // reference price settings, and the value of one point at the protected buy (false) or sale (true) price
+  "function referencePrice() view returns (uint256)",
+  "function referenceTime() view returns (uint40)",
+  "function spotPrice() view returns (uint256 spot, bool ok)",
+  "function quote() view returns (uint32 referenceRateBpsPerHour, uint16 referenceStepBps, uint16 tolBps, uint32 referenceMaxStale, uint32 referenceMinSeconds, uint128 minLiquidity)",
+  "function valuePerPoint(bool forSale) view returns (uint256 value, bool ok)",
   // actions
   "function buy(uint256 sid) payable",
   "function buyCredit(uint256 id) payable",
   "function buyCredits(uint256[] ids) payable",
+  "function refreshReference()",
+  "error NoQuote()",
 ]);
 
 // Credits: the holdings read, the owner read and the Core approval.
@@ -205,6 +217,7 @@ export const engineEventsAbi = parseAbi([
   // Core
   "event CreditBought(uint256 indexed id, address indexed from, uint256 cost)",
   "event EthRateFill(uint256 spent, uint256 rate, uint256 pot)",
+  "event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot)",
   "event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available)",
   "event ListingBought(uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate)",
   "event CreditAdopted(uint256 indexed id, uint256 cost)",
@@ -217,7 +230,7 @@ export const engineEventsAbi = parseAbi([
   "event Buyback(address indexed caller, uint256 amountIn, uint256 paid)",
   "event FeesAdded(uint256 amount, uint256 toPayee)",
   "event Funded(address indexed from, uint256 amount)",
-  "event SettingsSet((uint16 dropPer100PointsBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 pointsPerPage, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps, uint16 spendCapBps, uint32 bucketSeconds, uint32 balanceBidCapBps, uint32 idleStepSeconds, uint32 sniperSeconds) settings)",
+  "event SettingsSet((uint16 dropPer100PointsBps, uint16 dropFloorBps, uint16 climbPerMinBps, uint16 ceilBps, uint16 idleLoosenBps, uint16 saleFloorBps, uint16 saleToBuybackBps, uint16 recoveryClimbPerMinBps, uint16 recoveryGapBps, uint32 peakHalfLife, uint16 buybackDelay, bool redeemOn, bool balanceBidOn, uint16 redeemSlippageBps, uint16 balanceBidMarginBps, uint16 redeemBurnBps, uint128 buybackSlice, uint64 keeperFee, uint48 keeperMaxBaseFee, uint64 rateCap, uint64 callerFee, uint48 callerMaxBaseFee, uint16 feeToRedeemBurnBps, uint24 payeePpm, uint32 pointsPerPage, uint96 swapFeeCc, uint16 saleToArtistBps, uint16 saleToOperatorBps, uint16 climbMultiplierCapBps, uint16 spendCapBps, uint32 bucketSeconds, uint32 balanceBidCapBps, uint32 idleStepSeconds, uint32 sniperSeconds, uint64 reserveWei, uint32 returnLockSeconds, bool valueModeOn) settings)",
   "event PausedSet(bool paused)",
   "event PayeeSet(address indexed payee)",
   "event ArtistSet(address indexed artist)",
@@ -234,7 +247,7 @@ export const transferEventAbi = parseAbi(["event Transfer(address indexed from, 
 // keeper reads: the listing adapters, the CreditStrategy, Seaport 1.6 order status, the fee escrow, the factory launch
 // record (DeploymentInfoV2, src/interfaces/ArtCoinsV2.sol)
 export const listingAdapterAbi = parseAbi([
-  "function price(uint256 id, bytes params) view returns (address target, uint256 value, bytes data)",
+  "function price(uint256 id, bytes params) view returns (address target, uint256 value, bytes data, address offerer)",
   "function allowedRecipient(address a) view returns (bool)",
 ]);
 export const creditStrategyAbi = parseAbi(["function nftForSale(uint256 id) view returns (uint256)"]);

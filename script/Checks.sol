@@ -74,17 +74,17 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
     /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0xaf9298c826f8637475bb78f972e370066580954f33b15d7f80c378a6245fcca5;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x4eb81deea42baa58b4e5d45e5b3bd4cf95488ad22a8fd190ca875caa38f1049b;
+    bytes32 internal constant BUILD_HASH_CORE = 0x0b6643f150ed620c8fc7511ae9add795f81e51bfbb336dd959635fe67d24176b;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xd301d93d25b07d7c36feeccb36f137eae9b784d7028a9f8321a08f5b253c552b;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
-        0xfc88e789e86afc068aed7b393cb8b05cbb8fafc012debff2ad8381389f9afa4a;
+        0x545e5ac240bf8a7338a2e869237cccdf7703fddeed3ae6e7606e9194ce2d632f;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
-        0x0b17448fac198c25ec624fb38e905c11e25033afad67f37e17571f7393f628ae;
+        0xf5c8fd4b675f717f11908ff47d000431035956c15a5f38d74b63a3d40310d30c;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
-        0x6bd01b6fa306c2d98acc6feb34ee0ec61ead5ae90db4e8c0a6e69f512e7473bf;
+        0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x21bc6e3d0b34d0e43e48bdc78e106393a18ba34e6cc9dc81a722844d60b12ce6;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xe6282bcb727a6f4829e4207480088658bd9519802b25898fa4d4c4c125932ee8;
+        0xe54162719a0ccd5139c5f5ca1a31f9231cf980bd88b68cb560fe4f2d5b20e294;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -181,15 +181,39 @@ abstract contract LaunchChecks is PostflightChecks {
             "sale settings inside the bounds",
             badSale == 0,
             badSale == 0
-                ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost"
+                ? "markupBps startCapBps decayHours anchorHalfLife anchorMinCost, reference referenceStepBps tolBps"
                 : string(abi.encodePacked("out of bounds: ", badSale))
+        );
+        // the reference price settings (decision 154): tolBps and referenceMinSeconds are launch values, the other three
+        // are owner inputs set once the balance token pool exists and its depth is known. at 0 the reference price is
+        // unusable, so value mode fails closed to NoQuote; the launch keeps value mode off, so the row warns and never fails
+        _warn(
+            "warn: reference price inputs pending the balance token pool",
+            c.quote.referenceRateBpsPerHour != 0 && c.quote.referenceStepBps != 0 && c.quote.referenceMaxStale != 0
+                && c.quote.minLiquidity != 0,
+            string.concat(
+                "tolBps ",
+                vm.toString(c.quote.tolBps),
+                "; referenceRateBpsPerHour ",
+                vm.toString(c.quote.referenceRateBpsPerHour),
+                " referenceStepBps ",
+                vm.toString(c.quote.referenceStepBps),
+                " referenceMaxStale ",
+                vm.toString(c.quote.referenceMaxStale),
+                " referenceMinSeconds ",
+                vm.toString(c.quote.referenceMinSeconds),
+                " minLiquidity ",
+                vm.toString(c.quote.minLiquidity),
+                " are set with setQuote before the switch; valueModeOn ",
+                c.settings.valueModeOn ? "true" : "false"
+            )
         );
         bytes32 badCredit = creditViolation(c);
         _check(
             "credit settings inside the bounds",
             badCredit == 0,
             badCredit == 0
-                ? "creditCostToPotBps creditWindow creditFloorBps creditStartBps"
+                ? "creditCostToPotBps creditWindow creditStartBps (creditSpreadBps takes any value)"
                 : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
@@ -842,6 +866,15 @@ abstract contract LaunchChecks is PostflightChecks {
         );
         _info("signoff: statement sale", string.concat("saleFloorBps ", vm.toString(c.settings.saleFloorBps)));
         _info(
+            "signoff: reserve and return lock",
+            string.concat(
+                "reserveWei ",
+                vm.toString(c.settings.reserveWei),
+                " (the reserve is the larger of it and 1.5 times the queued compose and redeem payments), returnLockSeconds ",
+                vm.toString(c.settings.returnLockSeconds)
+            )
+        );
+        _info(
             "signoff: credit swap",
             string.concat("swapFeeCc ", vm.toString(c.settings.swapFeeCc), " coin burned per swapCredit")
         );
@@ -901,8 +934,8 @@ abstract contract LaunchChecks is PostflightChecks {
                 c.credit.saleOn ? "on" : "off",
                 " window ",
                 vm.toString(c.credit.window),
-                "s floor ",
-                vm.toString(c.credit.floorBps),
+                "s spread over the bid's hard cap ",
+                vm.toString(c.credit.spreadBps),
                 " start ",
                 vm.toString(c.credit.startBps),
                 " bps, cost to pot ",

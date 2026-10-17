@@ -5,7 +5,7 @@ import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {CreditSale} from "../src/interfaces/Interfaces.sol";
+import {CreditSale, Settings} from "../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -14,10 +14,10 @@ import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditS
 
 /// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
 /// floor over `creditWindow` and rests at the floor. the floor is the larger of the credit's cost and
-/// `valueOf(score)`, times `creditFloorBps`; the start is the floor times `creditStartBps`. `valueOf` is the larger of the rate term
+/// `valueOf(score)`, times `floorMultBps()` (`(10_000 + creditSpreadBps)` of the Core's `balanceBidCapBps`); the start is the floor times `creditStartBps`. `valueOf` is the larger of the rate term
 /// `floorRate * score / refScore` and the balance token pool term, which reads the live pool and the live unit: a
 /// missing or failed pool read leaves the pool term at 0 and the sale never reverts for it. the core keeps a hard floor
-/// at the credit's cost. a buy pays the price, with the artist and operator cuts taken off it (decision 123). while
+/// at `saleFloorBps` of the credit's cost. a buy pays the price, with the artist and operator cuts taken off it (decision 123). while
 /// the sale is on compose takes only credits past their window
 contract CreditSaleTest is Fixture {
     uint256 internal constant BPS = 10_000;
@@ -70,8 +70,9 @@ contract CreditSaleTest is Fixture {
     // promise: INTEGRATION BadSetting and OnlyOwner on the credit sale setters
     function test_setters_boundsAndEventsAndOwner() public {
         assertEq(ctl.creditWindow(), 4 hours, "launch window");
-        assertEq(ctl.creditFloorBps(), 11_000, "launch floor");
-        assertEq(ctl.creditStartBps(), 30_000, "launch start");
+        assertEq(ctl.creditSpreadBps(), 1_000, "launch spread");
+        assertEq(ctl.floorMultBps(), 11_000, "launch floor multiplier, 10 percent over the 10,000 cap");
+        assertEq(ctl.creditStartBps(), 15_000, "launch start");
 
         CreditSale memory c = _creditSale();
         c.saleOn = true;
@@ -91,11 +92,16 @@ contract CreditSaleTest is Fixture {
         _creditBad(c, "creditWindow");
         c.window = type(uint32).max;
 
-        c.floorBps = type(uint16).max;
+        // the spread couples with the reference tolerance (loop closure, decision 157): at the launch tol 450 the
+        // spread must be at least 943, so a zero spread reverts and a spread above it stores
+        c.spreadBps = 0;
+        _creditBad(c, "creditSpreadBps");
+        c.spreadBps = 1_000;
         ctl.setCredit(c);
-        c.floorBps = 9_999;
-        _creditBad(c, "creditFloorBps");
-        c.floorBps = type(uint16).max;
+        assertEq(ctl.floorMultBps(), 11_000, "spread 1,000 at the 10,000 cap is a 10 percent floor over the reference");
+        c.spreadBps = type(uint16).max;
+        ctl.setCredit(c);
+        assertEq(ctl.creditSpreadBps(), type(uint16).max);
 
         c.startBps = type(uint32).max;
         ctl.setCredit(c);
@@ -125,15 +131,15 @@ contract CreditSaleTest is Fixture {
         uint256 id = ids[0];
         (, uint256 cost,) = core.creditInfo(id);
         assertLt(core.ethRate(), cost, "the bid is below the cost");
-        uint256 floor = cost * ctl.creditFloorBps() / BPS;
+        uint256 floor = cost * ctl.floorMultBps() / BPS;
         uint256 start = floor * ctl.creditStartBps() / BPS;
         uint256 window = ctl.creditWindow();
 
         // age 0: the start
         assertEq(ctl.creditPrice(id), start, "start at acquisition");
         // the balance token baseline is off, so the floor is the cost times the floor bps
-        assertEq(floor, cost * 11_000 / BPS, "floor is 110 percent of cost");
-        assertEq(start, floor * 3, "start is three times the floor");
+        assertEq(floor, cost * 11_000 / BPS, "floor is 110 percent of cost at the launch spread and cap");
+        assertEq(start, floor * 15_000 / BPS, "start is 150 percent of the floor");
 
         // mid window: on the straight line
         _warp(window / 2);
@@ -175,6 +181,7 @@ contract CreditSaleTest is Fixture {
         _fundPot(20 ether);
         vm.prank(owner);
         core.setRate(0.1 ether);
+        _setReturnLock(0); // the price promise, not the lock: test/ReturnLock.t.sol covers the lock
         _on();
         _warp(ctl.creditWindow());
         uint256 price = ctl.creditPrice(id);
@@ -190,7 +197,7 @@ contract CreditSaleTest is Fixture {
         uint256[] memory back = new uint256[](1);
         back[0] = id;
         uint256 ethBefore = buyer.balance;
-        vm.roll(block.number + 1); // a credit sold through the credit sale returns through a door in a later block
+        _nextSecond(); // with the lock at 0 a credit sold through the credit sale returns in a later second
         vm.prank(buyer);
         core.sellForEth(back);
         assertLt(buyer.balance - ethBefore, price, "the sell back pays less than the purchase cost");
@@ -199,9 +206,10 @@ contract CreditSaleTest is Fixture {
 
     // promise: an outsider gains nothing at the engine's cost: a credit bought at its sale price and sold straight
     // back into the eth bid returns less than it cost, for the credit with the lowest sale price. the floor is
-    // `valueOf(score) * creditFloorBps >= floorRate * score / refScore * creditFloorBps >= bidOf`, so the round trip loses
+    // `valueOf(score) * floorMultBps >= floorRate * score / RATE_SCORE * floorMultBps >= bidOf`, so the round trip loses
     function test_noProfit_buyThenSellBackNeverBeatsTheBid() public {
         uint256[] memory ids = _fillEthPile(40);
+        _setReturnLock(0); // the price promise, not the lock
         _on();
         _warp(ctl.creditWindow());
         uint256 id = ids[0];
@@ -220,15 +228,15 @@ contract CreditSaleTest is Fixture {
         CREDITS.setApprovalForAll(address(core), true);
         uint256[] memory one = new uint256[](1);
         one[0] = id;
-        vm.roll(block.number + 1); // the same block return is refused; the profit test is about price, not timing
+        _nextSecond(); // the same second return is refused; the profit test is about price, not timing
         core.sellForEth(one);
         vm.stopPrank();
         assertLe(arb.balance, pay, "the round trip returned more eth than the credit cost");
     }
 
-    // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) * creditFloorBps, the flat floorRate term dropped
-    /// a credit scoring well below refScore floors at its per-point value, not the average-credit floor rate. the
-    /// dropped term (decision 115a, redundant under the per-point bid of decision 116) would have priced it at floorRate * creditFloorBps, far above
+    // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) * floorMultBps, the flat floorRate term dropped
+    /// a credit scoring well below 100 points floors at its per-point value, not the floor rate. the dropped term
+    /// (decision 115a, redundant under the per-point bid of decision 116) would have priced it at floorRate * floorMultBps, far above
     function test_floor_usesValueOfNotTheFlatFloorRate() public {
         uint256 id = _fillEthPile(1)[0];
         _on();
@@ -246,10 +254,10 @@ contract CreditSaleTest is Fixture {
         assertEq(value, FullMath.mulDiv(fr, s, RATE_SCORE), "valueOf is the rate term, no pool");
         uint256 hi = _max(cost, value);
         assertLt(hi, fr, "the governing term is below the flat floor rate that was dropped");
-        uint256 fb = ctl.creditFloorBps();
+        uint256 fb = ctl.floorMultBps();
         _warp(ctl.creditWindow());
-        assertEq(ctl.creditPrice(id), hi * fb / BPS, "the floor is max(cost, valueOf(score)) * creditFloorBps");
-        assertLt(ctl.creditPrice(id), fr * fb / BPS, "and below floorRate * creditFloorBps, the dropped flat term");
+        assertEq(ctl.creditPrice(id), hi * fb / BPS, "the floor is max(cost, valueOf(score)) * floorMultBps");
+        assertLt(ctl.creditPrice(id), fr * fb / BPS, "and below floorRate * floorMultBps, the dropped flat term");
     }
 
     // promise: SPEC 1 buyCredits prices each credit after the previous sale
@@ -298,6 +306,58 @@ contract CreditSaleTest is Fixture {
         _buyAt(buyer, id, price);
         assertEq(core.ethPot() - potBefore, toPot, "the credit cost basis share of the rest goes to the pot");
         assertEq(core.ethToBuyback() - buybackBefore, rest - toPot, "the remainder of the rest goes to the buyback");
+    }
+
+    // promise: SPEC 8 the credit floor multiplier is (10,000 + spreadBps) of the Core's live balanceBidCapBps
+    /// a cap change moves the credit floor with no controller edit: 11,000 at the cap of 10,000, 12,100 at the hard cap of
+    /// 11,000 of decision 152, 13,200 at 12,000 (launch spread 1,000, decision 155)
+    function test_floor_followsTheLiveCap() public {
+        uint256[] memory ids = _armCostGoverns(1);
+        uint256 id = ids[0];
+        (, uint256 cost,) = core.creditInfo(id);
+        _warp(ctl.creditWindow());
+        uint32[3] memory caps = [uint32(10_000), 11_000, 12_000];
+        uint256[3] memory mult = [uint256(11_000), 12_100, 13_200];
+        for (uint256 i; i < 3; ++i) {
+            Settings memory s = core.settings();
+            s.balanceBidCapBps = caps[i];
+            _setSettings(s);
+            assertEq(ctl.floorMultBps(), mult[i], "the multiplier follows the cap");
+            assertEq(ctl.creditPrice(id), cost * mult[i] / BPS, "the floor follows the cap");
+        }
+    }
+
+    // promise: SPEC 8 the credit price is never under the Core's floor: with saleFloorBps above floorMultBps the floor is
+    // saleFloorBps of the cost, and a buy at the quote passes sellCreditTo
+    function test_price_neverUnderTheCoreFloor() public {
+        uint256[] memory ids = _armCostGoverns(1);
+        uint256 id = ids[0];
+        (, uint256 cost,) = core.creditInfo(id);
+        Settings memory s = core.settings();
+        s.saleFloorBps = 12_000; // above the launch multiplier 11,000, at most the 15,000 markup
+        _setSettings(s);
+        _warp(ctl.creditWindow());
+        uint256 price = ctl.creditPrice(id);
+        assertEq(price, cost * 12_000 / BPS, "the floor is the Core's floor");
+        _buyAt(buyer, id, price);
+        assertEq(CREDITS.ownerOf(id), buyer, "the quote passes sellCreditTo");
+    }
+
+    // promise: SPEC 8 sellCreditTo refuses a payment under saleFloorBps of the cost, read at the sale
+    /// the credit door floors on the one sale floor: at 10,000 the cost, lowered to 5,000 half the cost
+    function test_buy_coreFloorFollowsSaleFloorBps() public {
+        uint256[] memory ids = _fillEthPile(2);
+        LowballCreditController lowball = new LowballCreditController(address(core));
+        _setController(address(lowball));
+        vm.deal(address(lowball), 10 ether);
+        Settings memory s = core.settings();
+        s.saleFloorBps = 5_000;
+        _setSettings(s);
+        (, uint256 cost,) = core.creditInfo(ids[0]);
+        vm.expectRevert(ICore.BelowFloor.selector);
+        lowball.sell{value: cost / 2 - 1}(ids[0], buyer);
+        lowball.sell{value: cost / 2}(ids[0], buyer);
+        assertEq(CREDITS.ownerOf(ids[0]), buyer, "half the cost passes at saleFloorBps 5,000");
     }
 
     // promise: INTEGRATION BelowFloor on sellCreditTo

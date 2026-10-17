@@ -259,7 +259,7 @@ contract Activity is Scenario {
 
     function _sweepSeaport(uint256 id, bytes memory params, uint256 margin) internal returns (bool valid, bool done) {
         try IListingAdapter(seaportAdapter).price(id, params) returns (
-            address target, uint256 value, bytes memory data
+            address target, uint256 value, bytes memory data, address
         ) {
             _topUp(bot, value + 1 ether, value + 100 ether);
             if (!_dry(bot, target, value, data)) return (false, false);

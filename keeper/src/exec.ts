@@ -12,7 +12,7 @@ import {
   type PrivateKeyAccount,
   type PublicClient,
 } from "viem";
-import { coreAbi } from "@cc/engine/abis";
+import { controllerAbi, coreAbi } from "@cc/engine/abis";
 import { revertName, txError } from "@cc/engine/errors";
 import type { Config } from "./config.ts";
 import { recheck, type Intended, type Listing, type Policy, type State } from "./decide.ts";
@@ -55,14 +55,15 @@ export class Executor {
   }
 
   private data(c: Intended): Hex {
-    return encodeFunctionData({ abi: coreAbi, functionName: c.functionName as any, args: c.args as any });
+    const abi = c.target === "controller" ? controllerAbi : coreAbi;
+    return encodeFunctionData({ abi, functionName: c.functionName as any, args: c.args as any });
   }
 
   // runs one decided call: returns what happened. never sends while another transaction of the keeper is pending
   async run(c: Intended, s: State, listing?: Listing): Promise<Outcome> {
     const chainId = this.cfg.record.chainId;
     if (this.breaker.paused(c.door)) return { kind: "skipped", reason: `door paused by the breaker until ${new Date(this.breaker.pausedUntil(c.door)!).toISOString()}` };
-    const to = this.cfg.record.core;
+    const to = c.target === "controller" ? s.controller : this.cfg.record.core;
     const data = this.data(c);
 
     // simulation: the node runs the call from the keeper at the latest block

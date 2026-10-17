@@ -24,7 +24,7 @@ abstract contract NewProd is SystemDeployer {
     }
 
     function _newController(address core, LaunchConfig memory c) internal virtual override returns (address) {
-        return address(new ControllerV1{salt: CONTROLLER_SALT}(core, c.sale, c.credit));
+        return address(new ControllerV1{salt: CONTROLLER_SALT}(core, c.sale, c.credit, c.quote));
     }
 
     function _newSeaportAdapter(address core, address[] memory recipients) internal virtual override returns (address) {

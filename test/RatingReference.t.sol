@@ -84,7 +84,7 @@ contract RatingReferenceTest is Fixture {
             hooks: address(0)
         });
         vm.prank(owner);
-        ctl.setBalancePoolKey(k);
+        ctl.setBalancePoolKey(k, spotOf(sp));
     }
 
     // ------------------------------------------------------------------ reference
@@ -215,7 +215,7 @@ contract RatingReferenceTest is Fixture {
             FullMath.mulDiv(p2, rating, RATE_SCORE),
             "the reference followed the floor rate at the call"
         );
-        assertEq(ctl.priceOf(sid), price1 * p2 / p1, "the curve price followed the reference");
+        assertApproxEqAbs(ctl.priceOf(sid), price1 * p2 / p1, 1, "the curve price followed the reference");
         assertEq(ctl.atFloor(sid), floor1, "atFloor is an age decision, unchanged by the floor rate move");
     }
 

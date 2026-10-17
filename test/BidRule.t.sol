@@ -269,6 +269,58 @@ contract BidRuleTest is Fixture {
         assertApproxEqRel(core.ethRate(), price * 1_218_994_419_994_757_376 / 1e18, 1e9, "and it climbs from there");
     }
 
+    // promise: SPEC 1 decision 147: the climb's pot clamp counts the unbooked fee income
+    /// the hook has pushed fee income that no `_book` has folded into `ethPot` yet. the stored price climbs toward the
+    /// pot share of that pending income, so the eth rate grows after launch before anyone books
+    function test_climbCountsUnbookedFeeIncome() public {
+        _with(_openCeiling);
+        assertEq(core.ethPot(), 0, "nothing booked at launch");
+        assertEq(address(core).balance, 0, "fresh deploy holds no eth");
+        // the hook pushes 1 eth of pool bounty, unbooked. the pot share is 0.9 eth (feeToRedeemBurnBps 1000), far
+        // above the climbed rate, so the clamp does not bind the climb
+        vm.deal(address(core), 1 ether);
+        vm.prank(owner);
+        core.setRate(START);
+        assertEq(core.ethRate(), START, "the opening rate before the climb");
+        _warp(10 minutes);
+        uint256 rate = core.ethRate();
+        assertEq(core.ethPot(), 0, "the booked pot is still empty, the climb rose on the pending income");
+        assertGt(rate, START, "the stored price climbed on the pending pot clamp");
+        // _openCeiling climbs at climbPerMinBps 1000: 1.1 per minute, 1.1^10 = 2.5937424601
+        assertApproxEqRel(rate, START * 2_593_742_460_100_000_000 / 1e18, 1e9, "the climb for 10 minutes");
+    }
+
+    // promise: SPEC 1 decision 147: a payable door's own value is not pending income
+    /// `fund` books the income above the pots, checkpoints, then adds `msg.value` to the pot. the checkpoint runs while
+    /// `msg.value` is on the balance but not in a pot, and it reads a zero pending pot, so the stored price holds
+    function test_payableDoorExcludesItsOwnValueFromPendingIncome() public {
+        assertEq(core.ethPot(), 0, "nothing booked at launch");
+        assertEq(address(core).balance, 0, "fresh deploy holds no eth");
+        _warp(10 minutes);
+        vm.deal(address(this), 1 ether);
+        core.fund{value: 1 ether}();
+        assertEq(core.ethPot(), 1 ether, "the whole value is the pot, none booked as fee income");
+        assertEq(core.rateAtCheckpoint(), START, "fund's own value is not pending income, the climb held at the pot");
+    }
+
+    // promise: SPEC 1 decision 147: booking the pending income does not jump the climb
+    /// the pot clamp is `ethPot` plus the pending pot share, conserved across a `_book` that folds the pending income
+    /// into `ethPot`, so the eth rate is continuous across `book` and the climb continues from the same price
+    function test_bookDoesNotJumpTheClimb() public {
+        _with(_openCeiling);
+        vm.deal(address(core), 5 ether);
+        vm.prank(owner);
+        core.setRate(START);
+        _warp(10 minutes);
+        uint256 before = core.ethRate();
+        assertGt(before, START, "climbing on the pending pot clamp");
+        core.book();
+        assertEq(core.ethPot(), 4.5 ether, "the pot share of the booked income (feeToRedeemBurnBps 1000)");
+        assertEq(core.ethRate(), before, "book conserves the clamp pot, the rate does not jump");
+        _warp(10 minutes);
+        assertGt(core.ethRate(), before, "the climb continues from the booked pot");
+    }
+
     // promise: SPEC 1 the price state stays at or below rateCap (inv 19)
     /// a year of idle loosening never takes the rate above `rateCap`
     function test_loosenedCeilingNeverPassesTheRateCap() public {
@@ -507,6 +559,120 @@ contract BidRuleTest is Fixture {
         emit log_named_uint("sniper pump: marginal gain over no pump (wei)", gain);
         emit log_named_uint("sniper pump: fee fed to the engine (wei)", feePaid);
         assertLt(gain, feePaid, "the sniper-window pump marginal gain is below the fee paid");
+    }
+
+    // ------------------------------------------------------------------ the unbooked drip (decision 147), launch settings
+
+    /// @dev the unbooked fee income: the Core balance above the three pots
+    function _pending() internal view returns (uint256) {
+        return address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn();
+    }
+
+    /// @dev the pot share of the pending income that the next `_book` folds into `ethPot`: the payee share while
+    /// latched, then the redeem burn reserve share of the rest, the remainder to the pot
+    function _pendingPot() internal view returns (uint256) {
+        Settings memory s = core.settings();
+        uint256 income = _pending();
+        uint256 toPayee = core.payeeOn() ? income * s.payeePpm / 1_000_000 : 0;
+        uint256 toBurn = (income - toPayee) * s.feeToRedeemBurnBps / 10_000;
+        return income - toPayee - toBurn;
+    }
+
+    // promise: SPEC 1 decision 147: the unbooked drip scales the idle loosening and the pot multiplier like a booked pot
+    /// six buys through the real pool leave fee income unbooked. with no door to fold it, the pot share of the pending
+    /// income raises the climb multiplier above 1x and loosens the ceiling faster over an idle hour than the same fill
+    /// with no drip. launch settings, a fast climb so the read pins to the loosened ceiling the multiplier scales
+    function test_unbookedDripScalesTheMultiplierAndLoosening() public {
+        Settings memory s = core.settings();
+        s.climbPerMinBps = 1_000;
+        s.recoveryClimbPerMinBps = 1_000;
+        _setSettings(s);
+        _skipSniperWindow();
+        // a booked pot under one page keeps the multiplier at 1x without the drip; one fill sets the anchor
+        _potTo(0.1 ether);
+        _sellOne();
+        uint256 snap = vm.snapshotState();
+
+        // no drip: an idle hour at the small booked pot
+        _warp(1 hours);
+        uint256 rate0 = core.ethRate();
+        uint256 mult0 = core.climbMultiplier();
+        uint256 floor0 = core.floorRate();
+        assertEq(mult0, 10_000, "the small booked pot keeps the multiplier at 1x");
+        vm.revertToState(snap);
+
+        // the drip: six buys left unbooked, then the same idle hour
+        autoBook = false;
+        uint256 potBooked = core.ethPot();
+        for (uint256 i; i < 6; ++i) {
+            _buyCoin(funder, 3 ether);
+        }
+        assertEq(core.ethPot(), potBooked, "no door booked, the drip waits above the pots");
+        assertGt(_pending(), 0, "the hook pushed fee income");
+        _warp(1 hours);
+        uint256 rate1 = core.ethRate();
+        uint256 mult1 = core.climbMultiplier();
+        uint256 floor1 = core.floorRate();
+
+        assertGt(mult1, mult0, "the pot share of the unbooked drip raised the climb multiplier above 1x");
+        assertGt(rate1, rate0, "the drip loosened the ceiling faster, the idle read is higher");
+        assertGe(floor1, floor0, "the floor rate climbed at least as far with the drip");
+        // the read rides the pot plus the pending pot share (decision 147), never above it
+        assertLe(rate1, core.ethPot() + _pendingPot(), "the read stays inside the pending pot clamp");
+    }
+
+    // promise: SPEC 1 decision 147: a pot that grows only from unbooked income climbs the bid with no further fill
+    /// one fill sets the anchor, then three hourly buys arrive unbooked and the clock idles an hour each. the eth bid
+    /// climbs every round as the pending pot share grows, with no door booking and no further credit fill, and stays
+    /// inside the pot plus the pending pot share. launch settings
+    function test_growingUnbookedPotClimbsWithNoFurtherFill() public {
+        _with(_openCeiling);
+        _skipSniperWindow();
+        _potTo(1 ether);
+        _sellOne();
+        autoBook = false;
+        uint256 potBooked = core.ethPot();
+        uint256 last = core.ethRate();
+        for (uint256 i; i < 3; ++i) {
+            _buyCoin(funder, 1 ether);
+            assertEq(core.ethPot(), potBooked, "no book folded the income into the pot");
+            _warp(1 hours);
+            uint256 r = core.ethRate();
+            assertGt(r, last, "the bid climbs as the unbooked pot grows, with no further fill");
+            assertLe(r, core.ethPot() + _pendingPot(), "the climb rides the pot plus the pending pot share");
+            last = r;
+        }
+    }
+
+    // promise: SPEC 1 a fill after idle time runs at the climbed rate and leaves it as the anchor and peak
+    /// the fixture's `_fillEthPile` restates the price to the opening rate with `setRate` before a fill, which erases the
+    /// idle climb. this fills after idle time with no restatement: the fill pays the climbed rate and leaves that rate
+    /// as the anchor, the minute start and the remembered peak, with one launch drop stored. launch settings
+    function test_fillAfterIdleTimeUsesTheClimbedRateAsTheAnchorAndPeak() public {
+        _skipSniperWindow();
+        _potTo(20 ether);
+        _sellOne();
+        _warp(2 hours);
+        uint256 climbed = core.ethRate();
+        (uint256 anchorBefore,,) = _anchor();
+        assertGt(climbed, anchorBefore, "the rate climbed above the last fill rate over the idle hours");
+
+        uint256 id = _credits(seller, 1)[0];
+        _unitScore(id);
+        uint256 quote = core.ethRate();
+        assertEq(quote, climbed, "no time passed between the read and the fill");
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+        assertEq(seller.balance - before, quote, "the fill paid the climbed rate, not a restated opening rate");
+
+        (uint256 anchor, uint256 start,) = _anchor();
+        assertEq(anchor, climbed, "the anchor is the climbed rate paid");
+        assertEq(start, climbed, "and the minute start");
+        (uint256 peakRate, uint256 peakTime) = _peak();
+        assertEq(peakRate, climbed, "the remembered peak is the climbed rate");
+        assertEq(peakTime, block.timestamp, "the peak time is the fill");
+        assertEq(core.rateAtCheckpoint(), climbed * 9_885 / 10_000, "one launch drop below the climbed rate");
     }
 
     // promise: an expired bucket's cleared anchor starts a fresh drop floor on its first fill

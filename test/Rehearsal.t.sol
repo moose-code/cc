@@ -144,7 +144,7 @@ contract RehearsalTest is Test, ProdDeployer {
         bytes[6] memory inits = [
             vm.getCode("CoreLib.sol:CoreLib"),
             coreInitCode(c, deployer),
-            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(first.core, c.sale, c.credit)),
+            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(first.core, c.sale, c.credit, c.quote)),
             abi.encodePacked(
                 vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"), abi.encode(first.core, c.seaportRecipients)
             ),

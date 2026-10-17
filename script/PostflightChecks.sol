@@ -123,7 +123,7 @@ abstract contract PostflightChecks is PostflightPool {
     /// deterministic deployer with `CONTROLLER_SALT`
     function controllerAddress(address core_, LaunchConfig memory c) internal view returns (address) {
         bytes memory init =
-            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(core_, c.sale, c.credit));
+            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(core_, c.sale, c.credit, c.quote));
         return vm.computeCreate2Address(CONTROLLER_SALT, keccak256(init), CREATE2_DEPLOYER);
     }
 
@@ -197,7 +197,7 @@ abstract contract PostflightChecks is PostflightPool {
         console.log("verify: core constructor args");
         console.logBytes(coreConstructorArgs(c, deployer));
         console.log("verify: controller constructor args");
-        console.logBytes(abi.encode(address(core), c.sale, c.credit));
+        console.logBytes(abi.encode(address(core), c.sale, c.credit, c.quote));
         console.log("verify: seaport adapter constructor args");
         console.logBytes(abi.encode(address(core), c.seaportRecipients));
     }
@@ -291,7 +291,7 @@ abstract contract PostflightChecks is PostflightPool {
             _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
         }
         bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
-            && k.creditFloorBps() == c.credit.floorBps && k.creditStartBps() == c.credit.startBps;
+            && k.creditSpreadBps() == c.credit.spreadBps && k.creditStartBps() == c.credit.startBps;
         if (_settingsChanged()) {
             _warn(
                 "warn: credit sale settings equal the config",
@@ -302,7 +302,20 @@ abstract contract PostflightChecks is PostflightPool {
             _check(
                 "controller: credit sale settings equal the config",
                 creditSame,
-                "creditSaleOn creditWindow creditFloorBps creditStartBps"
+                "creditSaleOn creditWindow creditSpreadBps creditStartBps"
+            );
+        }
+        (uint32 rate, uint16 step, uint16 tol, uint32 stale, uint32 minSec, uint128 liq) = k.quote();
+        bool quoteSame = rate == c.quote.referenceRateBpsPerHour && step == c.quote.referenceStepBps
+            && tol == c.quote.tolBps && stale == c.quote.referenceMaxStale && minSec == c.quote.referenceMinSeconds
+            && liq == c.quote.minLiquidity;
+        if (_settingsChanged()) {
+            _warn("warn: reference price settings equal the config", quoteSame, "SETTINGS_CHANGED=1, the owner changed it since launch");
+        } else {
+            _check(
+                "controller: reference price settings equal the config",
+                quoteSame,
+                "referenceRateBpsPerHour referenceStepBps tolBps referenceMaxStale referenceMinSeconds minLiquidity"
             );
         }
     }
