@@ -155,7 +155,7 @@ export const controllerAbi = parseAbi([
   "function referencePrice() view returns (uint256)",
   "function referenceTime() view returns (uint40)",
   "function spotPrice() view returns (uint256 spot, bool ok)",
-  "function quote() view returns (uint32 referenceRateBpsPerHour, uint16 referenceStepBps, uint16 tolBps, uint32 referenceMaxStale, uint32 referenceMinSeconds, uint128 minLiquidity)",
+  "function quote() view returns (uint32 referenceRateBpsPerHour, uint16 referenceStepBps, uint16 tolBps, uint32 referenceMaxStale, uint32 referenceMinSeconds, uint128 minLiquidity, uint8 referenceSamples)",
   "function valuePerPoint(bool forSale) view returns (uint256 value, bool ok)",
   // actions
   "function buy(uint256 sid) payable",

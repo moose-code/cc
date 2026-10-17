@@ -64,11 +64,13 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// (a stale key after an owner module replacement), with no balance module set, on a failed, zero or above
 /// `uint128.max` unit read, or on a zero pool read.
 /// the protected price (decision 148): the controller keeps a reference price of the balance token, set to the pool spot
-/// by `setBalancePoolKey` and moved toward the spot by `refreshReference()` and the sale doors by at most
-/// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update. a refresh runs at
-/// most once per block and stores the spot and liquidity it sampled. buys price off `min(spotSample, reference *
-/// (10_000 + tolBps) / 10_000)`, sales off `max(spotSample, reference * (10_000 - tolBps) / 10_000)`, where `spotSample`
-/// is the spot taken at a prior block's refresh, never the live spot, so a same-block pool move cannot change the quote.
+/// by `setBalancePoolKey` and moved toward the lowest of the last `referenceSamples` spots by `refreshReference()` and
+/// the sale doors by at most `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per
+/// update. a refresh runs at most once per block and stores the spot and liquidity it sampled. buys price off
+/// `min(lowSample, reference * (10_000 + tolBps) / 10_000)`, sales off `max(highSample, reference * (10_000 - tolBps) /
+/// 10_000)`, where `lowSample` and `highSample` are the lowest and highest of the last `referenceSamples` spots taken at
+/// refreshes of prior blocks, never the live spot, so a same-block pool move cannot change the quote and a price pushed
+/// up reaches the buy price only after it is held through `referenceSamples` refreshes.
 /// the reference price is usable while the sample is at most `referenceMaxStale` old, the two most recent liquidity
 /// samples both hold `minLiquidity` and the unit read succeeds. in value mode (the Core's `valueModeOn`) `valueOf` is the
 /// sale price value with the floor rate and cost terms dropped, a statement's reference is that value times
@@ -80,6 +82,8 @@ contract ControllerV1 is IController {
 
     uint256 private constant PAGE = 80;
     uint256 private constant BPS = 10_000;
+    /// capacity of the spot ring: the largest `referenceSamples` (8) plus one
+    uint256 private constant RING = 9;
     uint256 private constant MIN_CREDIT_SPREAD_BPS = 200;
     /// bounds pool-key seeding independently of the executable quote tolerance
     uint256 private constant POOL_SEED_MAX_DEVIATION_BPS = 450;
@@ -155,11 +159,12 @@ contract ControllerV1 is IController {
     uint256 public referencePrice;
     /// the sample time of `referencePrice`: the moment the stored reference was sampled from the spot
     uint40 public referenceTime;
-    /// the pool spot sampled at the two most recent refreshes, newest in `spotSampleA`, wei per 1e18 base units. the
-    /// executable quote clamps the band to the sample taken in a prior block, so a same-block pool move cannot change
-    /// the bid or the ask
-    uint256 private spotSampleA;
-    uint256 private spotSampleB;
+    /// ring of the pool spots sampled at the most recent refreshes, wei per 1e18 base units. `RING` slots hold the newest
+    /// `referenceSamples` plus the one a same-block refresh leaves out of the quote window. `spotHead` is the slot of the
+    /// newest sample and `spotCount` the number of filled slots
+    uint256[RING] private spotRing;
+    uint8 private spotHead;
+    uint8 private spotCount;
     /// the pool liquidity sampled at the two most recent refreshes, newest in `liqSampleA`. the quote is usable only
     /// while both hold `minLiquidity`, so liquidity added for one block cannot open the quote
     uint128 private liqSampleA;
@@ -248,8 +253,9 @@ contract ControllerV1 is IController {
         if (spot < expectedSpot - band || spot > expectedSpot + band) revert BadSetting("spot");
         // seed both sample slots from the live spot and liquidity, so the first quote reads a sample from this block
         uint128 liq = _sampleLiq();
-        spotSampleA = spot;
-        spotSampleB = spot;
+        spotCount = 0;
+        _pushSpot(spot);
+        _pushSpot(spot);
         liqSampleA = liq;
         liqSampleB = liq;
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -262,7 +268,7 @@ contract ControllerV1 is IController {
         return IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(balancePoolKey.toId());
     }
 
-    /// sets the reference price settings at once. `referenceStepBps` 0 to 10_000, `tolBps` 0 to 9_999
+    /// sets the reference price settings at once. `referenceStepBps` 0 to 10_000, `tolBps` 0 to 9_999, `referenceSamples` 1 to 8
     function setQuote(Quote calldata v) external onlyOwner {
         _setQuote(v);
     }
@@ -270,12 +276,16 @@ contract ControllerV1 is IController {
     function _setQuote(Quote memory v) private {
         if (v.referenceStepBps > BPS) revert BadSetting("referenceStepBps");
         if (v.tolBps >= BPS) revert BadSetting("tolBps");
+        if (v.referenceSamples < 1 || v.referenceSamples > RING - 1) revert BadSetting("referenceSamples");
         // the rate, the step and the staleness are all set or all zero: a partial triple would move or expire the
         // reference without the matching bound, a misconfiguration
         bool anyRef = v.referenceRateBpsPerHour != 0 || v.referenceStepBps != 0 || v.referenceMaxStale != 0;
         bool allRef = v.referenceRateBpsPerHour != 0 && v.referenceStepBps != 0 && v.referenceMaxStale != 0;
         if (anyRef && !allRef) revert BadSetting("referenceTriple");
-        // the sale spread covers the worst round trip through the reference band at the current credit spread
+        // the sale spread covers the worst round trip through the reference band at the current credit spread. the sample
+        // window leaves the check unchanged: `pBuy = min(lowest sample, ref * (1 + tol))` is at most `ref * (1 + tol)`
+        // and `pSell = max(highest sample, ref * (1 - tol))` is at least `ref * (1 - tol)`, the two bounds the check
+        // uses, so payout * pSell <= the un-clamped bid * 1e18 still holds for every window length
         _checkLoopClosure(v.tolBps, creditSpreadBps);
         // the reference band widened by the step stays inside value mode's shared instance margin, so a buy from the
         // value mode eth bid and a sale back loses. the reference prices the value mode eth bid, whose floor is
@@ -331,16 +341,48 @@ contract ControllerV1 is IController {
         if (move == 0) return false;
         uint256 hi = ref * (BPS + move) / BPS;
         uint256 lo = ref * (BPS - move) / BPS;
-        // shift the sample history: the most recent spot and liquidity become the previous, this block's become the most
-        // recent. the quote clamps to the previous sample and checks `minLiquidity` at both
-        spotSampleB = spotSampleA;
+        // the new spot joins the ring and the liquidity samples shift by one. the quote reads the ring without a sample
+        // taken in the current block and checks `minLiquidity` at both liquidity samples
+        _pushSpot(spot);
         liqSampleB = liqSampleA;
-        spotSampleA = spot;
         liqSampleA = _sampleLiq();
         // forge-lint: disable-next-line(unsafe-typecast)
         lastRefreshBlock = uint48(block.number);
-        _setRef(spot > hi ? hi : spot < lo ? lo : spot, spot);
+        // the reference moves toward the lowest spot of the last `referenceSamples` samples, so a price pushed up must be
+        // held through that many refreshes before the reference follows it
+        (uint256 lowSpot,) = _window(q.referenceSamples, false, 0, false);
+        _setRef(lowSpot > hi ? hi : lowSpot < lo ? lo : lowSpot, spot);
         return true;
+    }
+
+    function _pushSpot(uint256 spot) private {
+        uint256 head = spotCount == 0 ? 0 : (uint256(spotHead) + 1) % RING;
+        spotRing[head] = spot;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        spotHead = uint8(head);
+        if (spotCount < RING) spotCount++;
+    }
+
+    /// the lowest and the highest spot among the newest `n` samples of the ring, newest first. `extra` is a sample ahead
+    /// of the ring when `hasExtra` (a projected refresh), and `skip` leaves out the newest sample. a ring with fewer
+    /// samples than `n` is read whole. `high` is 0 when no sample is left
+    function _window(uint256 n, bool hasExtra, uint256 extra, bool skip)
+        private
+        view
+        returns (uint256 low, uint256 high)
+    {
+        uint256 total = uint256(spotCount) + (hasExtra ? 1 : 0);
+        uint256 first = skip ? 1 : 0;
+        uint256 end = first + n;
+        if (end > total) end = total;
+        low = type(uint256).max;
+        for (uint256 i = first; i < end; i++) {
+            uint256 v = hasExtra
+                ? (i == 0 ? extra : spotRing[(uint256(spotHead) + RING - (i - 1)) % RING])
+                : spotRing[(uint256(spotHead) + RING - i) % RING];
+            if (v < low) low = v;
+            if (v > high) high = v;
+        }
     }
 
     function _setRef(uint256 ref, uint256 spot) private {
@@ -376,12 +418,12 @@ contract ControllerV1 is IController {
         uint256 ref = referencePrice;
         if (ref == 0 || q.referenceMaxStale == 0) return (0, 0, 0, false);
         uint256 t = referenceTime;
-        uint256 sA = spotSampleA;
-        uint256 sB = spotSampleB;
         uint256 lA = liqSampleA;
         uint256 lB = liqSampleB;
         // forge-lint: disable-next-line(unsafe-typecast)
         bool aThisBlock = uint48(block.number) == lastRefreshBlock;
+        bool hasExtra;
+        uint256 extra;
         // forge-lint: disable-next-line(unsafe-typecast)
         if (project && !aThisBlock && block.timestamp - t >= q.referenceMinSeconds) {
             (uint256 spot, bool priced) = _spot();
@@ -391,10 +433,11 @@ contract ControllerV1 is IController {
                 if (move != 0) {
                     uint256 hi = ref * (BPS + move) / BPS;
                     uint256 lo = ref * (BPS - move) / BPS;
-                    ref = spot > hi ? hi : spot < lo ? lo : spot;
-                    sB = sA;
+                    (uint256 lowSpot,) = _window(q.referenceSamples, true, spot, false);
+                    ref = lowSpot > hi ? hi : lowSpot < lo ? lo : lowSpot;
+                    hasExtra = true;
+                    extra = spot;
                     lB = lA;
-                    sA = spot;
                     lA = _sampleLiq();
                     t = block.timestamp;
                     aThisBlock = true;
@@ -403,16 +446,18 @@ contract ControllerV1 is IController {
         }
         if (block.timestamp - t > q.referenceMaxStale) return (0, 0, 0, false);
         if (lA < q.minLiquidity || lB < q.minLiquidity) return (0, 0, 0, false);
-        // the clamp spot is a prior block's sample: the previous one when the latest was taken this block
-        uint256 spotNow = aThisBlock ? sB : sA;
+        // the quote window is the newest `referenceSamples` samples of prior blocks: the newest sample is left out when
+        // it was taken this block
+        (uint256 low, uint256 high) = _window(q.referenceSamples, hasExtra, extra, aThisBlock);
+        if (high == 0) return (0, 0, 0, false);
         address module = CORE.balanceModule();
         if (module == address(0)) return (0, 0, 0, false);
         (unit, ok) = _liveUnit(module);
         if (!ok) return (0, 0, 0, false);
         uint256 up = ref * (BPS + q.tolBps) / BPS;
         uint256 down = ref * (BPS - q.tolBps) / BPS;
-        pBuy = spotNow < up ? spotNow : up;
-        pSell = spotNow > down ? spotNow : down;
+        pBuy = low < up ? low : up;
+        pSell = high > down ? high : down;
     }
 
     /// the wei value of one point at the protected price, see `IController.valuePerPoint`

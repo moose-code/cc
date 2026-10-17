@@ -319,6 +319,9 @@ struct Quote {
     uint32 referenceMinSeconds;
     /// the least pool liquidity of a usable reference price
     uint128 minLiquidity;
+    /// the number of recent refresh spots the quote window covers, 1 to 8: buys price off the lowest of them, sales off
+    /// the highest, and the reference moves toward the lowest
+    uint8 referenceSamples;
 }
 
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
@@ -470,7 +473,8 @@ library Mainnet {
             tolBps: 100,
             referenceMaxStale: 0,
             referenceMinSeconds: 600,
-            minLiquidity: 0
+            minLiquidity: 0,
+            referenceSamples: 3
         });
     }
 

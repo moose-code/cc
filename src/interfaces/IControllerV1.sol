@@ -81,7 +81,8 @@ interface IControllerV1 {
             uint16 tolBps,
             uint32 referenceMaxStale,
             uint32 referenceMinSeconds,
-            uint128 minLiquidity
+            uint128 minLiquidity,
+            uint8 referenceSamples
         );
     function referenceOf(uint256 sid) external view returns (uint256);
     function referencePrice() external view returns (uint256);

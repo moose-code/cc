@@ -191,7 +191,7 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
   });
   const ok = <T,>(r: { status: string; result?: unknown }): T | undefined => (r.status === "success" ? (r.result as T) : undefined);
   const spot = ok<readonly [bigint, boolean]>(spotRes);
-  const q = ok<readonly [number, number, number, number, number, bigint]>(quoteRes);
+  const q = ok<readonly [number, number, number, number, number, bigint, number]>(quoteRes);
   const vBuy = ok<readonly [bigint, boolean]>(buyRes);
   const vSell = ok<readonly [bigint, boolean]>(sellRes);
   const value = {
@@ -199,7 +199,7 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     referencePrice: ok<bigint>(refRes),
     referenceTime: ok<number>(refTimeRes),
     spot: spot && spot[1] ? spot[0] : undefined,
-    quote: q && { referenceRateBpsPerHour: q[0], referenceStepBps: q[1], tolBps: q[2], referenceMaxStale: q[3], referenceMinSeconds: q[4], minLiquidity: q[5] },
+    quote: q && { referenceRateBpsPerHour: q[0], referenceStepBps: q[1], tolBps: q[2], referenceMaxStale: q[3], referenceMinSeconds: q[4], minLiquidity: q[5], referenceSamples: q[6] },
     // usable is the controller's own answer: the reference fresh, the pool deep enough, a spot and a unit read
     usable: vBuy !== undefined && vBuy[1],
     perPointBuy: vBuy && vBuy[1] ? vBuy[0] : undefined,

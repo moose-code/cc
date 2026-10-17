@@ -495,27 +495,30 @@ contract E2EReal is Scenario {
     // ------------------------------------------------------------------ phase 7: value mode
 
     /// sets the value quote and switches value mode on with the eth spend cap active, as the owner. reference values
-    /// 1,200 bps/h, step 200, min 600 s, stale 3,600, tol 0, minLiquidity from the balance pool depth.
+    /// 1,200 bps/h, step 50, 3 samples, min 600 s, stale 3,600, tol 100, minLiquidity from the balance pool depth. the
+    /// spend cap is 20 bps of the pot per 1,800 s bucket
     function phase7Quote(uint128 minLiquidity) external {
         _boot();
         vm.broadcast(OWNER);
         ctl.setQuote(
             Quote({
                 referenceRateBpsPerHour: 1_200,
-                referenceStepBps: 200,
+                referenceStepBps: 50,
                 tolBps: 100,
                 referenceMaxStale: 3_600,
                 referenceMinSeconds: 600,
-                minLiquidity: minLiquidity
+                minLiquidity: minLiquidity,
+                referenceSamples: 3
             })
         );
         Settings memory s = core.settings();
         s.valueModeOn = true;
-        s.spendCapBps = 1_000;
+        s.spendCapBps = 20;
+        s.bucketSeconds = 1_800;
         vm.broadcast(OWNER);
         core.setSettings(s);
         require(core.settings().valueModeOn, "phase7: value mode not on");
-        console.log("phase7: value mode on, spendCapBps 1000, referencePrice", ctl.referencePrice());
+        console.log("phase7: value mode on, spendCapBps 20, bucketSeconds 1800, referencePrice", ctl.referencePrice());
     }
 
     /// moves the balance pool spot up about 8 percent with real eth buys of the balance token through a swap router.

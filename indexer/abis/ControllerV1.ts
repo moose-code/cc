@@ -122,6 +122,11 @@ export const controllerAbi = [
             "name": "minLiquidity",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "referenceSamples",
+            "type": "uint8",
+            "internalType": "uint8"
           }
         ]
       }
@@ -541,6 +546,11 @@ export const controllerAbi = [
         "name": "minLiquidity",
         "type": "uint128",
         "internalType": "uint128"
+      },
+      {
+        "name": "referenceSamples",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "stateMutability": "view"
@@ -747,6 +757,11 @@ export const controllerAbi = [
             "name": "minLiquidity",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "referenceSamples",
+            "type": "uint8",
+            "internalType": "uint8"
           }
         ]
       }
@@ -1086,6 +1101,11 @@ export const controllerAbi = [
             "name": "minLiquidity",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "referenceSamples",
+            "type": "uint8",
+            "internalType": "uint8"
           }
         ]
       }

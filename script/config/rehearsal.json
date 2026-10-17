@@ -72,7 +72,8 @@
     "tolBps": 100,
     "referenceMaxStale": 0,
     "referenceMinSeconds": 600,
-    "minLiquidity": 0
+    "minLiquidity": 0,
+    "referenceSamples": 3
   },
   "credit": {
     "costToPotBps": 8000,

@@ -1051,7 +1051,7 @@ abstract contract HandlerOwner is HandlerBase {
             data = abi.encodeCall(IControllerV1.setCredit, (cs));
             // the loop closure bound (decision 157): the spread must cover the reference band at the current tolerance,
             // so a spread below `(10_000 + tol) * 10_000 / (10_000 - tol) - 10_000` reverts BadSetting
-            (,, uint16 tol,,,) = c.quote();
+            (,, uint16 tol,,,,) = c.quote();
             uint256 req = ((10_000 + uint256(tol)) * 10_000 + (10_000 - uint256(tol)) - 1) / (10_000 - uint256(tol)) - 10_000;
             valid = v >= req;
             want = v;

@@ -142,7 +142,8 @@ contract ColdAuditTest is Fixture {
                 tolBps: 450,
                 referenceMaxStale: 1 hours,
                 referenceMinSeconds: 600,
-                minLiquidity: 1e18
+                minLiquidity: 1e18,
+            referenceSamples: 1
             })
         );
         Settings memory s = core.settings();
@@ -423,7 +424,8 @@ contract ColdAuditTest is Fixture {
                 tolBps: 450,
                 referenceMaxStale: 1 hours,
                 referenceMinSeconds: 600,
-                minLiquidity: 2e18
+                minLiquidity: 2e18,
+            referenceSamples: 1
             })
         );
         (, bool before) = ctl.valuePerPoint(false);
@@ -475,7 +477,8 @@ contract ColdAuditTest is Fixture {
                 tolBps: 450,
                 referenceMaxStale: 0,
                 referenceMinSeconds: 600,
-                minLiquidity: 1e18
+                minLiquidity: 1e18,
+            referenceSamples: 1
             })
         );
         _setCreditSaleOn(true);

@@ -258,7 +258,8 @@ abstract contract ConfigReader is CommonBase {
             tolBps: _u16(j, ".quote.tolBps"),
             referenceMaxStale: _u32(j, ".quote.referenceMaxStale"),
             referenceMinSeconds: _u32(j, ".quote.referenceMinSeconds"),
-            minLiquidity: _u128(j, ".quote.minLiquidity")
+            minLiquidity: _u128(j, ".quote.minLiquidity"),
+            referenceSamples: _u8(j, ".quote.referenceSamples")
         });
     }
 
@@ -295,6 +296,11 @@ abstract contract ConfigReader is CommonBase {
     function _uint(string memory j, string memory key, uint256 max) private pure returns (uint256 v) {
         v = vm.parseJsonUint(j, key);
         if (v > max) revert ConfigOutOfRange(key);
+    }
+
+    function _u8(string memory j, string memory key) private pure returns (uint8) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint8(_uint(j, key, type(uint8).max));
     }
 
     function _u16(string memory j, string memory key) private pure returns (uint16) {
@@ -372,6 +378,7 @@ abstract contract ConfigReader is CommonBase {
         if (k.anchorMoveBps > 10_000) return "anchorMoveBps";
         if (c.quote.referenceStepBps > 10_000) return "referenceStepBps";
         if (c.quote.tolBps >= 10_000) return "tolBps";
+        if (c.quote.referenceSamples < 1 || c.quote.referenceSamples > 8) return "referenceSamples";
         return bytes32(0);
     }
 

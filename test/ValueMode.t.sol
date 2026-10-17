@@ -58,7 +58,7 @@ abstract contract ValueBase is Fixture {
         ctl.setBalancePoolKey(k, _spotOf(SP));
         // tol 450 and step 500 satisfy the loop closure bound at the credit spread 1,000 and the product bound at the
         // margin 1,000 (decisions 153 and 157): a round trip through the reference band loses
-        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18}));
+        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18, referenceSamples: 1}));
         mod.setAvailable(1e30);
     }
 
@@ -216,7 +216,8 @@ contract ValueReferenceTest is ValueBase {
                 tolBps: 450,
                 referenceMaxStale: 1 days,
                 referenceMinSeconds: 0,
-                minLiquidity: 1e18
+                minLiquidity: 1e18,
+            referenceSamples: 1
             })
         );
         uint256 ref0 = ctl.referencePrice();
@@ -243,7 +244,8 @@ contract ValueReferenceTest is ValueBase {
                 tolBps: 450,
                 referenceMaxStale: 1 days,
                 referenceMinSeconds: 600,
-                minLiquidity: 1e18
+                minLiquidity: 1e18,
+            referenceSamples: 1
             })
         );
         uint256 ref0 = ctl.referencePrice();
@@ -306,15 +308,15 @@ contract ValueReferenceTest is ValueBase {
         assertTrue(ok, "an update refreshes it");
         // raise the required liquidity above the pool's sampled liquidity: the quote reads the liquidity sampled at the
         // last refresh, so a threshold above the standing depth makes it unusable
-        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: uint128(POOL_LIQ) * 2}));
+        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: uint128(POOL_LIQ) * 2, referenceSamples: 1}));
         (, ok) = ctl.valuePerPoint(false);
         assertFalse(ok, "liquidity under the minimum");
-        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18}));
+        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18, referenceSamples: 1}));
         mod.setRevertUnit(true);
         (, ok) = ctl.valuePerPoint(true);
         assertFalse(ok, "a failing unit read");
         mod.setRevertUnit(false);
-        _setQuote(Quote({referenceRateBpsPerHour: 0, referenceStepBps: 0, tolBps: 450, referenceMaxStale: 0, referenceMinSeconds: 0, minLiquidity: 1e18}));
+        _setQuote(Quote({referenceRateBpsPerHour: 0, referenceStepBps: 0, tolBps: 450, referenceMaxStale: 0, referenceMinSeconds: 0, minLiquidity: 1e18, referenceSamples: 1}));
         (, ok) = ctl.valuePerPoint(false);
         assertFalse(ok, "referenceMaxStale 0, the launch placeholder, keeps it unusable");
     }
@@ -324,23 +326,23 @@ contract ValueReferenceTest is ValueBase {
     function test_setQuoteBounds() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("referenceStepBps")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 10_001, tolBps: 0, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 10_001, tolBps: 0, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0, referenceSamples: 1}));
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("tolBps")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 10_000, tolBps: 10_000, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 10_000, tolBps: 10_000, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0, referenceSamples: 1}));
         // a partial reference triple (step 0 while the rate and staleness are set) is a misconfiguration
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("referenceTriple")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 0, tolBps: 450, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 0, tolBps: 450, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0, referenceSamples: 1}));
         // tol 500 needs a credit spread of at least 1,053, above the fixture's 1,000: the loop would not close
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 1, tolBps: 500, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 1, tolBps: 500, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0, referenceSamples: 1}));
         // step 700 at tol 450 widens the reference band past the bid margin
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("referenceBand")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 700, tolBps: 450, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 700, tolBps: 450, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0, referenceSamples: 1}));
         // a valid quote: the reference triple set, tol 450 inside the loop closure and the band
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1_200, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 3_600, referenceMinSeconds: 600, minLiquidity: 1e18}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1_200, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 3_600, referenceMinSeconds: 600, minLiquidity: 1e18, referenceSamples: 1}));
         vm.stopPrank();
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1_200, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 3_600, referenceMinSeconds: 600, minLiquidity: 1e18}));
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1_200, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 3_600, referenceMinSeconds: 600, minLiquidity: 1e18, referenceSamples: 1}));
     }
 
     // promise: SPEC 11 a seed manipulated between signing and landing reverts: setBalancePoolKey refuses a live spot
@@ -368,7 +370,8 @@ contract ValueReferenceTest is ValueBase {
             tolBps: 0,
             referenceMaxStale: 3_600,
             referenceMinSeconds: 600,
-            minLiquidity: 1e18
+            minLiquidity: 1e18,
+            referenceSamples: 1
         }));
         uint256 expected = _spotOf(SP);
         uint256 spot = _swapSpot(100);
@@ -951,7 +954,8 @@ contract ValueRealPoolTest is ValueBase {
             tolBps: 450,
             referenceMaxStale: 1 days,
             referenceMinSeconds: 0,
-            minLiquidity: minLiq
+            minLiquidity: minLiq,
+            referenceSamples: 1
         });
     }
 
@@ -963,7 +967,8 @@ contract ValueRealPoolTest is ValueBase {
             tolBps: 0,
             referenceMaxStale: 3_600,
             referenceMinSeconds: 600,
-            minLiquidity: 1e18
+            minLiquidity: 1e18,
+            referenceSamples: 1
         }));
         _fundPot(20 ether); // real coin trading creates the hook fees that fund this bid
         _valueOn();
@@ -1015,7 +1020,8 @@ contract ValueRealPoolTest is ValueBase {
             tolBps: 100,
             referenceMaxStale: 3_600,
             referenceMinSeconds: 600,
-            minLiquidity: 1e18
+            minLiquidity: 1e18,
+            referenceSamples: 1
         }));
         uint256 opening = ctl.referencePrice();
         uint256 spot = _swapSpot(moveBps);

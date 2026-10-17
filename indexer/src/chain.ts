@@ -296,7 +296,7 @@ async function readQuote(ctx: Ctx, address: Hex) {
       { ...k, functionName: "referenceTime" },
     ],
   });
-  const q = quote.status === "success" ? (quote.result as readonly [number, number, number, number, number, bigint]) : null;
+  const q = quote.status === "success" ? (quote.result as readonly [number, number, number, number, number, bigint, number]) : null;
   return {
     referenceRateBpsPerHour: q ? BigInt(q[0]) : null,
     referenceStepBps: q ? Number(q[1]) : null,
