@@ -55,7 +55,10 @@ export const SETTINGS = {
   balanceBidCapBps: _cs.balanceBidCapBps,
   idleStepSeconds: _cs.idleStepSeconds,
   sniperSeconds: _cs.sniperSeconds,
+  reserveWei: _cs.reserveWei / W, // eth: the least the pot keeps for processing; the reserve is the larger of it and 1.5 times the queued compose and redeem payments (CoreLib._reserve)
+  returnLockSeconds: _cs.returnLockSeconds, // seconds every intake door refuses a credit the engine sold; 0 is no lock (CoreLib.checkReturn)
   swapFeeCc: _cs.swapFeeCc / W, // whole coins burned by the caller of swapCredit per swap (decision 116)
+  valueModeOn: _cs.valueModeOn, // the value switch (decision 148): the eth bid prices off the shared balance instance times the controller's protected value per point
 };
 export const SETTING_KEYS = Object.keys(SETTINGS);
 // the controller's own settings (src/ControllerV1.sol), owner settable at once. the asking price of a statement with price reference r (below), in bps of r, starts at
@@ -76,12 +79,12 @@ export const CONTROLLER = {
 };
 export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // the credit settings (script/config/mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
-// (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditFloorBps and creditStartBps are controller
+// (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditSpreadBps and creditStartBps are controller
 // settings (FLOW 88 to 90, 93, 94). refScore is a Core setting the eth doors and the controller share. while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
-// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, valueOf(score)) * creditFloorBps / 10000 (decisions 104, 115). valueOf is the larger of the rate term
+// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, valueOf(score)) * floorMultBps / 10000, floorMultBps = max(10000, (10000 + creditSpreadBps) * balanceBidCapBps / 10000) (decisions 104, 115, 150, 153). valueOf is the larger of the rate term
 // floorRate * score / refScore (the floor rate is the larger of the climbed price state and the decayed peak) and the pool term score * unitPerPoint at the balance token pool price, 0 while no module or pool key is set.
 // every sale adds royaltyBps of the engine price on top, paid by the buyer and claimed by the royalty recipient (decision 112).
-// Core.sellCreditTo takes at least the credit's cost; after the artist and operator cuts it books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
+// Core.sellCreditTo takes at least saleFloorBps of the credit's cost; after the artist and operator cuts it books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
 // compose waits for a credit's window while the sale is on (ControllerV1.pastWindow). refScore is the per-credit score of the statement price reference, in
 // ten-thousandths of a point (the model's scores are in points). minCcToChoose is a coin balance the model does not track: every composer passes it
 export const CREDIT = {
@@ -90,13 +93,29 @@ export const CREDIT = {
   minCcToChoose: +_cr.minCcToChoose,
   creditSaleOn: _cr.saleOn,
   creditWindow: _cr.window, // seconds
-  creditFloorBps: _cr.floorBps,
+  creditSpreadBps: _cr.spreadBps,
   creditStartBps: _cr.startBps,
 };
 export const CREDIT_KEYS = Object.keys(CREDIT);
 // the config names of the credit block (script/config/mainnet.json credit.*)
-export const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditFloorBps: 'floorBps', creditStartBps: 'startBps' };
+export const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditSpreadBps: 'spreadBps', creditStartBps: 'startBps' };
 // the config credit block also holds royaltyRecipient, an address the model has no use for
+// the controller's protected price settings (script/config/mainnet.json quote block, the Quote struct, ControllerV1.setQuote, decision 148).
+// the reference moves toward the pool spot by at most min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps) bps
+// per update; buys price off min(spot, reference * (10000 + tolBps) / 10000), sales off max(spot, reference * (10000 - tolBps) / 10000);
+// the reference price is usable while it is at most referenceMaxStale old (referenceMaxStale 0 is never usable) and the pool holds
+// minLiquidity. a refresh runs only when the last sample is older than referenceMinSeconds. the launch config leaves
+// referenceRateBpsPerHour, referenceStepBps, referenceMaxStale and minLiquidity at 0, owner inputs set before the switch
+const _q = LAUNCH_RAW.quote;
+export const QUOTE = {
+  referenceRateBpsPerHour: _q.referenceRateBpsPerHour,
+  referenceStepBps: _q.referenceStepBps,
+  tolBps: _q.tolBps,
+  referenceMaxStale: _q.referenceMaxStale,
+  referenceMinSeconds: _q.referenceMinSeconds,
+  minLiquidity: +_q.minLiquidity,
+};
+export const QUOTE_KEYS = Object.keys(QUOTE);
 // Integer widths are checked with BigInt before a value can enter the numerical model.
 function uint(value, bits, scale = 1) {
   if (typeof value === 'bigint') return scale === 1 && value >= 0n && value < (1n << BigInt(bits));
@@ -107,7 +126,7 @@ function uint(value, bits, scale = 1) {
 export function creditViolation(c) {
   if (!uint(c.creditCostToPotBps, 16) || c.creditCostToPotBps > BPS) return 'creditCostToPotBps';
   if (!uint(c.creditWindow, 32) || c.creditWindow < 1) return 'creditWindow';
-  if (!uint(c.creditFloorBps, 16) || c.creditFloorBps < BPS) return 'creditFloorBps';
+  if (!uint(c.creditSpreadBps, 16)) return 'creditSpreadBps';
   if (!uint(c.creditStartBps, 32) || c.creditStartBps < BPS) return 'creditStartBps';
   if (!uint(c.minCcToChoose, 256)) return 'minCcToChoose';
   return null;
@@ -119,6 +138,15 @@ export function askBps(c, start, age, floor) {
   const span = c.decayHours * 3600;
   if (age >= span) return floor;
   return start - (start - floor) * age / span;
+}
+// ControllerV1.setQuote bounds: the name of the first quote field out of bounds, or null
+export function quoteViolation(q) {
+  for (const [k, bits] of [['referenceRateBpsPerHour', 32], ['referenceStepBps', 16], ['tolBps', 16], ['referenceMaxStale', 32], ['referenceMinSeconds', 32], ['minLiquidity', 128]]) {
+    if (!uint(q[k], bits)) return k;
+  }
+  if (q.referenceStepBps > BPS) return 'referenceStepBps';
+  if (q.tolBps >= BPS) return 'tolBps';
+  return null;
 }
 // ControllerV1 bounds: the name of the first controller field out of bounds, or null
 export function controllerViolation(c) {
@@ -144,6 +172,7 @@ export function firstViolation(s) {
     ['callerFee',64,W], ['callerMaxBaseFee',48,1e9], ['feeToRedeemBurnBps',16,1], ['payeePpm',24,1],
     ['pointsPerPage',32,1], ['swapFeeCc',96,W], ['climbMultiplierCapBps',16,1], ['spendCapBps',16,1],
     ['bucketSeconds',32,1], ['balanceBidCapBps',32,1], ['idleStepSeconds',32,1], ['sniperSeconds',32,1],
+    ['reserveWei',64,W], ['returnLockSeconds',32,1],
   ];
   for (const [k, bits, scale] of fields) if (!uint(s[k], bits, scale)) return k;
   for (const k of ['dropToPct', 'recoveryGapPct']) if (s[k] > 100) return k;
@@ -167,6 +196,7 @@ export function firstViolation(s) {
   if (s.buybackSlice < 2 * (CORE_PARAMS.BUYBACK_GAS * s.keeperMaxBaseFee * 1e-9 + s.keeperFee)) return 'buybackSlice';
   if (typeof s.redeemOn !== 'boolean') return 'redeemOn';
   if (typeof s.balanceBidOn !== 'boolean') return 'balanceBidOn';
+  if (typeof s.valueModeOn !== 'boolean') return 'valueModeOn';
   return null;
 }
 // the eth rate bounds of setRate, rateStart and rateCap, wei per credit (Interfaces.sol)
@@ -199,7 +229,7 @@ export const SIM_DEFAULTS = {
   forceFillFrac: 0.5,
   holdPot: 0, // test hook: eth. the pot is topped up to this level after every step (accounting checks do not hold)
   whipsawStartDay: 2, // pricePath 'whipsaw': day the fall starts
-  schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting and `rate` (setRate, wei per credit), `moduleUnit` (the balance module reports a new eth value per point), `releaseRedeemBurn: eth`
+  schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting, the quote fields and `rate` (setRate, wei per credit), `moduleUnit` (the balance module reports a new eth value per point), `poolMult` (the balance token pool price moves), `releaseRedeemBurn: eth`
   baselineSkimBps: _ln.baselineSkimBps, // bps of volume: 10 points (script/config/mainnet.json launch.baselineSkimBps)
   bountyBps: _ln.bountyBps, // of the baseline skim, to the Core (the bounty recipient). the rest, 10000 - bountyBps, is the protocol leg to artcoins (decision 120)
   sniperStartBps: _ln.sniperStartBps,
@@ -251,7 +281,8 @@ export const SIM_DEFAULTS = {
   xpPerPoint: 0.0108 / 440, // eth value of the balance token per whole score point, at the balance token price. a 440 point credit redeems 0.0108 eth. the module's unitPerPoint is per stored unit (1/10000 point), so this value is 10000 times the module's unit read times the price
   redeemPayFrac: 1, // share of rating * unitPerPoint the balance module returns. the Core requires at least 1 - redeemSlippageBps / 10000, else the redemption reverts
   balancePoolSet: false, // ControllerV1.setBalancePoolKey done (native eth as currency0, the balance token as currency1, pool initialized): the pool term of valueOf (points * unitPerPoint at the pool price) joins the statement reference and the credit floor, unset at launch. the balance token bid works without it
-  balancePoolMult: 1, // the balance token pool price against the price the unit assumes. values the pool term. 1 at the unit; below 1 is a pool price pushed down
+  balancePoolMult: 1, // the balance token pool price against the price the unit assumes. values the pool term and is the spot of the protected price. 1 at the unit; below 1 is a pool price pushed down. a schedule patch `poolMult` moves it mid run
+  poolLiquidity: 1e30, // the balance token pool's liquidity, read against the quote's minLiquidity
   // credit sale and composition (FLOW 88 to 90). the buyers of pile credits and the composer exist only in the model
   creditBuyersPerDay: 40, // arrivals a day of buyers of pile credits while creditSaleOn is true
   creditWtpMult: 1, // a credit buyer pays up to this multiple of the market price of a credit times a lognormal draw (askSigma)
@@ -269,7 +300,7 @@ export const SIM_DEFAULTS = {
   bookEveryHours: 0, // 0 books the swap fee every step (today's behaviour). above 0 the hook drip is left unbooked and a book folds it every this many hours, so the bid climbs between books on the pending pot share (decision 147)
 };
 
-export const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, CREDIT, SIM_DEFAULTS);
+export const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, CREDIT, QUOTE, SIM_DEFAULTS);
 
 
 // The market model uses Number prices. Spend accounting accepts integer wei so its boundary arithmetic is exact.
@@ -351,11 +382,17 @@ export class Core {
     for (const k of CONTROLLER_KEYS) this.c[k] = p[k];
     this.cr = {}; // the credit settings (Core and controller)
     for (const k of CREDIT_KEYS) this.cr[k] = p[k];
+    this.q = {}; // the controller's quote settings
+    for (const k of QUOTE_KEYS) this.q[k] = p[k];
+    // the protected price: the pool spot as a multiple of the price the unit assumes, and the controller's reference of it.
+    // the reference is 0 until the pool key is set (ControllerV1.setBalancePoolKey sets it to the spot)
+    this.poolMult = p.balancePoolMult; this.refMult = 0; this.refTime = t0;
     this.creditCostToPot = 0; // cumulative cost share of credit sales booked to the pot
     this.creditToBuyback = 0; // cumulative credit sale eth booked to the buyback pot
     this.anchorStored = 10000; // the controller's storedAnchorBps: the anchor at anchorTime, bps of the reference
     this.anchorTime = t0;
     this.paused = false; this.pausedSince = 0; this.pausedTotal = 0; // the Core's pause clock: the flag, the start of the open pause, the seconds of closed pauses
+    this.ageEligibilityOn = false; // ControllerV1.ageEligibilityOn: false (launch) is the curve rule, true is age only (decision 155)
     this.feeToRedeemBurn = 0; // cumulative swap fee eth sent to the redeem burn reserve by feeToRedeemBurnBps
     this.redeemBurnMoved = 0; // cumulative eth moved from the reserve to the buyback pot by redemptions
     this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.balancePot = 0; // balancePot is the balance module's holding, the eth value of the token it can pay (available())
@@ -390,9 +427,9 @@ export class Core {
     return (inc - toPayee) * (1 - this.s.feeToRedeemBurnBps / BPS);
   }
   // the climb stops where the pot no longer affords one credit at the rate, or at rateCap, whichever is lower. the pot
-  // counts the pot share of the unbooked drip (decision 147), so the bid climbs on income no door has booked
+  // counts the pot share of the unbooked drip (decision 147) net of the reserve (Core._ethClimb reads pagesPot less the reserve)
   clamp() {
-    return Math.min((this.ethPot + this.pendingPot()) * W, this.s.rateCap);
+    return Math.min(Math.max(0, this.ethPot + this.pendingPot() - this.reserve()) * W, this.s.rateCap);
   }
   // Core.receive: fee income the hook pushed, left unbooked. the climb clamp counts its pot share until a book folds it
   accrue(amount) {
@@ -407,6 +444,20 @@ export class Core {
     this.unbooked = 0;
     return this.addFees(a, now);
   }
+  // the queue the reserve prices: the pile size and the held statements, kept by the run (simulate) or a test
+  setQueue(pile, held) { this.queue = { pile, held }; }
+  // CoreLib._reserve: the larger of reserveWei and 1.5 times the queued caller payments, one compose per full page of the
+  // pile at COMPOSE_QUEUE_GAS and one redemption per held statement at REDEEM_QUEUE_GAS, each at callerMaxBaseFee plus callerFee
+  reserve() {
+    const s = this.s, q = this.queue || { pile: 0, held: 0 }, gwei = s.callerMaxBaseFee * 1e-9;
+    const queued = Math.floor(q.pile / this.p.PAGE) * (9e6 * gwei + s.callerFee) + q.held * (6e5 * gwei + s.callerFee);
+    return Math.max(s.reserveWei, 1.5 * queued);
+  }
+  // CoreLib.room: ethPot less the reserve, the most the bids may spend. the caller payments pay from the whole pot
+  room() { return Math.max(0, this.ethPot - this.reserve()); }
+  // CoreLib.checkReturn: an intake door refuses a credit the engine sold before soldAt + returnLockSeconds. a lock of 0
+  // is no lock, so a credit may return in the second of its sale
+  returnLocked(cr, now) { return cr.soldAt !== undefined && this.s.returnLockSeconds > 0 && now < cr.soldAt + this.s.returnLockSeconds; }
   // the ceiling in rate terms: ceilPct of the anchor, the anchor loosened while idle. the anchor is max(last rate paid, peak now)
   stepCeil(now) {
     const s = this.s, p = this.p;
@@ -445,7 +496,12 @@ export class Core {
   }
   // the bid read by a seller: the price state lowered to the clamp (the pot). the clamp bounds what is paid and is never
   // stored: checkpoint, the drop and the anchor all use the price state rate. an empty pot reads 0
-  ethRate(now) { return Math.min(this.priceRate(now), this.clamp(), this.hourlyCap(now)); }
+  // in value mode the price state is valueRate, lowered to the room; the Core reverts NoQuote while the quote is unusable,
+  // which the model reads as 0, so no eth door fills
+  ethRate(now) {
+    if (this.s.valueModeOn) return Math.min(this.valueRate(now).rate, this.clamp());
+    return Math.min(this.priceRate(now), this.clamp(), this.hourlyCap(now));
+  }
   // The multiplier counts pages at the last fill rate; a model override supports historical comparisons.
   bidMult() {
     const cap = this.p.multiplierCap ?? this.s.climbMultiplierCapBps / BPS;
@@ -479,7 +535,7 @@ export class Core {
   }
   // Core.ethPrice(): the price state before the pot clamp (wei per credit). the clamp is the read only lowering that ethRate applies. the cost floor of a credit
   // bought with the balance token and the eth bid term of the credit sale floor read it, so an empty pot does not zero them (FLOW 93)
-  ethPrice(now) { return this.priceRate(now); }
+  ethPrice(now) { return this.s.valueModeOn ? this.valueRate(now).rate : this.priceRate(now); }
   // Core.floorRate(): the floor rate now (wei per credit): the larger of ethPrice, the price state climbed before the
   // pot clamp, and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak
   // decays between fills, so the maximum follows the climb and holds against a sale within the block. the statement
@@ -499,14 +555,18 @@ export class Core {
     for (const k of SETTING_KEYS) if (patch[k] !== undefined) next[k] = typeof SETTINGS[k] === 'boolean' ? !!patch[k] : patch[k];
     for (const k of CONTROLLER_KEYS) if (patch[k] !== undefined) nextC[k] = patch[k];
     for (const k of CREDIT_KEYS) if (patch[k] !== undefined) nextCr[k] = typeof CREDIT[k] === 'boolean' ? !!patch[k] : patch[k];
-    const bad = firstViolation(next) || (next.saleFloorBps > nextC.markupBps ? 'saleFloorBps' : null) || controllerViolation(nextC) || creditViolation(nextCr) || (patch.anchorBps !== undefined && !(patch.anchorBps >= 10000 && patch.anchorBps <= nextC.startCapBps) ? 'anchorBps' : null);
+    const nextQ = Object.assign({}, this.q);
+    for (const k of QUOTE_KEYS) if (patch[k] !== undefined) nextQ[k] = patch[k];
+    const bad = firstViolation(next) || quoteViolation(nextQ) || (next.saleFloorBps > nextC.markupBps ? 'saleFloorBps' : null) || controllerViolation(nextC) || creditViolation(nextCr) || (patch.anchorBps !== undefined && !(patch.anchorBps >= 10000 && patch.anchorBps <= nextC.startCapBps) ? 'anchorBps' : null);
     if (bad) throw new Error('BadSetting ' + bad);
     if (rate !== undefined && !(uint(rate, 64) && rate >= RATE_MIN && rate <= RATE_MAX && rate <= next.rateCap)) throw new Error('BadRate');
     this.checkpoint(now);
     const anchorNow = this.anchorAt(now);
-    // CoreLib.setSettings: climb the balance instance under the old settings before the new ones apply (decision 122)
-    const wasOn = this.s.balanceBidOn, wasUsable = this.balanceUsable();
-    if (wasOn && wasUsable) { this.balRate = this.balPriceState(now); this.balCheckpointTime = now; }
+    // CoreLib.setSettings: climb the balance instance under the old settings before the new ones apply (decision 122).
+    // in value mode the shared instance climbs whatever the module, so `usable` is true there
+    const wasOn = this.s.balanceBidOn, wasValue = this.s.valueModeOn;
+    const usable = wasValue || (wasOn && this.balanceUsable());
+    if (usable) { this.balRate = this.balPriceState(now); this.balCheckpointTime = now; }
     // CoreLib.setSettings: a change of peakHalfLife restates the remembered peak at the old half life before the new one applies
     if (next.peakHalfLifeHours !== this.s.peakHalfLifeHours) {
       this.peakRate = this.peakAt(now); this.peakTime = now;
@@ -519,12 +579,13 @@ export class Core {
       if (this.balBurstBucket !== oldBucket) this.balBurstBase = 0;
       this.burstTime = nextBucket; this.balBurstBucket = nextBucket;
     }
-    this.s = next; this.c = nextC; this.cr = nextCr;
+    this.s = next; this.c = nextC; this.cr = nextCr; this.q = nextQ;
     this.checkpointMult = this.bidMult();
     if (patch.anchorHalfLife !== undefined) this.setAnchor(anchorNow, now);
     if (this.c.startCapBps < anchorNow) this.setAnchor(this.c.startCapBps, now);
     if (patch.anchorBps !== undefined) this.setAnchor(patch.anchorBps, now);
     if (patch.paused !== undefined) this.setPaused(patch.paused, now);
+    if (patch.ageEligibilityOn !== undefined) this.ageEligibilityOn = !!patch.ageEligibilityOn;
     this.rateAtCheckpoint = Math.min(this.rateAtCheckpoint, next.rateCap); // a lower cap pulls the rate down now
     if (rate !== undefined) {
       this.rateAtCheckpoint = rate; this.checkpointTime = now;
@@ -532,10 +593,11 @@ export class Core {
       this.lastPaidRate = rate; this.peakRate = rate; this.peakTime = now;
     }
     this.syncFunded();
-    // decision 122: the bid turning on or a turn on with no usable module opens the instance at the floor; otherwise a
-    // floor at or above the stored rate resets to the floor
+    // decisions 122 and 148: the value switch turning on and the bid turning on open the shared instance at the floor, and
+    // so does the bid on outside value mode with no usable module; otherwise a floor at or above the stored rate resets
+    // to the floor. a currency switch never resets it
     const floor = BPS - this.s.balanceBidMarginBps;
-    if (this.s.balanceBidOn && (!wasOn || !wasUsable)) this.resetBalanceToFloor(now);
+    if ((this.s.valueModeOn && !wasValue) || (this.s.balanceBidOn && (!wasOn || (!usable && !this.s.valueModeOn)))) this.resetBalanceToFloor(now);
     else if (this.balRate < floor) this.resetBalanceToFloor(now);
   }
   // the score of a credit of `pts` points over 100 points: the eth doors scale the rate and the drop by it (CoreLib).
@@ -547,9 +609,17 @@ export class Core {
   // dropPerCreditPct * ratio, bounded at 100 percent. false means the Core would revert
   spend(x, now, ratio = 1) {
     const pot = this.ethPot;
-    if (!(x > 0) || x > pot + 1e-18) return false;
+    if (!(x > 0) || x > this.room() + 1e-18) return false;
     if (!this.spendBucket.charge(modelWei(x), modelWei(pot), now, this.s.bucketSeconds, this.s.spendCapBps)) return false;
     this.checkpoint(now);
+    if (this.s.valueModeOn) {
+      // CoreLib.spend in value mode: the fill drops the shared instance, climbed to now, never under its floor; the eth
+      // instance is left as it is
+      this.balDrop(this.balPriceState(now), ratio, now);
+      this.ethPot = pot - x;
+      this.syncFunded();
+      return true;
+    }
     const paid = this.rateAtCheckpoint;
     // CoreLib.drop: the minute floor is dropFloorBps of the price at the first fill of the minute bucket (now / 60), and restarts at the price when the price is already under the floor (setRate, lowered caps)
     const bucket = Math.floor(now / this.s.bucketSeconds);
@@ -615,8 +685,9 @@ export class Core {
   buyListing(ask, now, pts = RATE_SCORE / 1e4) {
     const ratio = this.scoreRatio(pts);
     const ceil = (this.ethRate(now) / W) * ratio;
-    if (ask > this.ethPot || ask > ceil) return null;
-    const paid = Math.min(this.listingPayMax(), ceil - ask, this.ethPot - ask);
+    const room = this.room();
+    if (ask > room || ask > ceil) return null;
+    const paid = Math.min(this.listingPayMax(), ceil - ask, room - ask);
     if (!this.spend(ask + paid, now, ratio)) return null;
     return { cost: ask, paid };
   }
@@ -628,13 +699,53 @@ export class Core {
   // ControllerV1.valueOf: the value in eth of `pts` points, the larger of the rate term floorRate * pts / refScore and the pool term pts * unitPerPoint at the pool price.
   // the floor rate is the larger of the climbed price state and the decayed peak. points are in points here, refScore in ten-thousandths of a point, so refScore/1e4 is the
   // reference score in points and floorRate/W is the per-credit rate in eth. the pool term is 0 while the pool key or the module is unset or the unit reads 0
+  // in value mode it is pts at the protected sale value per point, the rate term dropped, and 0 while the quote is
+  // unusable (the controller reverts NoQuote there; the sale doors refuse)
   valueOf(pts, now) {
+    if (this.s.valueModeOn) { const v = this.valuePerPoint(true, now); return v.ok ? pts * v.value : 0; }
     const rateTerm = (this.floorRate(now) / W) * (pts / (RATE_SCORE / 1e4));
     return Math.max(rateTerm, this.poolTerm(pts));
   }
-  poolTerm(pts) { return this.p.balancePoolSet && this.moduleSet && this.xpLive > 0 ? pts * this.xpLive * this.p.balancePoolMult : 0; }
-  // ControllerV1.referenceOf: the price reference of a statement, max(cost, valueOf(rating)). a record without a rating references its cost
-  reference(st, now) { return Math.max(st.cost, this.valueOf(st.rating || 0, now)); }
+  poolTerm(pts) { return this.p.balancePoolSet && this.moduleSet && this.xpLive > 0 ? pts * this.xpLive * this.poolMult : 0; }
+  // ControllerV1.referenceOf: the price reference of a statement, max(cost, valueOf(rating)). a record without a rating references its cost.
+  // in value mode the protected floor valueOf(rating) * floorMultBps / 10000, the cost term dropped (decision 150)
+  reference(st, now) {
+    if (this.s.valueModeOn) return (this.valueOf(st.rating || 0, now) * this.floorMultBps()) / BPS;
+    return Math.max(st.cost, this.valueOf(st.rating || 0, now));
+  }
+  // ---- the protected price (ControllerV1, decision 148). spot and reference are multiples of the price the unit assumes
+  // ControllerV1.setBalancePoolKey: the reference starts at the spot
+  setPoolKey(now) { this.refMult = this.poolMult; this.refTime = now; }
+  // the pool price moves (the market); the reference follows only through refreshReference
+  movePool(mult) { this.poolMult = mult; }
+  // ControllerV1.refreshReference: moves the reference toward the spot by at most
+  // min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps) bps of the reference and records the time. no move
+  // before the pool key is set, with referenceMaxStale 0 (mode off), or before referenceMinSeconds has passed
+  refreshReference(now) {
+    if (!(this.refMult > 0)) return;
+    if (this.q.referenceMaxStale === 0) return;
+    if (now - this.refTime < this.q.referenceMinSeconds) return;
+    const move = Math.min((this.q.referenceRateBpsPerHour * (now - this.refTime)) / 3600, this.q.referenceStepBps) / BPS;
+    const hi = this.refMult * (1 + move), lo = this.refMult * (1 - move);
+    this.refMult = Math.min(Math.max(this.poolMult, lo), hi); this.refTime = now;
+  }
+  // ControllerV1.valuePerPoint: eth per point at the protected buy price (forSale false) or sale price (forSale true), and
+  // whether the reference price is usable: the reference set and at most referenceMaxStale old (referenceMaxStale nonzero),
+  // the pool liquidity at least minLiquidity and a usable module
+  valuePerPoint(forSale, now) {
+    const q = this.q, ref = this.refMult;
+    if (!(ref > 0) || q.referenceMaxStale === 0 || now - this.refTime > q.referenceMaxStale || this.p.poolLiquidity < q.minLiquidity || !this.balanceUsable() || !(this.poolMult > 0)) return { value: 0, ok: false };
+    const spot = this.poolMult, up = ref * (BPS + q.tolBps) / BPS, down = ref * (BPS - q.tolBps) / BPS;
+    return { value: this.xpLive * (forSale ? Math.max(spot, down) : Math.min(spot, up)), ok: true };
+  }
+  // CoreLib._valueRate: the value mode eth rate, wei per 100 points: the shared instance climbed to now (clamped to the cap)
+  // times 100 times the buy value per point, at most rateCap. ok false while the quote is unusable
+  valueRate(now) {
+    const v = this.valuePerPoint(false, now);
+    if (!v.ok || !(v.value > 0)) return { rate: 0, ok: false };
+    return { rate: Math.min((this.balPriceState(now) / BPS) * v.value * 100 * W, this.s.rateCap), ok: true };
+  }
+  quoteOk(now) { return !this.s.valueModeOn || this.valuePerPoint(true, now).ok; }
   // ControllerV1._setAnchorStored: the anchor at `now`
   setAnchor(bps, now) { this.anchorStored = bps; this.anchorTime = now; }
   // ControllerV1.anchorBps(): 10000 plus the part of the stored anchor above 10000, halved every anchorHalfLife since anchorTime, rounded down like the contract
@@ -663,7 +774,7 @@ export class Core {
   // the age is `statementAge`. the price is relative to the reference, the larger of the cost and the value of the rating,
   // not to the market price of the statement's parts. the curve falls to saleFloorBps of the reference
   statementPrice(ref, st, now) {
-    return (ref * askBps(this.c, this.startBps(now), this.statementAge(st, now), this.s.saleFloorBps)) / BPS;
+    return (ref * askBps(this.c, this.startBps(now), this.statementAge(st, now), this.s.valueModeOn ? BPS : this.s.saleFloorBps)) / BPS;
   }
   // the Core's hard floor: no sale below cost * saleFloorBps / 10000
   floorPrice(st) { return (st.cost * this.s.saleFloorBps) / BPS; }
@@ -674,7 +785,7 @@ export class Core {
   // ControllerV1.priceOf: the engine price of a statement now, the curve price
   askingPrice(st, now) { return this.curvePrice(st, now); }
   // the lowest asking price the statement will ever have under the current settings: saleFloorBps of the reference
-  lowestPrice(st, now) { return Math.max((this.reference(st, now) * this.s.saleFloorBps) / BPS, this.floorPrice(st)); }
+  lowestPrice(st, now) { return Math.max((this.reference(st, now) * (this.s.valueModeOn ? BPS : this.s.saleFloorBps)) / BPS, this.floorPrice(st)); }
   // sale proceeds into the pots (decision 123): the artist and operator cuts come off the payment first, then
   // saleToBuybackBps of the rest to the buyback and the remainder to the pot (checkpoint first, resync after)
   bookSale(amount, now) {
@@ -701,6 +812,8 @@ export class Core {
   // costs less than anchorMinCost (or has a zero reference). returns the booking, or null when the Core would revert
   buy(st, now) {
     if (this.isPaused()) return null;
+    this.refreshReference(now);
+    if (!this.quoteOk(now)) return null; // NoQuote
     const price = this.curvePrice(st, now);
     const res = this.sellTo(st, price, now);
     if (!res) return null;
@@ -716,20 +829,28 @@ export class Core {
   // the eth cost the Core records for a credit bought with the balance token: the floor rate times score / refScore (CoreLib.sellForBalance, at least 1 wei). the floor
   // rate is the larger of the climbed price state and the decayed peak. refScore is in ten-thousandths of a point, so refScore/1e4 is the reference score in points.
   // the cost basis reads the price state and the peak
-  balanceCostBasis(pts, now) { return (this.floorRate(now) / W) * (pts / (RATE_SCORE / 1e4)); }
-  // the credit sale floor: the larger of the credit's cost and valueOf(score), times creditFloorBps (decision 115)
-  creditFloor(cr, now) { return (Math.max(cr.cost, this.valueOf(cr.pts, now)) * this.cr.creditFloorBps) / BPS; }
+  // in value mode the base is the value mode eth rate (CoreLib._ethFloorNow), 0 while the quote is unusable, a 1 wei basis
+  balanceCostBasis(pts, now) { return ((this.s.valueModeOn ? this.valueRate(now).rate : this.floorRate(now)) / W) * (pts / (RATE_SCORE / 1e4)); }
+  // ControllerV1.floorMultBps: (10000 + creditSpreadBps) of the live balanceBidCapBps, at least 10000 (decisions 150, 153)
+  floorMultBps() { return Math.max(BPS, ((BPS + this.cr.creditSpreadBps) * this.s.balanceBidCapBps) / BPS); }
+  // the credit sale floor: the larger of the credit's cost and valueOf(score), times floorMultBps, and at least saleFloorBps
+  // of the cost, the Core's floor of sellCreditTo
+  // in value mode valueOf alone, the cost term dropped
+  creditFloor(cr, now) {
+    const hi = this.s.valueModeOn ? this.valueOf(cr.pts, now) : Math.max(cr.cost, this.valueOf(cr.pts, now));
+    return Math.max((hi * this.floorMultBps()) / BPS, (cr.cost * this.s.saleFloorBps) / BPS);
+  }
   // ControllerV1.creditPrice: falls linearly from floor * creditStartBps to the floor over creditWindow from the acquisition time and rests at the floor
   creditPrice(cr, now) {
     const floor = this.creditFloor(cr, now), start = (floor * this.cr.creditStartBps) / BPS, age = Math.max(0, now - cr.t0);
     return age >= this.cr.creditWindow ? floor : start - ((start - floor) * age) / this.cr.creditWindow;
   }
-  // Core.sellCreditTo (decision 123): the payment is at least the credit's cost. the artist and operator cuts come off
-  // the payment first; creditCostToPotBps of the cost, at most the rest, goes to the pot, the remainder to the buyback pot.
-  // returns the booking or null when the Core would revert
+  // Core.sellCreditTo (decision 123): the payment is at least saleFloorBps of the credit's cost. the artist and operator
+  // cuts come off the payment first; creditCostToPotBps of the cost, at most the rest, goes to the pot, the remainder to
+  // the buyback pot. the sale time is stored for the return lock. returns the booking or null when the Core would revert
   sellCreditTo(cr, value, now) {
-    if (cr.sold || value < cr.cost * (1 - 1e-12)) return null;
-    cr.sold = true;
+    if (cr.sold || value < ((cr.cost * this.s.saleFloorBps) / BPS) * (1 - 1e-12)) return null;
+    cr.sold = true; cr.soldAt = now;
     const toArtist = (value * this.s.saleToArtistBps) / BPS, toOperator = (value * this.s.saleToOperatorBps) / BPS;
     const rest = value - toArtist - toOperator;
     const toPot = Math.min((cr.cost * this.cr.creditCostToPotBps) / BPS, rest), toBuyback = rest - toPot;
@@ -743,6 +864,8 @@ export class Core {
   // ControllerV1.buyCredit: the buyer pays creditPrice, the controller forwards it to sellCreditTo (decision 123, no royalty). null while the sale is off or sales are paused, or when the Core would revert
   buyCredit(cr, now) {
     if (!this.cr.creditSaleOn || this.isPaused()) return null;
+    this.refreshReference(now);
+    if (!this.quoteOk(now)) return null; // NoQuote
     const price = this.creditPrice(cr, now), res = this.sellCreditTo(cr, price, now);
     if (!res) return null;
     return Object.assign({ price }, res);
@@ -762,7 +885,10 @@ export class Core {
   // xpLive is the unit the module reports now (the module's unitPerPoint()), read at every use
   setBalanceModule(now, xpPerPoint) {
     this.moduleSet = true; this.xpLive = xpPerPoint;
-    if (this.s.balanceBidOn) this.resetBalanceToFloor(now); // the module becoming usable opens the instance at the floor
+    if (this.p.balancePoolSet && !(this.refMult > 0)) this.setPoolKey(now);
+    // the module becoming usable opens the instance at the floor while the bid is on outside value mode; in value mode
+    // the shared instance climbed and carries the eth bid, so a module change leaves it (CoreLib.resetBalanceToFloor)
+    if (this.s.balanceBidOn && !this.s.valueModeOn) this.resetBalanceToFloor(now);
   }
   // the module reports a new unit; the next redemption, bid and price read it
   moduleReports(xpLive) { this.xpLive = xpLive; }
@@ -779,6 +905,7 @@ export class Core {
   balPeakAt(now) { return this.balPeakRate * Math.pow(0.5, Math.max(0, now - this.balPeakTime) / (this.s.peakHalfLifeHours * 3600)); }
   // the module available as bps of par for a refScore credit (CoreLib._toBps). par of a refScore credit is (refScore/1e4) * unit, eth value; a zero denom reads as no clamp
   balAvailBps() {
+    if (this.s.valueModeOn) return this.s.balanceBidCapBps; // value mode: clamped to the cap, not to the funds
     const denom = (RATE_SCORE / 1e4) * this.unit();
     if (!(denom > 0)) return this.s.balanceBidCapBps;
     return Math.min((this.balancePot * BPS) / denom, this.s.balanceBidCapBps);
@@ -820,7 +947,7 @@ export class Core {
   }
   // CoreLib balanceRate(): bps of par now. the floor while the bid is off or no usable module; else the climbed instance clamped to the available bps
   balanceRate(now) {
-    if (!this.s.balanceBidOn || !this.balanceUsable()) return this.balFloor();
+    if (!this.s.valueModeOn && (!this.s.balanceBidOn || !this.balanceUsable())) return this.balFloor();
     return Math.min(this.balPriceState(now), this.balAvailBps());
   }
   // CoreLib balanceBidOf(id): pts * unit * rate / 10000, the rate held at or above the floor. a module too short to pay the floor still reports the floor payout
@@ -844,17 +971,22 @@ export class Core {
     if (rate < floor * (1 - 1e-12)) return 0; // PotTooSmall: the available clamp falls below the floor
     const paid = (pts * this.unit() * rate) / BPS;
     if (!(paid > 0) || paid > this.balancePot + 1e-18) return 0; // PotTooSmall: the payout exceeds the holding
-    this.balRate = price; this.balCheckpointTime = now;
-    // drop the balance rate per credit (CoreLib._drop, absFloor = floor)
+    this.balDrop(price, this.scoreRatio(pts), now);
+    this.balancePot -= paid;
+    return paid;
+  }
+  // a fill on the shared instance at the price state `price` for a credit of score ratio `ratio` (CoreLib._drop, absFloor = floor):
+  // the minute floor, the last fill rate and the peak, then the drop, never under the floor. the balance door and the value mode eth door share it
+  balDrop(price, ratio, now) {
+    const floor = this.balFloor();
+    this.balCheckpointTime = now;
     const bucket = Math.floor(now / this.s.bucketSeconds);
     if (bucket !== this.balBurstBucket || this.balBurstBase === 0 || price < (this.balBurstBase * this.s.dropToPct) / 100) { this.balBurstBucket = bucket; this.balBurstBase = price; }
     this.balLastFillRate = price;
     this.balPeakRate = Math.max(price, this.balPeakAt(now)); this.balPeakTime = now;
-    const fall = Math.min((this.s.dropPerCreditPct / 100) * this.scoreRatio(pts), 1);
+    const fall = Math.min((this.s.dropPerCreditPct / 100) * ratio, 1);
     this.balRate = Math.max(Math.max(price * (1 - fall), (this.balBurstBase * this.s.dropToPct) / 100), floor);
     this.balLastFillTime = now;
-    this.balancePot -= paid;
-    return paid;
   }
   // sellForBalance for one credit at `now`: the credit enters the pile at an eth cost of the score-scaled floor rate
   // cost basis, at least 1 wei, from the price state and the peak. returns {paid, cost}, or null when the bid would revert
@@ -863,10 +995,12 @@ export class Core {
     if (!(paid > 0)) return null;
     return { paid, cost: Math.max(this.balanceCostBasis(pts, now), 1e-18) };
   }
-  // ControllerV1.atFloor: the curve price has reached its floor, saleFloorBps of the reference
+  // ControllerV1.atFloor: with ageEligibilityOn false (launch) the curve price has reached its floor (saleFloorBps of the
+  // reference), reading the reference; with it true the rule is age only, the start at or below 10000 or the statement
+  // aged decayHours, no reference read (decision 155)
   atFloor(st, now) {
-    const ref = this.reference(st, now);
-    return this.statementPrice(ref, st, now) <= ((ref * this.s.saleFloorBps) / BPS) * (1 + 1e-9);
+    if (this.ageEligibilityOn) return this.startBps(now) <= BPS || this.statementAge(st, now) >= this.c.decayHours * 3600;
+    return askBps(this.c, this.startBps(now), this.statementAge(st, now), this.s.saleFloorBps) <= this.s.saleFloorBps;
   }
   // Core.redeemStatement preconditions: a module is set, redeemOn is true, and the statement's curve price has reached its floor
   redeemReady(st, now) {
@@ -1039,6 +1173,7 @@ export function simulate(userParams = {}) {
   const p = Object.assign({}, DEFAULTS, userParams);
   const rng = mulberry32(p.seed);
   const core = new Core(p, 0);
+  // the reserve reads the run's own queue: the pile and the held statements at every read
   const rngThr = mulberry32((p.seed + 99991) >>> 0); // the throttler draws from its own stream, the honest sellers' draws are the same with it on or off
   const pool = new Pool(p);
   const H = Math.round(p.days * 24);
@@ -1052,6 +1187,7 @@ export function simulate(userParams = {}) {
   let holdPool = p.holders;
   const pile = []; // the one credit pile, oldest first: {pts, cost, t0}. credits bought with eth and with the balance token enter it alike (FLOW 92)
   let unbid = []; // statements held by the Core for sale or redemption
+  core.queue = { get pile() { return pile.length; }, get held() { return unbid.length; } };
   let lnM = 0, nextSid = 1;
   const T = { // totals
     fees: 0, feesBuyback: 0, saleGross: 0, saleToPot: 0, saleToBuyback: 0, spent: 0, listingPaid: 0,
@@ -1367,9 +1503,10 @@ export function simulate(userParams = {}) {
       if (e.done || e.at > t0) continue;
       e.done = true; T.settingsChanges++;
       // owner calls that are not settings: the module reports a unit, releaseRedeemBurn (a revert changes nothing)
-      const { moduleUnit, releaseRedeemBurn, ...rest } = e.patch;
+      const { moduleUnit, releaseRedeemBurn, poolMult, ...rest } = e.patch;
       if (Object.keys(rest).length) core.setSettings(rest, t0);
       if (moduleUnit !== undefined) core.moduleReports(moduleUnit);
+      if (poolMult !== undefined) core.movePool(poolMult);
       if (releaseRedeemBurn !== undefined) core.releaseRedeemBurn(releaseRedeemBurn);
     }
   }
@@ -1398,6 +1535,7 @@ export function simulate(userParams = {}) {
     } else core.addFees(fee, mid);
     T.fees += fee; T.vol += V;
     if (!core.moduleSet && t1 >= balanceAt) { core.setBalanceModule(t1, p.xpPerPoint); if (p.balanceDayMode != null) core.setSettings({ redeemOn: p.balanceDayMode >= 1, balanceBidOn: p.balanceDayMode === 2 }, t1); }
+    core.refreshReference(t1); // the keeper refresh door moves the reference each step (no move before the pool key)
     // credit market: the engine's own buying lifts the flat price, the lift decays
     lnM *= Math.pow(0.5, dt / (p.impactHalfLifeHours * 3600));
     const Pe = peff(t1), r0 = core.ethRate(t1);

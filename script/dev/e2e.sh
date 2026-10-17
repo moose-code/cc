@@ -121,7 +121,7 @@ stage claims
 stage d-open
 
 say "the credit price holds at or above its floor as the bid climbs (decision 116)"
-# creditPrice(id) = max(cost, valueOf(score)) * creditFloorBps / 10000, scaled up by the age curve to creditStartBps at
+# creditPrice(id) = max(cost, valueOf(score)) * floorMultBps() / 10000, scaled up by the age curve to creditStartBps at
 # acquisition. the floor tracks the climbing eth bid through valueOf, so the price rises with the bid; the invariant is
 # that it never sits below that floor. compute the floor from the controller's getters and assert price >= floor.
 CREDITS=0x97630aA70AB14ed9883B41dAfccBc11349723043
@@ -135,7 +135,7 @@ credit_floor() {   # the controller's creditPrice floor for credit $1 at the lat
   paid="$(call "$CREDITS" 'timestampOf(uint256)(uint64)' "$id" | awk '{print $1}')"
   score="$(call "$CREDIT_SCORE" 'scoreOf(bytes21,uint64)(uint256)' "$seed" "$paid" | awk '{print $1}')"
   val="$(call "$CTL" 'valueOf(uint256)(uint256)' "$score" | awk '{print $1}')"
-  fbps="$(call "$CTL" 'creditFloorBps()(uint16)' | awk '{print $1}')"
+  fbps="$(call "$CTL" 'floorMultBps()(uint256)' | awk '{print $1}')"
   python3 -c "c=$cost; v=$val; print((c if c>v else v)*$fbps//10000)"
 }
 P0="$(call "$CTL" 'creditPrice(uint256)(uint256)' "$ID0" | awk '{print $1}')"; F0="$(credit_floor "$ID0")"

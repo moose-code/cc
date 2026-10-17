@@ -100,6 +100,16 @@ export class Keeper {
       this.skipLogged.set(k, now);
       log("info", "skip", { block: state.blockNumber, ...sk });
     }
+    // the quote alert: in value mode an unusable quote halts the eth bid and the engine's sales until the reference is
+    // fresh and the pool reads; the balance bid, compose and redemption keep running
+    if (state.valueModeOn && state.noQuote && !state.retired) {
+      await alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token reference price is unusable, the eth routes wait", { referenceTime: state.referenceTime, referenceMaxStale: state.referenceMaxStale });
+    }
+    // the reserve alert: a pot at or under the reserve halts every acquisition until fee income refills it; processing
+    // (compose, redeem, buyback) keeps paying from the whole pot
+    if (state.potRoom === 0n && !state.retired) {
+      await alert(this.cfg.alertWebhook, "reserve", "the pot is at or under the reserve, the bids read zero", { pot: state.potWithPending, reserve: state.reserve });
+    }
     const outcomes: TickResult["outcomes"] = [];
     for (const c of d.calls) {
       const listing = c.door === "buyListing" ? listings.find((l) => l.id === c.args[1] && l.adapter === c.args[0]) : undefined;
@@ -117,6 +127,7 @@ export class Keeper {
       block: state.blockNumber,
       baseFee: state.baseFee,
       pot: state.potWithPending,
+      reserve: state.reserve,
       toBuyback: state.ethToBuyback,
       candidates: listings.length,
       decided: d.calls.map((c) => c.key),

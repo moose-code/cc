@@ -77,7 +77,7 @@ export const controllerAbi = [
             "internalType": "uint32"
           },
           {
-            "name": "floorBps",
+            "name": "spreadBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -85,6 +85,43 @@ export const controllerAbi = [
             "name": "startBps",
             "type": "uint32",
             "internalType": "uint32"
+          }
+        ]
+      },
+      {
+        "name": "quote_",
+        "type": "tuple",
+        "internalType": "struct Quote",
+        "components": [
+          {
+            "name": "referenceRateBpsPerHour",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceStepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "tolBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "referenceMaxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceMinSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minLiquidity",
+            "type": "uint128",
+            "internalType": "uint128"
           }
         ]
       }
@@ -100,6 +137,19 @@ export const controllerAbi = [
         "name": "",
         "type": "address",
         "internalType": "contract ICoreViews"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ageEligibilityOn",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -275,19 +325,6 @@ export const controllerAbi = [
   },
   {
     "type": "function",
-    "name": "creditFloorBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "creditPrice",
     "inputs": [
       {
@@ -314,6 +351,19 @@ export const controllerAbi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "creditSpreadBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -353,6 +403,19 @@ export const controllerAbi = [
         "name": "",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "floorMultBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -446,6 +509,44 @@ export const controllerAbi = [
   },
   {
     "type": "function",
+    "name": "quote",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "referenceRateBpsPerHour",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "referenceStepBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "tolBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceMaxStale",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "referenceMinSeconds",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "minLiquidity",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "referenceOf",
     "inputs": [
       {
@@ -462,6 +563,52 @@ export const controllerAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "referencePrice",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "referenceTime",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint40",
+        "internalType": "uint40"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "refreshReference",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setAgeEligibilityOn",
+    "inputs": [
+      {
+        "name": "v",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -536,7 +683,7 @@ export const controllerAbi = [
             "internalType": "uint32"
           },
           {
-            "name": "floorBps",
+            "name": "spreadBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -544,6 +691,51 @@ export const controllerAbi = [
             "name": "startBps",
             "type": "uint32",
             "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setQuote",
+    "inputs": [
+      {
+        "name": "v",
+        "type": "tuple",
+        "internalType": "struct Quote",
+        "components": [
+          {
+            "name": "referenceRateBpsPerHour",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceStepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "tolBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "referenceMaxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceMinSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minLiquidity",
+            "type": "uint128",
+            "internalType": "uint128"
           }
         ]
       }
@@ -595,6 +787,24 @@ export const controllerAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "spotPrice",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "spot",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ok",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -653,6 +863,43 @@ export const controllerAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "valuePerPoint",
+    "inputs": [
+      {
+        "name": "forSale",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ok",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "AgeEligibilitySet",
+    "inputs": [
+      {
+        "name": "on",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -775,7 +1022,7 @@ export const controllerAbi = [
             "internalType": "uint32"
           },
           {
-            "name": "floorBps",
+            "name": "spreadBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -785,6 +1032,70 @@ export const controllerAbi = [
             "internalType": "uint32"
           }
         ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "QuoteSet",
+    "inputs": [
+      {
+        "name": "quote",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct Quote",
+        "components": [
+          {
+            "name": "referenceRateBpsPerHour",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceStepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "tolBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "referenceMaxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceMinSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minLiquidity",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReferenceRefreshed",
+    "inputs": [
+      {
+        "name": "referencePrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "spot",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -848,6 +1159,11 @@ export const controllerAbi = [
   {
     "type": "error",
     "name": "CreditSaleOff",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoQuote",
     "inputs": []
   },
   {

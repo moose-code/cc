@@ -8,9 +8,14 @@ export interface BalanceTokenInfo {
   decimals: number;
 }
 
+// A balance token amount without its symbol, to `dp` decimals at most; undefined until the token is read.
+export function balanceAmount(v: bigint, info?: BalanceTokenInfo, dp = 6): string | undefined {
+  return info ? Number(formatUnits(v, info.decimals)).toLocaleString("en-US", { maximumFractionDigits: dp }) : undefined;
+}
+
 // A balance token amount with its symbol; raw units until the token is read.
 export function formatBalance(v: bigint, info?: BalanceTokenInfo): string {
-  const n = info ? Number(formatUnits(v, info.decimals)).toLocaleString("en-US", { maximumFractionDigits: 6 }) : undefined;
+  const n = balanceAmount(v, info);
   return n != null ? `${n} ${BALANCE_SYMBOL}` : `${v} ${BALANCE_SYMBOL} units`;
 }
 

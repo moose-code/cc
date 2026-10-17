@@ -267,7 +267,7 @@ function ComposeBox({ id, pile, snap }: { id: number; pile: PileCredit[]; snap: 
 }
 
 // Price now, the falling curve and the buy button. Curve (see Snapshot): floor = max(cost, valueOf(score)) *
-// creditFloorBps / 10000, start = floor * creditStartBps / 10000, linear over the sale window, then flat.
+// creditFloorBps / 10000 (floorMultBps: the spread over the bid's hard cap), start = floor * creditStartBps / 10000, linear over the sale window, then flat.
 function PriceBox({
   id,
   c,

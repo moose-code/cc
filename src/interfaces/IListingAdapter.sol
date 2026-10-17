@@ -11,8 +11,9 @@ interface IListingAdapter {
     /// @return target the contract the Core calls
     /// @return value the exact eth the Core sends with the call
     /// @return data the calldata of the call
+    /// @return offerer the listing seller, which the Core's return lock reads
     function price(uint256 id, bytes calldata params)
         external
         view
-        returns (address target, uint256 value, bytes memory data);
+        returns (address target, uint256 value, bytes memory data, address offerer);
 }

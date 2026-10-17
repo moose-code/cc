@@ -25,7 +25,7 @@ abstract contract OwnerBase is Fixture {
         s = _sale();
         (s.markupBps, s.startCapBps, s.decayHours) = (12_000, 150_000, 24);
         c = _creditSale();
-        (c.floorBps, c.startBps) = (12_000, 40_000);
+        (c.spreadBps, c.startBps) = (1_000, 40_000);
     }
 
     function setUp() public virtual override {

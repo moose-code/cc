@@ -45,5 +45,7 @@ contract StatementInfoStub {
 
     function settings() external view returns (Settings memory s) {
         s.saleFloorBps = saleFloorBps;
+        // a realistic bid margin so the controller's reference band bound (decision 157) accepts the launch quote
+        s.balanceBidMarginBps = 1_000;
     }
 }

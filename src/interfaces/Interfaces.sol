@@ -7,9 +7,9 @@ interface IController {
     /// the next page to compose. the core uses `ready` and `ids`; the returned `format` is not used, the core picks the
     /// format of a system compose
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    /// true when the curve price of statement `sid` has reached its floor, `saleFloorBps` of the reference. the curve age
-    /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate the balance side
-    /// redemption
+    /// true when statement `sid` is eligible for redemption. with `ageEligibilityOn` false (launch) the curve price has
+    /// reached its floor, `saleFloorBps` of the reference; with it on the rule is age only. the age excludes paused
+    /// seconds, so eligibility is frozen while sales are paused. the core reads it to gate the balance side redemption
     function atFloor(uint256 sid) external view returns (bool);
     /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
     /// the credit window has passed. the core reads it to gate a chosen compose
@@ -17,6 +17,16 @@ interface IController {
     /// the asking price of statement `sid` now. the core reads it once per compose for the `Composed` event, and a
     /// failed read is logged as 0
     function priceOf(uint256 sid) external view returns (uint256);
+    /// the wei value of one point (`POINT_UNIT` score units, `POINT_UNIT * unitPerPoint` balance token base units) at the
+    /// protected price of the balance token: the buy price `min(spot, reference * (10_000 + tolBps) / 10_000)` for
+    /// `forSale` false, rounded down, the sale price `max(spot, reference * (10_000 - tolBps) / 10_000)` for true, rounded
+    /// up. `ok` is false, and `value` 0, while the quote is unusable (no pool key or module, a stale reference, pool
+    /// liquidity under the minimum, a failed unit read). the core reads it in value mode, with a bounded call that fails
+    /// closed to `NoQuote`
+    function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
+    /// moves the reference toward the pool spot under its cadence, rate and step gates; true when it updated the
+    /// reference. the Core's `refreshReference` door forwards to it and pays the caller only when it returns true
+    function refreshReference() external returns (bool);
 }
 
 interface IBalanceModule {
@@ -144,7 +154,8 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
 /// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
 /// split and `pointsPerPage`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`, `spendCapBps`, `bucketSeconds`,
-/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`. docs/SPEC.md section 3 has the meaning of every field
+/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei`, `returnLockSeconds` and `valueModeOn`.
+/// docs/SPEC.md section 3 has the meaning of every field
 struct Settings {
     // slot 0
     /// fall of a bid rate on a fill, bps of the rate before the credit, as `dropPer100PointsBps * score / (100 points in score units)`, bounded at 10_000; shared by the eth and balance bids
@@ -232,6 +243,17 @@ struct Settings {
     uint32 idleStepSeconds;
     /// seconds after token launch before the one-way payee latch may activate
     uint32 sniperSeconds;
+    /// the least eth the pot keeps for processing, wei. the reserve is the larger of this and 1.5 times the queued compose
+    /// and redeem caller payments; the bids and `ethRate` read `ethPot` less the reserve, the caller payments, the buyback
+    /// and the pushes pay from the whole pot
+    uint64 reserveWei;
+    /// seconds every intake door refuses a credit the engine sold through `sellCreditTo`, from the sale. 0 refuses it in
+    /// the second of the sale only
+    uint32 returnLockSeconds;
+    /// the value switch: the eth bid is the shared balance instance times the controller's protected value per point,
+    /// every eth fill drops that instance, and the controller prices sales on the value with the floor rate and cost
+    /// terms dropped. turning it on resets the shared instance to its floor
+    bool valueModeOn;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -260,16 +282,36 @@ struct CreditSale {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 to uint32.max seconds
     uint32 window;
-    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to uint16.max
-    uint16 floorBps;
+    /// the sale spread, bps. the credit sale floor is the larger of the credit's cost and its `valueOf` score times
+    /// `max(10_000, (10_000 + spreadBps) * balanceBidCapBps / 10_000)`, the Core's cap read live. 0 to uint16.max
+    uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
+}
+
+/// the reference price settings of the controller (decision 148), set at once by `setQuote`. the controller keeps a
+/// reference price of the balance token that `refreshReference()` and its sale doors move toward the pool spot by at most
+/// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update
+struct Quote {
+    /// the most the reference moves toward the spot per hour, bps of the reference
+    uint32 referenceRateBpsPerHour;
+    /// the most one update moves the reference, bps of the reference. 0 to 10_000
+    uint16 referenceStepBps;
+    /// the band around the reference: buys price off `min(spot, reference * (10_000 + tolBps) / 10_000)`, sales off
+    /// `max(spot, reference * (10_000 - tolBps) / 10_000)`. 0 to 9_999
+    uint16 tolBps;
+    /// seconds after the last update the reference stays usable. 0 keeps the reference price unusable
+    uint32 referenceMaxStale;
+    /// least seconds between two reference refreshes. a refresh runs only when the last sample is older than this
+    uint32 referenceMinSeconds;
+    /// the least pool liquidity of a usable reference price
+    uint128 minLiquidity;
 }
 
 /// the credit settings of the launch: the constructor arguments the Core and the controller take for the credit sale
 /// window and chosen composition. owner adjustable afterwards, so the launch rules only check
 /// bounds (`src/lib/CreditBounds.sol`). the Core reads `costToPotBps`, `chosenComposeOn` and `minCcToChoose`; the
-/// controller reads `saleOn`, `window`, `floorBps` and `startBps`. the point rate basis is the fixed 100 points
+/// controller reads `saleOn`, `window`, `spreadBps` and `startBps`. the point rate basis is the fixed 100 points
 struct Credit {
     // core
     /// share of the sold credit's cost booked to the buying pot, bps. the rest of the payment funds the coin buyback.
@@ -285,8 +327,8 @@ struct Credit {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 to uint32.max seconds
     uint32 window;
-    /// the credit sale floor over the larger of the credit's cost and its `valueOf` score, bps. 10_000 to uint16.max
-    uint16 floorBps;
+    /// the sale spread over the bid's hard cap, bps (the controller's `CreditSale.spreadBps`). 0 to uint16.max
+    uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
 }
@@ -363,27 +405,32 @@ library Mainnet {
             bucketSeconds: 60,
             balanceBidCapBps: 10_000,
             idleStepSeconds: 600,
-            sniperSeconds: 1800
+            sniperSeconds: 1800,
+            reserveWei: 0.1 ether,
+            returnLockSeconds: 21_600,
+            valueModeOn: false
         });
     }
 
     /// the launch sale: the ask starts at 150 percent of the reference (at most 1_000 percent, the start cap) and falls
-    /// in a straight line to 100 percent over 12 hours, where it rests. the anchor excess over 100 percent halves every
-    /// 7 days, and the anchor moves only on a statement that costs at least 0.1 eth
+    /// in a straight line to 100 percent over 4 hours, where it rests. `anchorMoveBps` 0 keeps the anchor at 100 percent,
+    /// so no sale moves it; its half life and minimum cost stay set for a later raise
     function defaultSale() internal pure returns (Sale memory) {
         return Sale({
             markupBps: 15_000,
             startCapBps: 100_000,
-            decayHours: 12,
+            decayHours: 4,
             anchorHalfLife: 7 days,
             anchorMinCost: 0.1 ether,
-            anchorMoveBps: 5_000
+            anchorMoveBps: 0
         });
     }
 
-    /// the launch credit settings: the credit sale is on, its window is 4 hours, the floor is 110 percent and the
-    /// start 300 percent of the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and
-    /// the coin balance a caller needs to choose a compose or a held format is 1 coin
+    /// the launch credit settings: the credit sale is on, its window is 4 hours, the spread is 10 percent over the bid's
+    /// hard cap (decision 155; the floor is 110 percent of the reference at the launch cap of 10_000, today's 1.1x; the
+    /// owner lowers it to 200 at the value switch per decision 153), the start is 150 percent of the floor, 80 percent of
+    /// a sold credit's cost funds the pot, chosen composition is off, and the coin balance a caller needs to choose a
+    /// compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
             costToPotBps: 8_000,
@@ -391,8 +438,23 @@ library Mainnet {
             minCcToChoose: 1e18,
             saleOn: true,
             window: 4 hours,
-            floorBps: 11_000,
-            startBps: 30_000
+            spreadBps: 1_000,
+            startBps: 15_000
+        });
+    }
+
+    /// the launch reference price settings: the 4.5 percent band (loop closure bound, decision 153) and a 600 second refresh
+    /// cadence. the rate, the step, the staleness and the liquidity minimum are owner inputs set once the balance token
+    /// pool exists and its depth is known; a `referenceMaxStale` of 0 keeps the reference price unusable, so value mode
+    /// fails closed to `NoQuote` until they are set
+    function defaultQuote() internal pure returns (Quote memory) {
+        return Quote({
+            referenceRateBpsPerHour: 0,
+            referenceStepBps: 0,
+            tolBps: 450,
+            referenceMaxStale: 0,
+            referenceMinSeconds: 600,
+            minLiquidity: 0
         });
     }
 

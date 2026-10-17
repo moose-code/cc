@@ -109,6 +109,8 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     spend: { bucket: spendState[0], budget: spendState[1], spent: spendState[2] },
     ethPot: snap.ethPot,
     potWithPending: snap.potWithPending,
+    reserve: snap.reserve,
+    potRoom: snap.potRoom,
     pendingIncome: snap.pendingIncome,
     lastBookAt: 0n,
     ethToBuyback: snap.ethToBuyback,
@@ -122,6 +124,13 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     pageReady: snap.page.ready,
     balanceModule: snap.balanceModule,
     atFloor: held.filter((_, i) => floors[i]?.status === "success" && floors[i].result === true),
+    controller: snap.controller,
+    valueModeOn: snap.value.on,
+    noQuote: snap.noQuote,
+    referencePrice: snap.value.referencePrice ?? 0n,
+    referenceTime: BigInt(snap.value.referenceTime ?? 0),
+    referenceMaxStale: BigInt(snap.value.quote?.referenceMaxStale ?? 0),
+    referenceMinSeconds: BigInt(snap.value.quote?.referenceMinSeconds ?? 0),
   };
   return { state, snap };
 }

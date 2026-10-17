@@ -251,7 +251,7 @@ abstract contract HandlerOwner is HandlerBase {
         // funded, lowered to the new clamp
         {
             uint256 stored = core.rateAtCheckpoint();
-            uint256 want = BidModel.read(ns, core.ethPot(), _priceNow(ns));
+            uint256 want = BidModel.read(ns, _room(), _priceNow(ns));
             if (stored != p.price) _flag(V_RATE_BOUND, "a settings call moved the stored eth rate");
             if (core.ethRate() != want) _flag(V_RATE_BOUND, "a settings call moved the eth rate");
         }
@@ -442,7 +442,7 @@ abstract contract HandlerOwner is HandlerBase {
             Settings memory cs = core.settings();
             (uint256 anchor,,) = _anchorState();
             (uint256 peakRate, uint256 peakTime) = _peakState();
-            uint256 want = BidModel.read(cs, core.ethPot(), _priceNow(cs));
+            uint256 want = BidModel.read(cs, _room(), _priceNow(cs));
             if (core.ethRate() != want || core.rateAtCheckpoint() != rate || anchor != rate) {
                 _flag(V_RATE_BOUND, "setRate did not land on the rate and the anchor");
             }
@@ -1044,12 +1044,16 @@ abstract contract HandlerOwner is HandlerBase {
             want = v;
         } else if (which == 5) {
             target = v1;
-            cur = c.creditFloorBps();
-            uint256 v = bad ? (seed % 2 == 0 ? 9_999 : 40_001) : _f(seed, 10_000, 40_000, cur);
+            cur = c.creditSpreadBps();
+            uint256 v = _f(seed, 0, 30_000, cur);
             CreditSale memory cs = _creditSaleOf(c);
-            cs.floorBps = uint16(v);
+            cs.spreadBps = uint16(v);
             data = abi.encodeCall(IControllerV1.setCredit, (cs));
-            valid = v >= 10_000;
+            // the loop closure bound (decision 157): the spread must cover the reference band at the current tolerance,
+            // so a spread below `(10_000 + tol) * 10_000 / (10_000 - tol) - 10_000` reverts BadSetting
+            (,, uint16 tol,,,) = c.quote();
+            uint256 req = ((10_000 + uint256(tol)) * 10_000 + (10_000 - uint256(tol)) - 1) / (10_000 - uint256(tol)) - 10_000;
+            valid = v >= req;
             want = v;
         } else if (which == 6) {
             target = v1;
@@ -1068,7 +1072,7 @@ abstract contract HandlerOwner is HandlerBase {
         return CreditSale({
             saleOn: c.creditSaleOn(),
             window: c.creditWindow(),
-            floorBps: c.creditFloorBps(),
+            spreadBps: c.creditSpreadBps(),
             startBps: c.creditStartBps()
         });
     }
@@ -1081,7 +1085,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (which == 2) return core.minCcToChoose();
         if (which == 3) return c.creditSaleOn() ? 1 : 0;
         if (which == 4) return c.creditWindow();
-        if (which == 5) return c.creditFloorBps();
+        if (which == 5) return c.creditSpreadBps();
         return c.creditStartBps();
     }
 }

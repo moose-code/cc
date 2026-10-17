@@ -138,7 +138,7 @@ export const controller = onchainTable("controller", (t) => ({
   anchorMinCost: t.bigint(),
   saleOn: t.boolean(),
   window: t.bigint(),
-  floorBps: t.integer(),
+  spreadBps: t.integer(),
   startBps: t.bigint(),
   anchorBps: t.bigint(), // stored value, decays with anchorHalfLife from anchorBlock
   anchorBlock: t.bigint(),
@@ -148,6 +148,17 @@ export const controller = onchainTable("controller", (t) => ({
   balanceFee: t.integer(),
   balanceTickSpacing: t.integer(),
   balanceHooks: t.hex(),
+  // the reference price (decision 148): the reference price settings (QuoteSet) and the reference of the balance token
+  // with the pool spot it moved toward, wei per 1e18 base units, at the last ReferenceRefreshed
+  referenceRateBpsPerHour: t.bigint(),
+  referenceStepBps: t.integer(),
+  referenceTolBps: t.integer(),
+  referenceMaxStale: t.bigint(),
+  referenceMinSeconds: t.bigint(),
+  referenceMinLiquidity: t.bigint(),
+  referencePrice: t.bigint(),
+  referenceSpot: t.bigint(),
+  referenceTime: t.bigint(),
 }));
 
 /**

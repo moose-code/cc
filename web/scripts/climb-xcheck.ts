@@ -14,7 +14,8 @@ const rd = (fn: any, args?: any[]) => c.readContract({ address: core, abi: coreA
 const [st, r, t, lf, pot, w0, w2, w3] = await Promise.all([rd("settings"), rd("rateAtCheckpoint"), rd("checkpointTime"), rd("lastFillTime"), rd("ethPot"), word(0n), word(2n), word(3n)]);
 const s = st as any;
 const mul = await rd("climbMultiplier").catch(() => 10_000n);
-const state: ClimbState = { r, t: Number(t), anchorTime: Number(lf), lastFillRate: BigInt(w0!), peakRate: BigInt(w3!), peakTime: Number((BigInt(w2!) >> 64n) & ((1n << 64n) - 1n)), ceilBps: s.ceilBps, idleLoosenBps: s.idleLoosenBps, idleStepSeconds: s.idleStepSeconds, climbMultiplierBps: Number(mul), rateCap: BigInt(s.rateCap), peakHalfLife: s.peakHalfLife, climbPerMinBps: s.climbPerMinBps, recoveryClimbPerMinBps: s.recoveryClimbPerMinBps, recoveryGapBps: s.recoveryGapBps, ethPot: pot, pending: 0n };
+const reserve = (await rd("reserve").catch(() => 0n)) as bigint; // the clamp is the pot less the reserve (Core.room)
+const state: ClimbState = { r, t: Number(t), anchorTime: Number(lf), lastFillRate: BigInt(w0!), peakRate: BigInt(w3!), peakTime: Number((BigInt(w2!) >> 64n) & ((1n << 64n) - 1n)), ceilBps: s.ceilBps, idleLoosenBps: s.idleLoosenBps, idleStepSeconds: s.idleStepSeconds, climbMultiplierBps: Number(mul), rateCap: BigInt(s.rateCap), peakHalfLife: s.peakHalfLife, climbPerMinBps: s.climbPerMinBps, recoveryClimbPerMinBps: s.recoveryClimbPerMinBps, recoveryGapBps: s.recoveryGapBps, ethPot: pot > reserve ? pot - reserve : 0n, pending: 0n };
 console.log("state", { r, t, lf, pot, lastFill: state.lastFillRate, peak: state.peakRate, peakTime: state.peakTime, blk: blk.timestamp });
 const id = 1n;
 for (const dt of [0, 60, 600, 3600, 6 * 3600, 24 * 3600, 5 * 86400]) {

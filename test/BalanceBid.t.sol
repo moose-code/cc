@@ -128,9 +128,9 @@ contract BalanceBidTest is Fixture {
         assertGt(xt.balanceOf(user) - before, 0, "sellForBalance paid");
         // setSettings checkpoints the balance instance while the bid is on; it must not revert
         Settings memory s = core.settings();
-        s.climbPerMinBps = 123;
+        s.climbPerMinBps = 99;
         _setSettings(s);
-        assertEq(core.settings().climbPerMinBps, 123, "setSettings landed");
+        assertEq(core.settings().climbPerMinBps, 99, "setSettings landed");
     }
 
     // promise: SPEC 4 the module's available() rises with no engine call and the clamped rate and the next fill follow it

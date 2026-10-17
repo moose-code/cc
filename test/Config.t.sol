@@ -104,14 +104,21 @@ contract ConfigTest is Fixture {
         assertEq(f.settings.keeperMaxBaseFee, 5 gwei);
         assertTrue(f.settings.redeemOn);
         assertEq(f.settings.balanceBidMarginBps, 1_000);
-        assertEq(SettingsFields.N, 34);
-        assertEq(abi.encode(f.settings).length, 34 * 32);
+        assertEq(SettingsFields.N, 37);
+        assertEq(abi.encode(f.settings).length, 37 * 32);
         assertEq(f.settings.spendCapBps, 10_000);
         assertEq(f.settings.bucketSeconds, 60);
         assertEq(f.settings.balanceBidCapBps, 10_000);
         assertEq(f.settings.idleStepSeconds, 600);
         assertEq(f.settings.sniperSeconds, 1800);
-        assertEq(f.sale.anchorMoveBps, 5_000);
+        assertEq(f.settings.reserveWei, 0.1 ether);
+        assertEq(f.settings.returnLockSeconds, 21_600);
+        assertEq(f.credit.spreadBps, 1_000);
+        assertFalse(f.settings.valueModeOn);
+        assertEq(abi.encode(f.quote), abi.encode(Mainnet.defaultQuote()), "the quote block is the launch quote");
+        assertEq(f.quote.tolBps, 450);
+        assertEq(f.quote.referenceMaxStale, 0);
+        assertEq(f.sale.anchorMoveBps, 0);
         assertEq(f.payee, v2.owner);
         // the stack addresses of the shipped file are the record of the live stack, the factory owner is the config owner
         assertEq(unsetFields(f).length, 0, "the shipped file leaves nothing unset");
@@ -753,9 +760,9 @@ contract ConfigTest is Fixture {
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     // promise: the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[34] memory lo = SettingsFields.lo();
-        uint256[34] memory hi = SettingsFields.hi();
-        bytes32[34] memory names = SettingsFields.names();
+        uint256[37] memory lo = SettingsFields.lo();
+        uint256[37] memory hi = SettingsFields.hi();
+        bytes32[37] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             for (uint256 edge; edge < 2; ++edge) {
                 Settings memory s = Mainnet.defaultSettings();

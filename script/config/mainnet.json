@@ -51,15 +51,26 @@
     "bucketSeconds": 60,
     "balanceBidCapBps": 10000,
     "idleStepSeconds": 600,
-    "sniperSeconds": 1800
+    "sniperSeconds": 1800,
+    "reserveWei": 100000000000000000,
+    "returnLockSeconds": 21600,
+    "valueModeOn": false
   },
   "sale": {
     "markupBps": 15000,
     "startCapBps": 100000,
-    "decayHours": 12,
+    "decayHours": 4,
     "anchorHalfLife": 604800,
     "anchorMinCost": 100000000000000000,
-    "anchorMoveBps": 5000
+    "anchorMoveBps": 0
+  },
+  "quote": {
+    "referenceRateBpsPerHour": 0,
+    "referenceStepBps": 0,
+    "tolBps": 450,
+    "referenceMaxStale": 0,
+    "referenceMinSeconds": 600,
+    "minLiquidity": 0
   },
   "credit": {
     "costToPotBps": 8000,
@@ -67,8 +78,8 @@
     "minCcToChoose": "1000000000000000000",
     "saleOn": true,
     "window": 14400,
-    "floorBps": 11000,
-    "startBps": 30000
+    "spreadBps": 1000,
+    "startBps": 15000
   },
   "launch": {
     "supply": "1000000000000000000000000000",

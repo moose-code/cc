@@ -61,8 +61,8 @@ contract RecoveryTest is Fixture {
 
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a one minute dump of 140 credits halves the bid; the recovery climb brings it back to the pre dump price in about
-    /// 36 minutes at the launch gap. at launch `climbPerMinBps` and `recoveryClimbPerMinBps` are both 200, so the climb
-    /// from the 50 percent floor to the peak is a uniform 2 percent a minute. the climb is unscaled by the pot (decision
+    /// 36 minutes at the launch gap. at launch `climbPerMinBps` and `recoveryClimbPerMinBps` are both 200 (decision 155),
+    /// so the climb from the 50 percent floor to the peak is a uniform 2 percent a minute. the climb is unscaled by the pot (decision
     /// 128 variant d scales only the ceiling loosening). the exact minute is asserted and logged
     function test_oneMinuteDumpRecovers() public {
         vm.prank(owner);

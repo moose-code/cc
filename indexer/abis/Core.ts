@@ -451,6 +451,21 @@ export const coreAbi = [
             "name": "sniperSeconds",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "reserveWei",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "returnLockSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "valueModeOn",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },
@@ -485,7 +500,7 @@ export const coreAbi = [
             "internalType": "uint32"
           },
           {
-            "name": "floorBps",
+            "name": "spreadBps",
             "type": "uint16",
             "internalType": "uint16"
           },
@@ -1071,7 +1086,7 @@ export const coreAbi = [
     "inputs": [],
     "outputs": [
       {
-        "name": "price",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1503,6 +1518,19 @@ export const coreAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reserve",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1951,6 +1979,21 @@ export const coreAbi = [
             "name": "sniperSeconds",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "reserveWei",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "returnLockSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "valueModeOn",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -2150,6 +2193,21 @@ export const coreAbi = [
             "name": "sniperSeconds",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "reserveWei",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "returnLockSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "valueModeOn",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -3143,6 +3201,21 @@ export const coreAbi = [
             "name": "sniperSeconds",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "reserveWei",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "returnLockSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "valueModeOn",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -3226,6 +3299,31 @@ export const coreAbi = [
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ValueRateFill",
+    "inputs": [
+      {
+        "name": "spent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "rateBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "pot",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -3417,6 +3515,11 @@ export const coreAbi = [
   },
   {
     "type": "error",
+    "name": "NoQuote",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NoSuccessor",
     "inputs": []
   },
@@ -3518,10 +3621,15 @@ export const coreAbi = [
   },
   {
     "type": "error",
-    "name": "SameBlockReturn",
+    "name": "ReturnLocked",
     "inputs": [
       {
         "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "until",
         "type": "uint256",
         "internalType": "uint256"
       }

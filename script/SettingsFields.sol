@@ -3,15 +3,15 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interfaces/Interfaces.sol";
 
-/// @notice the 34 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
+/// @notice the 37 fields of `Settings` by index (the order of the struct), their names and the documented bounds of
 /// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. recoveryClimbPerMinBps is
-/// bounded below by climbPerMinBps, handled by the callers. the two switches are 0 or 1
+/// bounded below by climbPerMinBps, handled by the callers. the three switches are 0 or 1
 library SettingsFields {
-    uint256 internal constant N = 34;
+    uint256 internal constant N = 37;
 
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
-        uint256[34] memory f = [
+        uint256[37] memory f = [
             uint256(s.dropPer100PointsBps),
             s.dropFloorBps,
             s.climbPerMinBps,
@@ -45,7 +45,10 @@ library SettingsFields {
             s.bucketSeconds,
             s.balanceBidCapBps,
             s.idleStepSeconds,
-            s.sniperSeconds
+            s.sniperSeconds,
+            s.reserveWei,
+            s.returnLockSeconds,
+            s.valueModeOn ? 1 : 0
         ];
         return f[i];
     }
@@ -86,13 +89,16 @@ library SettingsFields {
         else if (i == 30) s.bucketSeconds = uint32(v);
         else if (i == 31) s.balanceBidCapBps = uint32(v);
         else if (i == 32) s.idleStepSeconds = uint32(v);
-        else s.sniperSeconds = uint32(v);
+        else if (i == 33) s.sniperSeconds = uint32(v);
+        else if (i == 34) s.reserveWei = uint64(v);
+        else if (i == 35) s.returnLockSeconds = uint32(v);
+        else s.valueModeOn = v != 0;
         // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @dev the documented lower bound of every field. recoveryClimbPerMinBps is bounded below by climbPerMinBps,
     /// handled by the callers
-    function lo() internal pure returns (uint256[34] memory) {
+    function lo() internal pure returns (uint256[37] memory) {
         return [
             uint256(1),
             1,
@@ -127,11 +133,14 @@ library SettingsFields {
             1,
             10_000,
             1,
+            0,
+            0,
+            0,
             0
         ];
     }
 
-    function hi() internal pure returns (uint256[34] memory) {
+    function hi() internal pure returns (uint256[37] memory) {
         return [
             uint256(9_999),
             10_000,
@@ -166,11 +175,14 @@ library SettingsFields {
             type(uint32).max,
             type(uint32).max,
             type(uint32).max,
-            type(uint32).max
+            type(uint32).max,
+            type(uint64).max,
+            type(uint32).max,
+            1
         ];
     }
 
-    function names() internal pure returns (bytes32[34] memory) {
+    function names() internal pure returns (bytes32[37] memory) {
         return [
             bytes32("dropPer100PointsBps"),
             "dropFloorBps",
@@ -205,7 +217,10 @@ library SettingsFields {
             "bucketSeconds",
             "balanceBidCapBps",
             "idleStepSeconds",
-            "sniperSeconds"
+            "sniperSeconds",
+            "reserveWei",
+            "returnLockSeconds",
+            "valueModeOn"
         ];
     }
 }

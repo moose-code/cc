@@ -15,7 +15,7 @@ abstract contract ProdDeployer is SystemDeployer {
 
     function _newController(address core_, LaunchConfig memory c) internal virtual override returns (address) {
         bytes memory init =
-            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(core_, c.sale, c.credit));
+            abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(core_, c.sale, c.credit, c.quote));
         return Prod.create2(init, CONTROLLER_SALT, CREATE2_DEPLOYER);
     }
 

@@ -158,10 +158,16 @@ abstract contract SaleBase is Fixture {
 /// from its start to cost and stays there. these tests exercise the slope of the line, so setUp sets `saleFloorBps` to
 /// 7_500 through the owner setter. the launch curve itself is `SaleLaunchCurveTest`
 abstract contract SaleShapeBase is SaleBase {
+    /// the shape, buy, decay and anchor suites run the 12 hour line and the anchor fraction 5,000 they were written for
+    /// (the launch before decision 154); the launch curve of 4 hours and the anchor off have their own tests
     function setUp() public virtual override {
         super.setUp();
         _pinReferenceToCost();
         _floorBps(7_500);
+        Sale memory s = _sale();
+        (s.decayHours, s.anchorMoveBps) = (12, 5_000);
+        vm.prank(owner);
+        ctl.setSale(s);
     }
 }
 
@@ -174,26 +180,27 @@ contract SaleLaunchCurveTest is SaleBase {
 
     // promise: SPEC 1 launch curve falls from the start price to the statement reference and rests there
     function test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() public {
-        assertEq(ctl.decayHours(), 12, "decay hours at launch");
+        assertEq(ctl.decayHours(), 4, "decay hours at launch");
+        assertEq(ctl.anchorMoveBps(), 0, "the anchor is off at launch");
         assertEq(core.settings().saleFloorBps, 10_000, "floor at launch");
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         uint256 start = cost * 15_000 / 10_000;
-        uint256[8] memory t = [uint256(0), 1, 6 * H, 12 * H - 1, 12 * H, 12 * H + 1, 100 * H, 100_000 * H];
+        uint256[8] memory t = [uint256(0), 1, 2 * H, 4 * H - 1, 4 * H, 4 * H + 1, 100 * H, 100_000 * H];
         for (uint256 i; i < t.length; ++i) {
             _age(sid, t[i]);
             uint256 ask = ctl.priceOf(sid);
-            assertEq(ask, _curve(cost, 15_000, 10_000, 12, t[i]), "closed form at launch values");
+            assertEq(ask, _curve(cost, 15_000, 10_000, 4, t[i]), "closed form at launch values");
             assertGe(ask, cost, "never below the floor (cost)");
             assertLe(ask, start, "never above the start");
         }
         _age(sid, 0);
         assertEq(ctl.priceOf(sid), start, "starts at 150 percent");
-        _age(sid, 6 * H);
+        _age(sid, 2 * H);
         assertEq(ctl.priceOf(sid), cost * 12_500 / 10_000, "halfway through the window it is 125 percent");
-        _age(sid, 12 * H);
-        assertEq(ctl.priceOf(sid), cost, "reaches cost (the floor) at hour 12");
-        _age(sid, 12 * H - 1);
+        _age(sid, 4 * H);
+        assertEq(ctl.priceOf(sid), cost, "reaches cost (the floor) at hour 4");
+        _age(sid, 4 * H - 1);
         assertGt(ctl.priceOf(sid), cost, "one second before it is above cost");
         _age(sid, 5000 * H);
         assertEq(ctl.priceOf(sid), cost, "stays at cost");
@@ -475,21 +482,21 @@ contract SaleSettingsTest is SaleBase {
     function test_settings_launchValues() public view {
         assertEq(lc.sale.markupBps, 15_000);
         assertEq(lc.sale.startCapBps, 100_000);
-        assertEq(lc.sale.decayHours, 12);
+        assertEq(lc.sale.decayHours, 4);
         assertEq(lc.sale.anchorHalfLife, 7 days);
         assertEq(lc.sale.anchorMinCost, 0.1 ether);
-        assertEq(lc.sale.anchorMoveBps, 5_000);
+        assertEq(lc.sale.anchorMoveBps, 0);
         assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(lc.sale), "the launch sale");
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.startCapBps(), 100_000);
-        assertEq(ctl.decayHours(), 12);
+        assertEq(ctl.decayHours(), 4);
         assertEq(core.settings().saleFloorBps, 10_000);
         assertEq(core.settings().saleToArtistBps, 250);
         assertEq(core.settings().saleToOperatorBps, 50);
         assertEq(core.artist(), creator);
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorMinCost(), 0.1 ether);
-        assertEq(ctl.anchorMoveBps(), 5_000);
+        assertEq(ctl.anchorMoveBps(), 0);
         assertEq(ctl.anchorBps(), 10_000, "the anchor starts at the cost");
         assertEq(ctl.storedAnchorBps(), 10_000);
         assertEq(ctl.anchorTime(), block.timestamp);
@@ -597,7 +604,7 @@ contract SaleSettingsTest is SaleBase {
         }
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorMinCost(), 0.1 ether);
-        assertEq(ctl.anchorMoveBps(), 5_000);
+        assertEq(ctl.anchorMoveBps(), 0);
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.anchorBps(), 10_000);
     }
@@ -1148,12 +1155,16 @@ contract SaleLaunchColdTest is SaleBase {
         assertEq(ctl.startBps(), 15_000, "the opening markup at launch");
         uint256 sid = _composeOnce().sid;
 
-        // the reference is read live at each age (no _pinReferenceToCost), the ask is the launch curve of it
+        // the reference is read live at each age (no _pinReferenceToCost), the ask is the launch 4 hour curve of it
         _age(sid, 0);
         assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 15_000 / 10_000, "age 0: 150 percent of the live reference");
-        _age(sid, 6 * H);
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 12_500 / 10_000, "age 6 h: 125 percent of the live reference");
+        _age(sid, 2 * H);
+        assertEq(
+            ctl.priceOf(sid), ctl.referenceOf(sid) * 12_500 / 10_000, "age 2 h: 125 percent, the midpoint of the 4 hour line"
+        );
+        _age(sid, 4 * H);
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "age 4 h: the sale floor, 100 percent of the live reference");
         _age(sid, 12 * H);
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "age 12 h: the sale floor, 100 percent of the live reference");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "past the window: still at the floor");
     }
 }

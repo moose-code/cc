@@ -109,6 +109,9 @@ export default function CreditsPage() {
     <div className="split">
       <div className="split-main">
         <PageHead title="credits" ink="m" meta={meta.join(" · ")}>
+          <Link href="/sell" className="ulink">
+            sell yours →
+          </Link>
           <div className="seg" role="group" aria-label="view">
             {(["grid", "table"] as View[]).map((v) => (
               <button key={v} className={view === v ? "on" : ""} onClick={() => setView(v)}>
