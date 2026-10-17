@@ -315,7 +315,7 @@ contract BidRuleTest is Fixture {
         uint256 before = core.ethRate();
         assertGt(before, START, "climbing on the pending pot clamp");
         core.book();
-        assertEq(core.ethPot(), 4.5 ether, "the pot share of the booked income (feeToRedeemBurnBps 1000)");
+        assertEq(core.ethPot(), 5 ether, "the whole booked income is pot (feeToRedeemBurnBps 0 at launch)");
         assertEq(core.ethRate(), before, "book conserves the clamp pot, the rate does not jump");
         _warp(10 minutes);
         assertGt(core.ethRate(), before, "the climb continues from the booked pot");
