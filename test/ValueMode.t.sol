@@ -163,9 +163,11 @@ contract ValueReferenceTest is ValueBase {
         uint256 ref0 = ctl.referencePrice();
         _swapSpot(10_000); // a real swap pushes the spot to about double the reference, past the step cap
         vm.warp(block.timestamp + 30 minutes);
+        vm.roll(block.number + 1); // the refresh runs at most once per block, so a new block is needed past the seed
         ctl.refreshReference();
         assertEq(ctl.referencePrice(), ref0 * 10_500 / 10_000, "half an hour at 1,000 bps an hour moves the 5 percent step");
         vm.warp(block.timestamp + 1 hours);
+        vm.roll(block.number + 1);
         ctl.refreshReference();
         assertEq(ctl.referencePrice(), ref0 * 10_500 / 10_000 * 10_500 / 10_000, "a full hour moves one more 5 percent step");
     }
@@ -175,6 +177,7 @@ contract ValueReferenceTest is ValueBase {
         uint256 ref0 = ctl.referencePrice();
         _swapSpot(-5_000); // a real swap pushes the spot to about half the reference, past the step cap
         vm.warp(block.timestamp + 20 hours);
+        vm.roll(block.number + 1);
         ctl.refreshReference();
         assertEq(ctl.referencePrice(), ref0 * 9_500 / 10_000, "twenty idle hours move one step of 5 percent");
     }
@@ -195,6 +198,7 @@ contract ValueReferenceTest is ValueBase {
         uint256 spammed = ctl.referencePrice();
         vm.revertToState(snap);
         vm.warp(block.timestamp + 1_800);
+        vm.roll(block.number + 1);
         ctl.refreshReference();
         uint256 once = ctl.referencePrice();
         assertEq(once, ref0 * 10_500 / 10_000, "one update after half an hour moves the 5 percent step");
@@ -220,6 +224,7 @@ contract ValueReferenceTest is ValueBase {
         // a call every 12 seconds: 100 bps an hour over 12 seconds is 0.33 bps, which floors to a zero integer move
         for (uint256 i; i < 300; ++i) {
             vm.warp(block.timestamp + 12);
+            vm.roll(block.number + 1);
             ctl.refreshReference();
         }
         uint256 ref = ctl.referencePrice();
@@ -244,29 +249,47 @@ contract ValueReferenceTest is ValueBase {
         uint256 ref0 = ctl.referencePrice();
         _swapSpot(10_000);
         vm.warp(block.timestamp + 599);
+        vm.roll(block.number + 1);
         ctl.refreshReference();
         assertEq(ctl.referencePrice(), ref0, "no refresh before the cadence elapses");
         vm.warp(block.timestamp + 1);
+        vm.roll(block.number + 1);
         ctl.refreshReference();
         assertGt(ctl.referencePrice(), ref0, "the refresh runs once the cadence has elapsed");
     }
 
-    // promise: SPEC 8 the protected prices: buys off min(spot, ref + tol), sales off max(spot, ref - tol)
+    // promise: SPEC 8 the protected prices clamp the band to the spot sampled at the last refresh (a prior block): buys
+    // off min(sampledSpot, ref + tol), sales off max(sampledSpot, ref - tol) (decision 159, C01)
     function test_protectedPricesAtSpotAboveAndBelow() public {
-        uint256 ref = ctl.referencePrice();
+        uint256 ref0 = ctl.referencePrice();
         uint256 unitPoint = POINT_UNIT * UNIT;
-        uint256 spotHi = _swapToSpot(ref * 2); // a real swap pushes the spot far above the reference
-        assertGt(spotHi, ref * 10_450 / 10_000, "the spot sits above the reference plus the band");
+        // push the spot far above, refresh in a new block to sample it, then read in the next block so the quote uses
+        // that sample (not the seed held in the previous slot)
+        _swapToSpot(ref0 * 2);
+        vm.warp(block.timestamp + 30 minutes);
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        vm.roll(block.number + 1);
+        uint256 refHi = ctl.referencePrice();
+        (uint256 spotHi,) = ctl.spotPrice();
+        assertGt(spotHi, refHi * 10_450 / 10_000, "the sampled spot sits above the reference plus the band");
         (uint256 buyHi,) = ctl.valuePerPoint(false);
         (uint256 sellHi,) = ctl.valuePerPoint(true);
-        assertEq(buyHi, FullMath.mulDiv(unitPoint, ref * 10_450 / 10_000, 1e18), "a pushed up spot buys at the reference plus the band");
-        assertEq(sellHi, FullMath.mulDivRoundingUp(unitPoint, spotHi, 1e18), "and sells at the spot");
-        uint256 spotLo = _swapToSpot(ref / 2); // a real swap pushes the spot far below the reference
-        assertLt(spotLo, ref * 9_550 / 10_000, "the spot sits below the reference less the band");
+        assertEq(buyHi, FullMath.mulDiv(unitPoint, refHi * 10_450 / 10_000, 1e18), "a sampled high spot buys at the reference plus the band");
+        assertEq(sellHi, FullMath.mulDivRoundingUp(unitPoint, spotHi, 1e18), "and sells at the sampled spot");
+        // push the spot far below, sample it, read in the next block
+        _swapToSpot(refHi / 4);
+        vm.warp(block.timestamp + 30 minutes);
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        vm.roll(block.number + 1);
+        uint256 refLo = ctl.referencePrice();
+        (uint256 spotLo,) = ctl.spotPrice();
+        assertLt(spotLo, refLo * 9_550 / 10_000, "the sampled spot sits below the reference less the band");
         (uint256 buyLo,) = ctl.valuePerPoint(false);
         (uint256 sellLo,) = ctl.valuePerPoint(true);
-        assertEq(buyLo, FullMath.mulDiv(unitPoint, spotLo, 1e18), "a pushed down spot buys at the spot");
-        assertEq(sellLo, FullMath.mulDivRoundingUp(unitPoint, ref * 9_550 / 10_000, 1e18), "and sells at the reference less the band");
+        assertEq(buyLo, FullMath.mulDiv(unitPoint, spotLo, 1e18), "a sampled low spot buys at the sampled spot");
+        assertEq(sellLo, FullMath.mulDivRoundingUp(unitPoint, refLo * 9_550 / 10_000, 1e18), "and sells at the reference less the band");
         assertLt(buyLo, sellLo, "the buy value stays under the sale value");
     }
 
@@ -277,10 +300,12 @@ contract ValueReferenceTest is ValueBase {
         vm.warp(block.timestamp + 1 days + 1);
         (, ok) = ctl.valuePerPoint(false);
         assertFalse(ok, "stale beyond referenceMaxStale");
+        vm.roll(block.number + 1);
         ctl.refreshReference();
         (, ok) = ctl.valuePerPoint(false);
         assertTrue(ok, "an update refreshes it");
-        // raise the required liquidity above the pool's real liquidity: the quote reads the live pool depth
+        // raise the required liquidity above the pool's sampled liquidity: the quote reads the liquidity sampled at the
+        // last refresh, so a threshold above the standing depth makes it unusable
         _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: uint128(POOL_LIQ) * 2}));
         (, ok) = ctl.valuePerPoint(false);
         assertFalse(ok, "liquidity under the minimum");
@@ -398,19 +423,19 @@ contract ValueModeTest is ValueBase {
         assertEq(core.balanceRate(), 9_000, "the bid turning on resets it to the floor");
     }
 
-    // promise: SPEC 4 an unusable quote halts the eth routes only: sellForEth and the controller sale doors revert
-    // NoQuote; sellForBalance, compose, redeemStatement, buyback and book stay live
-    function test_staleQuoteHaltsTheEthRoutesOnly() public {
+    // promise: SPEC 4 an unusable quote degrades the eth bid to the last good rate instead of halting it (decision 159,
+    // C02): sellForEth and ethRate stay live on the fallback; sellForBalance, redeemStatement and book also stay live
+    function test_staleQuoteDegradesTheEthRoutes() public {
         Composed memory c = _composeOnce();
         _valueOn();
         _fundPot(20 ether);
         vm.warp(block.timestamp + 1 days + 1); // the reference is stale
+        assertGt(core.ethRate(), 0, "the eth bid falls back to the last good rate, not NoQuote");
         uint256[] memory ids = _credits(seller, 2);
+        uint256 before = seller.balance;
         vm.prank(seller);
-        vm.expectRevert(ICore.NoQuote.selector);
         core.sellForEth(_one(ids[0]));
-        vm.expectRevert(ICore.NoQuote.selector);
-        core.ethRate();
+        assertGt(seller.balance, before, "the eth sell pays at the fallback rate");
         vm.prank(seller);
         core.sellForBalance(_one(ids[1]));
         core.book();
@@ -419,7 +444,8 @@ contract ValueModeTest is ValueBase {
     }
 
     // promise: SPEC 1 a hostile controller quoting a huge value pays at most rateCap and cannot move the balance bid; a
-    // zero quote halts the eth bid and leaves conversion and the balance bid live
+    // zero or not-ok quote degrades the eth bid to the last good rate (bounded by rateCap) and leaves conversion and the
+    // balance bid live (decision 159, C02)
     function test_hostileQuoteIsBounded() public {
         _valueOn();
         _fundPot(20 ether);
@@ -429,11 +455,9 @@ contract ValueModeTest is ValueBase {
         assertEq(core.ethRate(), core.settings().rateCap, "a huge quote pays the rate cap");
         uint256 bal0 = core.balanceRate();
         q.setValue(0, true);
-        vm.expectRevert(ICore.NoQuote.selector);
-        core.ethRate();
+        assertLe(core.ethRate(), core.settings().rateCap, "a zero quote degrades to the bounded fallback, not NoQuote");
         q.setValue(1e13, false);
-        vm.expectRevert(ICore.NoQuote.selector);
-        core.ethRate();
+        assertLe(core.ethRate(), core.settings().rateCap, "a not-ok quote degrades to the bounded fallback");
         assertEq(core.balanceRate(), bal0, "the quote never moves the balance bid");
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
@@ -538,34 +562,45 @@ contract ValueModeTest is ValueBase {
         _warp(6 hours);
         (paid, back) = _trip(ids[k++], true);
         _assertLoses(paid, back, "balance at the cap");
-        // the spot pushed up and down against the reference with real swaps, the reference following at its rate
+        // the spot pushed up and down against the reference with real swaps; the reference settles to the moved spot so
+        // a round trip at that settled reference loses the spread (the buy and the sell read the same sampled spot)
         uint256 ref = ctl.referencePrice();
         uint256[2] memory moved = [ref * 3 / 2, ref * 6 / 10];
         for (uint256 i; i < 2; ++i) {
             _swapToSpot(moved[i]);
-            _warp(6 hours);
+            _settleReference();
             (paid, back) = _trip(ids[k++], false);
             _assertLoses(paid, back, i == 0 ? "eth at spot above the reference" : "eth at spot below the reference");
-            _warp(6 hours);
             (paid, back) = _trip(ids[k++], true);
             _assertLoses(paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference");
         }
-        // the reference stale after the buy: the eth door refuses, the balance door still loses the spread
+        // the reference stale after the buy: the eth bid degrades to the last good rate (decision 159, C02), the balance
+        // door still loses the spread
         _swapToSpot(ctl.referencePrice());
-        ctl.refreshReference();
+        _settleReference();
         uint256 id = ids[k++];
         uint256 price = ctl.creditPrice(id);
         vm.deal(TRIPPER, price);
         vm.prank(TRIPPER);
         ctl.buyCredit{value: price}(id);
         _warp(1 days + 1);
-        vm.startPrank(TRIPPER);
-        CREDITS.setApprovalForAll(address(core), true);
-        vm.expectRevert(ICore.NoQuote.selector);
-        core.sellForEth(_one(id));
-        vm.stopPrank();
+        assertGt(core.ethRate(), 0, "the eth bid degrades to the last good rate, not NoQuote");
         _tripBack(id, true);
         _assertLoses(price, xt.balanceOf(TRIPPER) * _spotNow() / 1e18, "balance with the reference stale");
+    }
+
+    /// refreshes the reference, a step and a block at a time, until it is within 0.1 percent of the pool spot, so a round
+    /// trip runs at a settled reference where the buy and the sell read the same sampled spot
+    function _settleReference() internal {
+        for (uint256 i; i < 60; ++i) {
+            (uint256 spot,) = ctl.spotPrice();
+            uint256 ref = ctl.referencePrice();
+            uint256 diff = spot > ref ? spot - ref : ref - spot;
+            if (diff <= ref / 1_000) break;
+            vm.warp(block.timestamp + 1 hours);
+            vm.roll(block.number + 1);
+            ctl.refreshReference();
+        }
     }
 
     // promise: SPEC 8 a statement's reference in value mode is valueOf(rating) times floorMultBps, its curve rests there
@@ -587,6 +622,7 @@ contract ValueModeTest is ValueBase {
         uint256 ref0 = ctl.referencePrice();
         _swapSpot(10_000);
         vm.warp(block.timestamp + 1 hours);
+        vm.roll(block.number + 1); // the sale door's refresh runs at most once per block, past the seed block
         uint256 price = ctl.creditPrice(id);
         vm.deal(seller, price * 2);
         vm.prank(seller);
@@ -699,15 +735,16 @@ contract ValueRealPoolTest is ValueBase {
 
     // promise: SPEC 8 the minLiquidity gate reads the live pool depth; just-in-time liquidity added in the same block
     // lifts the pool above the minimum and makes the quote usable, the known ceiling of a block local liquidity check
-    function test_jitLiquidityPassesMinLiquidity() public {
+    // promise: the quote reads the liquidity sampled at the last refresh, so a one-block add cannot open it (C04)
+    function test_jitLiquidityCannotPassMinLiquidity() public {
         uint128 liq0 = _liquidityNow();
         _setQuote(_quoteWithMinLiquidity(liq0 + uint128(POOL_LIQ)));
         (, bool ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "the quote is unusable while the pool is under the raised minimum");
+        assertFalse(ok, "the quote is unusable while the sampled depth is under the raised minimum");
         _addFullRange(int256(uint256(POOL_LIQ)));
-        assertGe(_liquidityNow(), liq0 + POOL_LIQ, "the just-in-time add deepened the pool");
+        assertGe(_liquidityNow(), liq0 + POOL_LIQ, "the just-in-time add deepened the live pool");
         (, ok) = ctl.valuePerPoint(false);
-        assertTrue(ok, "the just-in-time liquidity makes the quote usable in the same block");
+        assertFalse(ok, "a one-block add does not change the sampled liquidity, so the quote stays closed");
         _setQuote(_quoteWithMinLiquidity(1e18));
     }
 

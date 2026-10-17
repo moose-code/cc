@@ -495,9 +495,10 @@ library CoreLib {
         c.checkpointTime = uint64(block.timestamp);
     }
 
-    /// @notice the keeper's reference refresh door, moved here to keep the Core under the code size limit: forwards to
-    /// the controller's refresh and, when it ran, pays the caller like compose, bounded by the pot and the caller base
-    /// fee ceiling. runs in the Core's storage context by delegatecall (the `_toLib` door forwards to it)
+    /// @notice the keeper's reference refresh door: forwards to the controller's refresh and, when it ran, pays the
+    /// caller like compose, bounded by the pot and the caller base-fee ceiling. the Core books the pending fee income
+    /// before forwarding here, so the payment comes from the pot share of that income (decision 159, C02). runs in the
+    /// Core's storage context by delegatecall (the `_toLib` door forwards to it)
     function refreshReference() external {
         uint256 gasStart = gasleft();
         State storage c = state();
@@ -506,8 +507,8 @@ library CoreLib {
         if (!IController(ctrl).refreshReference()) return;
         Settings storage cfg = c.settings;
         if (cfg.callerMaxBaseFee == 0 && cfg.callerFee == 0) return;
-        // the door does not grow the pot, so no checkpoint is needed before the payment; paying lowers the pot the next
-        // eth read clamps against, which is correct
+        // the Core already booked the pending income into the pot; pay from it, which lowers the pot the next eth read
+        // clamps against, as compose does
         uint256 pay = ((gasStart - gasleft() + REFRESH_OVERHEAD_GAS).min(REFRESH_GAS) * block.basefee.min(cfg.callerMaxBaseFee) + cfg.callerFee).min(c.ethPot);
         if (pay == 0) return;
         c.ethPot -= pay;
@@ -515,35 +516,37 @@ library CoreLib {
     }
 
     /// @notice the eth bid rate now, wei per 100 points: the price state lowered to the clamp, `ethPot` plus the pending
-    /// pot share less the reserve. in value mode the price state is `_valueRate`, which reverts `NoQuote` while the
-    /// controller's value read fails. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint` and `bidOf` and its doors
-    /// read it
+    /// pot share less the reserve. in value mode the price state is `_valueRate`, falling back to the last good value
+    /// rate while the quote is unusable. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint` and `bidOf` and its
+    /// doors read it
     function ethRate() external view returns (uint256 read) {
         State storage c = state();
         if (!c.settings.valueModeOn) {
             (, read,) = _ethClimb(c);
             return read;
         }
-        return _valuePrice(c).min(_ethPagesPot(c).zeroFloorSub(_reserve(c)));
+        return _valueRateOrLast(c).min(_ethPagesPot(c).zeroFloorSub(_reserve(c)));
     }
 
-    /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode `_valueRate`, reverting
-    /// `NoQuote` while the controller's value read fails. the Core forwards its `ethPrice()`
+    /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode the value rate, falling back
+    /// to the last good value rate while the quote is unusable. the Core forwards its `ethPrice()`
     function ethPrice() external view returns (uint256) {
         return _ethPrice(state());
     }
 
-    /// the eth price state now: the eth instance outside value mode, `_valueRate` in value mode (reverting `NoQuote`)
+    /// the eth price state now: the eth instance outside value mode, the value rate (or the last good one) in value mode
     function _ethPrice(State storage c) private view returns (uint256 price) {
-        if (c.settings.valueModeOn) return _valuePrice(c);
+        if (c.settings.valueModeOn) return _valueRateOrLast(c);
         (price,,) = _ethClimb(c);
     }
 
-    /// the value mode price state, reverting `NoQuote` while the controller's value read fails
-    function _valuePrice(State storage c) private view returns (uint256 rate) {
-        bool ok;
-        (rate, ok) = _valueRate(c);
-        if (!ok) revert NoQuote();
+    /// the value mode eth price state now: the controller's value read when usable, else the last good value mode eth
+    /// rate kept in the eth instance checkpoint. a lapsed or unusable quote degrades the eth bid instead of reverting
+    /// `NoQuote`, so the engine keeps buying while the reference recovers (decision 159, C02)
+    function _valueRateOrLast(State storage c) private view returns (uint256) {
+        (uint256 rate, bool ok) = _valueRate(c);
+        // the fallback is the last good value rate, itself stored at or under `rateCap` by `_valueRate`
+        return ok ? rate : c.rateAtCheckpoint;
     }
 
     /// the value mode eth rate, wei per 100 points: the shared instance climbed to now (clamped to the cap, not to the
@@ -1216,27 +1219,29 @@ library CoreLib {
         (rate,) = _balanceRead();
     }
 
-    /// @notice the balance token payout for a score of `score` stored units now: `score * unitPerPoint * rate / 10_000`,
-    /// the rate held at or above the floor `10_000 - balanceBidMarginBps`. the Core forwards its `balanceBidForScore(score)`
+    /// @notice the executable balance token payout for a score of `score` stored units now: the floor-advertised payout
+    /// when the module can pay it, else 0. the Core forwards its `balanceBidForScore(score)`
     function balanceBidForScore(uint256 score) external view returns (uint256) {
         return _balancePayout(score);
     }
 
-    /// @notice the balance token payout for credit `id` now: `balanceBidForScore(scoreOf(id))`. a module too short to pay
-    /// the floor still reports the floor payout, which `sellForBalance` refuses with `PotTooSmall`. zero at a zero-rate
-    /// floor, when no module is set or when the live unit read fails. the Core forwards its `balanceBidOf(id)`
+    /// @notice the executable balance token payout for credit `id` now: the floor-advertised payout when the module can
+    /// pay it, else 0. a module too short to pay this credit's floor reads 0 here, so the view never advertises a payout
+    /// the fill refuses (decision 159, C05). the Core forwards its `balanceBidOf(id)`
     function balanceBidOf(uint256 id) external view returns (uint256) {
         return _balancePayout(scoreOf(id));
     }
 
-    /// the balance token payout for a score of `score` stored units: `score * unitPerPoint * rate / 10_000`, the rate
-    /// held at or above the floor `10_000 - balanceBidMarginBps`. zero when no module is set or the live unit read fails
+    /// the balance token payout for `score` stored units: `score * unit * max(rate, floorBps) / 10_000`, 0 when the
+    /// module cannot fill this credit. the fill (`_fillBalance`) reverts when the available-clamped rate is below the
+    /// floor or the paid amount exceeds `available()`; the view mirrors those conditions and returns 0 instead of a
+    /// payout the fill refuses. 0 with no module or a failed unit read
     function _balancePayout(uint256 score) private view returns (uint256) {
         (uint256 rate, uint256 unit) = _balanceRead();
         if (unit == 0) return 0;
-        uint256 floorBps = BPS - state().settings.balanceBidMarginBps;
-        if (rate < floorBps) rate = floorBps;
-        return score * unit * rate / BPS;
+        uint256 pay = score * unit * rate / BPS;
+        if (rate < BPS - state().settings.balanceBidMarginBps || pay > _availableView(state().balanceModule)) return 0;
+        return pay;
     }
 
     /// the balance bid rate (bps of par) and the live unit. with the bid off or no usable module the instance does not

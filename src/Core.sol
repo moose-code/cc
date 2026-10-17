@@ -200,6 +200,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event AdapterSet(address indexed adapter, bool allowed);
     event CoinRescued(address indexed to, uint256 amount);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
+    /// `rescueToken` sent `amount` of a stray ERC20 `token` to `to`
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event SuccessorSet(address successor);
     event SuccessorLocked();
     /// `adopt` put a credit the core held without a record into the pile at cost basis `cost`
@@ -384,11 +386,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _book();
     }
 
-    /// forwards to the controller's reference refresh and, when it updated the reference (the cadence had elapsed), pays
-    /// the caller like compose, bounded by the pot and the caller base-fee ceiling. anyone may call; the keeper calls
-    /// this door. the body is `CoreLib.refreshReference`, kept there for the Core code size; the controller's own
-    /// `refreshReference` stays public and unpaid
+    /// books the pending fee income, then forwards to `CoreLib.refreshReference`, which calls the controller's refresh
+    /// and, when it updated the reference, pays the caller from the booked pot like compose. booking first means the
+    /// caller is paid from the pot share of the pending income the keeper's gate already counted (decision 159, C02).
+    /// anyone may call; the keeper calls this door. the controller's own `refreshReference` stays public and unpaid
     function refreshReference() external nonReentrant {
+        _book();
         _toLib();
     }
 
@@ -538,7 +541,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.balanceBidForScore(score);
     }
 
-    /// the balance token payout for credit id now: score times unitPerPoint times balanceRate() over 10_000
+    /// the executable balance token payout for credit id now: the floor payout when the module can pay it, else 0, so
+    /// the view never advertises a bid the fill refuses (decision 159, C05)
     function balanceBidOf(uint256 id) external view returns (uint256) {
         return CoreLib.balanceBidOf(id);
     }
@@ -554,10 +558,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         CoreLib.checkpoint();
     }
 
-    /// checkpoints, then books a spend of x from the pot for a credit of score `score`: rate drop scaled by
-    /// `score / RATE_SCORE`, fill time.
+    /// books a spend of x from the pot for a credit of score `score`. the eth sell door checkpoints the eth instance to
+    /// now once before the batch, so the drop walks down from the climbed rate without a per-credit re-climb (C08)
     function _spend(uint256 x, uint256 score) private {
-        _checkpoint();
         CoreLib.spend(x, score);
     }
 
@@ -665,6 +668,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function _sellForEth(uint256[] calldata ids, uint256 minOut) private {
         _openDoor();
         if (ids.length == 0) revert Empty();
+        // climb the eth instance to now once; each credit's drop walks down from it and the batch does not re-climb per
+        // credit (decision 159, C08). `_openDoor` books first, so a checkpoint here credits no climb under a later pot
+        _checkpoint();
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = _owned(ids[i]);
@@ -1217,6 +1223,20 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// core is refused. logs `NftRescued`
     function rescueNft(address, uint256, address) external {
         _toLib();
+    }
+
+    /// sends `amount` of a stray ERC20 `token` the core holds to `to`. owner only and guarded. it refuses every
+    /// forbidden target (the coin, recovered through `rescueCoin`, Credits, Statements, the core, the hook, the managers,
+    /// and the current and every past balance token and module), so a balance token reserve is never moved out of its
+    /// module path. it never touches tracked eth, which is not an ERC20. a balance token sent directly to the core is
+    /// recovered with this, not stranded (decision 159, C06). logs `TokenRescued`. no reentrancy guard: it is owner only,
+    /// transfers a token the Core does not track, and does nothing after the transfer, so a token callback changes
+    /// nothing here and any Core door it re-enters is itself guarded
+    function rescueToken(address token, address to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
+        if (_forbidden(token)) revert ForbiddenTarget();
+        SafeTransferLib.safeTransfer(token, to, amount);
+        emit TokenRescued(token, to, amount);
     }
 
     /// sets the successor that `migrate` sends the assets to. the zero address means no migration. it must have code.

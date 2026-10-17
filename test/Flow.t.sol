@@ -112,7 +112,7 @@ contract FlowTest is Fixture {
         assertEq(s.balanceBidMarginBps, 1_000);
         assertEq(s.redeemBurnBps, 2_000);
         assertEq(s.rateCap, 14_700_000_000_000_000);
-        assertEq(s.feeToRedeemBurnBps, 1_000);
+        assertEq(s.feeToRedeemBurnBps, 0);
         assertEq(s.callerFee, 0.0003 ether);
         assertEq(s.callerMaxBaseFee, 3 gwei);
         assertEq(s.returnLockSeconds, 21_600);
@@ -163,13 +163,9 @@ contract FlowTest is Fixture {
                 if (s.valueModeOn && s.spendCapBps >= 10_000) s.spendCapBps = 9_999;
                 _owner(s);
                 vm.warp(block.timestamp + 61);
-                if (s.valueModeOn) {
-                    // the value switch with no usable quote prices nothing: the eth bid reverts until the owner sets it
-                    vm.expectRevert(ICore.NoQuote.selector);
-                    core.ethRate();
-                } else {
-                    assertLe(core.ethRate(), s.rateCap, "rate stays inside its configured cap");
-                }
+                // the value switch with no usable quote degrades the eth bid to the last good rate, bounded by rateCap,
+                // rather than reverting (decision 159, C02)
+                assertLe(core.ethRate(), s.rateCap, "rate stays inside its configured cap");
                 core.balanceRate();
                 core.climbMultiplier();
                 assertEq(_get(core.settings(), i), v, "edge stored");

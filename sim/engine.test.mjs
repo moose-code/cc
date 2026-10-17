@@ -81,9 +81,9 @@ const R0 = 6.668e15;
   assert.equal(creditViolation(CREDIT), null); n++;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
-  // the launch rules: statements fall to cost and stay there (FLOW 85), the balance bid starts off and redeemOn is true (decision 119), the redeem burn reserve takes 10 percent of fees and each redemption releases 20 percent of it
+  // the launch rules: statements fall to cost and stay there (FLOW 85), the balance bid starts off and redeemOn is true (decision 119), the whole engine share of the skim goes to the buying pot at launch (feeToRedeemBurnBps 0, decision 155; the phase-2 wiring sets it to 1,000), and each redemption releases 20 percent of the redeem burn reserve
   assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, decayHours: 4, anchorHalfLife: 7 * 24 * H, anchorMinCost: 0.1, anchorMoveBps: 0 }); n++;
-  assert.equal(SETTINGS.saleFloorBps, 10000); assert.equal(SETTINGS.feeToBuybackBps, undefined); assert.equal(SETTINGS.feeToRedeemBurnBps, 1000); n += 3;
+  assert.equal(SETTINGS.saleFloorBps, 10000); assert.equal(SETTINGS.feeToBuybackBps, undefined); assert.equal(SETTINGS.feeToRedeemBurnBps, 0); n += 3;
   assert.equal(SETTINGS.redeemOn, true); assert.equal(SETTINGS.balanceBidOn, false); assert.equal(SETTINGS.balanceMode, undefined); assert.equal(SETTINGS.redeemSlippageBps, 200); assert.equal(SETTINGS.balanceBidMarginBps, 1000); assert.equal(SETTINGS.redeemBurnBps, 2000); n += 6;
   ok(SETTINGS.redeemAfter === undefined && SETTINGS.balanceToBuybackBps === undefined && SETTINGS.xAuctionHalfLife === undefined && SETTINGS.balanceSliceCredits === undefined && SETTINGS.balanceLaneToBuybackBps === undefined && SETTINGS.xRateCap === undefined, 'the balance token auction is gone from the model');
   ok(DEFAULTS.balancePoolSet === false && DEFAULTS.balanceDay === null, 'the balance token pool key is unset and the balance side is off at launch');
@@ -493,16 +493,16 @@ const R0 = 6.668e15;
 }
 // promise: the redeem burn reserve (FLOW 86): feeToRedeemBurnBps of the fee eth fills it, the rest goes to the pot
 {
-  const d = new Core(Object.assign({}, DEFAULTS), 0); // launch values: 10 percent of fees to the reserve
+  const d = new Core(Object.assign({}, DEFAULTS), 0); // launch values: 0 to the reserve, the phase-2 wiring sets it to 1,000
   const r = d.addFees(8, 0);
-  near(d.ethRedeemBurn, 0.8, 1e-12, 'launch reserve share of the fees'); near(d.ethPot, 7.2, 1e-12, 'the rest to the pot'); near(d.ethToBuyback, 0, 1e-12, 'nothing to the buyback pot'); near(d.feeToRedeemBurn, 0.8, 1e-12, 'booked');
+  near(d.ethRedeemBurn, 0, 1e-12, 'launch reserve share of the fees'); near(d.ethPot, 8, 1e-12, 'the whole engine share to the pot'); near(d.ethToBuyback, 0, 1e-12, 'nothing to the buyback pot'); near(d.feeToRedeemBurn, 0, 1e-12, 'booked');
   near(r.toRedeemBurn + r.toPot, 8, 1e-12, 'the fee split adds up');
   const e = new Core(Object.assign({}, DEFAULTS, { feeToRedeemBurnBps: 2500 }), 0);
   e.addFees(10, 0);
   near(e.ethRedeemBurn, 2.5, 1e-12, 'reserve share'); near(e.ethPot, 7.5, 1e-12, 'pot share');
   near(e.ethPot + e.ethToBuyback + e.ethRedeemBurn, 10, 1e-12, 'all of it is booked');
   // the reserve share does not enter the pot, so the funded flag and the clamp follow the pot alone
-  const q = new Core(Object.assign({}, DEFAULTS, { rateCap: 1e18, reserveWei: 0 }), 0); q.addFees(0.1, 0); near(q.clamp(), 0.09 * W, 1e-12, 'the clamp is the pot without the redeem burn share');
+  const q = new Core(Object.assign({}, DEFAULTS, { rateCap: 1e18, reserveWei: 0, feeToRedeemBurnBps: 1000 }), 0); q.addFees(0.1, 0); near(q.clamp(), 0.09 * W, 1e-12, 'the clamp is the pot without the redeem burn share');
   // sale proceeds: the artist and operator cuts come off first, then saleToBuybackBps of the rest to the buyback (decision 123)
   const s = new Core(Object.assign({}, DEFAULTS), 0); s.sellTo({ cost: 1, t0: 0 }, 2, 0); // cuts 2 * (0.025 + 0.005) = 0.06, rest 1.94, buyback 1.94 * 0.25
   near(s.ethRedeemBurn, 0, 1e-12, 'a sale does not fill the reserve'); near(s.ethToBuyback, 1.94 * 0.25, 1e-12, 'a sale sends saleToBuybackBps of the rest to the buyback'); near(s.artistPaid + s.operatorPaid, 0.06, 1e-12, 'the cuts are pushed out');
@@ -889,7 +889,8 @@ const R0 = 6.668e15;
   near(skimFraction(DEFAULTS, 1800), 0.1, 1e-12, 'end of window'); near(skimFraction(DEFAULTS, 99999), 0.1, 1e-12, 'baseline');
   near(bountyFeeFraction(DEFAULTS, 0.1), 0.09, 1e-12, 'Core 9 points, bountyBps 9000 of the 10 point baseline'); near(bountyFeeFraction(DEFAULTS, 0.9), 0.09 + 0.8, 1e-12, 'extra to the Core');
   // Core._book: the payee takes payeePpm of each book once payeeOn. the first book at or after sniperSeconds with income sets payeeOn and takes 0
-  const pc = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185 }), 0);
+  // feeToRedeemBurnBps is 1,000 here (its phase-2 value) to exercise the reserve split with the payee; launch is 0
+  const pc = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }), 0);
   pc.addFees(100, 1799); near(pc.ethPot, 90, 1e-12, 'before the window the pot gets 90 of 100, the reserve 10'); near(pc.payeePaid, 0, 1e-12, 'the payee gets 0 before the window');
   pc.addFees(100, 1800); near(pc.ethPot, 180, 1e-12, 'the first book at the window end shares 0'); ok(pc.payeeOn && pc.payeePaid === 0, 'the payee share starts');
   pc.addFees(100, 1900); near(pc.payeePaid, 7.5185, 1e-12, 'the payee takes payeePpm after the window');
@@ -898,7 +899,7 @@ const R0 = 6.668e15;
   const pz = new Core(DEFAULTS, 0); pz.addFees(0, 5000); ok(!pz.payeeOn, 'a zero income book leaves payeeOn false');
   const p0 = new Core(DEFAULTS, 0); p0.addFees(100, 1800); p0.addFees(100, 1900); near(p0.payeePaid, 0, 1e-12, 'payeePpm 0 at launch pushes nothing to the payee');
   // Core.fund: whole, the payee and reserve shares are 0
-  const pf = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185 }), 0); pf.addFees(100, 1900); pf.fund(50, 1900);
+  const pf = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }), 0); pf.addFees(100, 1900); pf.fund(50, 1900);
   near(pf.ethPot, 90 + 50, 1e-12, 'fund adds to the pot whole'); near(pf.ethRedeemBurn, 10, 1e-12, 'fund books a reserve share of 0'); near(pf.payeePaid, 0, 1e-12, 'and a payee share of 0');
   let d0 = 0;
   for (let t = 0; t < 3600; t += 120) d0 += stepVolume(DEFAULTS, t, 120);
@@ -946,7 +947,7 @@ const R0 = 6.668e15;
   ok(p2.T.redeemed > 0 && p2.T.redeemedAge > 0, 'held statements are redeemed through the balanceModule');
   const s = summary(a); ok(s.credits > 0 && s.statements > 0 && (s.potGoneDay === null || s.potGoneDay > 1), 'summary reads the run: the pot is spent after day one, or lasts the 20 days');
 }
-// whole runs at the launch values (FLOW 85, 86): statements fall to their reference and wait there while no balance module is set, the redeem burn reserve takes 10 percent of the fees,
+// whole runs at the launch values (FLOW 85, 86): statements fall to their reference and wait there while no balance module is set, the redeem burn reserve is 0 at launch (the phase-2 wiring sets feeToRedeemBurnBps to 1,000),
 // promise: the balance side in hold mode redeems at the floor and stops the bid, the balance side on adds the balance token bid, whose credits join the one pile (FLOW 92)
 {
   const base = { days: 30, seed: 3, stepSec: 300 };
@@ -959,30 +960,31 @@ const R0 = 6.668e15;
   const endSec = L.H * 3600, hoursToCost = L.core.c.decayHours, old = L.unbid.filter((st) => endSec - st.t0 >= hoursToCost * H);
   ok(L.unbid.length >= 3 && old.length >= 3, 'statements wait'); ok(old.every((st) => Math.abs(L.core.askingPrice(st, endSec) - L.core.reference(st, endSec)) < 1e-12 * L.core.reference(st, endSec)), 'and every one past that age is asked at its reference');
   ok(L.unbid.every((st) => L.core.askingPrice(st, endSec) >= st.cost * (1 - 1e-12)), 'none is asked under its cost');
-  near(L.core.feeToRedeemBurn, 0.1 * (L.T.fees + L.T.feesBuyback - L.core.payeePaid), 1e-9, 'the reserve takes 10 percent of the fees booked'); near(L.core.ethRedeemBurn, L.core.feeToRedeemBurn, 1e-12, 'the reserve equals the fee share, redemptions and releases aside');
+  near(L.core.feeToRedeemBurn, 0, 1e-12, 'the reserve share is 0 at launch'); near(L.core.ethRedeemBurn, L.core.feeToRedeemBurn, 1e-12, 'the reserve equals the fee share, redemptions and releases aside');
   ok(L.core.redeemBurnMoved === 0, 'no redemption, no move to the buyback');
-  // the pot buys with the other 90 percent
-  const noRes = simulate(Object.assign({ feeToRedeemBurnBps: 0 }, base));
-  ok(noRes.S.credits[noRes.H] > L.S.credits[L.H] * 0.99 - 1, 'a reserve share of 0 leaves the pot with the whole fee stream, at least as many credits');
+  // the phase-2 value 1,000 sends 10 percent of the fees to the reserve and leaves fewer credits bought than the launch pot
+  const res = simulate(Object.assign({ feeToRedeemBurnBps: 1000 }, base));
+  near(res.core.feeToRedeemBurn, 0.1 * (res.T.fees + res.T.feesBuyback - res.core.payeePaid), 1e-9, 'the reserve takes 10 percent of the fees booked at the phase-2 value');
+  ok(L.S.credits[L.H] > res.S.credits[res.H] * 0.99 - 1, 'the launch reserve share of 0 leaves the pot with the whole fee stream, at least as many credits');
   // hold: redemptions at the floor, the bid stopped
-  const hold = simulate(Object.assign({ balanceDay: 10, balanceDayMode: 1 }, base));
+  const hold = simulate(Object.assign({ feeToRedeemBurnBps: 1000, balanceDay: 10, balanceDayMode: 1 }, base));
   closes(hold, 'in hold');
   ok(hold.T.redeemed > 0 && hold.T.boughtX === 0 && hold.core.balancePot > 0, 'hold mode redeems and keeps the balance token without a bid');
   ok(hold.core.redeemBurnMoved > 0 && hold.core.ethRedeemBurn < hold.core.feeToRedeemBurn, 'each redemption moves part of the reserve to the buyback');
   ok(hold.T.redeemedAge / hold.T.redeemed >= hold.core.c.decayHours * H - 1, 'a statement redeems no earlier than its curve reaches its floor (decayHours, 4 at launch)');
   ok(hold.T.redeemedValue > 0 && hold.core.balancePot === hold.T.xRecv, 'the balance token pot is what the redemptions returned');
   // on: the bid buys credits at the margin under their value into the one pile and the statements built from them sell or redeem like the rest. the bid needs no pool key (FLOW 96)
-  const on = simulate(Object.assign({ balanceDay: 10, balancePoolSet: true }, base));
+  const on = simulate(Object.assign({ feeToRedeemBurnBps: 1000, balanceDay: 10, balancePoolSet: true }, base));
   closes(on, 'with the bid');
   ok(on.T.boughtX > 0 && on.core.redeemBurnMoved > 0, 'the bid buys and redemptions release the reserve');
   ok(on.T.redeemed > 0 && on.core.balancePot > 0, 'statements redeem');
   ok(on.S.credits[on.H] > hold.S.credits[hold.H], 'the bid adds credits'); ok(on.T.composed > hold.T.composed, 'and they compose into statements through the one pile');
-  const noKey = simulate(Object.assign({ balanceDay: 10 }, base)); ok(noKey.T.boughtX > 0 && noKey.T.redeemed > 0, 'the bid buys without the pool key and redemptions run (FLOW 96)'); closes(noKey, 'without the pool key');
+  const noKey = simulate(Object.assign({ feeToRedeemBurnBps: 1000, balanceDay: 10 }, base)); ok(noKey.T.boughtX > 0 && noKey.T.redeemed > 0, 'the bid buys without the pool key and redemptions run (FLOW 96)'); closes(noKey, 'without the pool key');
   // a later switch off stops the bid at once
-  const off = simulate(Object.assign({ balanceDay: 10, balancePoolSet: true, schedule: [{ day: 12, patch: { redeemOn: false, balanceBidOn: false } }] }, base));
+  const off = simulate(Object.assign({ feeToRedeemBurnBps: 1000, balanceDay: 10, balancePoolSet: true, schedule: [{ day: 12, patch: { redeemOn: false, balanceBidOn: false } }] }, base));
   ok(off.T.boughtX > 0 && off.S.xBought[off.H] === off.S.xBought[12 * 24 + 1], 'both switches false on day 12 ends the bid and the redemptions'); ok(off.S.redeemed[off.H] === off.S.redeemed[12 * 24 + 1], 'no redemption after the switch off'); closes(off, 'after a switch off');
   // the pool key (value floor) raises the price a buyer pays and changes nothing else about eligibility
-  const pool = simulate(Object.assign({ balanceDay: 10, balanceDayMode: 1, balancePoolSet: true, xpPerPoint: 4e-4 }, base));
+  const pool = simulate(Object.assign({ feeToRedeemBurnBps: 1000, balanceDay: 10, balanceDayMode: 1, balancePoolSet: true, xpPerPoint: 4e-4 }, base));
   closes(pool, 'with the value floor');
 }
 // whole runs with the credit sale window (FLOW 88): on at launch (decision 119). the books close, every credit sells at or above its cost, the proceeds split by the artist and operator cuts

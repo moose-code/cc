@@ -42,7 +42,7 @@
     "rateCap": 14700000000000000,
     "callerFee": 300000000000000,
     "callerMaxBaseFee": 3000000000,
-    "feeToRedeemBurnBps": 1000,
+    "feeToRedeemBurnBps": 0,
     "payeePpm": 0,
     "pointsPerPage": 35200,
     "swapFeeCc": 10000000000000000000000,

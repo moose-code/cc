@@ -205,9 +205,9 @@ contract CoreUnitTest is CoreBase {
         assertEq(alice.balance - before, price);
     }
 
-    // promise: INTEGRATION ZeroAmount and PotTooSmall
-    /// an empty pot reads a rate of 0: a sale reverts `ZeroAmount` and a purchase reverts `PotTooSmall`. a pot of 1 wei
-    /// reads 1 wei: a sale pays it and a purchase of 2 wei reverts `PotTooSmall`
+    // promise: INTEGRATION PotTooSmall and ZeroAmount
+    /// a pot at or under the reserve reads a rate of 0: a sale reverts `PotTooSmall` (decision 156) and a purchase
+    /// reverts `PotTooSmall`. a pot of 1 wei reads 1 wei: a sale pays it and a purchase of 2 wei reverts `PotTooSmall`
     function test_tinyPotSellsItsWeiAndBuysNothing() public {
         uint256[] memory ids = _credits(alice, 2);
         // refScore set to the sold credit's score, so a 1 wei pot reads a 1 wei bid for it (score / refScore is 1)
@@ -217,7 +217,7 @@ contract CoreUnitTest is CoreBase {
         vm.expectRevert(ICore.PotTooSmall.selector);
         _buyRaw(1, data, LISTED_A, Mainnet.CREDIT_STRATEGY);
         vm.prank(alice);
-        vm.expectRevert(ICore.ZeroAmount.selector);
+        vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForEth(_one(ids[0]));
 
         vm.deal(address(core), 1);
@@ -233,7 +233,7 @@ contract CoreUnitTest is CoreBase {
         assertEq(alice.balance - before, 1, "paid the wei");
         assertEq(core.ethPot(), 0);
         vm.prank(alice);
-        vm.expectRevert(ICore.ZeroAmount.selector);
+        vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForEth(_one(ids[1]));
     }
 
@@ -250,8 +250,9 @@ contract CoreUnitTest is CoreBase {
         vm.expectRevert(ICore.ZeroId.selector);
         core.sellForEth(_one(0));
 
+        // an unfunded pot is at or under the reserve, so the bid reads 0 and the sale names its cause (decision 156)
         vm.prank(alice);
-        vm.expectRevert(ICore.ZeroAmount.selector);
+        vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForEth(ids);
 
         _fund(10 ether);

@@ -394,7 +394,7 @@ library Mainnet {
             rateCap: 14_700_000_000_000_000,
             callerFee: 0.0003 ether,
             callerMaxBaseFee: 3 gwei,
-            feeToRedeemBurnBps: 1_000,
+            feeToRedeemBurnBps: 0,
             payeePpm: 0,
             pointsPerPage: 35_200,
             swapFeeCc: 10_000e18,

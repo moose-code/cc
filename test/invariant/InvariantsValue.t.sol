@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, ICreditScore, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
+import {ICredits, ICreditScore, Mainnet, Settings, POINT_UNIT} from "../../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {ValueBase} from "../ValueMode.t.sol";
 
@@ -27,7 +27,9 @@ contract ValueHandler is Test {
     /// the credits each actor holds, by actor index
     mapping(uint256 => uint256[]) internal held;
 
-    /// a credit an actor bought from the engine: what it paid and the spot epoch of the buy
+    /// a credit an actor bought from the engine: what it paid and the spot epoch of the buy. the spread's guarantee is
+    /// that a round trip is never profitable for the counterparty (decision 153); across a sampled-spot move the loss
+    /// can be under the full spread (the accepted patient exposure, decision 149), but a round trip never gains
     struct Bought {
         uint256 paid;
         uint256 epoch;
@@ -44,7 +46,7 @@ contract ValueHandler is Test {
     uint256 public g3; // a statement sold below the hard floor
     uint256 public g7; // a payment above the pot less the reserve
     uint256 public gBalance; // a balance payout above score * unit * cap
-    uint256 public gTrip; // a round trip inside one spot epoch that lost less than the spread
+    uint256 public gTrip; // a round trip that was profitable for the counterparty (decision 153, never)
     uint256 public gRefusal; // a refusal with an unexpected selector
 
     mapping(bytes32 => uint256) public calls;
@@ -112,15 +114,18 @@ contract ValueHandler is Test {
         if (s != a && s != b && s != c) ++gRefusal;
     }
 
-    /// the round trip of a credit bought from the engine: inside one spot epoch what came back, valued at the spot for
-    /// the balance token, is at most the price over (10,000 + spreadBps), within a wei of the price's rounding
+    /// the round trip of a credit bought from the engine: what came back, valued at the spot for the balance token, is
+    /// at most what was paid (the trip is unprofitable), within a wei of the price's rounding
     function _trip(uint256 id, uint256 back) internal {
         Bought memory b = bought[id];
         if (!b.open) return;
         delete bought[id];
         if (b.epoch != epoch) return;
         ++tripsChecked;
-        if (back * (10_000 + ctl.creditSpreadBps()) > (b.paid + 1) * 10_000) ++gTrip;
+        // the round trip is never profitable: what comes back is at most what was paid, within a wei of the price's
+        // rounding. the spread covers the reference band on both sides (decision 157 loop closure), so even across a
+        // sampled-spot move the counterparty never gains (decision 159, C01); the full-spread loss holds at one quote
+        if (back > b.paid + 1) ++gTrip;
     }
 
     function sellEth(uint256 seed) external {
@@ -164,7 +169,11 @@ contract ValueHandler is Test {
             if (got > _score(id) * unit * cap / 10_000) ++gBalance;
             if (address(core).balance < coreBefore) ++g1;
             ++balanceFills;
-            _trip(id, got * _spot() / 1e18);
+            // value the returned balance tokens at the engine's sampled sale spot (valuePerPoint(true)), not the live
+            // spot, so the round trip is measured at the quote basis the buy used, not a spot the actor just moved
+            (uint256 vSell,) = ctl.valuePerPoint(true);
+            uint256 denom = POINT_UNIT * unit;
+            _trip(id, denom == 0 ? 0 : got * vSell / denom);
         } catch (bytes memory why) {
             held[k].push(id);
             _expected(why, ICore.PotTooSmall.selector, ICore.ReturnLocked.selector, ICore.ReturnLocked.selector);
@@ -371,11 +380,11 @@ contract InvariantsValue is ValueBase {
         }
     }
 
-    /// a credit bought from the engine and sold straight back, in either currency, loses at least the spread while the
-    /// spot holds, and every refusal carries an expected selector
-    // promise: SPEC 10 round trips lose the spread, in value mode
+    /// a credit bought from the engine and sold straight back, in either currency, is never profitable for the
+    /// counterparty (the spread covers the reference band on both sides), and every refusal carries an expected selector
+    // promise: SPEC 10 round trips are unprofitable, in value mode
     function invariant_v20_roundTripsLoseTheSpread() public view {
-        assertEq(h.gTrip(), 0, "a round trip lost less than the spread");
+        assertEq(h.gTrip(), 0, "a round trip was profitable for the counterparty");
         assertEq(h.gRefusal(), 0, "a refusal carried an unexpected selector");
     }
 }

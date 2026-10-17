@@ -153,8 +153,9 @@ contract ColdAuditTest is Fixture {
         _setSettings(s);
     }
 
-    // promise: a keeper refresh paid against pending fee income receives the amount its pending-aware gate predicts
-    function test_refreshReferenceWithOnlyPendingIncomePaysNothing() public {
+    // promise: a keeper refresh books the pending fee income first and pays the caller from the pot share the keeper's
+    // gate predicted, and a later stale reference degrades the eth bid instead of reverting (decision 159, C02)
+    function test_refreshReferenceBooksPendingIncomeAndPays() public {
         _valuePool();
         autoBook = false;
         _buyCoin(funder, 0.005 ether);
@@ -162,22 +163,27 @@ contract ColdAuditTest is Fixture {
         uint256 pending = address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn();
         assertGt(pending, 0.0003 ether, "the real hook pushed enough to cover the keeper's caller fee");
         assertLt(pending, 0.01 ether, "the latched keeper's book gate stays idle below its threshold");
+        // the once-per-block refresh guard needs a new block past the seed block
         vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
         uint256 before = keeper.balance;
         uint256 oldTime = ctl.referenceTime();
         vm.prank(keeper);
         core.refreshReference();
         assertGt(ctl.referenceTime(), oldTime, "the keeper did refresh the reference");
-        assertEq(keeper.balance - before, 0, "refresh paid from the empty booked pot");
-        assertEq(core.ethPot(), 0, "refresh left the pending fee income unbooked");
+        uint256 paid = keeper.balance - before;
+        assertGt(paid, 0, "the refresh booked the pending income and paid the caller from the pot share");
+        assertLe(paid, pending, "the payment is at most the pending income it booked");
+        assertGt(core.ethPot() + paid, 0, "the pending pot share is booked");
+        // a stale reference no longer reverts the eth bid: it falls back to the last good value rate
         vm.warp(block.timestamp + 3_601);
-        vm.expectRevert(ICore.NoQuote.selector);
-        core.ethRate();
-        emit log_named_uint("pending income expected by keeper as pot", pending);
+        assertGt(core.ethRate(), 0, "a stale reference degrades to the last good rate, not NoQuote");
+        emit log_named_uint("pending income booked and paid from as pot", pending);
     }
 
-    // promise: after the payee latch, the keeper's below-threshold book skip cannot leave a refresh unpaid
-    function test_refreshAfterLatchUsesBookedDustInsteadOfNewHookIncome() public {
+    // promise: after the payee latch, a refresh books the new hook income and pays the caller from it, not only the
+    // booked dust (decision 159, C02)
+    function test_refreshAfterLatchBooksNewHookIncome() public {
         _valuePool();
         autoBook = false;
         vm.warp(block.timestamp + 1_800);
@@ -190,17 +196,20 @@ contract ColdAuditTest is Fixture {
         assertGt(pending, 0.0003 ether);
         assertLt(pending, 0.01 ether, "the keeper's post-latch book threshold is not met");
         vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
         uint256 before = keeper.balance;
+        uint256 potBefore = core.ethPot();
         vm.prank(keeper);
         core.refreshReference();
-        assertEq(keeper.balance - before, 1, "the refresh drains only the booked dust wei");
-        assertEq(core.ethPot(), 0);
-        assertEq(address(core).balance - core.ethToBuyback() - core.ethRedeemBurn(), pending);
+        uint256 paid = keeper.balance - before;
+        assertGt(paid, 1, "the refresh books the new hook income and pays more than the dust wei");
+        // the pending pot share less the caller payment is now booked (the dust was already in the pot)
+        assertGt(core.ethPot() + paid, potBefore, "the new hook income is booked by the refresh");
         emit log_named_uint("post-latch pending hook income", pending);
     }
 
-    // promise: a credit sale view is the amount its first buy charges after a reference refresh is due
-    function test_creditPriceBeforeDueRefreshExceedsFirstBuyCharge() public {
+    // promise: a credit sale view equals the amount its first buy charges when a reference refresh is due (C03)
+    function test_creditPriceEqualsFirstBuyChargeAtDueRefresh() public {
         _valuePool();
         _setCreditSaleOn(true);
         _addToPot(1 ether);
@@ -209,7 +218,9 @@ contract ColdAuditTest is Fixture {
         core.sellForEth(_one(id));
         // Selling balance tokens through the real pool lowers their ETH price.
         router.swap(balanceKey, false, -int256(1e17), address(this));
+        // past the seed block and the refresh cadence, so the view projects the refresh the buy persists
         vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
         uint256 quoted = ctl.creditPrice(id);
         uint256 refBefore = ctl.referencePrice();
         vm.deal(funder, quoted + 1 ether);
@@ -218,18 +229,19 @@ contract ColdAuditTest is Fixture {
         ctl.buyCredit{value: quoted}(id);
         uint256 charged = before - funder.balance;
         assertLt(ctl.referencePrice(), refBefore, "the buy refreshed the reference downward");
-        assertLt(charged, quoted, "the first buy charged less than the same-block view quote");
+        assertEq(charged, quoted, "the view quote equals the first buy charge");
         emit log_named_uint("creditPrice view wei", quoted);
         emit log_named_uint("buyCredit charged wei", charged);
     }
 
-    // promise: a statement priceOf view equals the first buy charge when a reference refresh is due
-    function test_statementPriceBeforeDueRefreshExceedsFirstBuyCharge() public {
+    // promise: a statement priceOf view equals the first buy charge when a reference refresh is due (C03)
+    function test_statementPriceEqualsFirstBuyChargeAtDueRefresh() public {
         _valuePool();
         _addToPot(20 ether);
         Composed memory c = _composeOnce();
         router.swap(balanceKey, false, -int256(1e17), address(this));
         vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
         uint256 quoted = ctl.priceOf(c.sid);
         uint256 refBefore = ctl.referencePrice();
         vm.deal(funder, quoted + 1 ether);
@@ -238,24 +250,22 @@ contract ColdAuditTest is Fixture {
         ctl.buy{value: quoted}(c.sid);
         uint256 charged = before - funder.balance;
         assertLt(ctl.referencePrice(), refBefore, "the statement buy refreshed the reference downward");
-        assertLt(charged, quoted, "the first statement buy charged less than the same-block view quote");
+        assertEq(charged, quoted, "the view quote equals the first statement buy charge");
         emit log_named_uint("priceOf view wei", quoted);
         emit log_named_uint("statement buy charged wei", charged);
     }
 
-    // promise: a positive balanceBidOf quote is payable by the first balance fill even with a thin module
-    function test_thinModuleAdvertisesBalanceBidThatCannotFill() public {
+    // promise: balanceBidOf reads 0 when the module cannot pay the credit's floor, and the fill still reverts (C05)
+    function test_thinModuleBalanceBidReadsZero() public {
         _enterPhase2();
         uint256 id = _credits(seller, 1)[0];
         _unitScore(id);
         mod.setAvailable(1e15);
-        uint256 quote = core.balanceBidOf(id);
-        assertEq(quote, 9e15, "the view reports the 90 percent floor payout");
-        assertLt(mod.available(), quote, "the module committed less than the quoted payout");
+        assertEq(core.balanceBidOf(id), 0, "the view reads 0 for a payout the module cannot fill");
+        assertLt(mod.available(), 9e15, "the module committed less than the 90 percent floor payout");
         vm.prank(seller);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(_one(id));
-        emit log_named_uint("unpayable balance quote", quote);
         emit log_named_uint("available balance tokens", mod.available());
     }
 
@@ -269,6 +279,23 @@ contract ColdAuditTest is Fixture {
         assertEq(mod.available(), before, "booking cannot move a direct token donation into the module");
         assertEq(xt.balanceOf(address(core)), 1e18, "the direct token donation remains in Core custody");
         emit log_named_uint("balance tokens stranded at Core", xt.balanceOf(address(core)));
+    }
+
+    // promise: rescueToken recovers a stray ERC20 the Core holds and refuses the balance token (decision 159, C06)
+    function test_rescueTokenRecoversStrayErc20AndRefusesBalanceToken() public {
+        _enterPhase2();
+        MockBalanceToken stray = new MockBalanceToken("Stray", "STR");
+        stray.mint(address(core), 5e18);
+        vm.prank(owner);
+        core.rescueToken(address(stray), owner, 5e18);
+        assertEq(stray.balanceOf(owner), 5e18, "the stray token is recovered to the owner");
+        assertEq(stray.balanceOf(address(core)), 0, "none is left at the Core");
+        // the balance token may leave only through the module path, so rescueToken refuses it
+        xt.mint(address(core), 1e18);
+        vm.prank(owner);
+        vm.expectRevert(ICore.ForbiddenTarget.selector);
+        core.rescueToken(address(xt), owner, 1e18);
+        assertEq(xt.balanceOf(address(core)), 1e18, "the balance token stays with the Core");
     }
 
     // promise: a new, zero-balance module accepts the first eligible real Statement redemption and receives the
@@ -385,8 +412,8 @@ contract ColdAuditTest is Fixture {
         emit log_named_uint("one-hour ETH bid wei per 100 points", core.ethRate());
     }
 
-    // promise: minLiquidity rejects a pool whose depth exists only for the transaction that quotes the bid
-    function test_jitLiquidityCanPassMinLiquidityInOneBlock() public {
+    // promise: minLiquidity reads the sampled liquidity, so depth added for one block cannot open the quote (C04)
+    function test_jitLiquidityCannotOpenQuoteInOneBlock() public {
         _valuePool();
         vm.prank(owner);
         ctl.setQuote(
@@ -400,15 +427,15 @@ contract ColdAuditTest is Fixture {
             })
         );
         (, bool before) = ctl.valuePerPoint(false);
-        assertFalse(before, "the standing liquidity is below the threshold");
+        assertFalse(before, "the sampled liquidity is below the threshold");
         TestLiquidityHelper jit = new TestLiquidityHelper();
         xt.approve(address(jit), type(uint256).max);
         jit.modify{value: 2 ether}(balanceKey, -887220, 887220, int256(1e18));
         (, bool during) = ctl.valuePerPoint(false);
-        assertTrue(during, "temporary liquidity passes the quote threshold");
+        assertFalse(during, "one-block live liquidity does not change the sampled liquidity the quote reads");
         jit.modify(balanceKey, -887220, 887220, -int256(1e18));
         (, bool after_) = ctl.valuePerPoint(false);
-        assertFalse(after_, "removing the JIT position closes the quote in the same block");
+        assertFalse(after_, "the quote stays closed after the JIT position is removed");
     }
 
     // promise: the owner cannot seed or reseed the reference from a real pool moved beyond the signed expected spot
@@ -486,8 +513,8 @@ contract ColdAuditTest is Fixture {
         uint256 id = _credits(seller, 1)[0];
         uint256 lastGood = core.ethPrice();
         vm.warp(block.timestamp + 3_601);
-        vm.expectRevert(ICore.NoQuote.selector);
-        core.ethRate();
+        // a stale reference degrades the eth bid to the last good rate instead of reverting NoQuote (decision 159, C02)
+        assertGt(core.ethRate(), 1, "the eth bid falls back to the last good rate, not a dust placeholder");
         vm.prank(seller);
         core.sellForBalance(_one(id));
         (bool inPile, uint256 cost,) = core.creditInfo(id);
@@ -539,16 +566,15 @@ contract ColdAuditTest is Fixture {
         router.swap(balanceKey, false, -int256(tokenBought), address(this));
         uint256 swapOutGas = gasStart - gasleft();
         uint256 ethRecovered = address(this).balance - ethBeforeReverse;
-        uint256 premium = manipulatedPay - baseline;
         uint256 poolLoss = 0.03 ether - ethRecovered;
         uint256 gasCostAtBaseFee = (swapInGas + sellGas + swapOutGas) * block.basefee;
+        // the bid clamps to the prior-block spot sample, so the same-block swap cannot raise the payout (C01)
         assertEq(manipulatedPay, raisedBid, "the bid view is the payout in the manipulated block");
-        assertGt(premium, poolLoss, "one real-score Credit covers the real pool round-trip loss");
-        assertGt(premium, poolLoss + gasCostAtBaseFee, "the sample clears pool fees and fork base-fee gas");
+        assertEq(manipulatedPay, baseline, "a same-block spot move does not change the eth bid");
+        assertGt(poolLoss, 0, "the round trip still loses the pool fee");
         emit log_named_uint("ordinary bid wei", baseline);
         emit log_named_uint("manipulated bid wei", manipulatedPay);
         emit log_named_uint("v4 swap round-trip loss wei", poolLoss);
-        emit log_named_uint("gross premium less pool loss wei", premium - poolLoss);
         emit log_named_uint("three-call gas at fork base fee wei", gasCostAtBaseFee);
         emit log_named_uint("fork base fee wei per gas", block.basefee);
     }
@@ -575,7 +601,8 @@ contract ColdAuditTest is Fixture {
         uint256 swapInGas = gasStart - gasleft();
         uint256 ethFromSwap = address(this).balance - ethBeforeSwap;
         uint256 loweredQuote = ctl.creditPrice(id);
-        assertLt(loweredQuote, baselineQuote, "the real pool sell lowers the protected ask");
+        // the ask clamps to the prior-block spot sample, so the same-block swap cannot lower it (C01)
+        assertEq(loweredQuote, baselineQuote, "a same-block spot move does not lower the protected ask");
         before = address(this).balance;
         gasStart = gasleft();
         ctl.buyCredit{value: baselineQuote}(id);
@@ -586,16 +613,15 @@ contract ColdAuditTest is Fixture {
         router.swap{value: 1 ether}(balanceKey, true, int256(5e16), address(this));
         uint256 swapOutGas = gasStart - gasleft();
         uint256 ethToReverse = before - address(this).balance;
-        uint256 saving = baselineCharge - manipulatedCharge;
         uint256 poolLoss = ethToReverse - ethFromSwap;
         uint256 gasCost = (swapInGas + buyGas + swapOutGas) * block.basefee;
         assertEq(manipulatedCharge, loweredQuote);
-        assertGt(saving, poolLoss + gasCost, "the ask saving clears pool fees and fork base-fee gas");
+        assertEq(manipulatedCharge, baselineCharge, "the manipulated purchase paid the ordinary ask");
+        assertGt(poolLoss + gasCost, 0, "the round trip costs pool fees and gas for no saving");
         emit log_named_uint("ordinary Credit ask wei", baselineCharge);
         emit log_named_uint("manipulated Credit ask wei", manipulatedCharge);
         emit log_named_uint("v4 swap round-trip loss wei", poolLoss);
         emit log_named_uint("three-call gas at fork base fee wei", gasCost);
-        emit log_named_uint("net purchase saving wei", saving - poolLoss - gasCost);
     }
 }
 
