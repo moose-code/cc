@@ -71,7 +71,7 @@ contract CreditSaleTest is Fixture {
     function test_setters_boundsAndEventsAndOwner() public {
         assertEq(ctl.creditWindow(), 4 hours, "launch window");
         assertEq(ctl.creditFloorBps(), 11_000, "launch floor");
-        assertEq(ctl.creditStartBps(), 30_000, "launch start");
+        assertEq(ctl.creditStartBps(), 15_000, "launch start");
 
         CreditSale memory c = _creditSale();
         c.saleOn = true;
@@ -133,7 +133,7 @@ contract CreditSaleTest is Fixture {
         assertEq(ctl.creditPrice(id), start, "start at acquisition");
         // the balance token baseline is off, so the floor is the cost times the floor bps
         assertEq(floor, cost * 11_000 / BPS, "floor is 110 percent of cost");
-        assertEq(start, floor * 3, "start is three times the floor");
+        assertEq(start, floor * 15_000 / BPS, "start is 150 percent of the floor");
 
         // mid window: on the straight line
         _warp(window / 2);

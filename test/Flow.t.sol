@@ -96,7 +96,7 @@ contract FlowTest is Fixture {
         Settings memory s = core.settings();
         assertEq(s.dropPer100PointsBps, 115);
         assertEq(s.dropFloorBps, 1);
-        assertEq(s.climbPerMinBps, 200);
+        assertEq(s.climbPerMinBps, 100);
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 600);
         assertEq(s.saleFloorBps, 10_000);

@@ -12,8 +12,8 @@ const near = (a, b, tol, msg) => {
 };
 const ok = (c, msg) => { n++; assert.ok(c, msg); };
 const H = 3600;
-// LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, feeToRedeemBurnBps 0) run on it. the launch floor (saleFloorBps 10000) and split (saleToBuybackBps 5000 with no artist or operator cut) are kept so the hand computed curves rest at cost; the launch values have their own checks against mainnet.json
-const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, dropPerCreditPct: 0.5, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0 };
+// LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, feeToRedeemBurnBps 0) run on it, with the 12 hour statement line, the anchor fraction 5000 and the credit start 30000 the curve checks were written for. the launch floor (saleFloorBps 10000) and split (saleToBuybackBps 5000 with no artist or operator cut) are kept so the hand computed curves rest at cost; the launch values have their own checks against mainnet.json
+const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, dropPerCreditPct: 0.5, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0, decayHours: 12, anchorMoveBps: 5000, creditStartBps: 30000 };
 // whole market runs price the rate per 100 points: the per credit rates above are per 433 point credit (the calibration credit), and so is the 0.5 percent drop, so simL rescales them by 100 / 433 (the drop to whole basis points)
 const PER_100 = 100 / 433;
 const simL = (o = {}) => simulate(Object.assign({}, LEGACY, { rateStart: LEGACY.rateStart * PER_100, rateCap: LEGACY.rateCap * PER_100, dropPerCreditPct: Math.round(LEGACY.dropPerCreditPct * PER_100 * 100) / 100 }, o));
@@ -35,7 +35,7 @@ const R0 = 6.668e15;
 {
   const cfg = JSON.parse(fs.readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8'));
   // the stepped bid fields of the Core, config name to model name (percent and hours in the model)
-  const STEPPED = { dropPer100PointsBps: 115, dropFloorBps: 1, climbPerMinBps: 200, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
+  const STEPPED = { dropPer100PointsBps: 115, dropFloorBps: 1, climbPerMinBps: 100, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 100, recoveryGapBps: 1000 };
   const STEPPED_SIM = { dropPerCreditPct: 'dropPer100PointsBps', dropToPct: 'dropFloorBps', climbPerMin: 'climbPerMinBps', ceilPct: 'ceilBps', idleLoosenPct: 'idleLoosenBps', recoveryClimbPerMin: 'recoveryClimbPerMinBps', recoveryGapPct: 'recoveryGapBps', peakHalfLifeHours: 'peakHalfLife' };
   for (const [k, v] of Object.entries(STEPPED)) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule, field for field with the config (bps to percent). the model has one bid rule
@@ -59,6 +59,8 @@ const R0 = 6.668e15;
   for (const k of Object.keys(cfg.settings)) ok(k in STEPPED || k in SETTINGS, 'the model carries ' + k);
   for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], k === 'anchorMinCost' ? +cfg.sale[k] / 1e18 : +cfg.sale[k], 1e-12, 'controller ' + k); // eth in the model, wei in the config
   assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same fields
+  // the launch rateStart is 100 percent of market
+  near(cfg.rateStart, 0.0049 * W, 1e-4, 'launch rateStart is 0.0049 eth per 100 points (decision 145, refreshed 2026-10-16)');
   // the launch rate cap is the config value and 3 times rateStart
   near(SETTINGS.rateCap, cfg.settings.rateCap, 1e-12, 'launch rateCap'); near(cfg.settings.rateCap, 3 * cfg.rateStart, 1e-12, 'launch rateCap is 3 times rateStart');
   // the pool and payee values of the v2 launch
@@ -74,13 +76,13 @@ const R0 = 6.668e15;
   // the credit block (the Credit struct of the launch config) is the model's CREDIT, field for field, and the launch values are the ones of FLOW 88 to 90
   assert.deepEqual(Object.keys(cfg.credit).sort(), Object.values(CREDIT_CONFIG_KEY).sort()); n++; // the config credit block is the model's CREDIT, field for field (decision 123 dropped royaltyRecipient)
   for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +cfg.credit[ck], 1e-12, 'credit ' + k);
-  assert.deepEqual(CREDIT, { creditCostToPotBps: 8000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: true, creditWindow: 4 * H, creditFloorBps: 11000, creditStartBps: 30000 }); n++;
+  assert.deepEqual(CREDIT, { creditCostToPotBps: 8000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: true, creditWindow: 4 * H, creditFloorBps: 11000, creditStartBps: 15000 }); n++;
   ok(CREDIT.royaltyBps === undefined && cfg.credit.royaltyBps === undefined, 'the royalty is gone from the model and the config (decision 123)'); n++;
   assert.equal(creditViolation(CREDIT), null); n++;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
   // the launch rules: statements fall to cost and stay there (FLOW 85), the balance bid starts off and redeemOn is true (decision 119), the redeem burn reserve takes 10 percent of fees and each redemption releases 20 percent of it
-  assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, decayHours: 12, anchorHalfLife: 7 * 24 * H, anchorMinCost: 0.1, anchorMoveBps: 5000 }); n++;
+  assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, decayHours: 4, anchorHalfLife: 7 * 24 * H, anchorMinCost: 0.1, anchorMoveBps: 0 }); n++;
   assert.equal(SETTINGS.saleFloorBps, 10000); assert.equal(SETTINGS.feeToBuybackBps, undefined); assert.equal(SETTINGS.feeToRedeemBurnBps, 1000); n += 3;
   assert.equal(SETTINGS.redeemOn, true); assert.equal(SETTINGS.balanceBidOn, false); assert.equal(SETTINGS.balanceMode, undefined); assert.equal(SETTINGS.redeemSlippageBps, 200); assert.equal(SETTINGS.balanceBidMarginBps, 1000); assert.equal(SETTINGS.redeemBurnBps, 2000); n += 6;
   ok(SETTINGS.redeemAfter === undefined && SETTINGS.balanceToBuybackBps === undefined && SETTINGS.xAuctionHalfLife === undefined && SETTINGS.balanceSliceCredits === undefined && SETTINGS.balanceLaneToBuybackBps === undefined && SETTINGS.xRateCap === undefined, 'the balance token auction is gone from the model');
@@ -865,9 +867,9 @@ const R0 = 6.668e15;
   closes(L, 'at launch');
   ok(L.core.s.redeemOn === true && L.core.s.balanceBidOn === false && L.core.moduleSet === false && L.T.redeemed === 0 && L.T.boughtX === 0 && L.core.balancePot === 0, 'redeemOn true but no module set, balanceBidOn false: no redemption, no balance token bid');
   ok(L.T.sold > 0 && L.T.soldPrice >= L.T.soldCost * (1 - 1e-9), 'every sale clears at or above cost (the launch hard floor)');
-  // the curve reaches its floor, the reference, decayHours (12) hours after listing
+  // the curve reaches its floor, the reference, decayHours (4) hours after listing. at the launch climb of 100 (decision 151) the 30 day run leaves a handful waiting, not hundreds
   const endSec = L.H * 3600, hoursToCost = L.core.c.decayHours, old = L.unbid.filter((st) => endSec - st.t0 >= hoursToCost * H);
-  ok(L.unbid.length > 100 && old.length > 20, 'statements wait'); ok(old.every((st) => Math.abs(L.core.askingPrice(st, endSec) - L.core.reference(st, endSec)) < 1e-12 * L.core.reference(st, endSec)), 'and every one past that age is asked at its reference');
+  ok(L.unbid.length >= 3 && old.length >= 3, 'statements wait'); ok(old.every((st) => Math.abs(L.core.askingPrice(st, endSec) - L.core.reference(st, endSec)) < 1e-12 * L.core.reference(st, endSec)), 'and every one past that age is asked at its reference');
   ok(L.unbid.every((st) => L.core.askingPrice(st, endSec) >= st.cost * (1 - 1e-12)), 'none is asked under its cost');
   near(L.core.feeToRedeemBurn, 0.1 * (L.T.fees + L.T.feesBuyback - L.core.payeePaid), 1e-9, 'the reserve takes 10 percent of the fees booked'); near(L.core.ethRedeemBurn, L.core.feeToRedeemBurn, 1e-12, 'the reserve equals the fee share, redemptions and releases aside');
   ok(L.core.redeemBurnMoved === 0, 'no redemption, no move to the buyback');
@@ -879,7 +881,7 @@ const R0 = 6.668e15;
   closes(hold, 'in hold');
   ok(hold.T.redeemed > 0 && hold.T.boughtX === 0 && hold.core.balancePot > 0, 'hold mode redeems and keeps the balance token without a bid');
   ok(hold.core.redeemBurnMoved > 0 && hold.core.ethRedeemBurn < hold.core.feeToRedeemBurn, 'each redemption moves part of the reserve to the buyback');
-  ok(hold.T.redeemedAge / hold.T.redeemed >= 12 * H - 1, 'a statement redeems no earlier than its curve reaches its floor (hour 12)');
+  ok(hold.T.redeemedAge / hold.T.redeemed >= hold.core.c.decayHours * H - 1, 'a statement redeems no earlier than its curve reaches its floor (decayHours, 4 at launch)');
   ok(hold.T.redeemedValue > 0 && hold.core.balancePot === hold.T.xRecv, 'the balance token pot is what the redemptions returned');
   // on: the bid buys credits at the margin under their value into the one pile and the statements built from them sell or redeem like the rest. the bid needs no pool key (FLOW 96)
   const on = simulate(Object.assign({ balanceDay: 10, balancePoolSet: true }, base));
@@ -923,7 +925,8 @@ const R0 = 6.668e15;
   const mid = simulate(Object.assign({ creditSaleOn: false, schedule: [{ day: 10, patch: { creditSaleOn: true } }] }, base)); ok(mid.T.creditSold > 0 && mid.S.creditSold[10 * 24] === 0, 'the owner turns the sale on mid run'); n++;
   // chosen composition: a composer that names the richest ready credits builds richer statements than compose() does from the oldest
   // the ready count stays near one page, so the choice ranks little: the richer-statement claim is checked on six seeds with a 72 hour window and 600 second steps
-  const win = { creditSaleOn: true, creditWindow: 72 * H, days: 30, seed: 4, stepSec: 600, stmtPerDay: 2 };
+  // the run keeps the climb of 200 bps a minute it was written for: at the launch 100 (decision 151) the ready count is one page and the choice ranks nothing
+  const win = { creditSaleOn: true, creditWindow: 72 * H, days: 30, seed: 4, stepSec: 600, stmtPerDay: 2, climbPerMin: 2, recoveryClimbPerMin: 2 };
   const std = simulate(win), pick = simulate(Object.assign({ chosenComposeOn: true, composeChoice: 'richest' }, win));
   ok(pick.T.composedChosen > 0 && std.T.composedChosen === 0, 'composeChosen runs only when the owner opens it');
   // the per seed margin is under 0.1 percent (the ready count stays near one page), so the claim is checked on the mean over six seeds

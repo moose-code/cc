@@ -111,7 +111,7 @@ contract ConfigTest is Fixture {
         assertEq(f.settings.balanceBidCapBps, 10_000);
         assertEq(f.settings.idleStepSeconds, 600);
         assertEq(f.settings.sniperSeconds, 1800);
-        assertEq(f.sale.anchorMoveBps, 5_000);
+        assertEq(f.sale.anchorMoveBps, 0);
         assertEq(f.payee, v2.owner);
         // the stack addresses of the shipped file are the record of the live stack, the factory owner is the config owner
         assertEq(unsetFields(f).length, 0, "the shipped file leaves nothing unset");

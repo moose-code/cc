@@ -120,13 +120,13 @@ contract PauseTest is SaleShapeBase {
     }
 
     // promise: SPEC 1 the age a price falls with excludes every paused second
-    /// a statement 20 hours into its fall is at hour 20 of the fall after a pause of any length, and the fall goes on
+    /// a statement 2 hours into its 4 hour fall is at hour 2 of the fall after a pause of any length, and the fall goes on
     function testFuzz_priceIsFrozenAndResumesAtTheSameAge(uint32 length) public {
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
-        _age(sid, 6 * H);
+        _age(sid, 2 * H);
         uint256 before = ctl.priceOf(sid);
-        assertEq(before, _launch(cost, 6 * H), "hour 6 of the launch curve");
+        assertEq(before, _launch(cost, 2 * H), "hour 2 of the launch curve");
         _setPaused(true);
         assertEq(ctl.priceOf(sid), before, "the price at the pause");
         vm.warp(block.timestamp + length);
@@ -134,7 +134,7 @@ contract PauseTest is SaleShapeBase {
         _setPaused(false);
         assertEq(ctl.priceOf(sid), before, "the price at the resume");
         vm.warp(block.timestamp + 1 hours);
-        assertEq(ctl.priceOf(sid), _launch(cost, 7 * H), "hour 7 an hour after the resume");
+        assertEq(ctl.priceOf(sid), _launch(cost, 3 * H), "hour 3 an hour after the resume");
         assertLt(ctl.priceOf(sid), before);
     }
 

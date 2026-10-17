@@ -1,0 +1,3016 @@
+{
+ "assumptions": {
+  "blockSeconds": 12,
+  "refPoints": 433,
+  "ethPerPoint": 0.0000577,
+  "census": [
+   152,
+   224,
+   296,
+   368,
+   440,
+   512,
+   584,
+   656,
+   728
+  ],
+  "seed": 147,
+  "capitalEth": 10,
+  "budgetPerMin": 0.01,
+  "budgetCap": 0.05,
+  "patienceSec": 7200,
+  "runSeconds": 4.694
+ },
+ "organic": [
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 1.4166666666666667,
+   "meanPaidPct": 99.88727980789082,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 99.76916138864219,
+   "timeShareAtCap": 0.9276388888888889,
+   "lost": 25
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2.0416666666666665,
+   "meanPaidPct": 99.90483304263077,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 99.66746923156022,
+   "timeShareAtCap": 0.8975,
+   "lost": 11
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 5.708333333333333,
+   "meanPaidPct": 99.43864450816665,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 99.11464084299585,
+   "timeShareAtCap": 0.7483333333333333,
+   "lost": 116
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 8.541666666666666,
+   "meanPaidPct": 98.94868489328624,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 98.51940384847822,
+   "timeShareAtCap": 0.6256944444444444,
+   "lost": 55
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 23,
+   "meanPaidPct": 96.81548456035506,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 95.28525487670655,
+   "timeShareAtCap": 0.1301388888888889,
+   "lost": 493
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 31.541666666666668,
+   "meanPaidPct": 94.69457180286109,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 93.23247623567538,
+   "timeShareAtCap": 0.012777777777777779,
+   "lost": 301
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 1.4166666666666667,
+   "meanPaidPct": 99.37015935075608,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 99.05834821823171,
+   "timeShareAtCap": 0.7365277777777778,
+   "lost": 25
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2.0416666666666665,
+   "meanPaidPct": 99.4529399815505,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 98.6368849029667,
+   "timeShareAtCap": 0.6205555555555555,
+   "lost": 11
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 5.583333333333333,
+   "meanPaidPct": 96.95762978565507,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 95.37986872700233,
+   "timeShareAtCap": 0.13583333333333333,
+   "lost": 119
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 7.958333333333333,
+   "meanPaidPct": 94.64789537978113,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 93.22234074881513,
+   "timeShareAtCap": 0.002777777777777778,
+   "lost": 68
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 11.791666666666666,
+   "meanPaidPct": 92.58165245910449,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.68556413881755,
+   "timeShareAtCap": 0,
+   "lost": 732
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 19.375,
+   "meanPaidPct": 91.46307078137032,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.0795288222189,
+   "timeShareAtCap": 0,
+   "lost": 567
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 1.375,
+   "meanPaidPct": 98.020898902654,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 97.09287580754447,
+   "timeShareAtCap": 0.3720833333333333,
+   "lost": 26
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2,
+   "meanPaidPct": 97.24533007814843,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 95.88761416426722,
+   "timeShareAtCap": 0.17,
+   "lost": 12
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 3.25,
+   "meanPaidPct": 94.00973815335757,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 92.5859808936429,
+   "timeShareAtCap": 0,
+   "lost": 170
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 5.333333333333333,
+   "meanPaidPct": 92.25316051528277,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.62619998633159,
+   "timeShareAtCap": 0,
+   "lost": 123
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 8.333333333333334,
+   "meanPaidPct": 91.3259573258416,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.90258828520759,
+   "timeShareAtCap": 0,
+   "lost": 810
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 15.458333333333334,
+   "meanPaidPct": 90.71153466955364,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.57182203651168,
+   "timeShareAtCap": 0,
+   "lost": 652
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 1.125,
+   "meanPaidPct": 96.2927696018634,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 94.33302723558424,
+   "timeShareAtCap": 0.030555555555555555,
+   "lost": 32
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 1.625,
+   "meanPaidPct": 94.03191494951312,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 92.78173736877461,
+   "timeShareAtCap": 0,
+   "lost": 21
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 2.25,
+   "meanPaidPct": 92.64308849982895,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.80345192359785,
+   "timeShareAtCap": 0,
+   "lost": 193
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 4.25,
+   "meanPaidPct": 91.29127910414098,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.99847074148312,
+   "timeShareAtCap": 0,
+   "lost": 147
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 6.833333333333333,
+   "meanPaidPct": 90.78285180281094,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.58069620713354,
+   "timeShareAtCap": 0,
+   "lost": 843
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 13.75,
+   "meanPaidPct": 90.38119517206759,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.3299723901738,
+   "timeShareAtCap": 0,
+   "lost": 690
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 2,
+   "meanPaidPct": 104.89998896764875,
+   "premiumLossPct": 4.899988967648738,
+   "sharePtsAbovePar": 1,
+   "timeMeanBidPct": 104.62453850653182,
+   "timeShareAtCap": 0.8997222222222222,
+   "lost": 12
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2.375,
+   "meanPaidPct": 104.81369432070647,
+   "premiumLossPct": 4.8137122462168405,
+   "sharePtsAbovePar": 0.9860859044162129,
+   "timeMeanBidPct": 104.54265045867045,
+   "timeShareAtCap": 0.8793055555555556,
+   "lost": 3
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 8.458333333333334,
+   "meanPaidPct": 103.76903183102685,
+   "premiumLossPct": 3.906838977909375,
+   "sharePtsAbovePar": 0.9056122448979592,
+   "timeMeanBidPct": 103.30756758815969,
+   "timeShareAtCap": 0.6213888888888889,
+   "lost": 57
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 10.125,
+   "meanPaidPct": 103.21914746884357,
+   "premiumLossPct": 3.5340311672307516,
+   "sharePtsAbovePar": 0.8536987121892782,
+   "timeMeanBidPct": 102.73480988677385,
+   "timeShareAtCap": 0.5440277777777778,
+   "lost": 21
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 26.208333333333332,
+   "meanPaidPct": 97.0714134004976,
+   "premiumLossPct": 0.19914430592983134,
+   "sharePtsAbovePar": 0.16443404504241005,
+   "timeMeanBidPct": 94.7999966160575,
+   "timeShareAtCap": 0,
+   "lost": 416
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 31.958333333333332,
+   "meanPaidPct": 94.70718007051882,
+   "premiumLossPct": 0.014934769868198248,
+   "sharePtsAbovePar": 0.016927674835624625,
+   "timeMeanBidPct": 93.15623717344936,
+   "timeShareAtCap": 0,
+   "lost": 291
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 2,
+   "meanPaidPct": 104.43096535943056,
+   "premiumLossPct": 4.43120684866456,
+   "sharePtsAbovePar": 0.9830383480825958,
+   "timeMeanBidPct": 103.46364128001073,
+   "timeShareAtCap": 0.6179166666666667,
+   "lost": 12
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2.375,
+   "meanPaidPct": 103.49941226418365,
+   "premiumLossPct": 3.6028724835719514,
+   "sharePtsAbovePar": 0.8693284936479129,
+   "timeMeanBidPct": 102.75696699284629,
+   "timeShareAtCap": 0.5394444444444444,
+   "lost": 3
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 6.416666666666667,
+   "meanPaidPct": 97.37290872137102,
+   "premiumLossPct": 0.23167791676532118,
+   "sharePtsAbovePar": 0.18488105301292115,
+   "timeMeanBidPct": 95.01248087673756,
+   "timeShareAtCap": 0,
+   "lost": 102
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 8,
+   "meanPaidPct": 94.65696724785175,
+   "premiumLossPct": 0.004533346166754827,
+   "sharePtsAbovePar": 0.0026605853287723297,
+   "timeMeanBidPct": 93.21948947957684,
+   "timeShareAtCap": 0,
+   "lost": 67
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 11.791666666666666,
+   "meanPaidPct": 92.58165245910449,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.68556413881755,
+   "timeShareAtCap": 0,
+   "lost": 732
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 19.375,
+   "meanPaidPct": 91.46307078137032,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.0795288222189,
+   "timeShareAtCap": 0,
+   "lost": 567
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 1.875,
+   "meanPaidPct": 101.07154545623446,
+   "premiumLossPct": 2.0725789293507284,
+   "sharePtsAbovePar": 0.6206896551724138,
+   "timeMeanBidPct": 98.8157369175806,
+   "timeShareAtCap": 0.10597222222222222,
+   "lost": 15
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2.1666666666666665,
+   "meanPaidPct": 98.34951661653122,
+   "premiumLossPct": 0.9282054485284258,
+   "sharePtsAbovePar": 0.33520290333223357,
+   "timeMeanBidPct": 96.72174142605625,
+   "timeShareAtCap": 0.059166666666666666,
+   "lost": 8
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 3.25,
+   "meanPaidPct": 94.00973815335757,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 92.5859808936429,
+   "timeShareAtCap": 0,
+   "lost": 170
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 5.333333333333333,
+   "meanPaidPct": 92.25316051528277,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.62619998633159,
+   "timeShareAtCap": 0,
+   "lost": 123
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 8.333333333333334,
+   "meanPaidPct": 91.3259573258416,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.90258828520759,
+   "timeShareAtCap": 0,
+   "lost": 810
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 15.458333333333334,
+   "meanPaidPct": 90.71153466955364,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.57182203651168,
+   "timeShareAtCap": 0,
+   "lost": 652
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 1.1666666666666667,
+   "meanPaidPct": 96.3564842535256,
+   "premiumLossPct": 0.09174625053323153,
+   "sharePtsAbovePar": 0.10273159144893111,
+   "timeMeanBidPct": 94.30735856252328,
+   "timeShareAtCap": 0,
+   "lost": 31
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 1.625,
+   "meanPaidPct": 94.03191494951312,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 92.78173736877461,
+   "timeShareAtCap": 0,
+   "lost": 21
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 2.25,
+   "meanPaidPct": 92.64308849982895,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.80345192359785,
+   "timeShareAtCap": 0,
+   "lost": 193
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 4.25,
+   "meanPaidPct": 91.29127910414098,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.99847074148312,
+   "timeShareAtCap": 0,
+   "lost": 147
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 6.833333333333333,
+   "meanPaidPct": 90.78285180281094,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.58069620713354,
+   "timeShareAtCap": 0,
+   "lost": 843
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 13.75,
+   "meanPaidPct": 90.38119517206759,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.3299723901738,
+   "timeShareAtCap": 0,
+   "lost": 690
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 2.2916666666666665,
+   "meanPaidPct": 109.804088594146,
+   "premiumLossPct": 9.804088594146002,
+   "sharePtsAbovePar": 1,
+   "timeMeanBidPct": 109.5007644603863,
+   "timeShareAtCap": 0.8829166666666667,
+   "lost": 5
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2.4166666666666665,
+   "meanPaidPct": 109.7972471626285,
+   "premiumLossPct": 9.797247162628507,
+   "sharePtsAbovePar": 1,
+   "timeMeanBidPct": 109.48020920768977,
+   "timeShareAtCap": 0.8769444444444444,
+   "lost": 2
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 9.958333333333334,
+   "meanPaidPct": 108.10959053892928,
+   "premiumLossPct": 8.12751385139296,
+   "sharePtsAbovePar": 0.9866595517609391,
+   "timeMeanBidPct": 107.5718930783005,
+   "timeShareAtCap": 0.5469444444444445,
+   "lost": 25
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 10.666666666666666,
+   "meanPaidPct": 107.39939499694427,
+   "premiumLossPct": 7.5449553521895805,
+   "sharePtsAbovePar": 0.9391353409972495,
+   "timeMeanBidPct": 107.07319155519606,
+   "timeShareAtCap": 0.5130555555555556,
+   "lost": 8
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 26.208333333333332,
+   "meanPaidPct": 97.07156489025681,
+   "premiumLossPct": 0.19918438860574733,
+   "sharePtsAbovePar": 0.16443404504241005,
+   "timeMeanBidPct": 94.80007429238474,
+   "timeShareAtCap": 0,
+   "lost": 416
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 31.958333333333332,
+   "meanPaidPct": 94.70718007051882,
+   "premiumLossPct": 0.014934769868198248,
+   "sharePtsAbovePar": 0.016927674835624625,
+   "timeMeanBidPct": 93.15623717344936,
+   "timeShareAtCap": 0,
+   "lost": 291
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 2.2916666666666665,
+   "meanPaidPct": 108.62868046631081,
+   "premiumLossPct": 8.628680466310831,
+   "sharePtsAbovePar": 1,
+   "timeMeanBidPct": 107.68088949013568,
+   "timeShareAtCap": 0.5475,
+   "lost": 5
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2.4166666666666665,
+   "meanPaidPct": 107.85018976269392,
+   "premiumLossPct": 7.863378705343429,
+   "sharePtsAbovePar": 0.9673590504451038,
+   "timeMeanBidPct": 107.24382762965733,
+   "timeShareAtCap": 0.5247222222222222,
+   "lost": 2
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 6.416666666666667,
+   "meanPaidPct": 97.37290872137102,
+   "premiumLossPct": 0.23167791676532118,
+   "sharePtsAbovePar": 0.18488105301292115,
+   "timeMeanBidPct": 95.01248087673756,
+   "timeShareAtCap": 0,
+   "lost": 102
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 8,
+   "meanPaidPct": 94.65696724785175,
+   "premiumLossPct": 0.004533346166754827,
+   "sharePtsAbovePar": 0.0026605853287723297,
+   "timeMeanBidPct": 93.21948947957684,
+   "timeShareAtCap": 0,
+   "lost": 67
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 11.791666666666666,
+   "meanPaidPct": 92.58165245910449,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.68556413881755,
+   "timeShareAtCap": 0,
+   "lost": 732
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 50,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 19.375,
+   "meanPaidPct": 91.46307078137032,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.0795288222189,
+   "timeShareAtCap": 0,
+   "lost": 567
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 2,
+   "meanPaidPct": 102.11977959772675,
+   "premiumLossPct": 2.946797370571899,
+   "sharePtsAbovePar": 0.6994594594594594,
+   "timeMeanBidPct": 99.654386348263,
+   "timeShareAtCap": 0.03722222222222222,
+   "lost": 12
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 2.1666666666666665,
+   "meanPaidPct": 98.7584926380813,
+   "premiumLossPct": 1.2388552329185596,
+   "sharePtsAbovePar": 0.3474100956779941,
+   "timeMeanBidPct": 97.1934486375635,
+   "timeShareAtCap": 0.035416666666666666,
+   "lost": 8
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 3.25,
+   "meanPaidPct": 94.00973815335757,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 92.5859808936429,
+   "timeShareAtCap": 0,
+   "lost": 170
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 5.333333333333333,
+   "meanPaidPct": 92.25316051528277,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.62619998633159,
+   "timeShareAtCap": 0,
+   "lost": 123
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 8.333333333333334,
+   "meanPaidPct": 91.3259573258416,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.90258828520759,
+   "timeShareAtCap": 0,
+   "lost": 810
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 15.458333333333334,
+   "meanPaidPct": 90.71153466955364,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.57182203651168,
+   "timeShareAtCap": 0,
+   "lost": 652
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 1,
+   "fillsPerHour": 1.1666666666666667,
+   "meanPaidPct": 96.3564842535256,
+   "premiumLossPct": 0.09174625053323153,
+   "sharePtsAbovePar": 0.10273159144893111,
+   "timeMeanBidPct": 94.30735856252328,
+   "timeShareAtCap": 0,
+   "lost": 31
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 3,
+   "mean": 0.95,
+   "fillsPerHour": 1.625,
+   "meanPaidPct": 94.03191494951312,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 92.78173736877461,
+   "timeShareAtCap": 0,
+   "lost": 21
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 1,
+   "fillsPerHour": 2.25,
+   "meanPaidPct": 92.64308849982895,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 91.80345192359785,
+   "timeShareAtCap": 0,
+   "lost": 193
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 12,
+   "mean": 0.95,
+   "fillsPerHour": 4.25,
+   "meanPaidPct": 91.29127910414098,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.99847074148312,
+   "timeShareAtCap": 0,
+   "lost": 147
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 1,
+   "fillsPerHour": 6.833333333333333,
+   "meanPaidPct": 90.78285180281094,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.58069620713354,
+   "timeShareAtCap": 0,
+   "lost": 843
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 10,
+    "drop": 115
+   },
+   "lam": 48,
+   "mean": 0.95,
+   "fillsPerHour": 13.75,
+   "meanPaidPct": 90.38119517206759,
+   "premiumLossPct": 0,
+   "sharePtsAbovePar": 0,
+   "timeMeanBidPct": 90.3299723901738,
+   "timeShareAtCap": 0,
+   "lost": 690
+  }
+ ],
+ "dump": [
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "rule": "bucket 60 s, first passes",
+   "minutes": 141,
+   "meanPaidPct": 91.00037654221553,
+   "ethSpent": 6.711682539663255,
+   "conversionGainEth": 0.6637622603367451,
+   "left": 0,
+   "capitalLeft": 3.288317460336748
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "rule": "allowance 1 pct a minute, cap 5 pct",
+   "minutes": 105.2,
+   "meanPaidPct": 90.75911320774348,
+   "ethSpent": 6.69388829560663,
+   "conversionGainEth": 0.6815565043933701,
+   "left": 0,
+   "capitalLeft": 3.306111704393353
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "rule": "bucket 60 s, first passes",
+   "minutes": 138,
+   "meanPaidPct": 90.09726624108154,
+   "ethSpent": 6.645074137920004,
+   "conversionGainEth": 0.7303706620799965,
+   "left": 0,
+   "capitalLeft": 3.354925862080002
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "rule": "allowance 1 pct a minute, cap 5 pct",
+   "minutes": 103.8,
+   "meanPaidPct": 90.07460316176437,
+   "ethSpent": 6.643402635014986,
+   "conversionGainEth": 0.732042164985014,
+   "left": 0,
+   "capitalLeft": 3.356597364985027
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "rule": "bucket 60 s, first passes",
+   "minutes": 141,
+   "meanPaidPct": 91.00037654221553,
+   "ethSpent": 6.711682539663255,
+   "conversionGainEth": 0.6637622603367451,
+   "left": 0,
+   "capitalLeft": 3.288317460336748
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "rule": "allowance 1 pct a minute, cap 5 pct",
+   "minutes": 105.2,
+   "meanPaidPct": 90.75911320774348,
+   "ethSpent": 6.69388829560663,
+   "conversionGainEth": 0.6815565043933701,
+   "left": 0,
+   "capitalLeft": 3.306111704393353
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "rule": "bucket 60 s, first passes",
+   "minutes": 138,
+   "meanPaidPct": 90.09726624108154,
+   "ethSpent": 6.645074137920004,
+   "conversionGainEth": 0.7303706620799965,
+   "left": 0,
+   "capitalLeft": 3.354925862080002
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "rule": "allowance 1 pct a minute, cap 5 pct",
+   "minutes": 103.8,
+   "meanPaidPct": 90.07460316176437,
+   "ethSpent": 6.643402635014986,
+   "conversionGainEth": 0.732042164985014,
+   "left": 0,
+   "capitalLeft": 3.356597364985027
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "rule": "bucket 60 s, first passes",
+   "minutes": 141,
+   "meanPaidPct": 91.00037654221553,
+   "ethSpent": 6.711682539663255,
+   "conversionGainEth": 0.6637622603367451,
+   "left": 0,
+   "capitalLeft": 3.288317460336748
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "rule": "allowance 1 pct a minute, cap 5 pct",
+   "minutes": 105.2,
+   "meanPaidPct": 90.75911320774348,
+   "ethSpent": 6.69388829560663,
+   "conversionGainEth": 0.6815565043933701,
+   "left": 0,
+   "capitalLeft": 3.306111704393353
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "rule": "bucket 60 s, first passes",
+   "minutes": 138,
+   "meanPaidPct": 90.09726624108154,
+   "ethSpent": 6.645074137920004,
+   "conversionGainEth": 0.7303706620799965,
+   "left": 0,
+   "capitalLeft": 3.354925862080002
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "rule": "allowance 1 pct a minute, cap 5 pct",
+   "minutes": 103.8,
+   "meanPaidPct": 90.07460316176437,
+   "ethSpent": 6.643402635014986,
+   "conversionGainEth": 0.732042164985014,
+   "left": 0,
+   "capitalLeft": 3.356597364985027
+  }
+ ],
+ "loop": [
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 0,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 102,
+   "gainPerCreditPct": -2.0000000000000018,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 0,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 105,
+   "gainPerCreditPct": -5.000000000000004,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 0,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 110.00000000000001,
+   "gainPerCreditPct": -10.000000000000009,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 0,
+   "cycleMin": 52.733333333333334,
+   "floorToCapMin": 52.733333333333334,
+   "creditsPerHour": 1.1378002528445006,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 102,
+   "gainPerCreditPct": -2.0000000000000018,
+   "cycleMin": 52.733333333333334,
+   "floorToCapMin": 52.733333333333334,
+   "creditsPerHour": 1.1378002528445006,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 0,
+   "cycleMin": 52.733333333333334,
+   "floorToCapMin": 52.733333333333334,
+   "creditsPerHour": 1.1378002528445006,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 105,
+   "gainPerCreditPct": -5.000000000000004,
+   "cycleMin": 52.733333333333334,
+   "floorToCapMin": 52.733333333333334,
+   "creditsPerHour": 1.1378002528445006,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 0,
+   "cycleMin": 52.733333333333334,
+   "floorToCapMin": 52.733333333333334,
+   "creditsPerHour": 1.1378002528445006,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 110.00000000000001,
+   "gainPerCreditPct": -10.000000000000009,
+   "cycleMin": 52.733333333333334,
+   "floorToCapMin": 52.733333333333334,
+   "creditsPerHour": 1.1378002528445006,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 5.000000000000004,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0.07495230000000005
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 107.10000000000002,
+   "gainPerCreditPct": -2.100000000000013,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 5.000000000000004,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0.07495230000000005
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 110.25,
+   "gainPerCreditPct": -5.249999999999999,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 5.000000000000004,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0.07495230000000005
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 115.50000000000003,
+   "gainPerCreditPct": -10.500000000000021,
+   "cycleMin": 10,
+   "floorToCapMin": 10,
+   "creditsPerHour": 6,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 5.000000000000004,
+   "cycleMin": 77.16666666666667,
+   "floorToCapMin": 77.16666666666667,
+   "creditsPerHour": 0.7775377969762419,
+   "gainPerHourPctOfCapital": 0.00971304103671707
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 107.10000000000002,
+   "gainPerCreditPct": -2.100000000000013,
+   "cycleMin": 77.16666666666667,
+   "floorToCapMin": 77.16666666666667,
+   "creditsPerHour": 0.7775377969762419,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 5.000000000000004,
+   "cycleMin": 77.16666666666667,
+   "floorToCapMin": 77.16666666666667,
+   "creditsPerHour": 0.7775377969762419,
+   "gainPerHourPctOfCapital": 0.00971304103671707
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 110.25,
+   "gainPerCreditPct": -5.249999999999999,
+   "cycleMin": 77.16666666666667,
+   "floorToCapMin": 77.16666666666667,
+   "creditsPerHour": 0.7775377969762419,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 5.000000000000004,
+   "cycleMin": 77.16666666666667,
+   "floorToCapMin": 77.16666666666667,
+   "creditsPerHour": 0.7775377969762419,
+   "gainPerHourPctOfCapital": 0.00971304103671707
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 10500,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 115.50000000000003,
+   "gainPerCreditPct": -10.500000000000021,
+   "cycleMin": 77.16666666666667,
+   "floorToCapMin": 77.16666666666667,
+   "creditsPerHour": 0.7775377969762419,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 10.000000000000009,
+   "cycleMin": 10.15,
+   "floorToCapMin": 10.15,
+   "creditsPerHour": 5.911330049261084,
+   "gainPerHourPctOfCapital": 0.14768926108374397
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 112.20000000000002,
+   "gainPerCreditPct": -2.200000000000002,
+   "cycleMin": 10.15,
+   "floorToCapMin": 10.15,
+   "creditsPerHour": 5.911330049261084,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 10.000000000000009,
+   "cycleMin": 10.15,
+   "floorToCapMin": 10.15,
+   "creditsPerHour": 5.911330049261084,
+   "gainPerHourPctOfCapital": 0.14768926108374397
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 115.50000000000003,
+   "gainPerCreditPct": -5.500000000000016,
+   "cycleMin": 10.15,
+   "floorToCapMin": 10.15,
+   "creditsPerHour": 5.911330049261084,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 10.000000000000009,
+   "cycleMin": 10.15,
+   "floorToCapMin": 10.15,
+   "creditsPerHour": 5.911330049261084,
+   "gainPerHourPctOfCapital": 0.14768926108374397
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 200,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 121.00000000000001,
+   "gainPerCreditPct": -11.00000000000001,
+   "cycleMin": 10.15,
+   "floorToCapMin": 10.15,
+   "creditsPerHour": 5.911330049261084,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 10.000000000000009,
+   "cycleMin": 100.45,
+   "floorToCapMin": 100.45,
+   "creditsPerHour": 0.5973120955699353,
+   "gainPerHourPctOfCapital": 0.014923305126928832
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.02,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 112.20000000000002,
+   "gainPerCreditPct": -2.200000000000002,
+   "cycleMin": 100.45,
+   "floorToCapMin": 100.45,
+   "creditsPerHour": 0.5973120955699353,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 10.000000000000009,
+   "cycleMin": 100.45,
+   "floorToCapMin": 100.45,
+   "creditsPerHour": 0.5973120955699353,
+   "gainPerHourPctOfCapital": 0.014923305126928832
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.05,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 115.50000000000003,
+   "gainPerCreditPct": -5.500000000000016,
+   "cycleMin": 100.45,
+   "floorToCapMin": 100.45,
+   "creditsPerHour": 0.5973120955699353,
+   "gainPerHourPctOfCapital": 0
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "current",
+   "bidLowPct": 90,
+   "floorPct": 100,
+   "gainPerCreditPct": 10.000000000000009,
+   "cycleMin": 100.45,
+   "floorToCapMin": 100.45,
+   "creditsPerHour": 0.5973120955699353,
+   "gainPerHourPctOfCapital": 0.014923305126928832
+  },
+  {
+   "cell": {
+    "floor": 9000,
+    "cap": 11000,
+    "climb": 20,
+    "drop": 115
+   },
+   "spread": 0.1,
+   "rule": "ceiling",
+   "bidLowPct": 90,
+   "floorPct": 121.00000000000001,
+   "gainPerCreditPct": -11.00000000000001,
+   "cycleMin": 100.45,
+   "floorToCapMin": 100.45,
+   "creditsPerHour": 0.5973120955699353,
+   "gainPerHourPctOfCapital": 0
+  }
+ ],
+ "manipulation": [
+  {
+   "k": 0.03,
+   "minutes": 5,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.014563106796116504,
+   "buyLossPctOfCapital": 0.14563106796116504,
+   "saleLossEth": 0.3
+  },
+  {
+   "k": 0.03,
+   "minutes": 5,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 0.14563106796116504,
+   "buyLossPctOfCapital": 0.14563106796116504,
+   "saleLossEth": 3
+  },
+  {
+   "k": 0.03,
+   "minutes": 30,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.08737864077669902,
+   "buyLossPctOfCapital": 0.8737864077669902,
+   "saleLossEth": 0.3
+  },
+  {
+   "k": 0.03,
+   "minutes": 30,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 0.8737864077669902,
+   "buyLossPctOfCapital": 0.8737864077669901,
+   "saleLossEth": 3
+  },
+  {
+   "k": 0.03,
+   "minutes": 60,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.17475728155339804,
+   "buyLossPctOfCapital": 1.7475728155339805,
+   "saleLossEth": 0.3
+  },
+  {
+   "k": 0.03,
+   "minutes": 60,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 1.7475728155339805,
+   "buyLossPctOfCapital": 1.7475728155339803,
+   "saleLossEth": 3
+  },
+  {
+   "k": 0.03,
+   "minutes": 1440,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.2912621359223301,
+   "buyLossPctOfCapital": 2.9126213592233006,
+   "saleLossEth": 0.3
+  },
+  {
+   "k": 0.03,
+   "minutes": 1440,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 2.912621359223301,
+   "buyLossPctOfCapital": 2.912621359223301,
+   "saleLossEth": 3
+  },
+  {
+   "k": 0.05,
+   "minutes": 5,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.023809523809523808,
+   "buyLossPctOfCapital": 0.23809523809523808,
+   "saleLossEth": 0.5
+  },
+  {
+   "k": 0.05,
+   "minutes": 5,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 0.23809523809523808,
+   "buyLossPctOfCapital": 0.2380952380952381,
+   "saleLossEth": 5
+  },
+  {
+   "k": 0.05,
+   "minutes": 30,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.14285714285714288,
+   "buyLossPctOfCapital": 1.4285714285714286,
+   "saleLossEth": 0.5
+  },
+  {
+   "k": 0.05,
+   "minutes": 30,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 1.4285714285714286,
+   "buyLossPctOfCapital": 1.4285714285714286,
+   "saleLossEth": 5
+  },
+  {
+   "k": 0.05,
+   "minutes": 60,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.28571428571428575,
+   "buyLossPctOfCapital": 2.857142857142857,
+   "saleLossEth": 0.5
+  },
+  {
+   "k": 0.05,
+   "minutes": 60,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 2.857142857142857,
+   "buyLossPctOfCapital": 2.857142857142857,
+   "saleLossEth": 5
+  },
+  {
+   "k": 0.05,
+   "minutes": 1440,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.47619047619047616,
+   "buyLossPctOfCapital": 4.761904761904762,
+   "saleLossEth": 0.5
+  },
+  {
+   "k": 0.05,
+   "minutes": 1440,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 4.761904761904762,
+   "buyLossPctOfCapital": 4.761904761904762,
+   "saleLossEth": 5
+  },
+  {
+   "k": 0.1,
+   "minutes": 5,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.045454545454545456,
+   "buyLossPctOfCapital": 0.4545454545454545,
+   "saleLossEth": 1
+  },
+  {
+   "k": 0.1,
+   "minutes": 5,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 0.45454545454545453,
+   "buyLossPctOfCapital": 0.45454545454545453,
+   "saleLossEth": 10
+  },
+  {
+   "k": 0.1,
+   "minutes": 30,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.27272727272727276,
+   "buyLossPctOfCapital": 2.7272727272727275,
+   "saleLossEth": 1
+  },
+  {
+   "k": 0.1,
+   "minutes": 30,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 2.727272727272727,
+   "buyLossPctOfCapital": 2.727272727272727,
+   "saleLossEth": 10
+  },
+  {
+   "k": 0.1,
+   "minutes": 60,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.5454545454545455,
+   "buyLossPctOfCapital": 5.454545454545455,
+   "saleLossEth": 1
+  },
+  {
+   "k": 0.1,
+   "minutes": 60,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 5.454545454545454,
+   "buyLossPctOfCapital": 5.454545454545454,
+   "saleLossEth": 10
+  },
+  {
+   "k": 0.1,
+   "minutes": 1440,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.9090909090909091,
+   "buyLossPctOfCapital": 9.09090909090909,
+   "saleLossEth": 1
+  },
+  {
+   "k": 0.1,
+   "minutes": 1440,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 9.09090909090909,
+   "buyLossPctOfCapital": 9.09090909090909,
+   "saleLossEth": 10
+  },
+  {
+   "k": 0.3,
+   "minutes": 5,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.11538461538461538,
+   "buyLossPctOfCapital": 1.1538461538461537,
+   "saleLossEth": 3
+  },
+  {
+   "k": 0.3,
+   "minutes": 5,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 1.1538461538461537,
+   "buyLossPctOfCapital": 1.153846153846154,
+   "saleLossEth": 30
+  },
+  {
+   "k": 0.3,
+   "minutes": 30,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 0.6923076923076922,
+   "buyLossPctOfCapital": 6.923076923076922,
+   "saleLossEth": 3
+  },
+  {
+   "k": 0.3,
+   "minutes": 30,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 6.9230769230769225,
+   "buyLossPctOfCapital": 6.9230769230769225,
+   "saleLossEth": 30
+  },
+  {
+   "k": 0.3,
+   "minutes": 60,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 1.3846153846153844,
+   "buyLossPctOfCapital": 13.846153846153843,
+   "saleLossEth": 3
+  },
+  {
+   "k": 0.3,
+   "minutes": 60,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 13.846153846153845,
+   "buyLossPctOfCapital": 13.846153846153845,
+   "saleLossEth": 30
+  },
+  {
+   "k": 0.3,
+   "minutes": 1440,
+   "capital": 10,
+   "inventoryEth": 10,
+   "buyLossEth": 2.3076923076923075,
+   "buyLossPctOfCapital": 23.076923076923077,
+   "saleLossEth": 3
+  },
+  {
+   "k": 0.3,
+   "minutes": 1440,
+   "capital": 100,
+   "inventoryEth": 100,
+   "buyLossEth": 23.076923076923077,
+   "buyLossPctOfCapital": 23.076923076923077,
+   "saleLossEth": 30
+  }
+ ],
+ "split": [
+  {
+   "mult": 1,
+   "bid": 0.9,
+   "toPot": 0.7275,
+   "toBuyback": 0.2425,
+   "potChange": -0.1725,
+   "burnFromPrincipal": 0.17250000000000004,
+   "breakEvenMult": 1.2371134020618557
+  },
+  {
+   "mult": 1.05,
+   "bid": 0.9,
+   "toPot": 0.763875,
+   "toBuyback": 0.254625,
+   "potChange": -0.13612500000000005,
+   "burnFromPrincipal": 0.13612500000000005,
+   "breakEvenMult": 1.2371134020618557
+  },
+  {
+   "mult": 1.1025,
+   "bid": 0.9,
+   "toPot": 0.8020687500000001,
+   "toBuyback": 0.26735625,
+   "potChange": -0.09793124999999991,
+   "burnFromPrincipal": 0.09793124999999997,
+   "breakEvenMult": 1.2371134020618557
+  },
+  {
+   "mult": 1.5,
+   "bid": 0.9,
+   "toPot": 1.09125,
+   "toBuyback": 0.36375,
+   "potChange": 0.19125000000000003,
+   "burnFromPrincipal": 0,
+   "breakEvenMult": 1.2371134020618557
+  },
+  {
+   "mult": 1.654,
+   "bid": 0.9,
+   "toPot": 1.203285,
+   "toBuyback": 0.401095,
+   "potChange": 0.3032849999999999,
+   "burnFromPrincipal": 0,
+   "breakEvenMult": 1.2371134020618557
+  },
+  {
+   "mult": 1,
+   "bid": 1,
+   "toPot": 0.7275,
+   "toBuyback": 0.2425,
+   "potChange": -0.27249999999999996,
+   "burnFromPrincipal": 0.2425,
+   "breakEvenMult": 1.3745704467353952
+  },
+  {
+   "mult": 1.05,
+   "bid": 1,
+   "toPot": 0.763875,
+   "toBuyback": 0.254625,
+   "potChange": -0.23612500000000003,
+   "burnFromPrincipal": 0.23612500000000003,
+   "breakEvenMult": 1.3745704467353952
+  },
+  {
+   "mult": 1.1025,
+   "bid": 1,
+   "toPot": 0.8020687500000001,
+   "toBuyback": 0.26735625,
+   "potChange": -0.1979312499999999,
+   "burnFromPrincipal": 0.19793124999999995,
+   "breakEvenMult": 1.3745704467353952
+  },
+  {
+   "mult": 1.5,
+   "bid": 1,
+   "toPot": 1.09125,
+   "toBuyback": 0.36375,
+   "potChange": 0.09125000000000005,
+   "burnFromPrincipal": 0,
+   "breakEvenMult": 1.3745704467353952
+  },
+  {
+   "mult": 1.654,
+   "bid": 1,
+   "toPot": 1.203285,
+   "toBuyback": 0.401095,
+   "potChange": 0.20328499999999994,
+   "burnFromPrincipal": 0,
+   "breakEvenMult": 1.3745704467353952
+  },
+  {
+   "mult": 1,
+   "bid": 1.05,
+   "toPot": 0.7275,
+   "toBuyback": 0.2425,
+   "potChange": -0.3225,
+   "burnFromPrincipal": 0.2425,
+   "breakEvenMult": 1.443298969072165
+  },
+  {
+   "mult": 1.05,
+   "bid": 1.05,
+   "toPot": 0.763875,
+   "toBuyback": 0.254625,
+   "potChange": -0.2861250000000001,
+   "burnFromPrincipal": 0.254625,
+   "breakEvenMult": 1.443298969072165
+  },
+  {
+   "mult": 1.1025,
+   "bid": 1.05,
+   "toPot": 0.8020687500000001,
+   "toBuyback": 0.26735625,
+   "potChange": -0.24793124999999994,
+   "burnFromPrincipal": 0.24793125,
+   "breakEvenMult": 1.443298969072165
+  },
+  {
+   "mult": 1.5,
+   "bid": 1.05,
+   "toPot": 1.09125,
+   "toBuyback": 0.36375,
+   "potChange": 0.04125000000000001,
+   "burnFromPrincipal": 0,
+   "breakEvenMult": 1.443298969072165
+  },
+  {
+   "mult": 1.654,
+   "bid": 1.05,
+   "toPot": 1.203285,
+   "toBuyback": 0.401095,
+   "potChange": 0.1532849999999999,
+   "burnFromPrincipal": 0,
+   "breakEvenMult": 1.443298969072165
+  }
+ ],
+ "processing": [
+  {
+   "gwei": 0.5,
+   "composeEth": 0.00455,
+   "redeemEth": 0.0005499999999999999,
+   "pageEth": 0.0051,
+   "pagesPer0_1Eth": 19.607843137254903
+  },
+  {
+   "gwei": 1,
+   "composeEth": 0.0088,
+   "redeemEth": 0.0007999999999999999,
+   "pageEth": 0.009600000000000001,
+   "pagesPer0_1Eth": 10.416666666666666
+  },
+  {
+   "gwei": 3,
+   "composeEth": 0.025800000000000003,
+   "redeemEth": 0.0018000000000000002,
+   "pageEth": 0.027600000000000003,
+   "pagesPer0_1Eth": 3.623188405797101
+  },
+  {
+   "gwei": 5,
+   "composeEth": 0.025800000000000003,
+   "redeemEth": 0.0018000000000000002,
+   "pageEth": 0.027600000000000003,
+   "pagesPer0_1Eth": 3.623188405797101
+  },
+  {
+   "gwei": 10,
+   "composeEth": 0.025800000000000003,
+   "redeemEth": 0.0018000000000000002,
+   "pageEth": 0.027600000000000003,
+   "pagesPer0_1Eth": 3.623188405797101
+  }
+ ],
+ "patient": [
+  {
+   "marketEth": 0.005,
+   "climb": 200,
+   "rateCapX": 3,
+   "loosening": "shipped",
+   "firstSaleMin": 3.8,
+   "eth6h": 7.67575289100937,
+   "credits6h": 120,
+   "overpay6h": 7.075752891009371,
+   "eth24h": 9.94656238737803,
+   "credits24h": 154,
+   "overpay24h": 9.17656238737803,
+   "potLeft": 0.05343761262196181
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 200,
+   "rateCapX": 3,
+   "loosening": "none",
+   "firstSaleMin": 3.8,
+   "eth6h": 5.394293514980609,
+   "credits6h": 120,
+   "overpay6h": 4.794293514980609,
+   "eth24h": 9.997436925965186,
+   "credits24h": 189,
+   "overpay24h": 9.052436925965186,
+   "potLeft": 0.00256307403481551
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 200,
+   "rateCapX": 1.5,
+   "loosening": "shipped",
+   "firstSaleMin": 3.8,
+   "eth6h": 4.452694487991501,
+   "credits6h": 135,
+   "overpay6h": 3.777694487991501,
+   "eth24h": 9.985868355556754,
+   "credits24h": 301,
+   "overpay24h": 8.480868355556753,
+   "potLeft": 0.014131644443242747
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 200,
+   "rateCapX": 1.5,
+   "loosening": "none",
+   "firstSaleMin": 3.8,
+   "eth6h": 4.326439495442094,
+   "credits6h": 135,
+   "overpay6h": 3.6514394954420943,
+   "eth24h": 9.98949404146754,
+   "credits24h": 305,
+   "overpay24h": 8.464494041467539,
+   "potLeft": 0.010505958532462653
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 200,
+   "rateCapX": 1.2,
+   "loosening": "shipped",
+   "firstSaleMin": 3.8,
+   "eth6h": 3.7200052216980755,
+   "credits6h": 140,
+   "overpay6h": 3.0200052216980753,
+   "eth24h": 9.981828957413681,
+   "credits24h": 375,
+   "overpay24h": 8.106828957413681,
+   "potLeft": 0.018171042586309482
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 200,
+   "rateCapX": 1.2,
+   "loosening": "none",
+   "firstSaleMin": 3.8,
+   "eth6h": 3.7148292492799895,
+   "credits6h": 140,
+   "overpay6h": 3.0148292492799893,
+   "eth24h": 9.976652984995596,
+   "credits24h": 375,
+   "overpay24h": 8.101652984995596,
+   "potLeft": 0.023347015004394577
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 50,
+   "rateCapX": 3,
+   "loosening": "shipped",
+   "firstSaleMin": 216.4,
+   "eth6h": 0.9982669001158178,
+   "credits6h": 15,
+   "overpay6h": 0.9232669001158178,
+   "eth24h": 7.9839960144757995,
+   "credits24h": 120,
+   "overpay24h": 7.3839960144758,
+   "potLeft": 2.016003985524198
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 50,
+   "rateCapX": 3,
+   "loosening": "none",
+   "firstSaleMin": 15.2,
+   "eth6h": 0.9234374118498624,
+   "credits6h": 40,
+   "overpay6h": 0.7234374118498623,
+   "eth24h": 2.9304165780558526,
+   "credits24h": 150,
+   "overpay24h": 2.1804165780558526,
+   "potLeft": 7.069583421944141
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 50,
+   "rateCapX": 1.5,
+   "loosening": "shipped",
+   "firstSaleMin": 77.4,
+   "eth6h": 0.9981078268395471,
+   "credits6h": 30,
+   "overpay6h": 0.8481078268395471,
+   "eth24h": 4.490282135491133,
+   "credits24h": 135,
+   "overpay24h": 3.815282135491133,
+   "potLeft": 5.509717864508866
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 50,
+   "rateCapX": 1.5,
+   "loosening": "none",
+   "firstSaleMin": 15.2,
+   "eth6h": 0.9234374118498624,
+   "credits6h": 40,
+   "overpay6h": 0.7234374118498623,
+   "eth24h": 2.9304165780558526,
+   "credits24h": 150,
+   "overpay24h": 2.1804165780558526,
+   "potLeft": 7.069583421944141
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 50,
+   "rateCapX": 1.2,
+   "loosening": "shipped",
+   "firstSaleMin": 32.6,
+   "eth6h": 0.9312775713608518,
+   "credits6h": 35,
+   "overpay6h": 0.7562775713608517,
+   "eth24h": 3.7253068445889395,
+   "credits24h": 140,
+   "overpay24h": 3.0253068445889393,
+   "potLeft": 6.2746931554110565
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 50,
+   "rateCapX": 1.2,
+   "loosening": "none",
+   "firstSaleMin": 15.2,
+   "eth6h": 0.9234374118498624,
+   "credits6h": 40,
+   "overpay6h": 0.7234374118498623,
+   "eth24h": 2.9304165780558526,
+   "credits24h": 150,
+   "overpay24h": 2.1804165780558526,
+   "potLeft": 7.069583421944141
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 20,
+   "rateCapX": 3,
+   "loosening": "shipped",
+   "firstSaleMin": 539.8,
+   "eth6h": 0,
+   "credits6h": 0,
+   "overpay6h": 0,
+   "eth24h": 2.6602966116538527,
+   "credits24h": 40,
+   "overpay24h": 2.4602966116538525,
+   "potLeft": 7.3397033883461456
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 20,
+   "rateCapX": 3,
+   "loosening": "none",
+   "firstSaleMin": 37.6,
+   "eth6h": 0.4301414037238083,
+   "credits6h": 20,
+   "overpay6h": 0.3301414037238083,
+   "eth24h": 1.131330637401867,
+   "credits24h": 85,
+   "overpay24h": 0.706330637401867,
+   "potLeft": 8.86866936259813
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 20,
+   "rateCapX": 1.5,
+   "loosening": "shipped",
+   "firstSaleMin": 193,
+   "eth6h": 0.33257658473933055,
+   "credits6h": 10,
+   "overpay6h": 0.28257658473933056,
+   "eth24h": 1.6626640431517634,
+   "credits24h": 50,
+   "overpay24h": 1.4126640431517634,
+   "potLeft": 8.33733595684824
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 20,
+   "rateCapX": 1.5,
+   "loosening": "none",
+   "firstSaleMin": 37.6,
+   "eth6h": 0.4301414037238083,
+   "credits6h": 20,
+   "overpay6h": 0.3301414037238083,
+   "eth24h": 1.131330637401867,
+   "credits24h": 85,
+   "overpay24h": 0.706330637401867,
+   "potLeft": 8.86866936259813
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 20,
+   "rateCapX": 1.2,
+   "loosening": "shipped",
+   "firstSaleMin": 81.2,
+   "eth6h": 0.39899030728819534,
+   "credits6h": 15,
+   "overpay6h": 0.32399030728819533,
+   "eth24h": 1.4631385947750841,
+   "credits24h": 55,
+   "overpay24h": 1.1881385947750842,
+   "potLeft": 8.536861405224911
+  },
+  {
+   "marketEth": 0.005,
+   "climb": 20,
+   "rateCapX": 1.2,
+   "loosening": "none",
+   "firstSaleMin": 37.6,
+   "eth6h": 0.4301414037238083,
+   "credits6h": 20,
+   "overpay6h": 0.3301414037238083,
+   "eth24h": 1.131330637401867,
+   "credits24h": 85,
+   "overpay24h": 0.706330637401867,
+   "potLeft": 8.86866936259813
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 200,
+   "rateCapX": 3,
+   "loosening": "shipped",
+   "firstSaleMin": 3.8,
+   "eth6h": 7.67575289100937,
+   "credits6h": 120,
+   "overpay6h": 4.67575289100937,
+   "eth24h": 9.94656238737803,
+   "credits24h": 154,
+   "overpay24h": 6.096562387378031,
+   "potLeft": 0.05343761262196181
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 200,
+   "rateCapX": 3,
+   "loosening": "none",
+   "firstSaleMin": 3.8,
+   "eth6h": 5.394293514980609,
+   "credits6h": 120,
+   "overpay6h": 2.3942935149806086,
+   "eth24h": 9.997436925965186,
+   "credits24h": 189,
+   "overpay24h": 5.272436925965185,
+   "potLeft": 0.00256307403481551
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 200,
+   "rateCapX": 1.5,
+   "loosening": "shipped",
+   "firstSaleMin": 3.8,
+   "eth6h": 4.452694487991501,
+   "credits6h": 135,
+   "overpay6h": 1.0776944879915007,
+   "eth24h": 9.985868355556754,
+   "credits24h": 301,
+   "overpay24h": 2.4608683555567534,
+   "potLeft": 0.014131644443242747
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 200,
+   "rateCapX": 1.5,
+   "loosening": "none",
+   "firstSaleMin": 3.8,
+   "eth6h": 4.326439495442094,
+   "credits6h": 135,
+   "overpay6h": 0.9514394954420942,
+   "eth24h": 9.98949404146754,
+   "credits24h": 305,
+   "overpay24h": 2.3644940414675393,
+   "potLeft": 0.010505958532462653
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 200,
+   "rateCapX": 1.2,
+   "loosening": "shipped",
+   "firstSaleMin": 3.8,
+   "eth6h": 3.7200052216980755,
+   "credits6h": 140,
+   "overpay6h": 0.22000522169807546,
+   "eth24h": 9.981828957413681,
+   "credits24h": 375,
+   "overpay24h": 0.6068289574136809,
+   "potLeft": 0.018171042586309482
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 200,
+   "rateCapX": 1.2,
+   "loosening": "none",
+   "firstSaleMin": 3.8,
+   "eth6h": 3.7148292492799895,
+   "credits6h": 140,
+   "overpay6h": 0.21482924927998948,
+   "eth24h": 9.976652984995596,
+   "credits24h": 375,
+   "overpay24h": 0.6016529849955958,
+   "potLeft": 0.023347015004394577
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 50,
+   "rateCapX": 3,
+   "loosening": "shipped",
+   "firstSaleMin": 216.4,
+   "eth6h": 0.9982669001158178,
+   "credits6h": 15,
+   "overpay6h": 0.6232669001158178,
+   "eth24h": 7.9839960144757995,
+   "credits24h": 120,
+   "overpay24h": 4.9839960144757995,
+   "potLeft": 2.016003985524198
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 50,
+   "rateCapX": 3,
+   "loosening": "none",
+   "firstSaleMin": 15.2,
+   "eth6h": 0.7040916983804646,
+   "credits6h": 30,
+   "overpay6h": -0.04590830161953541,
+   "eth24h": 0.7040916983804646,
+   "credits24h": 30,
+   "overpay24h": -0.04590830161953541,
+   "potLeft": 9.295908301619539
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 50,
+   "rateCapX": 1.5,
+   "loosening": "shipped",
+   "firstSaleMin": 77.4,
+   "eth6h": 0.9981078268395471,
+   "credits6h": 30,
+   "overpay6h": 0.24810782683954713,
+   "eth24h": 4.490282135491133,
+   "credits24h": 135,
+   "overpay24h": 1.1152821354911326,
+   "potLeft": 5.509717864508866
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 50,
+   "rateCapX": 1.5,
+   "loosening": "none",
+   "firstSaleMin": 15.2,
+   "eth6h": 0.7040916983804646,
+   "credits6h": 30,
+   "overpay6h": -0.04590830161953541,
+   "eth24h": 0.7040916983804646,
+   "credits24h": 30,
+   "overpay24h": -0.04590830161953541,
+   "potLeft": 9.295908301619539
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 50,
+   "rateCapX": 1.2,
+   "loosening": "shipped",
+   "firstSaleMin": 32.6,
+   "eth6h": 0.9312775713608518,
+   "credits6h": 35,
+   "overpay6h": 0.056277571360851764,
+   "eth24h": 3.7253068445889395,
+   "credits24h": 140,
+   "overpay24h": 0.22530684458893946,
+   "potLeft": 6.2746931554110565
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 50,
+   "rateCapX": 1.2,
+   "loosening": "none",
+   "firstSaleMin": 15.2,
+   "eth6h": 0.7040916983804646,
+   "credits6h": 30,
+   "overpay6h": -0.04590830161953541,
+   "eth24h": 0.7040916983804646,
+   "credits24h": 30,
+   "overpay24h": -0.04590830161953541,
+   "potLeft": 9.295908301619539
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 20,
+   "rateCapX": 3,
+   "loosening": "shipped",
+   "firstSaleMin": 539.8,
+   "eth6h": 0,
+   "credits6h": 0,
+   "overpay6h": 0,
+   "eth24h": 2.6602966116538527,
+   "credits24h": 40,
+   "overpay24h": 1.6602966116538527,
+   "potLeft": 7.3397033883461456
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 20,
+   "rateCapX": 3,
+   "loosening": "none",
+   "firstSaleMin": 37.6,
+   "eth6h": 0.12190655631161601,
+   "credits6h": 5,
+   "overpay6h": -0.00309344368838399,
+   "eth24h": 0.12190655631161601,
+   "credits24h": 5,
+   "overpay24h": -0.00309344368838399,
+   "potLeft": 9.878093443688385
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 20,
+   "rateCapX": 1.5,
+   "loosening": "shipped",
+   "firstSaleMin": 193,
+   "eth6h": 0.33257658473933055,
+   "credits6h": 10,
+   "overpay6h": 0.08257658473933055,
+   "eth24h": 1.6626640431517634,
+   "credits24h": 50,
+   "overpay24h": 0.4126640431517634,
+   "potLeft": 8.33733595684824
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 20,
+   "rateCapX": 1.5,
+   "loosening": "none",
+   "firstSaleMin": 37.6,
+   "eth6h": 0.12190655631161601,
+   "credits6h": 5,
+   "overpay6h": -0.00309344368838399,
+   "eth24h": 0.12190655631161601,
+   "credits24h": 5,
+   "overpay24h": -0.00309344368838399,
+   "potLeft": 9.878093443688385
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 20,
+   "rateCapX": 1.2,
+   "loosening": "shipped",
+   "firstSaleMin": 81.2,
+   "eth6h": 0.39899030728819534,
+   "credits6h": 15,
+   "overpay6h": 0.023990307288195345,
+   "eth24h": 1.4631385947750841,
+   "credits24h": 55,
+   "overpay24h": 0.08813859477508412,
+   "potLeft": 8.536861405224911
+  },
+  {
+   "marketEth": 0.025,
+   "climb": 20,
+   "rateCapX": 1.2,
+   "loosening": "none",
+   "firstSaleMin": 37.6,
+   "eth6h": 0.12190655631161601,
+   "credits6h": 5,
+   "overpay6h": -0.00309344368838399,
+   "eth24h": 0.12190655631161601,
+   "credits24h": 5,
+   "overpay24h": -0.00309344368838399,
+   "potLeft": 9.878093443688385
+  }
+ ]
+}
