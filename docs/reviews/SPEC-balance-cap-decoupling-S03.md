@@ -19,32 +19,29 @@ The cap is meant to bound a cross-currency round trip: a payout in tokens is wor
 
 Compute the cap from an un-clamped value rate and the protected sale price, then apply the module bound separately:
 
-    cap  = ctl value rate (before _bidRoom) * score / RATE_SCORE * 1e18 / pSell
+    cap  = valueRateUnclamped * score / RATE_SCORE * 1e18 / pSell
     paid = min(posted, cap)          // the Core still applies available() afterwards
 
-Needs the Core to expose the un-clamped value rate (a new view, or `ethPrice()` bounded by `rateCap`, which already exists and is the pre-clamp price state). Core bytecode is 57 bytes over budget for new code, so use `ethPrice()` and have the controller apply `rateCap` itself.
+Finding on `ethPrice()`: in value mode `CoreLib.ethPrice()` returns `_valueRateOrLast`, which is `min(sharedBps * valuePerPoint(false) * 100 / 10_000, rateCap)` before `_bidRoom` while the quote is usable, and the last stored eth instance rate while it is unusable. So it is the pre-clamp value rate (bounded by `rateCap`), not the eth Rate price state, and it is not pot-clamped. While the quote is unusable the cap is refused anyway (S02), so the fallback value is not read. A needs only a Core read through the existing `ethPrice()`; no Core change.
 
 ## Candidate B (controller only)
 
-The controller already owns the value rate: `valuePerPoint(true)` is the wei value of one point at `pSell`. Define the cap in tokens directly from it:
+The controller computes the same un-clamped value rate itself and does not call `bidForScore`:
 
-    capTokens = points(score) * POINT_UNIT_TOKENS * (1 - 0)   // the balance token amount whose sale value is the value rate
-              = score * unit * balanceBidCapBps / 10_000      // bounded above by the cap bps of par
+    valueRateUnclamped = min(sharedBps * valuePerPoint(false) * 100 / 10_000, rateCap)
+    cap = valueRateUnclamped * score / RATE_SCORE * 1e18 / pSell
 
-with the value rate and the sample reference agreeing by construction, since both come from `_protected`. No Core read and no `bidForScore` call, so the controller no longer depends on pot state at all. The posted amount (par less discount, already bounded by `balanceBidCapBps`) is then lowered only by `pSell` versus the reference band.
+It needs `sharedBps` (a Core read) and `rateCap` (a Core setting read), so it reads the same inputs as A, in the controller. `balanceBidCapBps` bounds the eth instance, not balance tokens, and is not part of this cap. The posted amount lowered by `min(posted, cap)` stays as today.
 
-B removes the dependency instead of re-deriving it. It needs the controller to hold its own copy of the value rate ceiling (`rateCap`); A reuses the Core's.
+A reuses the Core's own definition of the rate; B re-derives it and can drift from it. A is the smaller change and keeps one definition.
 
 ## Loop closure each design keeps
 
-Decision 165: a round trip through the balance route loses at least the spread, spread >= (1+tol)/(1-tol) - 1.
-- Buy side pays at most the protected buy price (`pBuy <= ref*(1+tol)`).
-- Balance payout is worth at most `valueRate * score` at `pSell >= ref*(1-tol)`.
-Both A and B give a payout whose eth value at `pSell` is at most the un-clamped eth bid, which is at least the clamped bid. The un-clamped bid is the quantity the existing proof bounds (the pot clamp only lowers the eth door), so the inequality holds; the cap rises to the proof's own bound, no further. The pot never funds the balance payout, so no new solvency path opens.
+Both give a payout whose eth value at `pSell` is at most the un-clamped eth bid, which is at least the clamped bid. The existing proof bounds the un-clamped bid, since the pot clamp only lowers the eth door. With the buy side at most `ref*(1+tol)` and the sale side at least `ref*(1-tol)`, a round trip loses the spread, spread >= (1+tol)/(1-tol) - 1, and the spot-leads-reference case of decision 165 stays closed because `pSell` is in the denominator. The pot never funds the balance payout, so no new solvency path opens.
 
 ## Controller byte impact
 
-Estimate: A about +150 to +250 bytes (one extra read, one min). B about +100 bytes net (removes the `bidForScore` call, adds `unit` math). ControllerV1 has room; CoreLib and Core stay untouched.
+Unverified estimate: A about +150 to +250 bytes, B about +200 to +300 bytes. ControllerV1 has room; CoreLib and Core stay untouched. Measure with `forge build --sizes` before deciding.
 
 ## Test plan
 
@@ -55,4 +52,4 @@ Estimate: A about +150 to +250 bytes (one extra read, one min). B about +100 byt
 
 ## Recommendation
 
-Candidate B: derive the cap in the controller from the value rate and `pSell` so pot state cannot reach the balance route; the owner decides.
+Candidate A: cap = the un-clamped value rate (`ethPrice()`) valued at `pSell`, then the module bound separately, so pot state cannot reach the balance route; the owner decides.

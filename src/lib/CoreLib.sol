@@ -581,7 +581,7 @@ library CoreLib {
 
     /// the posted balance payout `pay` for `score` stored units lowered to the controller's `balanceClampFor`: the eth
     /// bid for the score valued in tokens at the protected sale price, so a filled payout is worth at most the eth bid
-    /// when the engine sells the tokens and a round trip cannot extract a spot that leads the reference (decision 165).
+    /// when the engine sells the tokens and a round trip cannot extract a spot that leads the reference.
     /// returns `pay` outside value mode. in value mode the controller's answer is used as given; while the reference is
     /// unusable the controller answers a zero payout, so the fill reverts `ZeroAmount`. a failed or malformed
     /// controller call keeps `pay`
@@ -1249,7 +1249,7 @@ library CoreLib {
         checkReturn(c, id, msg.sender);
         uint256 score = scoreOf(id);
         // value mode: lower the posted payout to the eth bid for the score at the protected sale price; the royalty
-        // and the `avail` bound follow the converted payout (decision 165)
+        // and the `avail` bound follow the converted payout
         paid = _clampPayout(score, score * unit * (BPS - c.settings.balanceDiscountBps) / BPS);
         if (paid == 0) revert ZeroAmount();
         toArtist = paid * c.settings.buyToArtistBps / BPS;
@@ -1305,7 +1305,7 @@ library CoreLib {
         if (module == address(0)) return 0;
         (uint256 unit, bool ok) = _unitView(module);
         if (!ok) return 0;
-        // report the clamped payout the fill pays in value mode, not the posted par (decision 165)
+        // report the clamped payout the fill pays in value mode, not the posted par
         uint256 pay = _clampPayout(score, score * unit * (BPS - c.settings.balanceDiscountBps) / BPS);
         if (pay + pay * c.settings.buyToArtistBps / BPS > _availableView(module)) return 0;
         return pay;

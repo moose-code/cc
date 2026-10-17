@@ -672,12 +672,13 @@ contract ValueModeTest is ValueBase {
     }
 
     // promise: SPEC 10 in value mode an unusable reference refuses the balance fill instead of paying the posted amount.
-    // a credit bought before the outage and moved to a second wallet is not held by the return lock, so the cap must
-    // hold: with the pool drained for two samples the fill reverts ZeroAmount and the payout view reports 0
+    // the return lock (21,600 s) blocks the engine buyer from selling the credit back, but a credit moved to a second
+    // wallet is not tracked by it. with the pool drained for two samples the buyer reverts ReturnLocked and the second
+    // wallet reaches the balance fill, which reverts ZeroAmount; the payout view reports 0
     function test_balanceFillRefusesWhileTheReferenceIsUnusable() public {
         uint256[] memory ids = _fillEthPile(4);
         _valueOn();
-        _setReturnLock(0);
+        _setReturnLock(21_600);
         _setCreditSaleOn(true);
         _warp(ctl.creditWindow());
         _fundPot(50 ether);
@@ -688,8 +689,6 @@ contract ValueModeTest is ValueBase {
         vm.prank(TRIPPER);
         ctl.buyCredit{value: price * 2}(id);
         address second = address(0xB0B2);
-        vm.prank(TRIPPER);
-        CREDITS.transferFrom(TRIPPER, second, id);
         uint256 score = _scoreOf(id);
         (uint256 healthy, bool ok) = ctl.balanceClampFor(score, type(uint128).max);
         assertTrue(ok);
@@ -705,6 +704,12 @@ contract ValueModeTest is ValueBase {
         (uint256 capped, bool answered) = ctl.balanceClampFor(score, type(uint128).max);
         assertTrue(answered);
         assertEq(capped, 0, "no cap can be computed, so no payout");
+        vm.startPrank(TRIPPER);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.expectPartialRevert(ICore.ReturnLocked.selector);
+        core.sellForBalance(_one(id));
+        CREDITS.transferFrom(TRIPPER, second, id);
+        vm.stopPrank();
         vm.startPrank(second);
         CREDITS.setApprovalForAll(address(core), true);
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
