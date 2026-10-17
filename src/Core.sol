@@ -203,6 +203,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event AdapterSet(address indexed adapter, bool allowed);
     event CoinRescued(address indexed to, uint256 amount);
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
+    /// `rescueToken` sent `amount` of a stray ERC20 `token` to `to`
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event SuccessorSet(address successor);
     event SuccessorLocked();
     /// `adopt` put a credit the core held without a record into the pile at cost basis `cost`
@@ -551,9 +553,15 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.balanceBidForScore(score);
     }
 
-    /// the balance token payout for credit id now: score times unitPerPoint times balanceRate() over 10_000
+    /// the executable balance token payout for credit id now: the advertised payout when the module can pay it, else 0
     function balanceBidOf(uint256 id) external view returns (uint256) {
         return CoreLib.balanceBidOf(id);
+    }
+
+    /// the gross balance token quote for credit id and whether the module can fill it now. `canFill` is false when
+    /// `sellForBalance` would revert for this one credit; the web and keeper read it to surface an unpayable quote
+    function balanceBidStatus(uint256 id) external view returns (uint256 payout, bool canFill) {
+        return CoreLib.balanceBidStatus(id);
     }
 
     /// the ETH purchase budget of the current bucket: the bucket id, its budget and the wei spent in it. a bucket with no
@@ -567,10 +575,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         CoreLib.checkpoint();
     }
 
-    /// checkpoints, then books a spend of x from the pot for a credit of score `score`: rate drop scaled by
-    /// `score / RATE_SCORE`, fill time.
+    /// books a spend of x from the pot for a credit of score `score`: rate drop scaled by `score / RATE_SCORE`, fill
+    /// time. the caller checkpoints the eth instance to now once before the batch, so the drop walks down from the
+    /// climbed rate; a batch does not re-climb per credit (one climb per door, decision 159, C08)
     function _spend(uint256 x, uint256 score) private {
-        _checkpoint();
         CoreLib.spend(x, score);
     }
 
@@ -678,6 +686,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function _sellForEth(uint256[] calldata ids, uint256 minOut) private {
         _openDoor();
         if (ids.length == 0) revert Empty();
+        // climb the eth instance to now once; each credit's drop walks down from it and the batch does not re-climb per
+        // credit (decision 159, C08). `_openDoor` books first, so a checkpoint here credits no climb under a later pot
+        _checkpoint();
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = _owned(ids[i]);
@@ -1230,6 +1241,19 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// core is refused. logs `NftRescued`
     function rescueNft(address, uint256, address) external {
         _toLib();
+    }
+
+    /// sends `amount` of a stray ERC20 `token` the core holds to `to`. owner only and guarded. it refuses every
+    /// forbidden target: the coin (recovered through `rescueCoin`), Credits, Statements, the core itself, the hook, the
+    /// managers, and the current and every past balance token and module (the `everBalanceTarget` set), so a balance
+    /// token reserve is never moved out of its module path. it never touches tracked eth, which is not an ERC20. a
+    /// balance token sent directly to the core is recovered with this, not stranded (decision 159, C06). logs
+    /// `TokenRescued`
+    function rescueToken(address token, address to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (_forbidden(token)) revert ForbiddenTarget();
+        SafeTransferLib.safeTransfer(token, to, amount);
+        emit TokenRescued(token, to, amount);
     }
 
     /// sets the successor that `migrate` sends the assets to. the zero address means no migration. it must have code.

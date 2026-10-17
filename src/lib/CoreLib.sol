@@ -1198,27 +1198,47 @@ library CoreLib {
         (rate,) = _balanceRead();
     }
 
-    /// @notice the balance token payout for a score of `score` stored units now: `score * unitPerPoint * rate / 10_000`,
-    /// the rate held at or above the floor `10_000 - balanceBidMarginBps`. the Core forwards its `balanceBidForScore(score)`
+    /// @notice the executable balance token payout for a score of `score` stored units now: the advertised payout when
+    /// the module can pay it, else 0. the Core forwards its `balanceBidForScore(score)`
     function balanceBidForScore(uint256 score) external view returns (uint256) {
-        return _balancePayout(score);
+        (uint256 payout, bool canFill) = _balanceQuote(score);
+        return canFill ? payout : 0;
     }
 
-    /// @notice the balance token payout for credit `id` now: `balanceBidForScore(scoreOf(id))`. a module too short to pay
-    /// the floor still reports the floor payout, which `sellForBalance` refuses with `PotTooSmall`. zero at a zero-rate
-    /// floor, when no module is set or when the live unit read fails. the Core forwards its `balanceBidOf(id)`
+    /// @notice the executable balance token payout for credit `id` now: the advertised payout when the module can pay it,
+    /// else 0. a module too short to pay this credit's floor reads 0 here, so the view never advertises a payout the fill
+    /// refuses; `balanceBidStatus` exposes the gross quote and the fillable flag (decision 159, C05). the Core forwards
+    /// its `balanceBidOf(id)`
     function balanceBidOf(uint256 id) external view returns (uint256) {
-        return _balancePayout(scoreOf(id));
+        (uint256 payout, bool canFill) = _balanceQuote(scoreOf(id));
+        return canFill ? payout : 0;
     }
 
-    /// the balance token payout for a score of `score` stored units: `score * unitPerPoint * rate / 10_000`, the rate
-    /// held at or above the floor `10_000 - balanceBidMarginBps`. zero when no module is set or the live unit read fails
-    function _balancePayout(uint256 score) private view returns (uint256) {
+    /// @notice the gross balance token quote for credit `id` and whether the module can fill it now. `payout` is the
+    /// advertised payout (the rate held at or above the floor); `canFill` is false when `sellForBalance` would revert
+    /// for this one credit, that is when the available-clamped rate is below the floor or the paid amount exceeds the
+    /// module's `available()`. the web and the keeper read it to show an unpayable quote without acting on it. the Core
+    /// forwards its `balanceBidStatus(id)`
+    function balanceBidStatus(uint256 id) external view returns (uint256 payout, bool canFill) {
+        return _balanceQuote(scoreOf(id));
+    }
+
+    /// the gross balance token payout for `score` stored units and whether the module can fill it now. the advertised
+    /// payout holds the rate at or above the floor `10_000 - balanceBidMarginBps`; `canFill` mirrors the single credit
+    /// revert conditions of `_fillBalance`: the available-clamped rate at or above the floor and the paid amount at most
+    /// the module `available()`. (0, false) with no module or a failed unit read
+    function _balanceQuote(uint256 score) private view returns (uint256 payout, bool canFill) {
+        State storage c = state();
+        address module = c.balanceModule;
+        if (module == address(0)) return (0, false);
         (uint256 rate, uint256 unit) = _balanceRead();
-        if (unit == 0) return 0;
-        uint256 floorBps = BPS - state().settings.balanceBidMarginBps;
-        if (rate < floorBps) rate = floorBps;
-        return score * unit * rate / BPS;
+        if (unit == 0) return (0, false);
+        uint256 floorBps = BPS - c.settings.balanceBidMarginBps;
+        uint256 advRate = rate < floorBps ? floorBps : rate;
+        payout = score * unit * advRate / BPS;
+        uint256 paid = score * unit * rate / BPS;
+        uint256 avail = _availableView(module);
+        canFill = rate >= floorBps && paid != 0 && paid <= avail;
     }
 
     /// the balance bid rate (bps of par) and the live unit. with the bid off or no usable module the instance does not
