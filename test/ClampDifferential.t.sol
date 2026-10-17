@@ -24,6 +24,7 @@ contract ClampDifferentialTest is Fixture {
         s.rateCap = 2 ether;
         s.ceilBps = 30_000;
         s.idleLoosenBps = 2_000;
+        s.reserveWei = 0.1 ether; // the launch reserve (decision 155), nonzero so the clamp holds it back
         _setSettings(s);
     }
 
