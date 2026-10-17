@@ -193,18 +193,6 @@ The dev wallet `dev.wallet` of `script/config/anvil.json` (the owner's browser w
 
 `buyListing` is outside the scenario: the CreditStrategy lists at about four times the rate cap and the Seaport adapter prices an order that needs an external signature.
 
-### the real end to end, nothing faked (script/dev/e2e-real.sh)
-
-`script/dev/e2e-real.sh` runs the whole launch on a local chain id 1 anvil fork of mainnet with nothing stubbed: the real deploy and seed, real `$CC` pool swaps pushing fee income through the hook, the real keeper binary (`keeper/src/main.ts`, a throwaway keystore outside the repo) as the only engine caller for the keeper doors, real EIP-712 Seaport orders (`script/dev/make-seaport-orders.mjs`), and the owner's real phase 2 and value mode calls (`script/dev/E2EReal.s.sol`). It is wired as a candidate gate (`.github/workflows/candidate.yml`, job `e2e-real`).
-
-Chain id 1 so Seaport accepts the OpenSea-style signatures. The fork is `https://gateway.tenderly.co/public/mainnet` at latest minus 100, built once (`script/deploy.sh local` plus `Seed PHASE=pre`) and saved with `anvil_dumpState` under `script/dev/.cache/`, keyed on the contract, deploy and seed sources, not the phase logic, so a rerun loads the state in seconds. The first run pays the Tenderly fork. The node runs on port 8620, never 8545.
-
-| item | how |
-|---|---|
-| run it | `script/dev/e2e-real.sh`. `FRESH=1` rebuilds the cached state, `FORK_URL` sets the archive rpc, `KEEP=1` leaves anvil running |
-| the phases | 1 launch (deploy, `Seed PHASE=pre`, settings rate 4.9e15 cap 1.47e16; asserts pot 0, bid 0, module zero), 2 fee income (10 buys and 5 sells through the universal router inside the sniper window, then 10 minutes idle; asserts the Core balance grew from the hook and `ethRate` climbs above the opening rate, decision 147), 3 keeper (the real binary books, sweeps a strategy listing under the climbing bid, the rate drops), 4 listings and sellers (signed Seaport orders filled by the keeper, direct `sellForEth` at the bid, a credit sale buyer, the return lock, the reserve refusing `sellForEth` with `PotTooSmall`), 5 a page composes and the statement sells with its split and a buyback, 6 the balance side wired the way `Seed` post does, 7 value mode on, the reference refreshed on cadence, a sale inside the bands, and the eth instance reset at switch off |
-| assertions | each phase prints `PASS`/`FAIL` with the numbers from chain reads; the run exits nonzero on any `FAIL` and prints the total wall time. The keeper and the anvil it started are stopped on exit |
-
 ### the master stack fork fixture (STACK=master)
 
 `script/config/v2-master.json` records an artcoins v2 stack at launcher commit `6d099486` deployed onto a mainnet fork at block 26158000. The fork is built on chain id 1 (the launcher's `DeployV2Stack` requires it), then the state loads onto the chain id 31337 local node, so the owner's wallet and the web local mode keep their 31337 network entry. The owner is the dev wallet `0xCB43078C32423F5348Cab5885911C3B5faE217F9`, so one key owns the factory and the engine as on mainnet. It is a fork deployment, not a mainnet stack. `STACK=master` points the fixture, the scripts and the local end to end at this record and loads the deployed state from `script/config/stack-master-26158000.hex` (tracked). The default stays the live stack of `script/config/v2-mainnet.json`.
