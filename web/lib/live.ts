@@ -348,7 +348,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
         { ...c, functionName: "settings" },
         { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [core!] },
         { ...c, functionName: "reserve" },
-        { ...c, functionName: "balanceRate" },
+        { ...c, functionName: "sharedRate" },
         { ...c, functionName: "controller" },
       ] as const,
     }),

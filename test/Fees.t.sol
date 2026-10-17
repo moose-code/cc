@@ -290,13 +290,19 @@ contract ReceiveTest is FeeBase {
         _buyRaw(ceiling, hex"deadbeef", id, address(t));
         assertEq(CREDITS.ownerOf(id), address(core));
         (, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, ceiling, "no gap, no payment: the cost basis is the price");
-        uint256 fees = address(core).balance + ceiling - balance;
+        assertEq(
+            booked,
+            ceiling + ceiling * core.settings().buyToArtistBps / 10_000,
+            "no gap, no payment: the cost basis is the price plus its royalty"
+        );
+        // the price and its artist royalty left the core (decision 160); the push arrived on top
+        uint256 royalty = ceiling * core.settings().buyToArtistBps / 10_000;
+        uint256 fees = address(core).balance + ceiling + royalty - balance;
         assertGt(fees, 0, "the Core received the push");
-        assertEq(_tracked(), booked0 - ceiling, "the push is not booked inside the call");
+        assertEq(_tracked(), booked0 - ceiling - royalty, "the push is not booked inside the call");
         assertEq(address(core).balance - _tracked(), fees, "it waits above the pots");
         _book();
-        assertEq(_tracked(), booked0 + fees - ceiling, "the next book counts the push");
+        assertEq(_tracked(), booked0 + fees - ceiling - royalty, "the next book counts the push");
         assertEq(address(core).balance, _tracked(), "every wei is booked");
     }
 

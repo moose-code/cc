@@ -80,9 +80,9 @@ interface ICore {
     event AdapterSet(address indexed adapter, bool allowed);
     event AdaptersLocked();
     event ArtistSet(address indexed artist);
+    event BalanceFill(uint256 paid, uint256 toArtist, uint256 available);
     event BalanceModuleLocked();
     event BalanceModuleSet(address balanceModule, address balanceToken, uint256 unitPerPoint);
-    event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
     event BalanceRateSet(uint256 rateBps);
     event Buyback(address indexed caller, uint256 amountIn, uint256 paid);
     event ChosenComposeOnSet(bool on);
@@ -93,7 +93,7 @@ interface ICore {
     event ControllerLocked();
     event ControllerSet(address controller);
     event CreditAdopted(uint256 indexed id, uint256 cost);
-    event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
+    event CreditBought(uint256 indexed id, address indexed from, uint256 cost, uint256 toArtist);
     event CreditCostToPotBpsSet(uint16 bps);
     event CreditSold(uint256 indexed id, address indexed buyer, uint256 price, uint256 toArtist, uint256 toOperator);
     event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee);
@@ -104,7 +104,13 @@ interface ICore {
     event Funded(address indexed from, uint256 amount);
     event HeldFormatSet(uint256 indexed sid, uint8 format, address indexed caller);
     event ListingBought(
-        uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
+        uint256 indexed id,
+        address indexed adapter,
+        address indexed caller,
+        uint256 cost,
+        uint256 paid,
+        uint256 rate,
+        uint256 toArtist
     );
     event Migrated(address indexed successor, uint256 eth, uint256 credits);
     event MinCcToChooseSet(uint96 min);
@@ -179,6 +185,7 @@ interface ICore {
     function floorRate() external view returns (uint256);
     function fund() external payable;
     function heldStatements() external view returns (uint256[] memory sids);
+    function isForbidden(address t) external view returns (bool);
     function lastBuybackBlock() external view returns (uint256);
     function lastFillTime() external view returns (uint64);
     function lockAdapters() external;
@@ -205,7 +212,7 @@ interface ICore {
     function removeAdapter(address a) external;
     function rescueCoin(address, uint256) external;
     function rescueNft(address, uint256, address) external;
-    function rescueToken(address token, address to, uint256 amount) external;
+    function rescueToken(address, address, uint256) external;
     function reserve() external view returns (uint256);
     function retired() external view returns (bool);
     function sellCreditTo(uint256 id, address buyer) external payable;
@@ -215,7 +222,7 @@ interface ICore {
     function sellForEth(uint256[] memory ids, uint256 minOut) external;
     function sellForEth(uint256[] memory ids) external;
     function sellTo(uint256 sid, address buyer) external payable;
-    function setArtist(address to) external;
+    function setArtist(address) external;
     function setBalanceModule(address module) external;
     function setChosenComposeOn(bool v) external;
     function setController(address c) external;
@@ -228,6 +235,7 @@ interface ICore {
     function setSettings(Settings memory) external;
     function setSuccessor(address) external;
     function settings() external view returns (Settings memory);
+    function sharedRate() external view returns (uint256);
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent);
     function statementAge(uint256 sid) external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);

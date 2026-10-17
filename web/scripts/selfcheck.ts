@@ -40,14 +40,13 @@ assert.equal(replayEth([2000n, 1000n], a), 2000n + 990n);
 // the sell page lists each credit's fill: the fills are in sell order and add up to the total
 assert.deepEqual(replayEthFills([2000n, 1000n], a), [2000n, 990n]);
 assert.deepEqual(replayEthFills(ref(50), { ...a, pot: 2500n }).reduce((t, x) => t + x, 0n), replayEth(ref(50), { ...a, pot: 2500n }));
-// balance: score * unit * rate / 10000 per credit, the rate dropped per credit by dropPer100PointsBps * score / scorePer100Points
-// in one rounding, never below the floor
+// balance: score * unit * rate / 10000 per credit, flat: the posted bid does not drop on a fill (decision 161)
 const b = { rate: 10000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
-// at par: 300, then the rate is 10000 * (100000 - 150) / 100000 = 9985 and the second credit pays 5 * 100 * 9985 / 10000
-assert.equal(replayBalance([3n, 5n], b), 300n + 499n);
-assert.deepEqual(replayBalanceFills([3n, 5n], b), [300n, 499n]);
-// at the floor the drop cannot lower the rate: 270 then 450
+assert.equal(replayBalance([3n, 5n], b), 300n + 500n);
+assert.deepEqual(replayBalanceFills([3n, 5n], b), [300n, 500n]);
+// the posted rate at the launch discount: 270 then 450, in either order
 assert.equal(replayBalance([3n, 5n], { ...b, rate: 9000n }), 270n + 450n);
+assert.equal(replayBalance([5n, 3n], { ...b, rate: 9000n }), 450n + 270n);
 
 console.log("selfcheck ok");
 

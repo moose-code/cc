@@ -594,7 +594,13 @@ export const controllerAbi = [
     "type": "function",
     "name": "refreshReference",
     "inputs": [],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -658,6 +664,11 @@ export const controllerAbi = [
             "internalType": "contract IHooks"
           }
         ]
+      },
+      {
+        "name": "expectedSpot",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],

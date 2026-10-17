@@ -24,6 +24,8 @@ const fresh = (over = {}, pot = 1000) => {
   // the ported single rate climb tests set only climbPerMin; match the recovery rate to it unless a test opts into the
   // dual speed, so a fill below the peak climbs at the same rate the assertions were written for
   if (over.recoveryClimbPerMin === undefined) p.recoveryClimbPerMin = p.climbPerMin;
+  // the ported bid tests read the price alone; the artist royalty on purchases (decision 160) has its own block below
+  if (over.buyToArtistBps === undefined) p.buyToArtistBps = 0;
   const c = new Core(p, 0);
   c.addFees(pot, 0);
   return c;
@@ -171,12 +173,12 @@ const R0 = 6.668e15;
 // promise: funded flag: the pot affords one credit at the rate, pot * 1e18 >= rate
 {
   const need = R0 / W;
-  const lo = new Core(Object.assign({}, DEFAULTS, LEGACY), 0);
+  const lo = new Core(Object.assign({}, DEFAULTS, LEGACY, { buyToArtistBps: 0 }), 0); // the clamp alone; the royalty's share of the room has its own block
   lo.addFees(need * 0.999, 0);
   assert.equal(lo.funded, false); n++;
   near(lo.ethPrice(100 * H), R0, 1e-12, 'unfunded: the price state holds');
   near(lo.ethRate(100 * H), need * 0.999 * W, 1e-12, 'unfunded: the read is the pot');
-  const hi = new Core(Object.assign({}, DEFAULTS, LEGACY), 0);
+  const hi = new Core(Object.assign({}, DEFAULTS, LEGACY, { buyToArtistBps: 0 }), 0);
   hi.addFees(need * 1.001, 0);
   assert.equal(hi.funded, true); n++;
 }
@@ -412,7 +414,7 @@ const R0 = 6.668e15;
 // promise: feeToRedeemBurnBps: the one split of swap fee eth booked in receive(), the share that fills the redeem burn reserve, the rest to the pot (decision 106)
 {
   for (const [bps, rb] of [[0, 0], [2500, 0.25], [5000, 0.5], [10000, 1]]) {
-    const c = new Core(Object.assign({}, DEFAULTS, LEGACY, { feeToRedeemBurnBps: bps }), 0);
+    const c = new Core(Object.assign({}, DEFAULTS, LEGACY, { feeToRedeemBurnBps: bps }, { buyToArtistBps: 0 }), 0);
     const r = c.addFees(8, 0);
     near(c.ethRedeemBurn, 8 * rb, 1e-12, 'fee share to the reserve at ' + bps); near(c.ethPot, 8 * (1 - rb), 1e-12, 'fee share to pot at ' + bps);
     near(r.toRedeemBurn + r.toPot, 8, 1e-12, 'fee split adds up at ' + bps); near(c.feeToRedeemBurn, 8 * rb, 1e-12, 'fee share booked at ' + bps);
@@ -421,7 +423,7 @@ const R0 = 6.668e15;
   assert.equal(SETTINGS.feeToBuybackBps, undefined); assert.equal(new Core(DEFAULTS, 0).feeToBuyback, undefined); n += 2;
   const z = fresh({ feeToRedeemBurnBps: 0 }, 10); near(z.ethRedeemBurn, 0, 1e-12, 'share 0 sends no fee to the reserve'); near(z.ethPot, 10, 1e-12, 'all of it to the pot');
   // the funded flag follows the pot only (the reserve share is not in the pot)
-  const h = new Core(Object.assign({}, DEFAULTS, LEGACY, { feeToRedeemBurnBps: 5000 }), 0);
+  const h = new Core(Object.assign({}, DEFAULTS, LEGACY, { feeToRedeemBurnBps: 5000 }, { buyToArtistBps: 0 }), 0);
   const need = R0 / W;
   h.addFees(need * 1.5, 0); assert.equal(h.funded, false); h.addFees(need * 1, 0); assert.equal(h.funded, true); n += 2; // pot 1.25 need after the second booking
   // a change applies to the next booking, sale proceeds are not touched by it
@@ -493,18 +495,18 @@ const R0 = 6.668e15;
 }
 // promise: the redeem burn reserve (FLOW 86): feeToRedeemBurnBps of the fee eth fills it, the rest goes to the pot
 {
-  const d = new Core(Object.assign({}, DEFAULTS), 0); // launch values: 0 to the reserve, the phase-2 wiring sets it to 1,000
+  const d = new Core(Object.assign({}, DEFAULTS, { buyToArtistBps: 0 }), 0); // launch values: 0 to the reserve, the phase-2 wiring sets it to 1,000
   const r = d.addFees(8, 0);
   near(d.ethRedeemBurn, 0, 1e-12, 'launch reserve share of the fees'); near(d.ethPot, 8, 1e-12, 'the whole engine share to the pot'); near(d.ethToBuyback, 0, 1e-12, 'nothing to the buyback pot'); near(d.feeToRedeemBurn, 0, 1e-12, 'booked');
   near(r.toRedeemBurn + r.toPot, 8, 1e-12, 'the fee split adds up');
-  const e = new Core(Object.assign({}, DEFAULTS, { feeToRedeemBurnBps: 2500 }), 0);
+  const e = new Core(Object.assign({}, DEFAULTS, { feeToRedeemBurnBps: 2500 }, { buyToArtistBps: 0 }), 0);
   e.addFees(10, 0);
   near(e.ethRedeemBurn, 2.5, 1e-12, 'reserve share'); near(e.ethPot, 7.5, 1e-12, 'pot share');
   near(e.ethPot + e.ethToBuyback + e.ethRedeemBurn, 10, 1e-12, 'all of it is booked');
   // the reserve share does not enter the pot, so the funded flag and the clamp follow the pot alone
-  const q = new Core(Object.assign({}, DEFAULTS, { rateCap: 1e18, reserveWei: 0, feeToRedeemBurnBps: 1000 }), 0); q.addFees(0.1, 0); near(q.clamp(), 0.09 * W, 1e-12, 'the clamp is the pot without the redeem burn share');
+  const q = new Core(Object.assign({}, DEFAULTS, { rateCap: 1e18, reserveWei: 0, feeToRedeemBurnBps: 1000 }, { buyToArtistBps: 0 }), 0); q.addFees(0.1, 0); near(q.clamp(), 0.09 * W, 1e-12, 'the clamp is the pot without the redeem burn share');
   // sale proceeds: the artist and operator cuts come off first, then saleToBuybackBps of the rest to the buyback (decision 123)
-  const s = new Core(Object.assign({}, DEFAULTS), 0); s.sellTo({ cost: 1, t0: 0 }, 2, 0); // cuts 2 * (0.025 + 0.005) = 0.06, rest 1.94, buyback 1.94 * 0.25
+  const s = new Core(Object.assign({}, DEFAULTS, { buyToArtistBps: 0 }), 0); s.sellTo({ cost: 1, t0: 0 }, 2, 0); // cuts 2 * (0.025 + 0.005) = 0.06, rest 1.94, buyback 1.94 * 0.25
   near(s.ethRedeemBurn, 0, 1e-12, 'a sale does not fill the reserve'); near(s.ethToBuyback, 1.94 * 0.25, 1e-12, 'a sale sends saleToBuybackBps of the rest to the buyback'); near(s.artistPaid + s.operatorPaid, 0.06, 1e-12, 'the cuts are pushed out');
 }
 // promise: redemption eligibility (Core.redeemStatement, ControllerV1.atFloor): a module is set, redeemOn is true, and the statement's curve price has reached its floor, saleFloorBps of its price reference
@@ -564,36 +566,55 @@ const R0 = 6.668e15;
   const f = mk({ redeemBurnBps: 10000 }); f.redeemStatement(f.compose(1, 0, 1), 60 * H); near(f.ethToBuyback, 10, 1e-12, 'redeemBurnBps 10000'); near(f.ethRedeemBurn, 0, 1e-12, 'whole reserve');
   const live = mk(); live.setSettings({ redeemBurnBps: 5000 }, 1); live.redeemStatement(live.compose(1, 0, 1), 60 * H); near(live.ethToBuyback, 5, 1e-12, 'the setting applies at once');
 }
-// the rising balance token bid (Core.sellForBalance, decision 122): a second price state in bps of par, floor 10000 - balanceBidMarginBps,
-// cap 10000 (par, so a payout never exceeds the score value), clamp the module available as bps of par. it opens at the floor, climbs
-// promise: with the shared settings, drops per credit on a fill, and pays score * unit * rate / 10000
+// the posted balance token bid (Core.sellForBalance, decision 161): pts * unit * (10000 - balanceDiscountBps) / 10000 per credit,
+// flat: no climb while idle, no drop on a fill, bounded by the module holding alone; the artist royalty (decision 160) rides on top
+// promise: the balance bid is posted at the discount, pays it flat, and the module pays the payout and the royalty
 {
   const unit = 1e-5;
-  const mk = (over = {}) => { const c = fresh(Object.assign({ redeemOn: true, balanceBidOn: true, balancePoolSet: true }, over), 10); c.setBalanceModule(0, unit); c.balancePot = 1; return c; };
+  const mk = (over = {}) => { const c = fresh(Object.assign({ redeemOn: true, balanceBidOn: true, balancePoolSet: true, buyToArtistBps: 250 }, over), 10); c.setBalanceModule(0, unit); c.balancePot = 1; return c; };
   const c = mk();
-  // the open is the floor, 90 percent of par at the launch margin 1000
-  near(c.balanceRate(0), 9000, 1e-9, 'the bid opens at the floor, 9000 bps of par');
-  near(c.balanceBidOf(440, 0), 440 * unit * 0.9, 1e-12, 'score times the per point value at the floor'); near(c.balanceBidOf(80, 0), 80 * unit * 0.9, 1e-12, 'a low score is paid less');
-  near(c.balanceBidOf(800, 0), 2 * c.balanceBidOf(400, 0), 1e-12, 'linear in the score at one rate');
-  // it climbs toward par (the cap) and rests there, never above the score value
-  ok(c.balanceRate(5 * 60) > 9000 && c.balanceRate(5 * 60) < 10000, 'climbing between the floor and par');
-  near(c.balanceRate(60 * 60), 10000, 1e-9, 'it reaches par and the cap holds it there'); near(c.balanceBidOf(440, 60 * 60), 440 * unit, 1e-12, 'at par the payout is the full score value');
-  // a fill at the open pays the floor and the drop is bounded at the floor
-  const d = mk(); near(d.xBuy(440, 0), 440 * unit * 0.9, 1e-12, 'a fill pays the floor rate'); near(d.balancePot, 1 - 440 * unit * 0.9, 1e-12, 'from the module holding'); ok(d.balanceRate(0) >= 9000 - 1e-9, 'the drop is bounded at the floor');
-  // a module too short to pay the floor refuses the whole fill (PotTooSmall) but balanceBidOf still reports the floor payout
-  const small = mk(); small.balancePot = 433 * unit * 0.9 / 2; // half the floor par of the 433 point credit, so available cannot cover its floor payout
-  assert.equal(small.xBuy(433, 0), 0); near(small.balancePot, 433 * unit * 0.9 / 2, 1e-15, 'nothing moves'); n++;
-  near(small.balanceBidOf(433, 0), 433 * unit * 0.9, 1e-12, 'balanceBidOf reports the floor payout'); ok(small.balanceBidOf(433, 0) > 0, 'never 0 for a credit the module cannot pay the floor for');
-  // the bid off, or no module: the rate reports the floor and a sell pays nothing
-  for (const over of [{ balanceBidOn: false }, { redeemOn: true, balanceBidOn: false }]) { const m = mk(over); assert.equal(m.balanceBidActive(), false); near(m.balanceRate(60 * 60), 9000, 1e-9, 'the floor while off'); assert.equal(m.xBuy(440, 0), 0); near(m.balancePot, 1, 1e-15, 'no bid with balanceBidOn false'); n += 3; }
+  near(c.balanceRate(0), 9000, 1e-9, 'the posted rate at the launch discount, 9000 bps of par');
+  near(c.balanceBidOf(440, 0), 440 * unit * 0.9, 1e-12, 'score times the per point value at the posted rate'); near(c.balanceBidOf(80, 0), 80 * unit * 0.9, 1e-12, 'a low score is paid less');
+  near(c.balanceBidOf(800, 0), 2 * c.balanceBidOf(400, 0), 1e-12, 'linear in the score');
+  near(c.balanceRate(60 * 60), 9000, 1e-9, 'no climb after an hour'); near(c.balanceRate(30 * 24 * 3600), 9000, 1e-9, 'no climb after a month');
+  // a fill pays the posted payout; the module holding falls by the payout and the royalty; the rate does not drop
+  const d = mk(); const royaltyBps = d.s.buyToArtistBps; near(d.xBuy(440, 0), 440 * unit * 0.9, 1e-12, 'a fill pays the posted rate');
+  near(d.balancePot, 1 - 440 * unit * 0.9 * (1 + royaltyBps / 10000), 1e-12, 'the holding pays the payout and the royalty'); near(d.royaltyPaidBalance, 440 * unit * 0.9 * royaltyBps / 10000, 1e-15, 'the royalty is counted');
+  near(d.balanceRate(0), 9000, 1e-9, 'no drop after a fill'); near(d.xBuy(440, 0), 440 * unit * 0.9, 1e-12, 'the next fill pays the same');
+  // a module that cannot pay the payout plus its royalty refuses the fill (PotTooSmall) and balanceBidOf reads 0
+  const small = mk(); small.balancePot = 433 * unit * 0.9; // the payout alone, no room for the royalty
+  assert.equal(small.xBuy(433, 0), 0); near(small.balancePot, 433 * unit * 0.9, 1e-15, 'nothing moves'); n++;
+  assert.equal(small.balanceBidOf(433, 0), 0); n++;
+  small.balancePot = 433 * unit * 0.9 * (1 + small.s.buyToArtistBps / 10000); near(small.balanceBidOf(433, 0), 433 * unit * 0.9, 1e-12, 'exactly enough: the view reads the payout');
+  // the bid off, or no module: the posted rate reads and a sell pays nothing
+  for (const over of [{ balanceBidOn: false }, { redeemOn: true, balanceBidOn: false }]) { const m = mk(over); assert.equal(m.balanceBidActive(), false); near(m.balanceRate(60 * 60), 9000, 1e-9, 'the posted rate while off'); assert.equal(m.xBuy(440, 0), 0); near(m.balancePot, 1, 1e-15, 'no bid with balanceBidOn false'); n += 3; }
   assert.equal(fresh({ redeemOn: true, balanceBidOn: true, balancePoolSet: true }, 10).balanceBidActive(), false); n++; // no module, no bid
   { const np = fresh({ redeemOn: true, balanceBidOn: true }, 10); np.setBalanceModule(0, unit); np.balancePot = 1; assert.equal(np.balanceBidActive(), true); near(np.xBuy(440, 0), 440 * unit * 0.9, 1e-12, 'the bid works without the pool key'); n += 2; }
-  // the margin sets the floor and opens a fresh instance there; a margin raise does not pull a climbed rate down
-  const g0 = mk({ balanceBidMarginBps: 0 }); near(g0.balanceRate(0), 10000, 1e-9, 'margin 0 opens at par'); near(g0.balanceBidOf(100, 0), 100 * unit, 1e-12, 'the whole value');
-  const g9 = mk({ balanceBidMarginBps: 9000 }); near(g9.balanceRate(0), 1000, 1e-9, 'margin 90 percent opens at 1000 bps of par'); near(g9.balanceBidOf(100, 0), 100 * unit * 0.1, 1e-12, 'the floor payout at margin 90 percent');
-  // buy near the floor and redeem at full value: the engine keeps at most the margin
+  // the discount is a setting: 0 pays par, 9999 pays 1 bps of par, effective at once
+  const g0 = mk({ balanceDiscountBps: 0 }); near(g0.balanceRate(0), 10000, 1e-9, 'no discount reads par'); near(g0.balanceBidOf(100, 0), 100 * unit, 1e-12, 'the whole value');
+  const g9 = mk({ balanceDiscountBps: 9999 }); near(g9.balanceRate(0), 1, 1e-9, 'the largest discount reads 1 bps of par'); near(g9.balanceBidOf(100, 0), 100 * unit * 0.0001, 1e-12, 'the payout at 1 bps');
+  const ed = mk(); ed.setSettings({ balanceDiscountBps: 2500 }, 1); near(ed.balanceRate(1), 7500, 1e-9, 'an edit lands at once'); near(ed.xBuy(100, 1), 100 * unit * 0.75, 1e-12, 'and the next fill pays it');
+  assert.throws(() => mk().setSettings({ balanceDiscountBps: 10000 }, 1), /BadSetting balanceDiscountBps/); n++;
+  // buy at the discount and redeem at full value: the engine keeps the discount less the royalty
   const h = mk(); const px = h.xBuy(35200 / 80, 0); const rec = h.redeemStatement(h.compose(0, 0, 440 * 80), 5000 * H); // redeemed once the curve has reached its floor
-  near(rec.received, 440 * 80 * unit, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px, 'more than the 80 credits were bought for');
+  near(rec.received, 440 * 80 * unit, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px * (1 + h.s.buyToArtistBps / 10000), 'more than the 80 credits and their royalties were bought for');
+}
+// the artist royalty on every purchase (decision 160): the seller receives the bid whole, the pot pays buyToArtistBps of it on top,
+// the listing pays it on the ask, and the eth clamp divides the room by 1 + the royalty so a bid at the clamp is payable with it
+// promise: the royalty rides on top of every eth purchase and the clamp leaves room for it
+{
+  const c = fresh({ buyToArtistBps: 250, climbPerMin: 0.01 }, 1000);
+  const bid = c.ethRate(0) / W, pot0 = c.ethPot;
+  near(c.sellForEth(0), bid, 1e-9, 'the seller receives the bid whole');
+  near(pot0 - c.ethPot, bid * 1.025, 1e-9, 'the pot paid the bid and the royalty'); near(c.royaltyPaid, bid * 0.025, 1e-9, 'the royalty is counted');
+  const l = fresh({ buyToArtistBps: 250 }, 1000); const ask = (l.ethRate(0) / W) * 0.5, lp0 = l.ethPot;
+  const r = l.buyListing(ask, 0); ok(r !== null, 'the listing clears'); near(r.royalty, ask * 0.025, 1e-9, 'the royalty on the ask');
+  near(lp0 - l.ethPot, ask + r.royalty + r.paid, 1e-9, 'the pot paid the ask, the royalty and the keeper');
+  // the clamp: with the price state above the pot the read is the pot over 1.025
+  const thin = fresh({ buyToArtistBps: 250 }, 0.001); // the pot affords less than one credit at the opening rate, so the clamp binds
+  near(thin.ethRate(100 * H), (0.001 * W) / 1.025, 1e-9, 'the read is the pot over 1 + the royalty');
+  const z = fresh({ buyToArtistBps: 0 }, 1000); const zb = z.ethRate(0) / W, zp = z.ethPot; near(z.sellForEth(0), zb, 1e-9); near(zp - z.ethPot, zb, 1e-9, 'no royalty, the bid alone');
+  assert.throws(() => fresh().setSettings({ buyToArtistBps: 1001 }, 1), /BadSetting buyToArtistBps/); n++;
 }
 // a credit bought with the balance token enters the one pile at an eth cost (FLOW 96): the floor rate times score / refScore
 // (CoreLib.sellForBalance), at least 1 wei. the floor rate is the larger of the price state and the remembered peak. it reads the price state and the peak,
@@ -820,11 +841,11 @@ const R0 = 6.668e15;
   const xb = v.xBuyCredit(100, stale); ok(xb && xb.cost === 1e-18, 'the balance route fills at a 1 wei basis while the quote fails');
   ok(v.buy(v.compose(0.001, 0, 440), stale) !== null && v.refTime === stale, 'a sale door observes first, so a stale reference is fresh again');
   v.moduleReports(0); assert.equal(v.buy(v.compose(0.001, 0, 440), stale), null); n++; // NoQuote: no unit read
-  // a currency switch or a settings change leaves the shared instance; only the switch and the bid turning on reset it
+  // a currency switch, a settings change and the balance door leave the shared instance; only the value switch resets it
   const k = mk({ rateCap: 1e18 }); k.setSettings({ valueModeOn: true, balanceBidOn: true }, 0); k.balRate = 10500;
   k.setSettings({ climbPerMin: 0.5 }, 0); near(k.balRate, 10500, 1e-12, 'a settings change leaves it');
   k.setSettings({ balanceBidOn: false }, 0); near(k.balRate, 10500, 1e-12, 'the balance door off leaves it');
-  k.setSettings({ balanceBidOn: true }, 0); near(k.balRate, 9000, 1e-12, 'the balance door turning on resets it');
+  k.setSettings({ balanceBidOn: true }, 0); near(k.balRate, 10500, 1e-12, 'the balance door turning on leaves it: the balance bid is posted (decision 161)');
   k.balRate = 10500; k.setBalanceModule(0, U); near(k.balRate, 10500, 1e-12, 'a module change in value mode leaves it');
   // the eth rate is bounded by rateCap and by the room
   const capped = mk({ rateCap: 1e14 }); capped.setSettings({ valueModeOn: true }, 0); near(capped.ethRate(0), 1e14, 1e-12, 'rateCap bounds a hostile value'); n++;
@@ -890,7 +911,7 @@ const R0 = 6.668e15;
   near(bountyFeeFraction(DEFAULTS, 0.1), 0.09, 1e-12, 'Core 9 points, bountyBps 9000 of the 10 point baseline'); near(bountyFeeFraction(DEFAULTS, 0.9), 0.09 + 0.8, 1e-12, 'extra to the Core');
   // Core._book: the payee takes payeePpm of each book once payeeOn. the first book at or after sniperSeconds with income sets payeeOn and takes 0
   // feeToRedeemBurnBps is 1,000 here (its phase-2 value) to exercise the reserve split with the payee; launch is 0
-  const pc = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }), 0);
+  const pc = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }, { buyToArtistBps: 0 }), 0);
   pc.addFees(100, 1799); near(pc.ethPot, 90, 1e-12, 'before the window the pot gets 90 of 100, the reserve 10'); near(pc.payeePaid, 0, 1e-12, 'the payee gets 0 before the window');
   pc.addFees(100, 1800); near(pc.ethPot, 180, 1e-12, 'the first book at the window end shares 0'); ok(pc.payeeOn && pc.payeePaid === 0, 'the payee share starts');
   pc.addFees(100, 1900); near(pc.payeePaid, 7.5185, 1e-12, 'the payee takes payeePpm after the window');
@@ -899,7 +920,7 @@ const R0 = 6.668e15;
   const pz = new Core(DEFAULTS, 0); pz.addFees(0, 5000); ok(!pz.payeeOn, 'a zero income book leaves payeeOn false');
   const p0 = new Core(DEFAULTS, 0); p0.addFees(100, 1800); p0.addFees(100, 1900); near(p0.payeePaid, 0, 1e-12, 'payeePpm 0 at launch pushes nothing to the payee');
   // Core.fund: whole, the payee and reserve shares are 0
-  const pf = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }), 0); pf.addFees(100, 1900); pf.fund(50, 1900);
+  const pf = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }, { buyToArtistBps: 0 }), 0); pf.addFees(100, 1900); pf.fund(50, 1900);
   near(pf.ethPot, 90 + 50, 1e-12, 'fund adds to the pot whole'); near(pf.ethRedeemBurn, 10, 1e-12, 'fund books a reserve share of 0'); near(pf.payeePaid, 0, 1e-12, 'and a payee share of 0');
   let d0 = 0;
   for (let t = 0; t < 3600; t += 120) d0 += stepVolume(DEFAULTS, t, 120);
@@ -1263,7 +1284,8 @@ const R0 = 6.668e15;
   const c = fresh({ balanceBidOn: true, balanceBidCapBps: 20000, climbMultiplierCapBps: 40000, multiplierCap: null, spendCapBps: 1, ceilPct: 200 }, 1);
   c.setBalanceModule(0, 0.001); c.balancePot = 100;
   near(c.balAvailBps(), 20000, 1e-12, 'available clamp can exceed par');
-  near(c.balanceRate(1000000), 20000, 1e-12, 'the balance bid climbs above par to the configured cap');
+  near(c.sharedRate(1000000), 20000, 1e-12, 'the shared instance climbs above par to the configured cap (value mode\'s eth bid)');
+  near(c.balanceRate(1000000), 9000, 1e-12, 'the balance bid stays posted whatever the cap (decision 161)');
   ok(c.xBuy(433, 1000000) > 0, 'the ETH spend cap does not constrain balance purchases');
   assert.equal(c.spendBucket.id, null); n++;
 }
@@ -1282,7 +1304,7 @@ const R0 = 6.668e15;
   m.buy(m.compose(1, 0), 0); assert.equal(m.anchorStored, 11250); n++;
   const z = fresh({ balanceBidOn: true, balanceBidMarginBps: 10000 }, 1);
   z.setBalanceModule(0, 0.001); z.balancePot = 100;
-  assert.equal(z.balanceRate(100000), 0); n++;
+  assert.equal(z.balanceRate(100000), 9000); n++; // the margin is value mode's floor; the balance bid stays posted (decision 161)
 }
 // promise: both bucket alignments retain accounting and distinguish a non-crossing from market recovery.
 {
@@ -1310,7 +1332,7 @@ const R0 = 6.668e15;
     c.balRate = 10000; c.balLastFillRate = 10000; c.balPeakRate = 10000;
     c.balCheckpointTime = 120; c.balLastFillTime = 120; c.balPeakTime = 120;
     ok(c.sellForEth(120) > 0, 'the ETH fill opens bucket two');
-    ok(c.xBuy(433, 120) > 0, 'the balance fill opens bucket two');
+    ok(c.sharedFill(433, 120) > 0, 'the shared instance fill opens bucket two (the balance bid is posted and has no bucket, decision 161)');
     return c;
   };
   const active = make();
@@ -1319,7 +1341,7 @@ const R0 = 6.668e15;
   near(active.burstBase, 1e16, 1e-12, 'active ETH base survives rebasing');
   near(active.balBurstBase, 10000, 1e-12, 'active balance base survives rebasing');
   ok(active.sellForEth(120) > 0, 'a second ETH fill succeeds');
-  ok(active.xBuy(433, 120) > 0, 'a second balance fill succeeds');
+  ok(active.sharedFill(433, 120) > 0, 'a second balance fill succeeds');
   near(active.rateAtCheckpoint, 5e15, 1e-12, 'the ETH drop keeps its original half-price floor');
   near(active.balRate, 5000, 1e-12, 'the balance drop keeps its original half-price floor');
   n += 2;
@@ -1329,7 +1351,7 @@ const R0 = 6.668e15;
   assert.equal(expired.burstBase, 0); assert.equal(expired.balBurstBase, 0); n += 4;
   const ethBefore = expired.priceRate(200), balanceBefore = expired.balPriceState(200);
   ok(expired.sellForEth(200) > 0, 'an ETH fill reopens the expired floor');
-  ok(expired.xBuy(433, 200) > 0, 'a balance fill reopens the expired floor');
+  ok(expired.sharedFill(433, 200) > 0, 'a balance fill reopens the expired floor');
   near(expired.burstBase, ethBefore, 1e-12, 'the next ETH fill snapshots its current rate');
   near(expired.balBurstBase, balanceBefore, 1e-12, 'the next balance fill snapshots its current rate');
   near(expired.rateAtCheckpoint, ethBefore / 2, 1e-12, 'the expired ETH base cannot hold the old higher floor');
@@ -1339,7 +1361,7 @@ const R0 = 6.668e15;
 {
   const c = fresh({ rateStart: 1e16 }, 0.01);
   const result = c.buyListing(0.01, 0, 866);
-  assert.deepEqual(result, { cost: 0.01, paid: 0 });
+  assert.deepEqual(result, { cost: 0.01, paid: 0, royalty: 0 });
   assert.equal(c.ethPot, 0); assert.equal(c.spendBucket.spent, 10000000000000000n); n += 3;
 }
 // promise: requested integer steps apply from the first hour and preserve calibrated first-hour volume.
@@ -1365,11 +1387,11 @@ const R0 = 6.668e15;
 // the default (bookEveryHours 0) still books every step, and a simulate with an hourly book keeps the ledger closed
 {
   // with no drip and an empty booked pot the bid is pinned to the clamp of 0
-  const empty = new Core(Object.assign({}, DEFAULTS), 0);
+  const empty = new Core(Object.assign({}, DEFAULTS, { buyToArtistBps: 0 }), 0);
   ok(empty.ethRate(30 * 60) === 0, 'bookEveryHours: an empty booked pot with no drip reads a bid of 0');
 
   // the hook pushes fee income, left unbooked: the clamp counts its pot share, so the bid climbs between books
-  const c = new Core(Object.assign({}, DEFAULTS), 0);
+  const c = new Core(Object.assign({}, DEFAULTS, { buyToArtistBps: 0 }), 0);
   c.accrue(1); // 1 eth of fee income, unbooked
   ok(c.ethPot === 0, 'bookEveryHours: nothing booked, the drip waits above the pots');
   const r0 = c.ethRate(0), r30 = c.ethRate(30 * 60), r60 = c.ethRate(60 * 60);

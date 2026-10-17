@@ -107,7 +107,7 @@ contract PerPointExactTest is Fixture {
         assertEq(core.rateAtCheckpoint(), r, "the rate reflects three scaled drops in order");
         for (uint256 i; i < 3; ++i) {
             (, uint256 c,) = core.creditInfo(ids[i]);
-            assertEq(c, pay[i], "the cost basis is the credit's scaled bid");
+            assertEq(c, pay[i] + pay[i] * core.settings().buyToArtistBps / 10_000, "the cost basis is the scaled bid plus its royalty");
         }
     }
 
@@ -165,7 +165,7 @@ contract PerPointExactTest is Fixture {
         core.sellForEth(_one(id));
         assertEq(who.balance - before, floored, "the payout rounds down");
         (, uint256 cost,) = core.creditInfo(id);
-        assertEq(cost, floored, "the cost basis rounds down");
+        assertEq(cost, floored + floored * core.settings().buyToArtistBps / 10_000, "the cost basis rounds down, plus its royalty");
     }
 
     // promise: SPEC 8 the credit sale floor term valueOf(score) floors floorRate * score / RATE_SCORE

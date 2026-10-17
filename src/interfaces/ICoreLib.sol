@@ -14,6 +14,7 @@ interface ICoreLib {
     error BalanceTokenChanged();
     error CallFailed();
     error Empty();
+    error ForbiddenTarget();
     error Held();
     error InPile();
     error Locked(bytes32 what);
@@ -37,11 +38,12 @@ interface ICoreLib {
     error ZeroAmount();
     error ZeroId();
 
-    event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
+    event ArtistSet(address indexed artist);
+    event BalanceFill(uint256 paid, uint256 toArtist, uint256 available);
     event BalanceRateSet(uint256 rateBps);
     event CoinRescued(address indexed to, uint256 amount);
     event CreditAdopted(uint256 indexed id, uint256 cost);
-    event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
+    event CreditBought(uint256 indexed id, address indexed from, uint256 cost, uint256 toArtist);
     event CreditSwapped(uint256 indexed inId, uint256 indexed outId, address indexed caller, uint256 fee);
     event EngineRetired(address indexed successor);
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
@@ -50,17 +52,19 @@ interface ICoreLib {
     event SettingsSet(Settings settings);
     event SuccessorLocked();
     event SuccessorSet(address successor);
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
 
     function balanceBidForScore(uint256 score) external view returns (uint256);
     function balanceBidOf(uint256 id) external view returns (uint256);
-    function balanceRate() external view returns (uint256 rate);
+    function balanceRate() external view returns (uint256);
     function climbMultiplier() external view returns (uint256);
     function ethPrice() external view returns (uint256);
     function ethRate() external view returns (uint256 read);
     function floorRate() external view returns (uint256);
     function reserve() external view returns (uint256);
     function room() external view returns (uint256);
+    function sharedRate() external view returns (uint256);
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent);
 
     function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)

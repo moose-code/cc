@@ -691,10 +691,11 @@ contract SaleAnchorTest is SaleShapeBase {
         for (uint256 r; r < 4; ++r) {
             uint256[] memory ids = _credits(attacker, 80);
             for (uint256 i; i < 80; ++i) {
-                vm.deal(attacker, attacker.balance + 1);
+                // two wei: the bid's room is the pot over 1 + the royalty (decision 160), so a 2 wei pot reads a 1 wei bid
+                vm.deal(attacker, attacker.balance + 2);
                 vm.prank(attacker);
-                core.fund{value: 1}();
-                // refScore set to this credit's score, so a 1 wei pot reads a 1 wei bid for it (score / refScore is 1)
+                core.fund{value: 2}();
+                // refScore set to this credit's score, so the pot reads a 1 wei bid for it (score / refScore is 1)
                 _unitScore(ids[i]);
                 uint256[] memory one = new uint256[](1);
                 one[0] = ids[i];
@@ -1107,17 +1108,24 @@ contract SaleCutsTest is SaleBase {
         Settings memory s = core.settings();
         s.saleToArtistBps = 0;
         _setSettings(s);
+        // the royalty on purchases keeps the artist required as well (decision 160)
+        vm.prank(owner);
+        vm.expectRevert(ICore.ZeroAddress.selector);
+        core.setArtist(address(0));
+        s.buyToArtistBps = 0;
+        _setSettings(s);
         vm.prank(owner);
         core.setArtist(address(0));
-        assertEq(core.artist(), address(0), "the artist is cleared when the cut is off");
+        assertEq(core.artist(), address(0), "the artist is cleared when both cuts are off");
     }
 
     // promise: SPEC 1 setSettings refuses a nonzero artist cut while the artist is the zero address, so the pair is
     // checked on both setters and the cut can never be pushed to address(0)
     function test_cuts_setSettingsRefusesCutWhileArtistZero() public {
-        // clear the cut, then the artist, so the artist is the zero address with a zero cut
+        // clear both cuts, then the artist, so the artist is the zero address with no cut
         Settings memory s = core.settings();
         s.saleToArtistBps = 0;
+        s.buyToArtistBps = 0;
         _setSettings(s);
         vm.prank(owner);
         core.setArtist(address(0));

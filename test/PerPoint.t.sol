@@ -56,7 +56,7 @@ contract PerPointTest is Fixture {
         core.sellForEth(_one(id));
         assertEq(user.balance - before, want, "the seller is paid the per-credit bid");
         (, uint256 cost,) = core.creditInfo(id);
-        assertEq(cost, want, "the cost basis is the per-credit bid");
+        assertEq(cost, want + want * core.settings().buyToArtistBps / 10_000, "the cost basis is the per-credit bid plus its royalty");
 
         uint256 fallNum = uint256(core.settings().dropPer100PointsBps) * score;
         uint256 denom = 10_000 * ref;

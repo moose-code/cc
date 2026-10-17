@@ -13,8 +13,8 @@ Both are `Settings` fields set through `setSettings`, with no lock and no delay,
 
 | field | type | bounds | launch | where |
 |---|---|---|---|---|
-| `buyToArtistBps` | uint16 | 0 to 1,000 | 250 | `Settings` field 37 (mirror index 36) |
-| `balanceDiscountBps` | uint16 | 0 to 9,999 | 1,000 | `Settings` field 38 (mirror index 37) |
+| `buyToArtistBps` | uint16 | 0 to 1,000 | 250 | `Settings` field 38, appended after `valueModeOn` (mirror index 37, `N` 39) |
+| `balanceDiscountBps` | uint16 | 0 to 9,999 | 1,000 | `Settings` field 39, appended last (mirror index 38); both fit the existing last slot |
 
 - `SettingsBounds.firstViolation`: `buyToArtistBps > 1_000` names `"buyToArtistBps"`; `balanceDiscountBps > 9_999` names `"balanceDiscountBps"` (a 10,000 discount would pay zero and every balance fill would revert `ZeroAmount`, the liveness rule of decision 143).
 - `CoreLib.setSettings`: the zero artist rule becomes `(ns.saleToArtistBps != 0 || ns.buyToArtistBps != 0) && c.artist == address(0)` reverts `ZeroAddress`. `Core.setArtist(address(0))` is refused while either cut is nonzero.
@@ -116,6 +116,7 @@ The `Rate` instance `State.balance` stays in storage and keeps its name. It is r
 - `script/tools/gen-interfaces.sh` regenerates `src/interfaces/ICore.sol` and friends. The ABIs in `packages/engine/src/abis.ts`, `keeper`, `indexer/abis/Core.ts` and `web` are regenerated from the build.
 - `script/Checks.sol` and `test/BuildIdentity.t.sol` re-pin the Core, CoreLib and Controller build hashes. The Controller is untouched by this spec; its hash should not move.
 - Size. The cold audit measured CoreLib at 51 bytes under EIP-170 and Core at 303 under, before PR 66 added the rescue door. Sections 3 and 4 add code; section 4 and 6 remove the balance climb, clamp, drop, floor check and the bid-on resets. Measure on the first build. If CoreLib is over, the next moves in order: drop `_toBps` and `resetBalanceToFloor` entirely, move the forced artist push into one private helper shared by the three doors and the sale cuts, move `rescueToken` into CoreLib behind `_toLib`. No behaviour change is spent on size.
+- Outcome (built 2026-10-17). The first build put the Core 191 bytes over. `setArtist` and `rescueToken` moved into CoreLib behind `_toLib` (the owner check and the forbidden check run there; the Core gained the `isForbidden(address)` view the library reads, and `_toBps` and `resetBalanceToFloor` went). `setPayee` stayed in the Core to balance the two margins. A `sharedRate()` view was added (CoreLib, forwarded by the Core) for the eth quote replay in value mode, since `balanceRate()` now reports the posted rate: it reads value mode's shared instance climbed with the cap as its clamp. Final runtime sizes: Core 24,536 (40 under), CoreLib 24,452 (124 under), ControllerV1 17,223 (its hash and size moved with the `Settings` struct it decodes, nothing else changed). The Core calls CoreLib at fifteen sites, was sixteen. The build pins and sizes are re-pinned in `script/Checks.sol` and `test/BuildIdentity.t.sol`.
 
 ## 9. Off chain
 
@@ -156,6 +157,8 @@ New, `test/BalanceFlat.t.sol`:
 - the bound at 10,000.
 
 Rewritten: the balance bid tests that assert the climb, the drop, the floor rate check, the `availBps` clamp and the bid-on resets (26 files reference the balance bid; each case is kept where the promise survives and deleted with its promise line where the promise is gone). The invariant handler's balance route and its accounting; `test/GasCap.t.sol` (the batch size with one more push); the keeper e2e door and Seaport tests; the exposure grids and the cold audit's launch day tests re-run on the new numbers, their result files refreshed.
+
+Outcome (built 2026-10-17). `test/BalanceBid.t.sol` and `test/BalanceFloor.t.sol` are deleted with their promises (the climb, the drop, the available clamp, the floor rate check); `test/BalanceFlat.t.sol` and `test/ArtistRoyalty.t.sol` carry the new promises. The suites whose promises read the price or the clamp alone (`test/SpendCap.t.sol`, `test/BidRule.t.sol`, `test/CoreUnit.t.sol`, the sim's ported bid tests) run with `buyToArtistBps` 0 and say so; the cost basis and pot assertions elsewhere carry the royalty. Four tests fail on main `48be14c` before this change and still do, all assuming a launch `feeToRedeemBurnBps` of 1,000 where commit `9bba9e7` set 0: `test_bookDoesNotJumpTheClimb` (BidRule), `test_OK_aRetiredCoreStillBooksFeesAndSkims` (Migrate), `test_releaseRedeemBurnCapsAtReserveAndRefusesEmpty` and `test_releaseRedeemBurnMovesExactlyAndHoldsSolvency` (Redeem). They are not this change's and are left for their own fix.
 
 ## 12. Order of work
 

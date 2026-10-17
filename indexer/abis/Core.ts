@@ -466,6 +466,16 @@ export const coreAbi = [
             "name": "valueModeOn",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "buyToArtistBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "balanceDiscountBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       },
@@ -1167,6 +1177,25 @@ export const coreAbi = [
   },
   {
     "type": "function",
+    "name": "isForbidden",
+    "inputs": [
+      {
+        "name": "t",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "lastBuybackBlock",
     "inputs": [],
     "outputs": [
@@ -1454,6 +1483,13 @@ export const coreAbi = [
   },
   {
     "type": "function",
+    "name": "refreshReference",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "releaseRedeemBurn",
     "inputs": [
       {
@@ -1514,6 +1550,29 @@ export const coreAbi = [
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "rescueToken",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -1671,7 +1730,7 @@ export const coreAbi = [
     "name": "setArtist",
     "inputs": [
       {
-        "name": "to",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -1994,6 +2053,16 @@ export const coreAbi = [
             "name": "valueModeOn",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "buyToArtistBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "balanceDiscountBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -2208,8 +2277,31 @@ export const coreAbi = [
             "name": "valueModeOn",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "buyToArtistBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "balanceDiscountBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sharedRate",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -2401,6 +2493,31 @@ export const coreAbi = [
   },
   {
     "type": "event",
+    "name": "BalanceFill",
+    "inputs": [
+      {
+        "name": "paid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toArtist",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "BalanceModuleLocked",
     "inputs": [],
     "anonymous": false
@@ -2423,31 +2540,6 @@ export const coreAbi = [
       },
       {
         "name": "unitPerPoint",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BalanceRateFill",
-    "inputs": [
-      {
-        "name": "spent",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "rateBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2624,6 +2716,12 @@ export const coreAbi = [
       },
       {
         "name": "cost",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toArtist",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -2862,6 +2960,12 @@ export const coreAbi = [
       },
       {
         "name": "rate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toArtist",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -3216,6 +3320,16 @@ export const coreAbi = [
             "name": "valueModeOn",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "buyToArtistBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "balanceDiscountBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -3299,6 +3413,31 @@ export const coreAbi = [
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TokenRescued",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

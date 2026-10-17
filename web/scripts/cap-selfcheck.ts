@@ -7,11 +7,12 @@ import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance, replayValue,
 // promise: every Settings field decodes in contract order without losing width at the maximum.
 const settings = getAbiItem({ abi: coreAbi, name: "settings" });
 const fields = settings.outputs[0].components;
-assert.equal(fields.length, 37);
+assert.equal(fields.length, 39);
 assert.deepEqual(fields.slice(28).map(({ name, type }) => [name, type]), [
   ["climbMultiplierCapBps", "uint16"], ["spendCapBps", "uint16"], ["bucketSeconds", "uint32"],
   ["balanceBidCapBps", "uint32"], ["idleStepSeconds", "uint32"], ["sniperSeconds", "uint32"],
   ["reserveWei", "uint64"], ["returnLockSeconds", "uint32"], ["valueModeOn", "bool"],
+  ["buyToArtistBps", "uint16"], ["balanceDiscountBps", "uint16"],
 ]);
 const maxValues = fields.map(({ type }) => type === "bool" ? true : (1n << BigInt(type.slice(4))) - 1n);
 const data = encodeAbiParameters([{ type: "tuple", components: fields }], [maxValues] as any);
@@ -32,8 +33,8 @@ assert.equal(quote.nowBucket, 7n);
 assert.equal(replayEth([1000n, 1000n], quote), 1000n + 994n);
 assert.equal(replayEth([1000n, 1000n], { ...quote, nowBucket: 8n }), 1000n + 990n);
 
-// promise: a raised balance cap does not raise the floor above par minus the margin.
-assert.equal(replayBalance([10n, 10n], { rate: 100000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 10000n, dropFloorBps: 0n, floorBps: 9000n }), 10000n + 900n);
+// promise: the balance bid is posted and flat: every credit of a batch pays score * unit * rate / 10000 (decision 161).
+assert.equal(replayBalance([10n, 10n], { rate: 9000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 10000n, dropFloorBps: 0n, floorBps: 9000n }), 900n + 900n);
 
 // promise: a value mode eth sale pays the shared instance times the buy value per credit, dropping the instance to its floor.
 {

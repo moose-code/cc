@@ -153,14 +153,25 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     event PayeeSet(address indexed payee);
     /// `setArtist` set the address the artist cut of nft sales is pushed to
     event ArtistSet(address indexed artist);
-    event CreditBought(uint256 indexed id, address indexed from, uint256 cost);
+    /// the engine bought a credit: the seller, the pile cost basis (the eth routes: the price plus the artist royalty,
+    /// plus the keeper payment for a listing; the balance route: the eth floor basis) and the royalty paid to the
+    /// artist in the route's currency
+    event CreditBought(uint256 indexed id, address indexed from, uint256 cost, uint256 toArtist);
+    /// the keeper swept a listing: the listing price (`cost`), the keeper payment, the rate the fill moved and the
+    /// artist royalty on the price
     event ListingBought(
-        uint256 indexed id, address indexed adapter, address indexed caller, uint256 cost, uint256 paid, uint256 rate
+        uint256 indexed id,
+        address indexed adapter,
+        address indexed caller,
+        uint256 cost,
+        uint256 paid,
+        uint256 rate,
+        uint256 toArtist
     );
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
-    /// one credit filled into the balance token bid: the balance token paid, the balance rate (bps of par) after this
-    /// credit's drop, and the module available left for the rest of the batch. mirrors EthRateFill
-    event BalanceRateFill(uint256 spent, uint256 rateBps, uint256 available);
+    /// one balance fill: the balance token paid to the seller for this credit, the artist royalty, and `available()`
+    /// left after both (emitted by CoreLib, declared here for the abi)
+    event BalanceFill(uint256 paid, uint256 toArtist, uint256 available);
     /// one eth fill in value mode: the eth paid, the shared instance rate (bps of par) after this credit's drop, and the
     /// pot left (emitted by CoreLib, declared here for the abi). mirrors EthRateFill
     event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
@@ -335,8 +346,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
         s.owner = owner_;
         s.payee = payee_;
-        // the artist receives the artist cut of nft sales. a forbidden target is refused; a zero artist with a nonzero
-        // saleToArtistBps is refused by CoreLib.setSettings below, so the launch config carries a real artist
+        // the artist receives the artist cut of nft sales and the royalty on purchases. a forbidden target is refused;
+        // a zero artist with a nonzero artist cut is refused by CoreLib.setSettings below, so the launch config carries
+        // a real artist
         if (artist_ != address(0) && _forbidden(artist_)) revert ForbiddenTarget();
         s.artist = artist_;
         COIN = coin;
@@ -530,6 +542,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.climbMultiplier();
     }
 
+    /// the shared instance now, bps of par: value mode's eth price state before the value multiply and the pot clamp
+    /// (`CoreLib.sharedRate`). no bearing on the balance bid, which is posted (decision 161)
+    function sharedRate() external view returns (uint256) {
+        return CoreLib.sharedRate();
+    }
+
     /// the balance token bid rate now, bps of par (par is a credit's score times the module unitPerPoint): the balance
     /// price state climbed and clamped to the module available(), at most 10_000. the web and the keeper read it
     function balanceRate() external view returns (uint256) {
@@ -653,7 +671,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                  DOORS
     //////////////////////////////////////////////////////////////*/
 
-    /// sell credits into the eth bid. each credit is paid `ethRate() * score / RATE_SCORE`. caller must have approved the
+    /// sell credits into the eth bid. each credit is paid `ethRate() * score / RATE_SCORE`, and the artist is paid
+    /// `buyToArtistBps` of that on top, once per batch with a forced push (decision 160). caller must have approved the
     /// core. The first purchase of a bucket always passes; a later credit above the bucket budget reverts the whole batch.
     /// reverts `Retired` after `migrate`
     function sellForEth(uint256[] calldata ids) external nonReentrant {
@@ -672,6 +691,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         // credit (decision 159, C08). `_openDoor` books first, so a checkpoint here credits no climb under a later pot
         _checkpoint();
         uint256 total;
+        uint256 artistTotal;
+        uint256 royaltyBps = s.settings.buyToArtistBps;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = _owned(ids[i]);
             CoreLib.checkReturn(s, id, msg.sender);
@@ -680,14 +701,19 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             // the pot is at or under the reserve, so the bid reads zero: a named refusal, not ZeroAmount from the spend
             if (bid == 0) revert PotTooSmall();
             uint256 pay = bid.mulDiv(score, RATE_SCORE);
-            _spend(pay, score);
-            _push(id, pay);
+            // the royalty rides on top: the seller receives the bid whole, the pot pays both, the cost basis records both.
+            // the bid read is already lowered to the room over `1 + royalty`, so the sum fits whenever the bid did
+            uint256 toArtist = pay * royaltyBps / BPS;
+            _spend(pay + toArtist, score);
+            _push(id, pay + toArtist);
             CREDITS.transferFrom(msg.sender, address(this), id);
             total += pay;
-            emit CreditBought(id, msg.sender, pay);
+            artistTotal += toArtist;
+            emit CreditBought(id, msg.sender, pay + toArtist, toArtist);
         }
         if (total < minOut) revert Slippage();
         SafeTransferLib.safeTransferETH(msg.sender, total);
+        _pushSaleCuts(artistTotal, 0);
     }
 
     /// buys credit `id` from the listing that an approved adapter prices. the adapter answers the one call the Core
@@ -695,8 +721,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// bytes. `value` is at most the bid for this credit (`bidOf(id)`, `ethRate() * score / RATE_SCORE`) and at most
     /// `ethPot` less the reserve. the Core must own `id` after the call and its credit balance must have risen by one. the
     /// caller is paid from `ethPot`: the gas of the call at the base fee, capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`,
-    /// plus `keeperFee`. the payment is at most the bid less `value` and at most `ethPot` less the reserve less `value`, so
-    /// the pot pays at most `ethRate() * score / RATE_SCORE` for the credit. reverts `Retired` after `migrate`
+    /// plus `keeperFee`. the artist is paid `buyToArtistBps` of `value` on top (decision 160). the payment is at most the
+    /// bid less `value` and at most the room less `value` less the royalty, so the pot pays at most the bid plus its
+    /// royalty for the credit, as `sellForEth` does. reverts `Retired` after `migrate`
     function buyListing(address adapter, uint256 id, bytes calldata params) external nonReentrant {
         uint256 gasStart = gasleft();
         _openDoor();
@@ -711,8 +738,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 score = _scoreOf(id);
         uint256 bid = _bid().mulDiv(score, RATE_SCORE);
         if (value == 0) revert ZeroAmount();
+        uint256 toArtist = value * s.settings.buyToArtistBps / BPS;
         uint256 room = CoreLib.room();
-        if (value > room) revert PotTooSmall();
+        if (value + toArtist > room) revert PotTooSmall();
         if (value > bid) revert AboveBid();
 
         uint256 ethBefore = address(this).balance;
@@ -725,18 +753,19 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (address(this).balance + value < ethBefore) revert BadCost();
 
         // the per credit bid can exceed the room for a score above 100 points; the keeper payment is capped so
-        // `value + paid` is at most the bid and at most `ethPot` less the reserve
+        // `value + paid` is at most the bid and `value + toArtist + paid` at most `ethPot` less the reserve
         Settings storage cfg = s.settings;
         uint256 paid = _payment(gasStart, BUYLISTING_OVERHEAD_GAS, BUYLISTING_GAS, cfg.keeperMaxBaseFee, cfg.keeperFee)
             .min(bid - value)
-            .min(room - value);
-        _spend(value + paid, score);
-        _push(id, value + paid);
+            .min(room - value - toArtist);
+        _spend(value + toArtist + paid, score);
+        _push(id, value + toArtist + paid);
         // the fill drop lands on the shared instance in value mode and on the eth instance outside it, so report the
         // rate the fill actually moved: the shared rate (bps of par) in value mode, the eth checkpoint rate otherwise
         uint256 rate = cfg.valueModeOn ? s.balance.rateAtCheckpoint : s.rateAtCheckpoint;
-        emit ListingBought(id, adapter, msg.sender, value, paid, rate);
+        emit ListingBought(id, adapter, msg.sender, value, paid, rate, toArtist);
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
+        _pushSaleCuts(toArtist, 0);
     }
 
     /// reads the quote of `adapter` for `id`: the call target, the eth value, the calldata, and the listing offerer the
@@ -1137,20 +1166,22 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit PayeeSet(to);
     }
 
-    /// sets the address the artist cut of nft sales is pushed to. the zero address is refused while `saleToArtistBps`
-    /// is nonzero, and a forbidden target is always refused. owner only
-    function setArtist(address to) external onlyOwner {
-        if (to == address(0)) {
-            if (s.settings.saleToArtistBps != 0) revert ZeroAddress();
-        } else if (_forbidden(to)) {
-            revert ForbiddenTarget();
-        }
-        s.artist = to;
-        emit ArtistSet(to);
+    /// sets the address the artist cut of nft sales and the artist royalty on purchases are pushed to. the zero
+    /// address is refused while `saleToArtistBps` or `buyToArtistBps` is nonzero, and a forbidden target is always
+    /// refused. owner only. the body is `CoreLib.setArtist`, called with the calldata untouched
+    function setArtist(address) external {
+        _toLib();
     }
 
-    /// pushes the artist cut to `artist` and the operator cut to the payee, both forced (solady), so a recipient that
-    /// cannot receive never blocks the sale
+    /// whether `t` is a forbidden target: the base set (Credits, Statements, the Core, the coin, the hook, the pool
+    /// manager, the factory, the locker, the escrow, Permit2, the position manager, the universal router) and every
+    /// module or token a `setBalanceModule` has ever selected. read by the library doors that take a target
+    function isForbidden(address t) external view returns (bool) {
+        return _forbidden(t);
+    }
+
+    /// pushes the artist cut or royalty to `artist` and the operator cut to the payee, both forced (solady), so a
+    /// recipient that cannot receive never blocks the sale or the purchase
     function _pushSaleCuts(uint256 toArtist, uint256 toOperator) private {
         if (toArtist != 0) SafeTransferLib.forceSafeTransferETH(s.artist, toArtist, PUSH_GAS);
         if (toOperator != 0) SafeTransferLib.forceSafeTransferETH(s.payee, toOperator, PUSH_GAS);
@@ -1232,11 +1263,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// recovered with this, not stranded (decision 159, C06). logs `TokenRescued`. no reentrancy guard: it is owner only,
     /// transfers a token the Core does not track, and does nothing after the transfer, so a token callback changes
     /// nothing here and any Core door it re-enters is itself guarded
-    function rescueToken(address token, address to, uint256 amount) external onlyOwner {
-        if (to == address(0)) revert ZeroAddress();
-        if (_forbidden(token)) revert ForbiddenTarget();
-        SafeTransferLib.safeTransfer(token, to, amount);
-        emit TokenRescued(token, to, amount);
+    /// the body is `CoreLib.rescueToken`, called with the calldata untouched (the owner check is there)
+    function rescueToken(address, address, uint256) external {
+        _toLib();
     }
 
     /// sets the successor that `migrate` sends the assets to. the zero address means no migration. it must have code.
@@ -1412,16 +1441,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.everBalanceTarget[token] = true;
         if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
         if (s.allowedAdapter[token]) delete s.allowedAdapter[token];
-        // outside value mode the instance does not climb while no usable module is set, so a module set while the bid is
-        // on opens it at the floor with a fresh clock; in value mode it carries the eth bid and stays (CoreLib)
-        _resetBalanceToFloor();
+        // the balance bid pays the posted price whatever the module (decision 161); in value mode the shared instance
+        // carries the eth bid and a module change leaves it
         emit BalanceModuleSet(module, token, unit);
-    }
-
-    /// on a module set, resets the balance bid instance to the floor `10_000 - balanceBidMarginBps` with a fresh clock
-    /// while the bid is on outside value mode. mirrors the library reset used by `setSettings`
-    function _resetBalanceToFloor() private {
-        CoreLib.resetBalanceToFloor();
     }
 
     /*//////////////////////////////////////////////////////////////

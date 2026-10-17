@@ -24,7 +24,7 @@ import { act, bump, bumpBalancePaid, idOf, lc, posOf, record, toJson, type At, t
 
 /** The transaction of the latest EthRateFill or ValueRateFill. Each eth bid credit is preceded by one in its transaction. */
 let ethFill: string | null = null;
-/** The credit of the latest balance bid CreditBought, completed by the BalanceRateFill that follows it. */
+/** The credit of the latest balance bid CreditBought, completed by the BalanceFill that follows it. */
 let balanceBuy: { tx: string; id: bigint; activityId: string } | null = null;
 /** $CC burned by the Core, per transaction; the Buyback event that follows reports it. */
 const coreBurn = new Map<string, bigint>();
@@ -64,6 +64,7 @@ async function enterPile(
   how: typeof credit.$inferInsert.acquiredHow,
   cost: bigint,
   seller: Hex | null,
+  royalty: bigint | null = null,
 ) {
   await ensureCredit(ctx, id);
   const eng = await ctx.db
@@ -77,6 +78,7 @@ async function enterPile(
     acquiredTx: e.transaction.hash,
     acquiredHow: how,
     seller,
+    royalty,
     balancePaid: null,
     pileOrder: eng.pileSeq,
     statementId: null,
@@ -108,44 +110,58 @@ ponder.on("Core:ValueRateFill", async ({ event, context }) => {
 
 ponder.on("Core:CreditBought", async ({ event, context }) => {
   await coreEvent(context, event, "CreditBought");
-  const { id, from, cost } = event.args;
+  // cost is the pile cost basis (eth bid: the price plus the artist royalty; balance bid: the eth floor basis);
+  // toArtist is the royalty in the route's currency (decision 160)
+  const { id, from, cost, toArtist } = event.args;
   const how = ethFill === event.transaction.hash ? "eth_bid" : "balance_bid";
   ethFill = null;
-  await enterPile(context, event, id, how, cost, lc(from));
+  await enterPile(context, event, id, how, cost, lc(from), how === "eth_bid" ? toArtist : null);
   await act(context, event, { kind: "credit_bought", creditId: id, account: lc(from), amount: cost, amount2: 0n });
   if (how === "balance_bid") balanceBuy = { tx: event.transaction.hash, id, activityId: idOf(event) };
   await bump(context, event, {
     creditsBought: 1n,
-    ...(how === "eth_bid" ? { creditsEth: 1n } : { creditsBalance: 1n }),
+    ...(how === "eth_bid" ? { creditsEth: 1n, toArtistBuys: toArtist } : { creditsBalance: 1n }),
   });
 });
 
-ponder.on("Core:BalanceRateFill", async ({ event, context }) => {
-  await coreEvent(context, event, "BalanceRateFill");
-  const { spent } = event.args;
+ponder.on("Core:BalanceFill", async ({ event, context }) => {
+  await coreEvent(context, event, "BalanceFill");
+  // paid is the seller's posted payout, toArtist the royalty, both in balance token (decisions 160, 161)
+  const { paid, toArtist } = event.args;
   // This column follows earlier BalanceModuleSet logs, never a latest-state RPC read.
   const { balanceToken } = await ensureEngine(context);
   if (balanceBuy?.tx === event.transaction.hash) {
-    await context.db.update(credit, { id: balanceBuy.id }).set({ balancePaid: spent, balancePaidToken: balanceToken });
-    await context.db.update(activity, { id: balanceBuy.activityId }).set({ amount2: spent, balanceToken });
+    await context.db
+      .update(credit, { id: balanceBuy.id })
+      .set({ balancePaid: paid, balancePaidToken: balanceToken, royalty: toArtist });
+    await context.db.update(activity, { id: balanceBuy.activityId }).set({ amount2: paid, balanceToken });
   }
   balanceBuy = null;
   if (balanceToken) {
-    await bumpBalancePaid(context, event, balanceToken, spent);
+    // the module's outflow: the payout and the royalty, raw units of the token
+    await bumpBalancePaid(context, event, balanceToken, paid + toArtist);
   } else {
     console.error(
-      `BalanceRateFill at ${event.transaction.hash} spent ${spent} while engine.balanceToken is null; the payout is credited to no token`,
+      `BalanceFill at ${event.transaction.hash} paid ${paid} while engine.balanceToken is null; the payout is credited to no token`,
     );
   }
 });
 
 ponder.on("Core:ListingBought", async ({ event, context }) => {
   await coreEvent(context, event, "ListingBought");
-  const { id, caller, cost, paid } = event.args;
+  // cost is the listing price, paid the keeper payment, toArtist the royalty on the price (decision 160); the pile
+  // cost basis is the three summed
+  const { id, caller, cost, paid, toArtist } = event.args;
   ethFill = null;
-  await enterPile(context, event, id, "listing", cost + paid, null);
-  await act(context, event, { kind: "listing_bought", creditId: id, account: lc(caller), amount: cost + paid, amount2: paid });
-  await bump(context, event, { creditsBought: 1n, creditsListing: 1n });
+  await enterPile(context, event, id, "listing", cost + toArtist + paid, null, toArtist);
+  await act(context, event, {
+    kind: "listing_bought",
+    creditId: id,
+    account: lc(caller),
+    amount: cost + toArtist + paid,
+    amount2: paid,
+  });
+  await bump(context, event, { creditsBought: 1n, creditsListing: 1n, toArtistBuys: toArtist });
 });
 
 ponder.on("Core:CreditAdopted", async ({ event, context }) => {

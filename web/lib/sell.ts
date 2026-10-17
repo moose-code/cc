@@ -67,43 +67,30 @@ export function replayEthFills(scores: bigint[], a: EthReplay): bigint[] {
 }
 
 export interface BalanceReplay {
-  rate: bigint; // balanceRate(): the balance bid rate now, bps of par
+  rate: bigint; // balanceRate(): the posted balance bid rate, 10000 - balanceDiscountBps, bps of par (decision 161)
   unit: bigint; // the module's unitPerPoint()
   scorePer100Points: bigint;
-  dropPer100PointsBps: bigint;
+  dropPer100PointsBps: bigint; // kept for the callers' shape; the posted bid does not drop
   dropFloorBps: bigint;
-  floorBps: bigint; // 10000 - balanceBidMarginBps
+  floorBps: bigint;
 }
 
-// Total balance token sellForBalance pays for the credits `scores` (in order) in one call. Each credit pays
-// score * unit * rate / 10000 and the fill drops the rate per credit by dropPer100PointsBps * score / scorePer100Points (one
-// rounding), held at or above the minute floor and the bid floor, mirroring CoreLib._drop. The quote is the first
-// fills of the minute, so the minute start is the starting rate. The available() clamp is not replayed: with ample
-// available it does not bind, and a module too short to pay the floor reverts PotTooSmall, which no minOut can clear.
+// Total balance token sellForBalance pays for the credits `scores` in one call: score * unit * rate / 10000 each, flat.
+// The posted bid does not drop on a fill and does not climb (decision 161), so the order does not matter. The
+// available() bound is not replayed: a batch whose payouts plus their artist royalties pass available() reverts
+// PotTooSmall, which no minOut can clear. The artist royalty rides on top from the module and never changes the seller's
+// payout (decision 160).
 export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
   return replayBalanceFills(scores, a).reduce((t, x) => t + x, 0n);
 }
 
 // What each credit of the batch pays in the balance token, in sell order; replayBalance is their sum.
 export function replayBalanceFills(scores: bigint[], a: BalanceReplay): bigint[] {
-  let r = a.rate;
-  const start = a.rate;
-  const fills: bigint[] = [];
-  for (const score of scores) {
-    fills.push((score * a.unit * r) / 10000n);
-    const denom = 10000n * a.scorePer100Points;
-    const fallNum = a.dropPer100PointsBps * score;
-    let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
-    const mfloor = (start * a.dropFloorBps) / 10000n;
-    if (dropped < mfloor) dropped = mfloor;
-    if (dropped < a.floorBps) dropped = a.floorBps;
-    r = dropped;
-  }
-  return fills;
+  return scores.map((score) => (score * a.unit * a.rate) / 10000n);
 }
 
 export interface ValueReplay {
-  rate: bigint; // balanceRate(): the shared instance now, bps of par
+  rate: bigint; // sharedRate(): the shared instance now, bps of par (value mode's eth price state; the balance bid is posted, decision 161)
   value: bigint; // controller.valuePerPoint(false): wei per point at the protected buy price
   pot: bigint; // ethPot plus the unbooked share the first book adds, less the reserve (Core.room)
   rateCap: bigint;

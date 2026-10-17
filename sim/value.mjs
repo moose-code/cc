@@ -1,7 +1,8 @@
 // value-referenced pricing study (design validation, docs/reviews/DESIGN-value-pricing-f1101cb.md).
 // usage: node sim/value.mjs [out.json]
-// the shared percentage bid is the shipped balance bid instance of engine.js (CoreLib's second Rate instance): a rate in
-// bps of par, floor 10000 - balanceBidMarginBps, cap balanceBidCapBps, the shared climb, recovery climb, drop and peak.
+// the shared percentage bid is the shipped shared instance of engine.js (CoreLib's second Rate instance, value mode's eth
+// price state): a rate in bps of par, floor 10000 - balanceBidMarginBps, cap balanceBidCapBps, the shared climb, recovery
+// climb, drop and peak, driven here through sharedRate and sharedFill. the balance bid itself is posted (decision 161).
 // par of a credit is score * V where V is the eth value of one point. nothing here changes the shipped rules; only the
 // cap, the climb and the drop vary, and the budget, the sale floor and the attacker are modelled on top.
 import fs from 'node:fs';
@@ -23,7 +24,7 @@ function makeBid(cell) {
   core.balancePot = 1e9;
   return core;
 }
-const pct = (core, t) => core.balanceRate(t) / 100; // the bid now, percent of par
+const pct = (core, t) => core.sharedRate(t) / 100; // the shared bid now, percent of par
 
 // the combined acquisition budget: an allowance in eth value that refills at `ratePerMin` of the capital per minute up to
 // `capFrac` of the capital. a purchase passes when it fits, or when the allowance is full (one otherwise admissible credit
@@ -69,7 +70,7 @@ function runOrganic(cell, lam, mean, sigma, hours = 24) {
       if (b >= q.r) {
         const cost = (q.pts * V * b) / 100;
         if (!budget.take(cost, t)) break;
-        const paid = core.xBuy(q.pts, t);
+        const paid = core.sharedFill(q.pts, t);
         if (!(paid > 0)) break;
         fills++; pts += q.pts; paidPts += paid / V; prem += Math.max(0, paid / V - q.pts); if (paid / V > q.pts) premPts += q.pts;
         queue.splice(i, 1); continue;
@@ -92,7 +93,7 @@ function runDump(cell, count, bucket) {
     for (;;) {
       const p = inv[i], b = pct(core, t);
       if (!budget.take((p * V * b) / 100, t)) break;
-      const paid = core.xBuy(p, t);
+      const paid = core.sharedFill(p, t);
       if (!(paid > 0)) break;
       pts += p; paidPts += paid / V; if (++i === count) { done = t; break; }
     }
@@ -110,11 +111,11 @@ function loopGain(cell, s, rule) {
   const cap = cell.cap / BPS;
   // the attacker first dumps credits to push the bid to the floor (paid for them at the bid, not counted here)
   let t = 0;
-  for (let i = 0; i < 20 && pct(core, t) > cell.floor / 100 + 1e-9; i++) core.xBuy(REF_PTS, t);
+  for (let i = 0; i < 20 && pct(core, t) > cell.floor / 100 + 1e-9; i++) core.sharedFill(REF_PTS, t);
   const bidLow = pct(core, t) / 100;
   const floor = rule === 'ceiling' ? (1 + s) * cap : Math.max(1, (1 + s) * bidLow);
   // time for the bid to climb from the post-drop level back to the cap, measured on the instance
-  core.xBuy(REF_PTS, t); // leave the bid one drop under the cap
+  core.sharedFill(REF_PTS, t); // leave the bid one drop under the cap
   let t1 = t;
   while (pct(core, t1) < cell.cap / 100 - 1e-9 && t1 < 7 * 86400) t1 += 1;
   // climb from the floor to the cap

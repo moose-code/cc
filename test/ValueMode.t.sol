@@ -382,45 +382,48 @@ contract ValueModeTest is ValueBase {
         assertEq(core.bidOf(ids[0]), core.ethRate() * _scoreOf(ids[0]) / RATE_SCORE, "per credit by score");
     }
 
-    // promise: SPEC 4 an eth fill and a balance fill drop the one shared instance; switching currency cannot reset it
-    function test_bothRoutesDropTheOneInstance() public {
+    // promise: SPEC 4 an eth fill drops the shared instance and a balance fill leaves it: the balance route pays the
+    // posted price and never reads the instance (decision 161); the posted rate never moves
+    function test_ethFillsDropTheInstanceAndBalanceFillsDoNot() public {
         _valueOn();
         _fundPot(20 ether);
         _warp(30 minutes);
-        uint256 r0 = core.balanceRate();
+        uint256 e0 = core.ethPrice();
+        uint256 posted = core.balanceRate();
         uint256[] memory ids = _credits(seller, 2);
         vm.prank(seller);
         core.sellForEth(_one(ids[0]));
-        uint256 r1 = core.balanceRate();
-        assertLt(r1, r0, "an eth fill drops the shared instance");
+        uint256 e1 = core.ethPrice();
+        assertLt(e1, e0, "an eth fill drops the shared instance");
+        assertEq(core.balanceRate(), posted, "the posted balance rate does not move on an eth fill");
         vm.prank(seller);
         core.sellForBalance(_one(ids[1]));
-        uint256 r2 = core.balanceRate();
-        assertLt(r2, r1, "a balance fill drops the same instance");
-        assertEq(core.ethRate(), _valueRate(r2), "and the eth bid reads it");
+        assertEq(core.ethPrice(), e1, "a balance fill leaves the shared instance");
+        assertEq(core.balanceRate(), posted, "nor does it move the posted rate");
     }
 
     // promise: SPEC 4 in value mode the shared instance climbs with the balance bid off and with no usable module, and
-    // only the switch and the bid turning on reset it: a settings edit and a module set leave it
-    function test_onlyTheSwitchAndTheBidTurningOnReset() public {
+    // only the switch resets it: a settings edit, a module set and the bid turning on leave it (decision 161)
+    function test_onlyTheSwitchResets() public {
         Settings memory s = core.settings();
         s.balanceBidOn = false;
         _setSettings(s);
         _valueOn();
         _warp(30 minutes);
-        uint256 climbed = core.balanceRate();
-        assertGt(climbed, 9_000, "the shared instance climbs in value mode with the balance bid off");
+        uint256 climbed = core.ethPrice();
+        assertGt(climbed, _valueRate(9_000), "the shared instance climbs in value mode with the balance bid off");
         s = core.settings();
         s.climbPerMinBps = 50;
         s.recoveryClimbPerMinBps = 50;
         _setSettings(s);
-        assertEq(core.balanceRate(), climbed, "a settings edit does not reset it");
+        assertEq(core.ethPrice(), climbed, "a settings edit does not reset it");
         _setBalanceModule(address(mod));
-        assertEq(core.balanceRate(), climbed, "a module set does not reset it");
+        assertEq(core.ethPrice(), climbed, "a module set does not reset it");
         s = core.settings();
         s.balanceBidOn = true;
         _setSettings(s);
-        assertEq(core.balanceRate(), 9_000, "the bid turning on resets it to the floor");
+        assertEq(core.ethPrice(), climbed, "the bid turning on does not reset it");
+        assertEq(core.balanceRate(), 9_000, "the posted balance rate throughout");
     }
 
     // promise: SPEC 4 an unusable quote degrades the eth bid to the last good rate instead of halting it (decision 159,
@@ -556,7 +559,7 @@ contract ValueModeTest is ValueBase {
         (paid, back) = _trip(ids[k++], false);
         _assertLoses(paid, back, "eth after 20 idle minutes");
         _warp(6 hours);
-        assertEq(core.balanceRate(), 11_000, "the shared instance climbed to the cap");
+        assertEq(core.sharedRate(), 11_000, "the shared instance climbed to the cap");
         (paid, back) = _trip(ids[k++], false);
         _assertLoses(paid, back, "eth at the cap");
         _warp(6 hours);

@@ -41,6 +41,7 @@ function state(over: Partial<State> = {}): State {
       redeemOn: true,
       spendCapBps: 100,
       bucketSeconds: 60,
+      buyToArtistBps: 250,
     },
     spend: { bucket: 166n, budget: parseEther("0.1"), spent: 0n },
     ethPot: parseEther("10"),

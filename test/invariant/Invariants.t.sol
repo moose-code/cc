@@ -520,7 +520,8 @@ abstract contract InvariantsBase is InvariantFixture {
         assertLe(price, _ethCap(pot + pending), "the price state is above the rate cap and the ceiling");
         assertLe(rate, pot + pending > res ? pot + pending - res : 0, "the read is above the pot and the pending income less the reserve");
         if (pending == 0) {
-            uint256 room = pot > res ? pot - res : 0;
+            // the bid's room is the pot less the reserve over 1 + buyToArtistBps / 10_000 (decision 160)
+            uint256 room = (pot > res ? pot - res : 0) * 10_000 / (10_000 + core.settings().buyToArtistBps);
             assertEq(rate, price < room ? price : room, "the read is not the price state lowered to the pot less the reserve");
         } else {
             uint256 bookedRoom = pot > res ? pot - res : 0;

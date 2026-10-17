@@ -22,6 +22,12 @@ import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 abstract contract CoreBase is Fixture {
     using stdStorage for StdStorage;
 
+    /// the unit promises read the price alone: the artist royalty on purchases is test/ArtistRoyalty.t.sol's
+    function _settings() internal view override returns (Settings memory s) {
+        s = super._settings();
+        s.buyToArtistBps = 0;
+    }
+
     /// @dev the account that sells credits in these suites
     address internal alice;
 

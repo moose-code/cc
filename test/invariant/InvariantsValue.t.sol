@@ -146,7 +146,8 @@ contract ValueHandler is Test {
             uint256 paid = a.balance - before;
             if (paid > bid) ++g2;
             if (paid > room) ++g7;
-            if (coreBefore - address(core).balance != paid) ++g1;
+            // the seller's payment and its artist royalty leave the core (decision 160)
+            if (coreBefore - address(core).balance != paid + paid * core.settings().buyToArtistBps / 10_000) ++g1;
             ++ethFills;
             _trip(id, paid);
         } catch (bytes memory why) {
@@ -312,7 +313,7 @@ contract InvariantsValue is ValueBase {
         assertEq(h.gTrip() + h.g1() + h.g2() + h.g7() + h.gBalance() + h.gRefusal(), 0, "no broken promise");
     }
 
-    /// 1. eth leaves the core in value mode only as the seller's payment of an eth fill, and never on a balance fill
+    /// 1. eth leaves the core in value mode only as the seller's payment of an eth fill plus its artist royalty, and never on a balance fill
     // promise: 01 eth only leaves by allowed paths, in value mode
     function invariant_v01_ethOnlyLeavesAsThePayment() public view {
         assertEq(h.g1(), 0, "eth left the core other than as the seller's payment");
@@ -361,7 +362,7 @@ contract InvariantsValue is ValueBase {
     // promise: 19 the read is within its bounds, in value mode
     function invariant_v19_readBounds() public view {
         Settings memory s = core.settings();
-        uint256 bal = core.balanceRate();
+        uint256 bal = core.sharedRate();
         assertGe(bal, 10_000 - s.balanceBidMarginBps, "the shared instance is under its floor");
         assertLe(bal, s.balanceBidCapBps, "the shared instance is over the cap");
         (uint256 v, bool ok) = ctl.valuePerPoint(false);
