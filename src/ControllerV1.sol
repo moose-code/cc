@@ -65,12 +65,16 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// `uint128.max` unit read, or on a zero pool read.
 /// the protected price (decision 148): the controller keeps a reference price of the balance token, set to the pool spot
 /// by `setBalancePoolKey` and moved toward the spot by `refreshReference()` and the sale doors by at most
-/// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update. buys price off
-/// `min(spot, reference * (10_000 + tolBps) / 10_000)`, sales off `max(spot, reference * (10_000 - tolBps) / 10_000)`;
-/// the reference price is usable while it is at most `referenceMaxStale` old, the pool holds at least `minLiquidity` and the
-/// unit read succeeds. in value mode (the Core's `valueModeOn`) `valueOf` is the sale price value with the floor rate and
-/// cost terms dropped, a statement's reference is that value times `floorMultBps()` and its curve rests at 10_000 of it,
-/// and the price views and the sale doors revert `NoQuote` while the quote is unusable
+/// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update. a refresh runs at
+/// most once per block and stores the spot and liquidity it sampled. buys price off `min(spotSample, reference *
+/// (10_000 + tolBps) / 10_000)`, sales off `max(spotSample, reference * (10_000 - tolBps) / 10_000)`, where `spotSample`
+/// is the spot taken at a prior block's refresh, never the live spot, so a same-block pool move cannot change the quote.
+/// the reference price is usable while the sample is at most `referenceMaxStale` old, the two most recent liquidity
+/// samples both hold `minLiquidity` and the unit read succeeds. in value mode (the Core's `valueModeOn`) `valueOf` is the
+/// sale price value with the floor rate and cost terms dropped, a statement's reference is that value times
+/// `floorMultBps()` and its curve rests at 10_000 of it, and the price views and the sale doors revert `NoQuote` while
+/// the quote is unusable. the views and the sale doors run a read-only projected refresh so a view equals the price the
+/// same-block sale door charges (decision 159)
 contract ControllerV1 is IController {
     using StateLibrary for IPoolManager;
 
@@ -148,6 +152,17 @@ contract ControllerV1 is IController {
     uint256 public referencePrice;
     /// the sample time of `referencePrice`: the moment the stored reference was sampled from the spot
     uint40 public referenceTime;
+    /// the pool spot sampled at the two most recent refreshes, newest in `spotSampleA`, wei per 1e18 base units. the
+    /// executable quote clamps the band to the sample taken in a prior block, so a same-block pool move cannot change
+    /// the bid or the ask
+    uint256 private spotSampleA;
+    uint256 private spotSampleB;
+    /// the pool liquidity sampled at the two most recent refreshes, newest in `liqSampleA`. the quote is usable only
+    /// while both hold `minLiquidity`, so liquidity added for one block cannot open the quote
+    uint128 private liqSampleA;
+    uint128 private liqSampleB;
+    /// the block of the last reference refresh. a refresh runs at most once per block
+    uint48 private lastRefreshBlock;
 
     constructor(address core, Sale memory sale, Credit memory credit, Quote memory quote_) {
         CORE = ICoreViews(core);
@@ -228,7 +243,20 @@ contract ControllerV1 is IController {
         (uint256 spot,) = _spot();
         uint256 band = expectedSpot * quote.tolBps / BPS;
         if (spot < expectedSpot - band || spot > expectedSpot + band) revert BadSetting("spot");
+        // seed both sample slots from the live spot and liquidity, so the first quote reads a sample from this block
+        uint128 liq = _sampleLiq();
+        spotSampleA = spot;
+        spotSampleB = spot;
+        liqSampleA = liq;
+        liqSampleB = liq;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        lastRefreshBlock = uint48(block.number);
         _setRef(spot, spot);
+    }
+
+    /// the pool liquidity of the balance token pool now, the sample the quote's `minLiquidity` gate reads
+    function _sampleLiq() private view returns (uint128) {
+        return IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(balancePoolKey.toId());
     }
 
     /// sets the reference price settings at once. `referenceStepBps` 0 to 10_000, `tolBps` 0 to 9_999
@@ -279,6 +307,9 @@ contract ControllerV1 is IController {
     /// under frequent calls; a nonzero move resets the sample to now. repeated calls gain nothing beyond the rate.
     /// returns true when it updated the reference, so the Core's `refreshReference` door pays the caller only for work
     function refreshReference() public returns (bool) {
+        // at most one refresh per block, so a sample the quote clamps to is always from a prior block
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (uint48(block.number) == lastRefreshBlock) return false;
         uint256 ref = referencePrice;
         if (ref == 0) return false;
         Quote memory q = quote;
@@ -286,7 +317,7 @@ contract ControllerV1 is IController {
         uint256 elapsed = block.timestamp - referenceTime;
         if (elapsed < q.referenceMinSeconds) return false;
         (uint256 spot, bool ok) = _spot();
-        if (!ok) return false;
+        if (!ok || spot == 0) return false;
         uint256 move = uint256(q.referenceRateBpsPerHour) * elapsed / 1 hours;
         if (move > q.referenceStepBps) move = q.referenceStepBps;
         // a move that floors to zero leaves the sample untouched, so the sub bps time keeps accumulating until the next
@@ -294,6 +325,14 @@ contract ControllerV1 is IController {
         if (move == 0) return false;
         uint256 hi = ref * (BPS + move) / BPS;
         uint256 lo = ref * (BPS - move) / BPS;
+        // shift the sample history: the most recent spot and liquidity become the previous, this block's become the most
+        // recent. the quote clamps to the previous sample and checks `minLiquidity` at both
+        spotSampleB = spotSampleA;
+        liqSampleB = liqSampleA;
+        spotSampleA = spot;
+        liqSampleA = _sampleLiq();
+        // forge-lint: disable-next-line(unsafe-typecast)
+        lastRefreshBlock = uint48(block.number);
         _setRef(spot > hi ? hi : spot < lo ? lo : spot, spot);
         return true;
     }
@@ -318,27 +357,52 @@ contract ControllerV1 is IController {
     }
 
     /// the buy price, the sale price and the unit, wei per 1e18 base units and base units per score unit, and whether the
-    /// reference price is usable: a reference set, at most `referenceMaxStale` old with it nonzero, pool liquidity at least
-    /// `minLiquidity`, a spot and a unit read
-    function _protected() private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
-        uint256 ref = referencePrice;
+    /// reference price is usable. the band is centred on the reference and clamped to the pool spot sampled at the last
+    /// refresh (a prior block), never the live spot, so a same-block pool move cannot change the quote. the quote is
+    /// usable with a reference set, the sample at most `referenceMaxStale` old, both of the two most recent liquidity
+    /// samples at least `minLiquidity`, a balance module set and a unit read.
+    /// with `project` true the views and the sale doors run the read-only equivalent of `refreshReference` first, so a
+    /// view read in the same block as a sale door's refresh equals the price the door charges (decision 159, C03). the
+    /// Core's eth bid reads it with `project` false, so a lapsed refresh reads stale and the bid falls back
+    function _protected(bool project) private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
         Quote memory q = quote;
-        if (ref == 0 || q.referenceMaxStale == 0 || block.timestamp - referenceTime > q.referenceMaxStale) {
-            return (0, 0, 0, false);
+        uint256 ref = referencePrice;
+        if (ref == 0 || q.referenceMaxStale == 0) return (0, 0, 0, false);
+        uint256 t = referenceTime;
+        uint256 sA = spotSampleA;
+        uint256 sB = spotSampleB;
+        uint256 lA = liqSampleA;
+        uint256 lB = liqSampleB;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (project && uint48(block.number) != lastRefreshBlock && block.timestamp - t >= q.referenceMinSeconds) {
+            (uint256 spot, bool priced) = _spot();
+            if (priced && spot != 0) {
+                uint256 move = uint256(q.referenceRateBpsPerHour) * (block.timestamp - t) / 1 hours;
+                if (move > q.referenceStepBps) move = q.referenceStepBps;
+                if (move != 0) {
+                    uint256 hi = ref * (BPS + move) / BPS;
+                    uint256 lo = ref * (BPS - move) / BPS;
+                    ref = spot > hi ? hi : spot < lo ? lo : spot;
+                    sB = sA;
+                    lB = lA;
+                    sA = spot;
+                    lA = _sampleLiq();
+                    t = block.timestamp;
+                }
+            }
         }
-        (uint256 spot, bool priced) = _spot();
-        if (!priced) return (0, 0, 0, false);
-        if (IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(balancePoolKey.toId()) < q.minLiquidity) {
-            return (0, 0, 0, false);
-        }
+        if (block.timestamp - t > q.referenceMaxStale) return (0, 0, 0, false);
+        if (lA < q.minLiquidity || lB < q.minLiquidity) return (0, 0, 0, false);
+        // the clamp spot is a prior block's sample: the previous one when the latest was taken this block
+        uint256 spotNow = t == block.timestamp ? sB : sA;
         address module = CORE.balanceModule();
         if (module == address(0)) return (0, 0, 0, false);
         (unit, ok) = _liveUnit(module);
         if (!ok) return (0, 0, 0, false);
         uint256 up = ref * (BPS + q.tolBps) / BPS;
         uint256 down = ref * (BPS - q.tolBps) / BPS;
-        pBuy = spot < up ? spot : up;
-        pSell = spot > down ? spot : down;
+        pBuy = spotNow < up ? spotNow : up;
+        pSell = spotNow > down ? spotNow : down;
     }
 
     /// the wei value of one point at the protected price, see `IController.valuePerPoint`
@@ -346,7 +410,9 @@ contract ControllerV1 is IController {
         uint256 pBuy;
         uint256 pSell;
         uint256 unit;
-        (pBuy, pSell, unit, ok) = _protected();
+        // the Core's eth bid reads the stored reference without a projected refresh, so a lapsed refresh reads stale and
+        // the Core falls back to the eth instance rather than halting (decision 159, C02)
+        (pBuy, pSell, unit, ok) = _protected(false);
         if (!ok) return (0, false);
         value = forSale
             ? FullMath.mulDivRoundingUp(POINT_UNIT * unit, pSell, 1e18)
@@ -421,7 +487,7 @@ contract ControllerV1 is IController {
 
     function _valueOf(uint256 points, Settings memory cfg) private view returns (uint256) {
         if (cfg.valueModeOn) {
-            (, uint256 pSell, uint256 unit, bool ok) = _protected();
+            (, uint256 pSell, uint256 unit, bool ok) = _protected(true);
             if (!ok) revert NoQuote();
             return FullMath.mulDivRoundingUp(points * unit, pSell, 1e18);
         }
