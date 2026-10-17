@@ -213,14 +213,13 @@ test("listing: the reserve bounds the sweep, not the processing", () => {
   assert.match(reason(covered, "buyListing"), /PotTooSmall: price above ethPot less the reserve/);
 });
 
-test("listing: in value mode an unusable quote skips the sweep with NoQuote, processing still runs", () => {
+// promise: a lapsed value quote degrades the eth bid instead of halting it, so the keeper still sweeps (decision 159, C02)
+test("listing: in value mode an unusable quote degrades the bid and still sweeps", () => {
   const p = policy({}, 0);
-  const halted = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
-  assert.deepEqual(doorsOf(halted).filter((d) => d === "buyListing"), []);
-  assert.match(reason(halted, "buyListing"), /NoQuote/);
-  assert.ok(doorsOf(halted).includes("compose"), "compose does not read the quote");
+  const degraded = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
+  assert.ok(doorsOf(degraded).includes("buyListing"), "the sweep runs at the degraded bid, not NoQuote-halted");
   const live = decide(state({ valueModeOn: true, noQuote: false }), [listing()], gas("1"), p, new Map());
-  assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps as before");
+  assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps the same way");
 });
 
 // ------------------------------------------------------------------ refreshReference
@@ -245,8 +244,9 @@ test("refreshReference: due referenceMinSeconds after the last sample, never bef
   assert.match(reason(high, "refreshReference"), /above the door ceiling/);
 });
 
-// promise: a refresh intended with only unbooked hook income must be paid by the Core's booked-pot rule
-test("refreshReference: pending-only cold pot is projected as paid while the Core pays zero", () => {
+// promise: a refresh with only unbooked hook income is projected as paid from the pot share, matching the Core's
+// book-first-then-pay rule (decision 159, C02)
+test("refreshReference: pending-only cold pot is projected as paid from the booked pot share", () => {
   const s = state({
     timestamp: 1_600n,
     launchedAt: 1_000n,
@@ -268,7 +268,7 @@ test("refreshReference: pending-only cold pot is projected as paid while the Cor
   const intended = r.calls[0];
   assert.ok(intended.payment > 0n);
   assert.equal(recheck(intended, s, undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true);
-  assert.equal(s.ethPot, 0n, "CoreLib.refreshReference caps the actual payment at this empty booked pot");
+  assert.equal(s.ethPot, 0n, "booked pot is empty; the Core books the pending pot share first, then pays from it");
   const afterLatch = state({ ...s, payeeOn: true, ethPot: 1n, potWithPending: parseEther("0.000405") + 1n, pendingIncome: parseEther("0.00045"), lastBookAt: 1_000n });
   const latched = decide(afterLatch, [], gas("1"), p, new Map());
   assert.deepEqual(doorsOf(latched), ["refreshReference"]);
