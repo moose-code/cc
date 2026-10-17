@@ -374,6 +374,28 @@ One path, as in shapes PR #59 and the owner's deploy rule:
 
 Prerequisites before mainnet: `deployments/1.json` with the mainnet Core, deploy block, controller block and module block; the collection deploy blocks.
 
+### 10.1 running the chain 1 indexer directly (fork rehearsal)
+
+`indexer/` is its own npm package, outside the root workspaces, so a run installs its dependencies with `npm ci` in `indexer/`.
+
+A chain 1 run with Postgres reads three values the local PGlite path supplies on its own:
+
+- `DATABASE_URL`, the Postgres connection string (`ponder.config.ts` requires it on a real chain).
+- `DATABASE_SCHEMA`, the schema name. `ponder start` with Postgres requires it; the Fly path passes it from `indexer/env/mainnet.env`, and a direct `ponder start` sets it in the environment or with `--schema`.
+- the collection and strategy start blocks `CREDITS_START_BLOCK` (26037292), `STATEMENTS_START_BLOCK` (26100733) and `STRATEGY_START_BLOCK` (26037623). Chain 1 requires each; the local path defaults them from the Core deploy block.
+
+The chain 1 transport is the public endpoint list of section 7.1 through `fallbackTransport`. The record's `rpcUrl` and `RPC_URL` apply to the local chain (id 31337) through `guardedHttp`, so a fork is indexed through the local path at chain id 31337. `PONDER_RPC_URL_1` joins the chain 1 list as the last reserve, after every public endpoint. A full history backfill from block 26037292 is bounded by the public endpoint rate caps: the Ponder log reports `Unable to find available JSON-RPC provider` and the fetch of each 5000 block window grows to tens of seconds, so the full backfill wants an archive endpoint with headroom above the section 7.1 caps.
+
+A direct run against a fresh database:
+
+```sh
+cd indexer && npm ci
+CHAIN_ID=1 DEPLOYMENT_RECORD=../deployments/1.json \
+  DATABASE_URL=postgresql:///<db> DATABASE_SCHEMA=<schema> \
+  CREDITS_START_BLOCK=26037292 STATEMENTS_START_BLOCK=26100733 STRATEGY_START_BLOCK=26037623 \
+  node_modules/.bin/ponder start      # /graphql, /sql and /status on PORT (default 42069)
+```
+
 ## 11. web changes
 
 The browser keeps the on-chain read paths as an automatic fallback for every indexer read (owner decision 133, 2026-10-15). Nothing may break while the indexer is down.
