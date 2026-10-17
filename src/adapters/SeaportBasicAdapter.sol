@@ -13,7 +13,8 @@ interface ICoreOwner {
 /// prices a Seaport 1.6 basic order (`fulfillBasicOrder_efficient_6GL6yc`) that sells one credit for native eth.
 /// `params` is `abi.encode(BasicOrderParameters)`. the order must be an open route (`ETH_TO_ERC721_FULL_OPEN` or
 /// `ETH_TO_ERC721_PARTIAL_OPEN`), which ignore the order's zone. the eth goes to the order's offerer and to the additional
-/// recipients, each of which is the offerer or an allowlisted address. `value` is the sum of every payout. the allowlist is set at
+/// recipients, each of which is the offerer or an allowlisted address. `value` is the sum of every payout. the quote
+/// reports the order offerer, which the Core's return lock reads. the allowlist is set at
 /// construction and by the owner of the Core. read only.
 contract SeaportBasicAdapter is IListingAdapter {
     error WrongToken();
@@ -55,7 +56,7 @@ contract SeaportBasicAdapter is IListingAdapter {
     function price(uint256 id, bytes calldata params)
         external
         view
-        returns (address target, uint256 value, bytes memory data)
+        returns (address target, uint256 value, bytes memory data, address offerer)
     {
         BasicOrderParameters memory p = abi.decode(params, (BasicOrderParameters));
         if (p.offerToken != CREDITS) revert WrongToken();
@@ -70,6 +71,6 @@ contract SeaportBasicAdapter is IListingAdapter {
             if (recipient != p.offerer && !allowedRecipient[recipient]) revert RecipientNotAllowed(recipient);
             value += p.additionalRecipients[i].amount;
         }
-        return (SEAPORT, value, abi.encodeCall(ISeaport.fulfillBasicOrder_efficient_6GL6yc, (p)));
+        return (SEAPORT, value, abi.encodeCall(ISeaport.fulfillBasicOrder_efficient_6GL6yc, (p)), p.offerer);
     }
 }

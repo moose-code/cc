@@ -23,6 +23,6 @@ interface ISeaportBasicAdapter {
     function price(uint256 id, bytes memory params)
         external
         view
-        returns (address target, uint256 value, bytes memory data);
+        returns (address target, uint256 value, bytes memory data, address offerer);
     function setAllowedRecipient(address recipient, bool allowed) external;
 }

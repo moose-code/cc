@@ -260,7 +260,7 @@ test("seaport: the live OpenSea fetch returns orders the adapter quotes", { skip
   const r = await fetchListings({ key: process.env.OPENSEA_API_KEY!, rpc: RPC, adapter: rec.seaportAdapter, pages: 1, sign: 5, horizon: 86_400 * 365 });
   console.log(`  opensea: fetched ${r.fetched}, fit ${r.fit}, signed ${r.orders.length}, dropped ${JSON.stringify(r.dropped)}`);
   for (const o of r.orders) {
-    const q = await client.readContract({ address: rec.seaportAdapter, abi: parseAbi(["function price(uint256 id, bytes params) view returns (address, uint256, bytes)"]), functionName: "price", args: [BigInt(o.id), encodeBasicOrder(o.params)] });
+    const q = await client.readContract({ address: rec.seaportAdapter, abi: parseAbi(["function price(uint256 id, bytes params) view returns (address, uint256, bytes, address)"]), functionName: "price", args: [BigInt(o.id), encodeBasicOrder(o.params)] });
     assert.equal(q[1], BigInt(o.price), "the adapter quotes the listed price");
   }
 });

@@ -131,8 +131,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error Retired();
     /// `swapCredit`: the incoming credit's score is below the pile credit's score
     error ScoreTooLow(uint256 inId, uint256 outId);
-    // `ReturnLocked(id, until)`, a credit the engine sold through `sellCreditTo` offered back to an intake door before the
-    // sale time plus `returnLockSeconds`, is `CoreLib.ReturnLocked`, raised by `CoreLib.checkReturn` inside the Core
+    // `ReturnLocked(id, until)`, a credit the engine sold through `sellCreditTo` offered back to an intake door by its
+    // buyer before the sale time plus `returnLockSeconds`, is `CoreLib.ReturnLocked`, raised by `CoreLib.checkReturn`
+    // inside the Core
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
 
@@ -653,7 +654,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 total;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = _owned(ids[i]);
-            CoreLib.checkReturn(s, id);
+            CoreLib.checkReturn(s, id, msg.sender);
             uint256 score = _scoreOf(id);
             uint256 bid = _bid();
             // the pot is at or under the reserve, so the bid reads zero: a named refusal, not ZeroAmount from the spend
@@ -681,9 +682,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _openDoor();
         if (!s.allowedAdapter[adapter]) revert AdapterNotAllowed();
         if (id == 0) revert ZeroId();
-        CoreLib.checkReturn(s, id);
         if (CREDITS.ownerOf(id) == address(this)) revert AlreadyOwned();
-        (address target, uint256 value, bytes memory data) = _quote(adapter, id, params);
+        (address target, uint256 value, bytes memory data, address offerer) = _quote(adapter, id, params);
+        // the return lock reads the listing offerer: a credit the engine sold is refused while its buyer offers it back
+        CoreLib.checkReturn(s, id, offerer);
         if (_forbidden(target)) revert ForbiddenTarget();
         _checkpoint();
         uint256 score = _scoreOf(id);
@@ -714,12 +716,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (paid != 0) SafeTransferLib.safeTransferETH(msg.sender, paid);
     }
 
-    /// reads the quote of `adapter` for `id`. a revert, a gas cap overrun, an answer under three words or over
-    /// `QUOTE_MAX` bytes reverts `BadQuote`
+    /// reads the quote of `adapter` for `id`: the call target, the eth value, the calldata, and the listing offerer the
+    /// return lock reads. a revert, a gas cap overrun, an answer under four words or over `QUOTE_MAX` bytes reverts
+    /// `BadQuote`
     function _quote(address adapter, uint256 id, bytes calldata params)
         private
         view
-        returns (address target, uint256 value, bytes memory data)
+        returns (address target, uint256 value, bytes memory data, address offerer)
     {
         bytes memory input = abi.encodeCall(IListingAdapter.price, (id, params));
         bool ok;
@@ -727,7 +730,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         assembly ("memory-safe") {
             ok := staticcall(QUOTE_GAS, adapter, add(input, 0x20), mload(input), 0, 0)
             let n := returndatasize()
-            ok := and(ok, and(iszero(lt(n, 0x60)), iszero(gt(n, QUOTE_MAX))))
+            ok := and(ok, and(iszero(lt(n, 0x80)), iszero(gt(n, QUOTE_MAX))))
             if ok {
                 out := mload(0x40)
                 mstore(out, n)
@@ -736,7 +739,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             }
         }
         if (!ok) revert BadQuote();
-        (target, value, data) = abi.decode(out, (address, uint256, bytes));
+        (target, value, data, offerer) = abi.decode(out, (address, uint256, bytes, address));
     }
 
     /// sell credits into the balance token bid. the balance side only. reverts `Retired` after `migrate`. the body is
@@ -960,9 +963,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 cost = c.cost;
         if (msg.value < cost * s.settings.saleFloorBps / BPS) revert BelowFloor();
         _pull(id);
-        // record the sale time so every intake door refuses this credit back within the return lock (no round trip into
-        // a bid)
-        s.creditSoldAt[id] = block.timestamp;
+        // record the buyer in the high 160 bits and the sale time in the low 96, so every intake door refuses this
+        // credit while the same buyer offers it back within the return lock (no round trip into a bid)
+        s.creditSoldAt[id] = (uint256(uint160(buyer)) << 96) | uint96(block.timestamp);
         CREDITS.transferFrom(address(this), buyer, id);
         // the artist and operator cuts come off the payment; the credit cost basis share of the rest goes to the pot,
         // the remainder to the buyback. the pot share is at most the rest
