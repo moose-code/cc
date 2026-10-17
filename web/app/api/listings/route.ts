@@ -16,6 +16,10 @@ const PAGE = 100; // OpenSea's maximum page size
 const MAX_LISTINGS = 200; // the cheapest listings kept per cache window (two pages); sent as `max` for the listings page caption
 const CACHE_MS = 20_000;
 const FULFILL_CACHE_MS = 10_000;
+const MAX_FULFILL_INFLIGHT = 4; // concurrent OpenSea fulfillment POSTs across all clients
+const BUCKET_BURST = 10; // fulfill requests a client can send back to back
+const BUCKET_REFILL_MS = 2_000; // one request regained per interval
+const MAX_BUCKETS = 1_000; // tracked clients; the oldest is dropped past this
 
 interface Out {
   /** open ETH listings of the collection, cheapest first; `price` is the wei the buyer pays in total */
@@ -35,7 +39,24 @@ interface Fulfill {
 
 let cache: { at: number; out: Out } | undefined;
 let inflight: Promise<Out> | undefined;
+// Insertion-ordered LRU: a hit is re-inserted last, the first key is evicted past MAX_LISTINGS.
 const fulfilled = new Map<string, { at: number; out: Promise<Fulfill> }>();
+let fulfillActive = 0;
+const buckets = new Map<string, { tokens: number; at: number }>();
+
+// Token bucket per client key. Returns false when the client is over its rate.
+function allow(key: string): boolean {
+  const now = Date.now();
+  const b = buckets.get(key) ?? { tokens: BUCKET_BURST, at: now };
+  b.tokens = Math.min(BUCKET_BURST, b.tokens + (now - b.at) / BUCKET_REFILL_MS);
+  b.at = now;
+  buckets.delete(key);
+  buckets.set(key, b);
+  while (buckets.size > MAX_BUCKETS) buckets.delete(buckets.keys().next().value!);
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
+}
 
 const lc = (a: string) => a.toLowerCase();
 
@@ -115,6 +136,20 @@ async function fulfill(orderHash: string): Promise<Fulfill> {
   }
 }
 
+// The bounded listings snapshot, shared by every request within CACHE_MS.
+async function snapshot(): Promise<Out> {
+  if (cache && Date.now() - cache.at < CACHE_MS) return cache.out;
+  try {
+    inflight ??= build().finally(() => (inflight = undefined));
+    const out = await inflight;
+    cache = { at: Date.now(), out };
+  } catch {
+    // OpenSea failed: keep the last good answer for one more window, else nothing
+    cache = { at: Date.now(), out: cache?.out ?? { listings: [], max: MAX_LISTINGS } };
+  }
+  return cache.out;
+}
+
 export async function GET(req: Request) {
   const empty: Out = { listings: [], max: MAX_LISTINGS };
   if (!process.env.OPENSEA_API_KEY || !seaportAdapter || !core) return Response.json(empty);
@@ -122,23 +157,24 @@ export async function GET(req: Request) {
   const hash = new URL(req.url).searchParams.get("fulfill");
   if (hash) {
     if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) return Response.json({ skipped: "bad order hash" } satisfies Fulfill, { status: 400 });
-    const hit = fulfilled.get(hash);
-    if (hit && Date.now() - hit.at < FULFILL_CACHE_MS) return Response.json(await hit.out);
-    for (const [k, v] of fulfilled) if (Date.now() - v.at > FULFILL_CACHE_MS) fulfilled.delete(k);
-    const out = fulfill(hash);
-    fulfilled.set(hash, { at: Date.now(), out });
+    const client = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    if (!allow(client)) return Response.json({ skipped: "rate limited" } satisfies Fulfill, { status: 429 });
+    const key = hash.toLowerCase();
+    if (!(await snapshot()).listings.some((l) => lc(l.orderHash) === key)) return Response.json({ skipped: "order not in the current listings" } satisfies Fulfill, { status: 404 });
+    const hit = fulfilled.get(key);
+    if (hit && Date.now() - hit.at < FULFILL_CACHE_MS) {
+      fulfilled.delete(key);
+      fulfilled.set(key, hit);
+      return Response.json(await hit.out);
+    }
+    if (fulfillActive >= MAX_FULFILL_INFLIGHT) return Response.json({ skipped: "busy" } satisfies Fulfill, { status: 503 });
+    fulfillActive++;
+    const out = fulfill(key).finally(() => fulfillActive--);
+    fulfilled.delete(key);
+    fulfilled.set(key, { at: Date.now(), out });
+    while (fulfilled.size > MAX_LISTINGS) fulfilled.delete(fulfilled.keys().next().value!);
     return Response.json(await out);
   }
 
-  if (cache && Date.now() - cache.at < CACHE_MS) return Response.json(cache.out);
-  try {
-    inflight ??= build().finally(() => (inflight = undefined));
-    const out = await inflight;
-    cache = { at: Date.now(), out };
-    return Response.json(out);
-  } catch {
-    // OpenSea failed: keep the last good answer for one more window, else nothing
-    cache = { at: Date.now(), out: cache?.out ?? empty };
-    return Response.json(cache.out);
-  }
+  return Response.json(await snapshot());
 }

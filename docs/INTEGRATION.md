@@ -17,14 +17,15 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 
 | view | answers |
 |---|---|
-| `core.ethRate()` | the bid for a credit of score `refScore` now, with the unbooked fees counted into the pot |
-| `core.bidOf(id)` | the bid for credit `id` now: `ethRate()` times its score over `refScore`, the number a seller or keeper uses |
+| `core.ethRate()` | the eth bid in wei per 100 points now (`RATE_SCORE` 1,000,000 score units), with the unbooked fees counted into the pot |
+| `core.bidOf(id)`, `core.bidForScore(score)` | the bid for credit `id` or for a score now: `ethRate() * score / RATE_SCORE`, the number a seller or keeper uses |
 | `core.ethPrice()`, `core.floorRate()` | the price state before the pot clamp; the rate under every price floor |
 | `core.climbMultiplier()` | the pot scaled multiplier now, bps (10,000 is 1x, up to `climbMultiplierCapBps`, launch 40,000 is 4x): the pages of 80 credits the pot covers at the current rate, clamped to [1x, the cap]. the ceiling's idle loosening runs this many times as fast (the per minute climb is unscaled). show it when above 1x ("pot covers 3 pages, ceiling loosening 3x") |
 | `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()` | the eth pots |
 | `IBalanceModule(core.balanceModule()).available()` | the balance token the module commits to the bid (the Core holds none) |
-| `core.balanceRate()` | the balance token bid now, bps of par (par is a credit's `score * unitPerPoint`): the rising balance bid lowered to `available()` as bps of par, at most `settings.balanceBidCapBps` (10,000 at launch) |
-| `core.balanceBidOf(id)` | the balance token payout for credit `id` now: `score * unitPerPoint * balanceRate() / 10,000` |
+| `core.balanceRate()` | the posted balance token bid, bps of par (par is a credit's `score * unitPerPoint`): `10,000 - settings.balanceDiscountBps`, 9,000 at launch, the same value on or off |
+| `core.balanceBidOf(id)`, `core.balanceBidForScore(score)` | the balance token payout for credit `id` or a score now: `score * unitPerPoint * balanceRate() / 10,000`, lowered in value mode to the eth bid valued in tokens at the protected sale price (`controller.balanceClampFor(score, posted)`). `balanceBidOf` is 0 when the payout plus its artist royalty exceeds `available()`, so it equals what the fill pays |
+| `core.sharedRate()` | value mode's shared price state, bps of par; the eth bid is this times `valuePerPoint(false)` |
 | `core.pileSize()`, `core.pilePage(startAfter, n)`, `core.creditInfo(id)` | the pile, oldest first, with cost and acquisition time |
 | `core.heldStatements()`, `core.statementInfo(sid)`, `core.statementAge(sid)`, `core.ratingOf(sid)`, `core.composerOf(sid)` | the held statements |
 | `controller.nextPage()` | whether a page is ready for `compose` |
@@ -34,17 +35,19 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 | `controller.referencePrice()`, `controller.referenceTime()`, `controller.spotPrice()`, `controller.quote()`, `controller.valuePerPoint(forSale)` | the reference price of value mode (decisions 148 and 157): the rate limited reference of the balance token and the pool spot, wei per 1e18 base units, the reference sample time, the reference price settings, and the wei value of one point at the buy (`false`) or sale (`true`) price with whether the reference price is usable |
 | `core.settings()`, `core.paused()`, `core.retired()`, the lock flags, `core.chosenComposeOn()`, `core.minCcToChoose()` | the switches |
 
-in value mode (`settings().valueModeOn`) `ethRate()` is the shared balance instance (`balanceRate()`, climbed with the cap as its clamp) times `valuePerPoint(false) * 100 / 10,000`, at most `rateCap` and the room, and `ethRate`, `ethPrice`, `bidOf` and `sellForEth` revert `NoQuote()` while the quote is unusable; read them with a tolerant multicall and show no eth bid. `controller.observe()` is public: anyone moves the reference toward the spot by at most the rate times the elapsed time, and the sale doors call it first.
+in value mode (`settings().valueModeOn`) `ethRate()` is `core.sharedRate()` times `valuePerPoint(false) * 100 / 10,000`, at most `rateCap` and the room. While the quote is unusable `ethRate`, `ethPrice`, `bidOf` and `sellForEth` use the last good value rate, so the bid stays live and a client shows it as available; the controller's sale doors (`valueOf`, `priceOf`, `creditPrice`, `buy`, `buyCredit`) revert `NoQuote()` and a client shows those prices as unavailable. `controller.refreshReference()` is public: anyone moves the reference toward the spot by at most the rate times the elapsed time, and the sale doors call it first. `core.refreshReference()` does the same and pays the caller, the call a keeper makes.
+
+`balanceBidMarginBps` and `balanceBidCapBps` are value-mode ETH-state controls: they set the floor and the cap of the shared price state that prices the eth bid, and `balanceBidCapBps` also sets the credit sale floor multiplier. They leave the balance token bid unchanged, which depends on `balanceDiscountBps` alone.
 
 `ethRate()` and `bidOf(id)` report the rate and pot clamp without the purchase budget. A nonzero quote does not mean a purchase can execute: simulate the actual transaction, and handle `SpendCapReached(uint256 spent, uint256 cost, uint256 budget)` by waiting for the next bucket or an owner settings change. The first purchase of a bucket always passes. There is no separate remaining-budget view.
 
 ## 3. selling credits for eth
 
-1. read `core.bidOf(id)` for each credit (or `core.ethRate()` and scale by `score / refScore`) and `core.ethPot()`.
+1. read `core.bidOf(id)` for each credit (or `core.ethRate()` and scale by `score / RATE_SCORE`) and `core.ethPot()`.
 2. `credits.setApprovalForAll(core, true)` once.
-3. `core.sellForEth(ids, minOut)` pays `core.bidOf(id)` = `ethRate() * score / refScore` per credit; set `minOut` a little under the sum of `bidOf` over the ids (each credit drops the rate by `dropPerCreditBps * score / refScore` for the next). the eth arrives in the same call. a batch whose total passes the pot reverts whole (`ZeroAmount` or `PotTooSmall`); up to about 91 credits fit under the gas cap (each credit reads its score).
+3. `core.sellForEth(ids, minOut)` pays `core.bidOf(id)` = `ethRate() * score / RATE_SCORE` per credit to the seller; set `minOut` a little under the sum of `bidOf` over the ids (each credit drops the rate by `dropPer100PointsBps * score / RATE_SCORE` for the next). the artist royalty (`buyToArtistBps`, 250 at launch) is paid from the pot on top, once per batch, so the seller receives the bid whole. the eth arrives in the same call. a batch whose total passes the pot reverts whole (`ZeroAmount` or `PotTooSmall`); up to about 91 credits fit under the gas cap (each credit reads its score).
 
-reverts: `Empty`, `ZeroId`, `NotOwner`, `ZeroAmount`, `PotTooSmall`, `SpendCapReached`, `Slippage`, `Retired`, `ReturnLocked`, and in value mode `NoQuote`. event `CreditBought(id, from, cost)` per credit, `EthRateFill(spent, rate, pot)` per fill, in value mode `ValueRateFill(spent, rateBps, pot)` with the shared instance rate after the drop.
+reverts: `Empty`, `ZeroId`, `NotOwner`, `ZeroAmount`, `PotTooSmall`, `SpendCapReached`, `Slippage`, `Retired`, `ReturnLocked`, and in value mode `NoQuote`. event `CreditBought(id, from, cost, toArtist)` per credit (`cost` is the pile cost basis, the price plus the royalty), `EthRateFill(spent, rate, pot)` per fill, in value mode `ValueRateFill(spent, rateBps, pot)` with the shared instance rate after the drop.
 
 ## 4. sweeping a listing
 
@@ -55,7 +58,7 @@ reverts: `Empty`, `ZeroId`, `NotOwner`, `ZeroAmount`, `PotTooSmall`, `SpendCapRe
 | SeaportBasicAdapter | `abi.encode(BasicOrderParameters)` of a Seaport 1.6 basic order: Credits as offer token, `id`, amount 1, native consideration, an open order type, every additional recipient the offerer or allowlisted (`allowedRecipient(a)`) | `WrongToken`, `WrongId`, `WrongAmount`, `NotNative`, `ZeroPrice`, `RestrictedOrder`, `RecipientNotAllowed(recipient)` |
 | CreditStrategyAdapter | empty | `NotForSale` when `nftForSale(id)` is 0 |
 
-reverts of the Core: `AdapterNotAllowed`, `ZeroId`, `AlreadyOwned`, `BadQuote` (the adapter reverted or answered badly; an adapter's own revert surfaces as `BadQuote`), `ForbiddenTarget`, `ZeroAmount`, `PotTooSmall`, `AboveBid`, `CallFailed`, `NoCredit`, `BadCost`, `SpendCapReached`, `Retired`. event `ListingBought(id, adapter, caller, cost, paid, rate)`.
+reverts of the Core: `AdapterNotAllowed`, `ZeroId`, `AlreadyOwned`, `BadQuote` (the adapter reverted or answered badly; an adapter's own revert surfaces as `BadQuote`), `ForbiddenTarget`, `ZeroAmount`, `PotTooSmall`, `AboveBid`, `CallFailed`, `NoCredit`, `BadCost`, `SpendCapReached`, `Retired`. event `ListingBought(id, adapter, caller, cost, paid, rate, toArtist)`; the artist royalty on the listing price is paid from the pot on top.
 
 a listing whose price is above the bid is not swept; a holder sells it with `sellForEth` instead. a hook push landing inside the target call (a swap in a callback) is fee income at the next book.
 
@@ -81,9 +84,9 @@ fees reach the Core from the pool's hook on every swap and are booked at the nex
 
 ## 9. the balance side
 
-the module holds the balance token; the Core holds none. its interface adds `available()` (the token it commits to the bid) and `pay(to, amount)` (the Core only). at launch `redeemOn` is true, `balanceBidOn` is false and no module is set, so `redeemStatement` reverts `NoBalanceModule`. `core.redeemStatement(sid)` for a held statement with `controller.atFloor(sid)` true leaves its proceeds in the module; reverts `BadModule` when the module's holding rises by less than `rating * unit * (10,000 - redeemSlippageBps) / 10,000`. `core.sellForBalance(ids, minOut)` pays `score * unitPerPoint * core.balanceRate() / 10,000` in balance token per credit from the module, the rising balance bid (SPEC section 4): the rate climbs in bps of par toward `settings.balanceBidCapBps` (10,000 at launch), floors at `10,000 - balanceBidMarginBps`, clamps to `available()` as bps of par, and drops per credit. read `core.balanceBidOf(id)` for each credit and set `minOut` a little under the sum (each credit drops the rate for the next). the batch total must fit `available()` in base units and the seller's holding must rise by the total, else it reverts `NoBalanceModule`, `BalanceBidOff`, `Empty`, `BadModule`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. with the bid off and `redeemOn`, redemptions keep filling the module (the accumulate mode). events `StatementRedeemed(sid, received)`, `CreditBought(id, from, cost)`, `BalanceRateFill(spent, rateBps, available)` per credit sold into the balance bid.
+the module holds the balance token; the Core holds none. its interface adds `available()` (the token it commits to the bid) and `pay(to, amount)` (the Core only). at launch `redeemOn` is true, `balanceBidOn` is false and no module is set, so `redeemStatement` reverts `NoBalanceModule`. `core.redeemStatement(sid)` for a held statement with `controller.atFloor(sid)` true leaves its proceeds in the module; reverts `BadModule` when the module's holding rises by less than `rating * unit * (10,000 - redeemSlippageBps) / 10,000`. `core.sellForBalance(ids, minOut)` pays `score * unitPerPoint * core.balanceRate() / 10,000` in balance token per credit from the module: the flat posted price, par less `balanceDiscountBps` (SPEC section 9). the price is the same for every credit of a batch and over time. in value mode each payout is lowered to `controller.balanceClampFor(score, posted)`. read `core.balanceBidOf(id)` for each credit and set `minOut` a little under the sum. the artist is paid `buyToArtistBps` of each payout on top through a second module `pay`. the batch total (payouts and royalties) must fit `available()` in base units and the seller's holding must rise by the payout total, else it reverts `NoBalanceModule`, `BalanceBidOff`, `Empty`, `BadModule`, `ZeroAmount`, `PotTooSmall`, `Slippage`, `Retired`. with the bid off and `redeemOn`, redemptions keep filling the module (the accumulate mode). events `StatementRedeemed(sid, received)`, `CreditBought(id, from, cost, toArtist)` and `BalanceFill(paid, toArtist, available)` per credit sold into the balance bid. `toArtist` in `BalanceFill` is the intended royalty. When the token cannot deliver an amount to the artist, the module records it as a liability event; an indexer sums those events against `toArtist` to get the delivered royalty.
 
-balance purchases do not consume the ETH purchase budget. raising `balanceBidCapBps` permits bids above par; the floor remains `10,000 - balanceBidMarginBps`. lowering the cap checkpoints the old climb first and clamps the stored balance rate to the new cap.
+balance purchases do not consume the ETH purchase budget. `balanceBidCapBps` and `balanceBidMarginBps` apply to value mode only (section 2).
 
 ## 10. adopt, migrate, rescue
 
@@ -93,7 +96,7 @@ balance purchases do not consume the ETH purchase budget. raising `balanceBidCap
 
 ## 11. owner events to watch
 
-`SettingsSet(settings)`, `RateSet(rate)`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet(adapter, allowed)`, `SuccessorSet`, `PayeeSet`, `ArtistSet`, `PausedSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `RedeemBurnReleased`, the locks `ControllerLocked`, `BalanceModuleLocked`, `AdaptersLocked`, `SuccessorLocked`, the handover `OwnershipTransferStarted`, `OwnershipTransferred`; on the controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`; on the Seaport adapter `RecipientSet`.
+`SettingsSet(settings)`, `RateSet(rate)`, `BalanceRateSet(rateBps)` (value mode shared state reset), `ControllerSet`, `BalanceModuleSet`, `AdapterSet(adapter, allowed)`, `SuccessorSet`, `PayeeSet`, `ArtistSet`, `PausedSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `RedeemBurnReleased`, the locks `ControllerLocked`, `BalanceModuleLocked`, `AdaptersLocked`, `SuccessorLocked`, the handover `OwnershipTransferStarted`, `OwnershipTransferred`; on the controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`; on the Seaport adapter `RecipientSet`.
 
 ## 12. gas
 

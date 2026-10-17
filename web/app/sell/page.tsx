@@ -391,7 +391,7 @@ export default function SellPage() {
                 ? `the ${BALANCE_SYMBOL} bid is a posted price, ${snap ? Number(snap.balanceRate) / 100 : "…"}% of par per point: it does not drop after a credit and does not climb while idle, so a batch pays the offers added up.`
                 : "the bid drops a little after each credit the engine buys. selling several in one transaction, later credits fill at the lower bid, so the batch pays less than the offers added up."}
               {snap && snap.settings.buyToArtistBps > 0
-                ? ` the engine pays the artist a ${snap.settings.buyToArtistBps / 100}% royalty on top of every purchase; it never comes out of what you receive.`
+                ? ` the engine pays the artist a ${snap.settings.buyToArtistBps / 100}% royalty on top of every purchase, and it comes on top of what you receive.${isBal ? " On the balance route, a payment the token cannot deliver in the sale transaction is recorded for the artist to claim." : ""}`
                 : ""}
             </p>
 

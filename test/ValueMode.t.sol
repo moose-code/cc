@@ -470,6 +470,7 @@ contract ValueModeTest is ValueBase {
         core.sellForEth(_one(ids[0]));
         assertGt(seller.balance, before, "the eth sell pays at the fallback rate");
         vm.prank(seller);
+        vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         core.sellForBalance(_one(ids[1]));
         core.book();
         core.redeemStatement(c.sid);
@@ -544,6 +545,10 @@ contract ValueModeTest is ValueBase {
         }
     }
 
+    function tripBackExternal(uint256 id) external {
+        _tripBack(id, true);
+    }
+
     function _tripBack(uint256 id, bool viaBalance) internal {
         vm.startPrank(TRIPPER);
         CREDITS.setApprovalForAll(address(core), true);
@@ -608,7 +613,7 @@ contract ValueModeTest is ValueBase {
             _assertLoses(paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference");
         }
         // the reference stale after the buy: the eth bid degrades to the last good rate (decision 159, C02), the balance
-        // door still loses the spread
+        // door refuses: no cap can be computed
         _swapToSpot(ctl.referencePrice());
         _settleReference();
         uint256 id = ids[k++];
@@ -618,8 +623,8 @@ contract ValueModeTest is ValueBase {
         ctl.buyCredit{value: price}(id);
         _warp(1 days + 1);
         assertGt(core.ethRate(), 0, "the eth bid degrades to the last good rate, not NoQuote");
-        _tripBack(id, true);
-        _assertLoses(price, xt.balanceOf(TRIPPER) * _spotNow() / 1e18, "balance with the reference stale");
+        vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
+        this.tripBackExternal(id);
     }
 
     /// refreshes the reference, a step and a block at a time, until it is within 0.1 percent of the pool spot, so a round
@@ -664,6 +669,52 @@ contract ValueModeTest is ValueBase {
         _nextSecond();
         (uint256 paid, uint256 back) = _trip(ids[0], true);
         _assertLoses(paid, back, "balance with the spot far above the reference");
+    }
+
+    // promise: SPEC 10 in value mode an unusable reference refuses the balance fill instead of paying the posted amount.
+    // the return lock (21,600 s) blocks the engine buyer from selling the credit back, but a credit moved to a second
+    // wallet is not tracked by it. with the pool drained for two samples the buyer reverts ReturnLocked and the second
+    // wallet reaches the balance fill, which reverts ZeroAmount; the payout view reports 0
+    function test_balanceFillRefusesWhileTheReferenceIsUnusable() public {
+        uint256[] memory ids = _fillEthPile(4);
+        _valueOn();
+        _setReturnLock(21_600);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(50 ether);
+        ctl.refreshReference();
+        uint256 id = ids[0];
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(TRIPPER, price * 2);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price * 2}(id);
+        address second = address(0xB0B2);
+        uint256 score = _scoreOf(id);
+        (uint256 healthy, bool ok) = ctl.balanceClampFor(score, type(uint128).max);
+        assertTrue(ok);
+        assertGt(healthy, 0, "healthy cap");
+        // drain the pool and take two samples
+        _addFullRange(-int256(uint256(POOL_LIQ)));
+        for (uint256 i; i < 2; ++i) {
+            _nextSecond();
+            ctl.refreshReference();
+        }
+        (, ok) = ctl.valuePerPoint(false);
+        assertFalse(ok, "the reference is unusable");
+        (uint256 capped, bool answered) = ctl.balanceClampFor(score, type(uint128).max);
+        assertTrue(answered);
+        assertEq(capped, 0, "no cap can be computed, so no payout");
+        vm.startPrank(TRIPPER);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.expectPartialRevert(ICore.ReturnLocked.selector);
+        core.sellForBalance(_one(id));
+        CREDITS.transferFrom(TRIPPER, second, id);
+        vm.stopPrank();
+        vm.startPrank(second);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
+        core.sellForBalance(_one(id));
+        vm.stopPrank();
     }
 
     // promise: SPEC 10 outside value mode the balance payout is par, the clamp does not apply (decision 165). a usable
