@@ -5,6 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {IBalanceModule, Mainnet} from "../src/interfaces/Interfaces.sol";
 
+interface IOwedClaim {
+    function owed(address) external view returns (uint256);
+    function claim(address) external returns (uint256);
+}
+
 interface IStatementBalanceModuleErrors {
     error InvalidConfiguration();
     error OnlyCore();
@@ -110,6 +115,7 @@ contract BalanceGateTokenDouble {
     }
 
     function transfer(address to, uint256 amount) external returns (bool) {
+        if (rejectTransfer) return false;
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         if (hook != address(0)) ReentrantHook(hook).onTransfer();
@@ -288,16 +294,19 @@ contract StatementBalanceModuleTest is Test {
         assertEq(token.balanceOf(recipient), 100 ether);
     }
 
-    // promise: a failed token transfer rolls back both caller bookkeeping and token-side balance changes.
-    function test_failedPaymentRollsBack() public {
+    // promise: a failed token transfer is recorded as owed to the recipient and excluded from available()
+    function test_failedPaymentAccruesOwed() public {
         _open();
         token.mint(address(module), 100 ether);
         token.setRejectTransfer(true);
-        vm.expectRevert(SafeTransferLib.TransferFailed.selector);
         this.payFromCore(40 ether);
-        assertEq(recordedPayments, 0);
-        assertEq(module.available(), 100 ether);
+        assertEq(IOwedClaim(address(module)).owed(recipient), 40 ether);
+        assertEq(module.available(), 60 ether);
         assertEq(token.balanceOf(recipient), 0);
+        token.setRejectTransfer(false);
+        assertEq(IOwedClaim(address(module)).claim(recipient), 40 ether);
+        assertEq(token.balanceOf(recipient), 40 ether);
+        assertEq(module.available(), 60 ether);
     }
 
     // promise: a live Core's reserve cannot leave through permissionless migration.

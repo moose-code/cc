@@ -1181,9 +1181,9 @@ library CoreLib {
         uint256 heldBefore = SafeTransferLib.balanceOf(token, msg.sender);
         IBalanceModule(module).pay(msg.sender, total);
         if (SafeTransferLib.balanceOf(token, msg.sender).zeroFloorSub(heldBefore) < total) revert BadModule();
-        // the artist royalty runs under a gas bound; a revert or a blacklisting token leaves the amount in the module,
-        // so a hostile artist or token cannot block the sale. the stranded royalty is paid to the artist on a later fill
-        // or recovered by the owner through the module (decision 163)
+        // the artist royalty call is gas bounded by ARTIST_PAY_GAS and its result is not checked. a transfer the module
+        // cannot complete inside that bound is recorded by the module as a liability that `available()` excludes, and
+        // anyone may settle it later through the module's `claim`. a hostile artist or token cannot block the sale.
         if (artistTotal != 0) {
             (bool okPay,) =
                 module.call{gas: ARTIST_PAY_GAS}(abi.encodeCall(IBalanceModule.pay, (c.artist, artistTotal)));

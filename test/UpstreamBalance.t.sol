@@ -5,9 +5,17 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {IBalanceModule} from "../src/interfaces/Interfaces.sol";
+import {console} from "forge-std/console.sol";
 
 interface IReserveMigration {
     function migrateReserve() external returns (uint256);
+}
+
+interface IOwedModule {
+    function owed(address) external view returns (uint256);
+    function totalOwed() external view returns (uint256);
+    function claim(address) external returns (uint256);
+    function pay(address, uint256) external;
 }
 
 interface IUpstreamToken {
@@ -238,7 +246,8 @@ contract UpstreamBalanceTest is Fixture {
         uint256 paid = balanceToken.balanceOf(seller);
         assertEq(paid, postedTotal, "the seller receives the posted total exactly");
         assertLe(paid, parTotal);
-        // the module paid the seller the posted total and the artist the royalty on top
+        // the artist holds the royalty or the module owes it, and available() excludes an owed amount
+        assertEq(_artistHolds(), royaltyTotal);
         assertEq(balanceModule.available(), owed - paid - royaltyTotal);
         for (uint256 i; i < ids.length; ++i) {
             assertEq(CREDITS.ownerOf(ids[i]), address(core));
@@ -255,6 +264,93 @@ contract UpstreamBalanceTest is Fixture {
         assertEq(balanceToken.balanceOf(address(core)), 0);
         vm.expectRevert(ICore.NotHeld.selector);
         core.redeemStatement(sid);
+    }
+
+    function _artistHolds() private view returns (uint256) {
+        address art = core.artist();
+        return balanceToken.balanceOf(art) + IOwedModule(address(balanceModule)).owed(art);
+    }
+
+    function _fundedModule() private returns (uint256 funded) {
+        _register();
+        _retire();
+        uint256 sid = _readyStatement();
+        vm.roll(balanceToken.transfersOpenBlock());
+        core.redeemStatement(sid);
+        funded = balanceModule.available();
+    }
+
+    function _oneCredit() private returns (uint256[] memory one) {
+        uint256[] memory ids = _affordablePage();
+        one = new uint256[](1);
+        one[0] = ids[0];
+    }
+
+    // promise: a one credit sale to a cold artist wallet pays the seller in full and the royalty reaches the artist or is
+    // owed to the artist, never lost, and an owed amount is outside available()
+    function test_oneCreditColdArtistRoyaltyIsPaidOrOwed() public {
+        uint256 funded = _fundedModule();
+        uint256[] memory one = _oneCredit();
+        uint256 posted = _scoreOf(one[0]) * UNIT_PER_SCORE * (10_000 - core.settings().balanceDiscountBps) / 10_000;
+        uint256 royalty = posted * core.settings().buyToArtistBps / 10_000;
+        address art = core.artist();
+        assertEq(balanceToken.balanceOf(art), 0, "cold artist");
+        vm.prank(seller);
+        core.sellForBalance(one, posted, address(balanceToken));
+        assertEq(balanceToken.balanceOf(seller), posted);
+        uint256 owedNow = IOwedModule(address(balanceModule)).owed(art);
+        assertEq(balanceToken.balanceOf(art) + owedNow, royalty);
+        assertEq(balanceModule.available(), funded - posted - royalty);
+        assertEq(IOwedModule(address(balanceModule)).totalOwed(), owedNow);
+        console.log("royalty paid directly", balanceToken.balanceOf(art));
+        console.log("royalty owed", owedNow);
+    }
+
+    // promise: with full gas the payment transfers directly; logs the measured gas of a cold and a warm recipient
+    function test_directPayWarmAndColdMeasure() public {
+        _fundedModule();
+        address cold = _user("coldWallet");
+        uint256 amount = 1e18;
+        vm.startPrank(address(core));
+        uint256 g = gasleft();
+        IOwedModule(address(balanceModule)).pay(cold, amount);
+        uint256 coldGas = g - gasleft();
+        g = gasleft();
+        IOwedModule(address(balanceModule)).pay(cold, amount);
+        uint256 warmGas = g - gasleft();
+        vm.stopPrank();
+        console.log("pay gas cold", coldGas);
+        console.log("pay gas warm", warmGas);
+        assertEq(balanceToken.balanceOf(cold), 2 * amount);
+        assertEq(IOwedModule(address(balanceModule)).owed(cold), 0);
+    }
+
+    // promise: a payment whose transfer cannot finish inside the gas given is recorded as owed, excluded from available(),
+    // unspendable by a later payment, and settled in full by claim
+    function test_boundedPayAccruesAndClaimSettles() public {
+        uint256 funded = _fundedModule();
+        IOwedModule m = IOwedModule(address(balanceModule));
+        address to = _user("starvedArtist");
+        uint256 amount = 5e18;
+        vm.prank(address(core));
+        m.pay{gas: 100_000}(to, amount);
+        assertEq(m.owed(to), amount, "accrued");
+        assertEq(m.totalOwed(), amount);
+        assertEq(balanceToken.balanceOf(to), 0);
+        assertEq(balanceModule.available(), funded - amount, "owed is outside available");
+        vm.prank(address(core));
+        vm.expectRevert();
+        m.pay(seller, funded - amount + 1);
+        vm.prank(address(core));
+        m.pay(seller, funded - amount);
+        assertEq(balanceToken.balanceOf(seller), funded - amount);
+        assertEq(balanceModule.available(), 0);
+        assertEq(balanceToken.balanceOf(address(balanceModule)), amount, "the owed amount stays in the module");
+        assertEq(m.claim(to), amount);
+        assertEq(balanceToken.balanceOf(to), amount);
+        assertEq(m.owed(to), 0);
+        assertEq(m.totalOwed(), 0);
+        assertEq(m.claim(to), 0);
     }
 
     // promise: real Core retirement moves existing and later real BALANCE proceeds only to the successor module
