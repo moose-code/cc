@@ -59,6 +59,7 @@ check_runtime SurrenderedBalanceRenderer "$RUNTIME_RENDERER"
 check_runtime LineageArtwork "$RUNTIME_ARTWORK"
 
 mkdir -p "$ROOT/out"
-jq --arg commit "$PIN" '{upstreamCommit: $commit, contract: "AuctionLineageWithdrawals", abi, bytecode: {object: .bytecode.object}, deployedBytecode: {object: .deployedBytecode.object}}' \
+jq --arg commit "$PIN" --arg rh "$RUNTIME_ALW" \
+  '{upstreamCommit: $commit, contract: "AuctionLineageWithdrawals", abi, bytecode: {object: .bytecode.object}, deployedBytecode: {object: .deployedBytecode.object, immutableReferences: .deployedBytecode.immutableReferences}, runtimeHash: $rh}' \
   "$(art AuctionLineageWithdrawals)" > "$ROOT/out/upstream-balance.json"
 echo "wrote $ROOT/out/upstream-balance.json from $REPO@$PIN"

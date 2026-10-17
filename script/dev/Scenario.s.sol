@@ -603,9 +603,22 @@ contract Scenario is Script {
             (bytes32)
         );
         vm.rpc("evm_mine", "[]");
-        string memory receipt = vm.rpcJson("eth_getTransactionReceipt", string.concat('["', vm.toString(txHash), '"]'));
+        string memory receipt = _receipt(txHash);
         require(vm.parseJsonUint(receipt, ".status") == 1, "Anvil dev transaction reverted");
         vm.createSelectFork(vm.envString("E2E_RPC_URL"), vm.parseJsonUint(receipt, ".blockNumber"));
+    }
+
+    /// @dev the receipt of a mined tx, retried while the fork RPC still returns null. a public fork endpoint can answer
+    /// eth_getTransactionReceipt with null for a block it has mined but not yet indexed; the tx is already in the chain,
+    /// so re-query and nudge with an empty mine until the receipt resolves.
+    function _receipt(bytes32 txHash) internal returns (string memory receipt) {
+        string memory params = string.concat('["', vm.toString(txHash), '"]');
+        for (uint256 i; i < 30; ++i) {
+            receipt = vm.rpcJson("eth_getTransactionReceipt", params);
+            if (bytes(receipt).length > 4 && keccak256(bytes(receipt)) != keccak256(bytes("null"))) return receipt;
+            vm.rpc("evm_mine", "[]");
+        }
+        revert("Anvil receipt never resolved");
     }
 
     function _quantity(uint256 value) internal pure returns (string memory) {

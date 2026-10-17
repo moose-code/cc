@@ -100,7 +100,11 @@ if [ "${FRESH:-0}" != "1" ] && [ -f "$STATE" ] && [ -f "$RECORD" ] && [ -f "$BLO
   jq --arg u "$RPC" '.rpcUrl = $u' "$RECORD" > "$REC"
 else
   echo "cache miss: key $KEY, building the deployed and seeded state"
-  BLOCK=$(( $(cast block-number --rpc-url "$FORK_URL") - 100 ))
+  # FORK_BLOCK pins the fork so the cache compounds across runs and a cold run is deterministic. the deploy predicts the
+  # Core, coin and renderer at CREATE2 addresses; the live protocol occupies them at recent head blocks, so a head fork
+  # collides. the default pins the cold-audit block, which predates those deployments. unset FORK_BLOCK to track head.
+  BLOCK="${FORK_BLOCK:-26208025}"
+  [ "$BLOCK" = head ] && BLOCK=$(( $(cast block-number --rpc-url "$FORK_URL") - 100 ))
   echo "fork block $BLOCK"
   anvil --fork-url "$FORK_URL" --fork-block-number "$BLOCK" --chain-id 1 --port "$PORT" \
     --auto-impersonate --retries 10 --timeout 60000 >"$SCRATCH/anvil.log" 2>&1 &
@@ -306,16 +310,29 @@ fi
 ############################################################################## phase 7
 say "PHASE 7: value mode"
 if [ -n "$BTOK" ]; then
-  # Jack's token reaches the module only through redemptions, so the balance pool carries no trading depth. value mode
-  # reads the initialized pool's sqrt spot as the protected value, so minLiquidity is 0 and the pool move is skipped.
-  MINLIQ=0
+  # Jack's token reaches holders through the module (A1's phase 6 balance sell) and the funder's launch balance. the
+  # funder moves about 2 percent of supply to the liquidity wallet after transfersOpenBlock and adds a full-range
+  # position, so the balance pool carries real trading depth. value mode then runs the full pool-move stress: a quote
+  # gated on that depth, an 8 percent spot move, a sell inside the bands, the keeper refresh cadence, and a same-block
+  # round trip that nets at most zero after pool fees. phase 6 already mined past transfersOpenBlock for the redemption.
+  OUT7L="$(step "phase7ProdLiquidity(address)" "$BTOK")"; echo "$OUT7L" | sed 's/^/    /'
+  DEPTH="$(echo "$OUT7L" | grep -m1 'POOL_DEPTH' | awk '{print $2}')"
+  MOVED="$(echo "$OUT7L" | grep -m1 'MOVED_TOKENS' | awk '{print $2}')"
+  check "the funder seeded real balance-pool depth" "$([ -n "$DEPTH" ] && calc "$DEPTH > 0")" "depth $DEPTH moved $MOVED"
+  # the minLiquidity gate at half the seeded depth: usable now, and an 8 percent price move keeps full-range L in place
+  MINLIQ="$(python3 -c "print(${DEPTH:-0}//2)")"
   if step "phase7Quote(uint128)" "$MINLIQ"; then check "value mode is on with the quote set" 1 "referencePrice $(num "$CTL" 'referencePrice()(uint256)')"; fi
+  step "phase7MovePool(address)" "$BTOK" || true
   : > "$KEEPER_LOG"
+  KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
   KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
   KEEPER_ENV="DOORS=refreshReference" keeper_once
   REFRESHES="$(grep -c '"door":"refreshReference"' "$KEEPER_LOG" 2>/dev/null | tr -d '[:space:]')"
   check "the keeper refreshed the reference on cadence" "$(calc "$REFRESHES >= 1")" "$REFRESHES refresh ticks"
   if step "phase7ValueSell()"; then check "a value mode sell pays inside the bands" 1 "see step log"; fi
+  OUT7RT="$(step "phase7RoundTrip(address)" "$BTOK")"; echo "$OUT7RT" | sed 's/^/    /'
+  RT_LOSS="$(echo "$OUT7RT" | grep -m1 'RT_POOL_LOSS' | awk '{print $2}')"
+  check "no profitable same-block round trip (loses the pool fee)" "$([ -n "$RT_LOSS" ] && calc "$RT_LOSS > 0")" "pool loss $RT_LOSS"
   RATE_ON="$(num "$CORE" 'ethRate()(uint256)')"
   step "phase7ValueOff()" || true
   RATE_OFF="$(num "$CORE" 'ethRate()(uint256)')"
