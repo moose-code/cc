@@ -401,7 +401,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// books the pending fee income, then forwards to `CoreLib.refreshReference`, which calls the controller's refresh
     /// and, when it updated the reference, pays the caller from the booked pot like compose. booking first means the
-    /// caller is paid from the pot share of the pending income the keeper's gate already counted (decision 159, C02).
+    /// caller is paid from the pot share of the pending income the keeper's gate counts.
     /// anyone may call; the keeper calls this door. the controller's own `refreshReference` stays public and unpaid
     function refreshReference() external nonReentrant {
         _book();
@@ -545,13 +545,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// the shared instance now, bps of par: value mode's eth price state before the value multiply and the pot clamp
-    /// (`CoreLib.sharedRate`). no bearing on the balance bid, which is posted (decision 164)
+    /// (`CoreLib.sharedRate`). the balance bid is a posted price and does not read it
     function sharedRate() external view returns (uint256) {
         return CoreLib.sharedRate();
     }
 
-    /// the balance token bid rate now, bps of par (par is a credit's score times the module unitPerPoint): the balance
-    /// price state climbed and clamped to the module available(), at most 10_000. the web and the keeper read it
+    /// the balance token bid rate now, bps of par (par is a credit's score times the module unitPerPoint): the posted
+    /// `10_000 - balanceDiscountBps`. the web and the keeper read it
     function balanceRate() external view returns (uint256) {
         return CoreLib.balanceRate();
     }
@@ -562,7 +562,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// the executable balance token payout for credit id now: the floor payout when the module can pay it, else 0, so
-    /// the view never advertises a bid the fill refuses (decision 159, C05)
+    /// the view returns 0 for a payout the fill would refuse
     function balanceBidOf(uint256 id) external view returns (uint256) {
         return CoreLib.balanceBidOf(id);
     }
@@ -579,7 +579,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// books a spend of x from the pot for a credit of score `score`. the eth sell door checkpoints the eth instance to
-    /// now once before the batch, so the drop walks down from the climbed rate without a per-credit re-climb (C08)
+    /// now once before the batch, so each credit's drop starts from the climbed rate and the batch climbs once
     function _spend(uint256 x, uint256 score) private {
         CoreLib.spend(x, score);
     }
@@ -674,7 +674,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// sell credits into the eth bid. each credit is paid `ethRate() * score / RATE_SCORE`, and the artist is paid
-    /// `buyToArtistBps` of that on top, once per batch with a forced push (decision 163). caller must have approved the
+    /// `buyToArtistBps` of that on top, once per batch with a forced push. caller must have approved the
     /// core. The first purchase of a bucket always passes; a later credit above the bucket budget reverts the whole batch.
     /// reverts `Retired` after `migrate`
     function sellForEth(uint256[] calldata ids) external nonReentrant {
@@ -690,7 +690,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _openDoor();
         if (ids.length == 0) revert Empty();
         // climb the eth instance to now once; each credit's drop walks down from it and the batch does not re-climb per
-        // credit (decision 159, C08). `_openDoor` books first, so a checkpoint here credits no climb under a later pot
+        // credit. `_openDoor` books first, so the checkpoint climbs under the booked pot
         _checkpoint();
         uint256 total;
         uint256 artistTotal;
@@ -723,7 +723,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// bytes. `value` is at most the bid for this credit (`bidOf(id)`, `ethRate() * score / RATE_SCORE`) and at most
     /// `ethPot` less the reserve. the Core must own `id` after the call and its credit balance must have risen by one. the
     /// caller is paid from `ethPot`: the gas of the call at the base fee, capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`,
-    /// plus `keeperFee`. the artist is paid `buyToArtistBps` of `value` on top (decision 163). the payment is at most the
+    /// plus `keeperFee`. the artist is paid `buyToArtistBps` of `value` on top. the payment is at most the
     /// bid less `value` and at most the room less `value` less the royalty, so the pot pays at most the bid plus its
     /// royalty for the credit, as `sellForEth` does. reverts `Retired` after `migrate`
     function buyListing(address adapter, uint256 id, bytes calldata params) external nonReentrant {
@@ -1263,7 +1263,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// forbidden target (the coin, recovered through `rescueCoin`, Credits, Statements, the core, the hook, the managers,
     /// and the current and every past balance token and module), so a balance token reserve is never moved out of its
     /// module path. it never touches tracked eth, which is not an ERC20. a balance token sent directly to the core is
-    /// recovered with this, not stranded (decision 159, C06). logs `TokenRescued`. no reentrancy guard: it is owner only,
+    /// recovered with this. logs `TokenRescued`. no reentrancy guard: it is owner only,
     /// transfers a token the Core does not track, and does nothing after the transfer, so a token callback changes
     /// nothing here and any Core door it re-enters is itself guarded
     /// the body is `CoreLib.rescueToken`, called with the calldata untouched (the owner check is there)
@@ -1444,8 +1444,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.everBalanceTarget[token] = true;
         if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
         if (s.allowedAdapter[token]) delete s.allowedAdapter[token];
-        // the balance bid pays the posted price whatever the module (decision 164); in value mode the shared instance
-        // carries the eth bid and a module change leaves it
+        // the balance bid pays the posted price for any module; in value mode the shared instance carries the eth bid
+        // and a module change leaves it
         emit BalanceModuleSet(module, token, unit);
     }
 
