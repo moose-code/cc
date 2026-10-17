@@ -56,6 +56,13 @@ contract ProductionValueAuditTest is Fixture {
     uint256 private poolEthDepth;
     uint256 private poolTokenDepth;
 
+    struct SellProbe {
+        int256 net;
+        uint256 premium;
+        uint256 poolLoss;
+        uint256 gasCost;
+    }
+
     function setUp() public override {
         if (!vm.exists("out/upstream-balance.json")) {
             require(!vm.envOr("REQUIRE_UPSTREAM_BALANCE", false), "run script/tools/upstream-balance.sh first");
@@ -298,5 +305,124 @@ contract ProductionValueAuditTest is Fixture {
         emit log_named_uint("production-token JIT min liquidity", BASE_LIQUIDITY * 2);
         emit log_named_uint("production-token JIT live liquidity", PM.getLiquidity(balanceKey.toId()));
         assertTrue(after_);
+    }
+
+    // promise: a pool with about $20,000 total value at $2,420 per ETH must be tested against
+    // real launch-token batches before treating one-Credit profitability as the phase-two risk.
+    function test_twentyThousandDollarPoolBatchSell() public {
+        uint256[] memory ids = _credits(seller, 8);
+        uint256 totalEthSide = _seedTwentyThousandPool();
+
+        _addToPot(1 ether);
+        uint256 stateBefore = vm.snapshotState();
+        SellProbe memory one = _crossRefreshSell(_one(ids[0]), 0.14 ether);
+        vm.revertToState(stateBefore);
+        SellProbe memory eight = _crossRefreshSell(ids, 0.14 ether);
+        emit log_named_uint("20k TVL scenario ETH side wei", totalEthSide);
+        emit log_named_uint("remaining pool-funder BALANCE wei", balance.balanceOf(address(this)));
+        emit log_named_uint("first Credit raw score", _scoreOf(ids[0]));
+        emit log_named_int("one Credit net wei", one.net);
+        emit log_named_uint("one Credit premium wei", one.premium);
+        emit log_named_uint("one Credit pool loss wei", one.poolLoss);
+        emit log_named_uint("one Credit gas wei", one.gasCost);
+        emit log_named_int("eight Credit net wei", eight.net);
+        emit log_named_uint("eight Credit premium wei", eight.premium);
+        emit log_named_uint("eight Credit pool loss wei", eight.poolLoss);
+        emit log_named_uint("eight Credit gas wei", eight.gasCost);
+        assertLt(one.net, 0);
+        assertGt(eight.net, 0);
+        assertGt(eight.premium, eight.poolLoss + eight.gasCost * 10);
+    }
+
+    // promise: $20,000 on the ETH side is treated as twice the depth of a $20,000 total-value pool.
+    function test_twentyThousandDollarEthSideBatchSell() public {
+        uint256[] memory ids = _credits(seller, 8);
+        uint256 ethSide = _seedTwentyThousandPool();
+        uint256 beforeEth = address(this).balance;
+        lp.modify{value: 5 ether}(balanceKey, -887220, 887220, int256(600e18));
+        ethSide += beforeEth - address(this).balance;
+        assertApproxEqAbs(ethSide, 8.4 ether, 128 wei);
+        assertEq(PM.getLiquidity(balanceKey.toId()), 1_200e18);
+
+        _addToPot(1 ether);
+        uint256 stateBefore = vm.snapshotState();
+        SellProbe memory one = _crossRefreshSell(_one(ids[0]), 0.28 ether);
+        vm.revertToState(stateBefore);
+        SellProbe memory eight = _crossRefreshSell(ids, 0.28 ether);
+        emit log_named_uint("20k ETH-side scenario wei", ethSide);
+        emit log_named_int("one Credit net at 20k ETH side wei", one.net);
+        emit log_named_uint("one Credit premium at 20k ETH side wei", one.premium);
+        emit log_named_int("eight Credit net at 20k ETH side wei", eight.net);
+        emit log_named_uint("eight Credit premium at 20k ETH side wei", eight.premium);
+        emit log_named_uint("eight Credit pool loss at 20k ETH side wei", eight.poolLoss);
+        emit log_named_uint("eight Credit gas at 20k ETH side wei", eight.gasCost);
+        assertLt(one.net, 0);
+        assertGt(eight.net, 0);
+        assertGt(eight.premium, eight.poolLoss + eight.gasCost * 10);
+    }
+
+    function _seedTwentyThousandPool() private returns (uint256 totalEthSide) {
+        address poolFunder = _user("twentyThousandPoolFunder");
+        uint256[] memory inventory = _credits(poolFunder, 480);
+        vm.startPrank(poolFunder);
+        CREDITS.setApprovalForAll(address(STATEMENTS), true);
+        uint256[80] memory page;
+        for (uint256 p; p < 6; ++p) {
+            for (uint256 i; i < 80; ++i) page[i] = inventory[p * 80 + i];
+            uint256 sid = STATEMENTS.compose(page, 0);
+            IProductionStatements(address(STATEMENTS)).approve(address(balance), sid);
+            balance.withdraw(sid, balance.quote(sid));
+        }
+        balance.transfer(address(this), balance.balanceOf(poolFunder));
+        vm.stopPrank();
+        uint256 extraLiquidity = 500e18;
+        uint256 beforeEth = address(this).balance;
+        balance.approve(address(lp), type(uint256).max);
+        lp.modify{value: 4 ether}(balanceKey, -887220, 887220, int256(extraLiquidity));
+        totalEthSide = poolEthDepth + beforeEth - address(this).balance;
+        assertApproxEqAbs(totalEthSide, 4.2 ether, 64 wei);
+        assertEq(PM.getLiquidity(balanceKey.toId()), BASE_LIQUIDITY + extraLiquidity);
+    }
+
+    function _crossRefreshSell(uint256[] memory ids, uint256 trade) private returns (SellProbe memory result) {
+        uint256 snap = vm.snapshotState();
+        vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        vm.warp(block.timestamp + 12);
+        vm.roll(block.number + 1);
+        uint256 beforeSeller = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(ids);
+        uint256 baseline = seller.balance - beforeSeller;
+        vm.revertToState(snap);
+
+        uint256 beforeToken = balance.balanceOf(address(this));
+        uint256 gasStart = gasleft();
+        router.swap{value: trade}(balanceKey, true, -int256(trade), address(this));
+        uint256 gasUsed = gasStart - gasleft();
+        uint256 bought = balance.balanceOf(address(this)) - beforeToken;
+        vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
+        gasStart = gasleft();
+        ctl.refreshReference();
+        gasUsed += gasStart - gasleft();
+        vm.warp(block.timestamp + 12);
+        vm.roll(block.number + 1);
+        beforeSeller = seller.balance;
+        gasStart = gasleft();
+        vm.prank(seller);
+        core.sellForEth(ids);
+        gasUsed += gasStart - gasleft();
+        result.premium = seller.balance - beforeSeller - baseline;
+        uint256 beforeReverse = address(this).balance;
+        gasStart = gasleft();
+        router.swap(balanceKey, false, -int256(bought), address(this));
+        gasUsed += gasStart - gasleft();
+        result.poolLoss = trade - (address(this).balance - beforeReverse);
+        result.gasCost = (gasUsed + 4 * 21_000) * TEST_GAS_PRICE;
+        result.net = int256(result.premium) - int256(result.poolLoss) - int256(result.gasCost);
+        emit log_named_uint("unmanipulated payout wei", baseline);
+        emit log_named_uint("manipulated payout wei", baseline + result.premium);
     }
 }
