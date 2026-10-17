@@ -1,9 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="CC engine">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-38 -38 176 176" width="176" height="176" role="img" aria-label="CC engine">
   <title>CC engine</title>
   <!--
     Standalone loop of the CC logo (web/components/CCLogo.tsx). Three 58x58 CMY squares on a four-corner track
     (TL 6,6 - TR 36,6 - BR 36,36 - BL 6,36), each stepping one corner clockwise every 1.6s with a 0.7s eased move.
     Rest frame: C at TL, M at TR, Y at BR, BL empty. Overlaps mix with multiply on light, screen on dark.
+    The viewBox gives the 88-unit artwork (6..94) the same margin as a credit: content fills the central 50%,
+    25% whitespace on each side (credit art is a 160 canvas centred in a 320 box).
   -->
   <style>
     svg { isolation: isolate; }
