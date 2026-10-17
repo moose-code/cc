@@ -73,10 +73,11 @@ contract ReturnLockTest is SeaportBase {
         vm.prank(maker);
         CREDITS.setApprovalForAll(address(SEAPORT), true);
         vm.warp(until - 1);
-        OrderComponents memory c = _open(id, 0.01 ether, 0);
+        // build and sign the order before the expectRevert: _basicData reads Seaport, which must not be the guarded call
+        bytes memory order = _basicData(_open(id, 0.01 ether, 0));
         vm.prank(keeper);
         vm.expectRevert(_locked(id, until));
-        core.buyListing(seaportAdapter, id, _basicData(c));
+        core.buyListing(seaportAdapter, id, order);
     }
 
     // promise: SPEC 6 a credit sold through the credit sale is refused by swapCredit as the incoming credit from its buyer
