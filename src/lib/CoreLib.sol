@@ -545,6 +545,7 @@ library CoreLib {
     /// `NoQuote`, so the engine keeps buying while the reference recovers (decision 159, C02)
     function _valueRateOrLast(State storage c) private view returns (uint256) {
         (uint256 rate, bool ok) = _valueRate(c);
+        // the fallback is the last good value rate, itself stored at or under `rateCap` by `_valueRate`
         return ok ? rate : c.rateAtCheckpoint;
     }
 
