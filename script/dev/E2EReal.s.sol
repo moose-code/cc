@@ -493,7 +493,7 @@ contract E2EReal is Scenario {
             Quote({
                 referenceRateBpsPerHour: 1_200,
                 referenceStepBps: 200,
-                tolBps: 0,
+                tolBps: 100,
                 referenceMaxStale: 3_600,
                 referenceMinSeconds: 600,
                 minLiquidity: minLiquidity

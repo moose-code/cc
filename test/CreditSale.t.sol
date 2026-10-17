@@ -92,13 +92,30 @@ contract CreditSaleTest is Fixture {
         _creditBad(c, "creditWindow");
         c.window = type(uint32).max;
 
-        // zero executable tolerance permits a zero spread; a nonzero tolerance still needs the loop-closure spread
+        // the floor remains at 200 with zero tolerance; 100 tolerance needs 203 to close the loop
         c.spreadBps = 0;
+        _creditBad(c, "creditSpreadBps");
+        c.spreadBps = 200;
+        _creditBad(c, "creditSpreadBps");
+        c.spreadBps = 203;
         ctl.setCredit(c);
-        assertEq(ctl.floorMultBps(), 10_000, "zero tolerance permits zero spread");
+        assertEq(ctl.floorMultBps(), 10_203, "100 tolerance requires a 203 bps spread");
+        Quote memory q = Mainnet.defaultQuote();
+        q.tolBps = 0;
+        ctl.setQuote(q);
+        c.spreadBps = 199;
+        _creditBad(c, "creditSpreadBps");
+        c.spreadBps = 200;
+        ctl.setCredit(c);
+        assertEq(ctl.floorMultBps(), 10_200, "the spread floor remains with zero tolerance");
+        q.tolBps = 100;
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
+        ctl.setQuote(q);
+        c.spreadBps = 203;
+        ctl.setCredit(c);
+        ctl.setQuote(q);
         c.spreadBps = 1_000;
         ctl.setCredit(c);
-        Quote memory q = Mainnet.defaultQuote();
         q.tolBps = 450;
         ctl.setQuote(q);
         c.spreadBps = 0;

@@ -80,6 +80,7 @@ contract ControllerV1 is IController {
 
     uint256 private constant PAGE = 80;
     uint256 private constant BPS = 10_000;
+    uint256 private constant MIN_CREDIT_SPREAD_BPS = 200;
     /// bounds pool-key seeding independently of the executable quote tolerance
     uint256 private constant POOL_SEED_MAX_DEVIATION_BPS = 450;
     /// gas of the controller's read of the balance module's `unitPerPoint()`. the Core allows `atFloor` 400,000 gas in all
@@ -291,11 +292,12 @@ contract ControllerV1 is IController {
     /// the sale spread (bps over the bid cap) must cover the worst round trip through the reference band: with a buy at
     /// the band top `(10_000 + tol)` and a sale floor at the band bottom `(10_000 - tol)`, the ask clears the bid only
     /// when `(10_000 + spread) >= (10_000 + tol) * 10_000 / (10_000 - tol)` (the bid cap cancels on both sides). about
-    /// 1,053 at `tol` 500, 943 at 450
+    /// 1,053 at `tol` 500, 943 at 450, and 203 at 100. a 200 bps floor remains when tolerance is zero
     function _checkLoopClosure(uint256 tol, uint256 spread) private pure {
         uint256 num = (BPS + tol) * BPS;
         uint256 den = BPS - tol;
         uint256 req = (num + den - 1) / den - BPS;
+        if (req < MIN_CREDIT_SPREAD_BPS) req = MIN_CREDIT_SPREAD_BPS;
         if (spread < req) revert BadSetting("creditSpreadBps");
     }
 
@@ -434,7 +436,7 @@ contract ControllerV1 is IController {
 
     /// sets the credit sale settings at once. `saleOn` turns the credit sale window on or off: while on, pile credits
     /// are for sale through `buyCredit` and compose takes only credits past their window. `window` 1 to uint32.max seconds,
-    /// `spreadBps` 0 to uint16.max, `startBps` 10_000 to uint32.max
+    /// `spreadBps` 200 to uint16.max, `startBps` 10_000 to uint32.max
     function setCredit(CreditSale calldata v) external onlyOwner {
         _setCredit(v);
         emit CreditSaleSet(v);

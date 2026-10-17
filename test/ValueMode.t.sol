@@ -396,7 +396,7 @@ contract ValueModeTest is ValueBase {
     function test_launchValues() public view {
         Settings memory s = core.settings();
         assertFalse(s.valueModeOn, "value mode off at launch");
-        assertEq(lc.quote.tolBps, 0, "the launch band");
+        assertEq(lc.quote.tolBps, 100, "the launch band");
         assertEq(lc.quote.referenceMaxStale, 0, "referenceMaxStale an owner input, unusable until set");
     }
 
@@ -758,7 +758,7 @@ contract ValueRealPoolTest is ValueBase {
         });
     }
 
-    // promise: at zero tolerance a real pool move cannot use an immediate band, while one scheduled refresh may move the reference by two percent
+    // promise: at zero tolerance a real pool move stays out of the same-block quote, while one scheduled refresh may move the reference by two percent
     function test_zeroToleranceUsesSampledSpotAndTwoPercentRefreshStep() public {
         _setQuote(Quote({
             referenceRateBpsPerHour: 1_200,
@@ -797,6 +797,58 @@ contract ValueRealPoolTest is ValueBase {
         assertTrue(okBuy && okSell);
         assertGt(buy1, buy0, "the scheduled step can still lift the bid");
         assertLt(buy1, sell1, "the sale uses the sampled spot above the reference");
+    }
+
+    // promise: at 100 bps tolerance a real 10 percent up-move keeps the bid below spot and the ask at spot until
+    // the reference catches up within five eligible 600-second refreshes
+    function test_realPoolUpMoveStaleQuoteClosesWithinFiveRefreshes() public {
+        _testStaleQuoteMove(1_000);
+    }
+
+    // promise: at 100 bps tolerance a real 10 percent down-move keeps the bid at spot and the ask above spot until
+    // the reference catches up within five eligible 600-second refreshes
+    function test_realPoolDownMoveStaleQuoteClosesWithinFiveRefreshes() public {
+        _testStaleQuoteMove(-1_000);
+    }
+
+    function _testStaleQuoteMove(int256 moveBps) internal {
+        _setQuote(Quote({
+            referenceRateBpsPerHour: 1_200,
+            referenceStepBps: 200,
+            tolBps: 100,
+            referenceMaxStale: 3_600,
+            referenceMinSeconds: 600,
+            minLiquidity: 1e18
+        }));
+        uint256 opening = ctl.referencePrice();
+        uint256 spot = _swapSpot(moveBps);
+        uint256 target = moveBps > 0 ? opening * 11_000 / 10_000 : opening * 9_000 / 10_000;
+        assertApproxEqRel(spot, target, 1e15, "the real swap moves spot by about 10 percent");
+        uint256 unit = mod.unitPerPoint();
+        uint256 spotBid = FullMath.mulDiv(POINT_UNIT * unit, spot, 1e18);
+        uint256 spotAsk = FullMath.mulDivRoundingUp(POINT_UNIT * unit, spot, 1e18);
+
+        for (uint256 i = 1; i <= 5; ++i) {
+            vm.warp(block.timestamp + 600);
+            vm.roll(block.number + 1);
+            assertTrue(ctl.refreshReference(), "the scheduled refresh moves the reference");
+            // The refresh block still uses the old sample. The next block prices against the held market move.
+            vm.roll(block.number + 1);
+            (uint256 bid, bool buyOk) = ctl.valuePerPoint(false);
+            (uint256 ask, bool sellOk) = ctl.valuePerPoint(true);
+            assertTrue(buyOk && sellOk, "both real-pool quotes remain usable");
+            if (moveBps > 0) {
+                assertEq(ask, spotAsk, "the up-move ask uses the sampled spot");
+                if (i == 1) assertLt(bid, spotBid, "the up-move bid lags the sampled spot");
+            } else {
+                assertEq(bid, spotBid, "the down-move bid uses the sampled spot");
+                if (i == 1) assertGt(ask, spotAsk, "the down-move ask lags the sampled spot");
+            }
+            if (i == 5) {
+                assertEq(bid, spotBid, "the bid reaches spot within five refreshes");
+                assertEq(ask, spotAsk, "the ask reaches spot within five refreshes");
+            }
+        }
     }
 
     // promise: SPEC 8 a single block spot swing around a victim trade cannot move the priced value past the band: a
