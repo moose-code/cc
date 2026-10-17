@@ -67,7 +67,8 @@ step() {
   if ! CORE="$CORE" OWNER="$OWNER" A1="$A1" A2="$A2" A3="$A3" TRADER="$TRADER" E2E_RPC_URL="$RPC" \
     forge script script/dev/E2EReal.s.sol --sig "$sig" "$@" \
     --rpc-url "$RPC" --chain-id 1 --broadcast --slow --unlocked --sender "$OWNER" >"$out" 2>&1; then
-    echo "  STEP FAILED: $sig"; tail -30 "$out"; FAILS=$((FAILS + 1)); return 1
+    echo "$sig" >> "$SCRATCH/failed-steps"
+    echo "  STEP FAILED: $sig"; tail -55 "$out"; return 1
   fi
   awk '/^== Logs ==/{f=1;next} /^(Script ran|=====|##|If you wish)/{f=0} f' "$out"
   return 0
@@ -311,17 +312,37 @@ fi
 say "PHASE 7: value mode"
 if [ -n "$BTOK" ]; then
   # Jack's token reaches holders through the module (A1's phase 6 balance sell) and the funder's launch balance. the
-  # funder moves about 2 percent of supply to the liquidity wallet after transfersOpenBlock and adds a full-range
-  # position, so the balance pool carries real trading depth. value mode then runs the full pool-move stress: a quote
-  # gated on that depth, an 8 percent spot move, a sell inside the bands, the keeper refresh cadence, and a same-block
-  # round trip that nets at most zero after pool fees. phase 6 already mined past transfersOpenBlock for the redemption.
+  # funder withdraws five real Statement pages and moves the balance token to the liquidity wallet after
+  # transfersOpenBlock. the full-range position must exceed $20,000 of two-sided value using the fork's Chainlink
+  # ETH/USD answer. value mode then tests a held pool move, the keeper refresh, an eth sell, and a same-block round trip.
   OUT7L="$(step "phase7ProdLiquidity(address)" "$BTOK")"; echo "$OUT7L" | sed 's/^/    /'
   DEPTH="$(echo "$OUT7L" | grep -m1 'POOL_DEPTH' | awk '{print $2}')"
   MOVED="$(echo "$OUT7L" | grep -m1 'MOVED_TOKENS' | awk '{print $2}')"
+  POOL_USD="$(echo "$OUT7L" | grep -m1 'POOL_USD' | awk '{print $2}')"
   check "the funder seeded real balance-pool depth" "$([ -n "$DEPTH" ] && calc "$DEPTH > 0")" "depth $DEPTH moved $MOVED"
-  # the minLiquidity gate at half the seeded depth: usable now, and an 8 percent price move keeps full-range L in place
+  check "the real balance pool has at least 20000 dollars of two-sided value" \
+    "$([ -n "$POOL_USD" ] && calc "$POOL_USD >= 20000")" "fork Chainlink ETH/USD pool value $POOL_USD"
+  # the minLiquidity gate at half the seeded depth; an 8 percent price move keeps the full-range liquidity in place
   MINLIQ="$(python3 -c "print(${DEPTH:-0}//2)")"
   if step "phase7Quote(uint128)" "$MINLIQ"; then check "value mode is on with the quote set" 1 "referencePrice $(num "$CTL" 'referencePrice()(uint256)')"; fi
+  # the pool key was bound before liquidity arrived, so its original two liquidity samples were zero. the keeper must
+  # record the funded pool twice, on the real 600-second cadence, before the active quote can be stressed.
+  for _ in 1 2; do
+    warp 601
+    KEEPER_ENV="DOORS=refreshReference" keeper_once
+  done
+  QUOTE_READY="$(callc "$CTL" 'valuePerPoint(bool)(uint256,bool)' false | tail -n 1 | awk '{print $1}')"
+  check "two keeper samples make the real value quote usable" "$([ "$QUOTE_READY" = true ] && echo 1 || echo 0)" "quote usable $QUOTE_READY"
+  for COUNT in 1 10; do
+    if OUT7HELD="$(step "phase7HeldRoundTrip(address,uint256)" "$BTOK" "$COUNT")"; then
+      echo "$OUT7HELD" | sed 's/^/    /'
+      HOLD_NET="$(echo "$OUT7HELD" | grep -m1 'HOLD_NET' | awk '{print $2}')"
+      check "a $COUNT-Credit held-price attack loses at the measured pool depth" \
+        "$([ -n "$HOLD_NET" ] && calc "$HOLD_NET <= 0")" "incremental net wei $HOLD_NET at $POOL_USD dollars pool value"
+    else
+      echo "$OUT7HELD" | sed 's/^/    /'
+    fi
+  done
   step "phase7MovePool(address)" "$BTOK" || true
   : > "$KEEPER_LOG"
   KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
@@ -345,6 +366,11 @@ fi
 ############################################################################## result
 WALL=$(( $(date +%s) - START_TS ))
 say "RESULT"
+if [ -f "$SCRATCH/failed-steps" ]; then
+  STEP_FAILURES="$(wc -l < "$SCRATCH/failed-steps" | tr -d '[:space:]')"
+  FAILS=$((FAILS + STEP_FAILURES))
+  echo "failed steps: $(tr '\n' ',' < "$SCRATCH/failed-steps")"
+fi
 echo "passes: $PASSES   fails: $FAILS   wall: ${WALL}s"
 [ "${KEEP:-0}" = 1 ] && { trap - EXIT; rm -rf "$SCRATCH"; echo "anvil left running on $RPC (pid $ANVIL_PID)"; }
 [ "$FAILS" -eq 0 ] || exit 1

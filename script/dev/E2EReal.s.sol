@@ -9,6 +9,7 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {Scenario, IUniversalRouterR, IPermit2R, IERC20R} from "./Scenario.s.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
@@ -32,6 +33,11 @@ interface IPermit2AllowanceR {
         external
         view
         returns (uint160 amount, uint48 expiration, uint48 nonce);
+}
+
+interface IETHUSD {
+    function latestAnswer() external view returns (int256);
+    function decimals() external view returns (uint8);
 }
 
 /// the AuctionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
@@ -306,8 +312,8 @@ contract E2EReal is Scenario {
     address internal constant FUNDER = 0x6666666666666666666666666666666666666666;
 
     /// deploys Jack's `AuctionLineageWithdrawals` from `out/upstream-balance.json` exactly as the production-module test
-    /// does: the funder receives 80 real Credits, the Statements owner registers the Balance renderer, the funder
-    /// composes a page, withdraws and retires the launch supply, then the owner deploys `StatementBalanceModule`, sets
+    /// does: the funder receives five pages of real Credits, the Statements owner registers the Balance renderer, the
+    /// funder composes and withdraws each page, then retires the launch supply. The owner deploys `StatementBalanceModule`, sets
     /// it, switches `redeemOn` and `balanceBidOn` on, initializes a native eth / token pool at the dev sqrt and points
     /// the controller at it. every write goes through the node directly (`_send` / `_sendCreate`) so the deployed token
     /// address is the one the node assigns, not a simulated one. `opensAt` is set past the current block so the shell
@@ -315,7 +321,7 @@ contract E2EReal is Scenario {
     function phase6ProdDeploy() external {
         _boot();
         sellBucketSeconds = 0;
-        _seedFunder(80);
+        _seedFunder(400);
 
         bytes memory creation = vm.parseJsonBytes(vm.readFile("out/upstream-balance.json"), ".bytecode.object");
         uint8 format = uint8(IUpstreamStatements(Mainnet.STATEMENTS).formatCount());
@@ -331,13 +337,15 @@ contract E2EReal is Scenario {
         address stOwner = IUpstreamStatements(Mainnet.STATEMENTS).owner();
         _send(stOwner, Mainnet.STATEMENTS, abi.encodeCall(IUpstreamStatements.addFormat, (renderer, "Balance")), 0);
 
-        uint256[80] memory page = _funderPage();
         _send(FUNDER, Mainnet.CREDITS, abi.encodeCall(ICredits.setApprovalForAll, (Mainnet.STATEMENTS, true)), 0);
-        _send(FUNDER, Mainnet.STATEMENTS, abi.encodeCall(IStatements.compose, (page, uint8(0))), 0);
-        uint256 funderSid = IStatements(Mainnet.STATEMENTS).supply();
-        _send(FUNDER, Mainnet.STATEMENTS, abi.encodeCall(IUpstreamStatements.approve, (token, funderSid)), 0);
-        uint256 q = IUpstreamToken(token).quote(funderSid);
-        _send(FUNDER, token, abi.encodeCall(IUpstreamToken.withdraw, (funderSid, q)), 0);
+        for (uint256 i; i < 5; ++i) {
+            uint256[80] memory page = _funderPage();
+            _send(FUNDER, Mainnet.STATEMENTS, abi.encodeCall(IStatements.compose, (page, uint8(0))), 0);
+            uint256 funderSid = IStatements(Mainnet.STATEMENTS).supply();
+            _send(FUNDER, Mainnet.STATEMENTS, abi.encodeCall(IUpstreamStatements.approve, (token, funderSid)), 0);
+            uint256 q = IUpstreamToken(token).quote(funderSid);
+            _send(FUNDER, token, abi.encodeCall(IUpstreamToken.withdraw, (funderSid, q)), 0);
+        }
         _send(FUNDER, token, abi.encodeCall(IUpstreamToken.retireLaunchSupply, ()), 0);
 
         bytes memory moduleInit =
@@ -438,8 +446,10 @@ contract E2EReal is Scenario {
     function _seedFunder(uint256 n) internal {
         uint256 got;
         uint256 cursor;
+        uint256 scan = 60_000;
         while (got < n) {
-            uint256 id = CreditIds.at(cursor++);
+            uint256 id = cursor < CreditIds.count() ? CreditIds.at(cursor++) : scan++;
+            require(scan <= 100_000, "phase6prod: Strategy has too few Credits for five pages");
             if (id == 35377 || id == 28352 || id == 18683) continue; // the strategy's listings at the pin block
             // the fork sits past the CreditIds capture block, so some listed ids no longer exist; skip those and any the
             // strategy no longer holds
@@ -458,7 +468,7 @@ contract E2EReal is Scenario {
         }
     }
 
-    /// the 80 Credits the funder now holds, for the surrender page
+    /// the next 80 Credits the funder holds, for one surrender page
     function _funderPage() internal view returns (uint256[80] memory page) {
         uint256[] memory ids = _creditsOf(FUNDER, 80);
         for (uint256 i; i < 80; ++i) {
@@ -494,7 +504,7 @@ contract E2EReal is Scenario {
     // ------------------------------------------------------------------ phase 7: value mode
 
     /// sets the value quote and switches value mode on with the eth spend cap active, as the owner. reference values
-    /// 1,200 bps/h, step 200, min 600 s, stale 3,600, tol 0, minLiquidity from the balance pool depth.
+    /// 1,200 bps/h, step 200, min 600 s, stale 3,600, tol 100, minLiquidity from the balance pool depth.
     function phase7Quote(uint128 minLiquidity) external {
         _boot();
         vm.broadcast(OWNER);
@@ -515,6 +525,108 @@ contract E2EReal is Scenario {
         core.setSettings(s);
         require(core.settings().valueModeOn, "phase7: value mode not on");
         console.log("phase7: value mode on, spendCapBps 1000, referencePrice", ctl.referencePrice());
+    }
+
+    /// A holder with real Credits holds an 8 percent pool move through the keeper's next reference refresh, sells
+    /// through the Core, then unwinds the pool trade. The second branch sells the same Credits after the same time and
+    /// keeper call with no pool move. This measures the incremental gain at the seeded pool depth and fork base fee.
+    /// The script broadcasts no transaction from this function; both branches run only in the local fork simulation.
+    // promise: a real held pool move at the measured launch depth cannot earn more from a Credit sale than the pool
+    // reversal and two swap gas charges cost, for the one- and ten-Credit cases the shell executes.
+    function phase7HeldRoundTrip(address token, uint256 count) external {
+        _boot();
+        require(count > 0 && count <= 10, "phase7held: count out of range");
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(token),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(0))
+        });
+        uint256[] memory ids = _creditsOf(A1, count);
+        uint256 atBlock = block.number;
+        uint256 atTime = block.timestamp;
+        uint256 snap = vm.snapshotState();
+        vm.fee(0.5 gwei);
+        vm.warp(atTime + 601);
+        vm.roll(atBlock + 1);
+        vm.prank(A3);
+        core.refreshReference();
+        vm.roll(atBlock + 2);
+        (uint256 baseValue, bool baseQuoteOk) = ctl.valuePerPoint(false);
+        require(baseQuoteOk, "phase7held: baseline quote unusable");
+        console.log("HOLD_BASE_VALUE_PER_POINT", baseValue);
+        console.log("HOLD_BASE_ETH_RATE", core.ethRate());
+        console.log("HOLD_BASE_SHARED_BPS", core.sharedRate());
+        console.log("HOLD_BASE_FIRST_BID", core.bidOf(ids[0]));
+        uint256 beforeBase = A1.balance;
+        vm.prank(A1);
+        core.sellForEth(ids);
+        uint256 baselinePaid = A1.balance - beforeBase;
+        require(vm.revertToState(snap), "phase7held: snapshot restore failed");
+        vm.warp(atTime);
+        vm.roll(atBlock);
+        vm.fee(0.5 gwei);
+
+        uint256 spotBefore;
+        (spotBefore,) = ctl.spotPrice();
+        uint256 referenceBefore = ctl.referencePrice();
+
+        IPoolManager pm = IPoolManager(Mainnet.POOL_MANAGER);
+        uint128 liq = pm.getLiquidity(pool.toId());
+        (uint160 sqrtP,,,) = pm.getSlot0(pool.toId());
+        uint256 reserve = FullMath.mulDiv(uint256(liq), FixedPoint96.Q96, sqrtP);
+        uint256 ethIn = reserve / 25;
+        TestSwapRouter router = new TestSwapRouter();
+        uint256 tokBefore = IERC20R(token).balanceOf(A1);
+        uint256 gasStart = gasleft();
+        vm.prank(A1);
+        router.swap{value: ethIn}(pool, true, -int256(ethIn), A1);
+        uint256 swapInGas = gasStart - gasleft();
+        uint256 bought = IERC20R(token).balanceOf(A1) - tokBefore;
+        uint256 spotMoved;
+        (spotMoved,) = ctl.spotPrice();
+        require(spotMoved >= spotBefore * 105 / 100, "phase7held: spot move below five percent");
+        vm.warp(atTime + 601);
+        vm.roll(atBlock + 1);
+        vm.prank(A3);
+        core.refreshReference();
+        vm.roll(atBlock + 2);
+        uint256 referenceMoved = ctl.referencePrice();
+        require(referenceMoved > referenceBefore, "phase7held: reference did not follow held spot");
+        (uint256 movedValue, bool movedQuoteOk) = ctl.valuePerPoint(false);
+        require(movedQuoteOk && movedValue > baseValue, "phase7held: protected quote did not follow held spot");
+        console.log("HOLD_SPOT_BEFORE", spotBefore);
+        console.log("HOLD_SPOT_MOVED", spotMoved);
+        console.log("HOLD_REFERENCE_BEFORE", referenceBefore);
+        console.log("HOLD_REFERENCE_MOVED", referenceMoved);
+        console.log("HOLD_ATTACK_VALUE_PER_POINT", movedValue);
+        console.log("HOLD_ATTACK_ETH_RATE", core.ethRate());
+        console.log("HOLD_ATTACK_SHARED_BPS", core.sharedRate());
+        console.log("HOLD_ATTACK_FIRST_BID", core.bidOf(ids[0]));
+        uint256 beforeAttack = A1.balance;
+        vm.prank(A1);
+        core.sellForEth(ids);
+        uint256 attackedPaid = A1.balance - beforeAttack;
+        vm.prank(A1);
+        IERC20R(token).approve(address(router), type(uint256).max);
+        uint256 beforeReverse = A1.balance;
+        gasStart = gasleft();
+        vm.prank(A1);
+        router.swap(pool, false, -int256(bought), A1);
+        uint256 swapOutGas = gasStart - gasleft();
+        uint256 recovered = A1.balance - beforeReverse;
+        require(ethIn > recovered, "phase7held: round trip did not cost ETH");
+        uint256 poolLoss = ethIn - recovered;
+        uint256 swapGasWei = (swapInGas + swapOutGas) * block.basefee;
+        int256 incrementalNet = int256(attackedPaid) - int256(baselinePaid) - int256(poolLoss) - int256(swapGasWei);
+        console.log("HOLD_COUNT", count);
+        console.log("HOLD_BASE_PAID", baselinePaid);
+        console.log("HOLD_ATTACK_PAID", attackedPaid);
+        console.log("HOLD_POOL_LOSS", poolLoss);
+        console.log("HOLD_SWAP_GAS_WEI", swapGasWei);
+        console.log("HOLD_NET", incrementalNet);
+        require(incrementalNet <= 0, "phase7held: profitable at measured pool depth");
     }
 
     /// moves the balance pool spot up about 8 percent with real eth buys of the balance token through a swap router.
@@ -579,7 +691,8 @@ contract E2EReal is Scenario {
     /// builds real trading depth on Jack's balance pool. after `transfersOpenBlock` the immutable funder moves part of
     /// its launch balance to the liquidity wallet (TRADER), which adds a full-range position to the native eth / token
     /// pool through the real pool manager. the move targets 2 percent of supply, capped at 95 percent of the funder
-    /// balance when the funder holds less. prints the moved amount and the pool liquidity the manager reports.
+    /// balance when the funder holds less. the actual deposited ETH and the fork's Chainlink ETH/USD answer establish
+    /// at least $20,000 of balanced pool value, rather than inferring depth from the token count or liquidity units.
     function phase7ProdLiquidity(address token) external {
         _boot();
         require(block.number >= IUpstreamToken(token).transfersOpenBlock(), "phase7: transfers not open");
@@ -610,7 +723,14 @@ contract E2EReal is Scenario {
         vm.broadcast(TRADER);
         IERC20R(token).approve(address(lp), type(uint256).max);
         vm.broadcast(TRADER);
-        lp.modify{value: ethLeg * 2 + 1 ether}(pool, -TICK_FULL, TICK_FULL, int256(liq));
+        BalanceDelta delta = lp.modify{value: ethLeg * 2 + 1 ether}(pool, -TICK_FULL, TICK_FULL, int256(liq));
+        require(delta.amount0() < 0 && delta.amount1() < 0, "phase7: no two-sided deposit");
+        uint256 ethDeposited = uint256(uint128(-delta.amount0()));
+        IETHUSD feed = IETHUSD(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419);
+        int256 answer = feed.latestAnswer();
+        require(answer > 0, "phase7: ETH/USD answer unavailable");
+        uint256 poolUsd = FullMath.mulDiv(ethDeposited * 2, uint256(answer), 1e18 * 10 ** feed.decimals());
+        require(poolUsd >= 20_000, "phase7: pool below $20k at fork ETH/USD");
 
         uint128 depth = IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(pool.toId());
         require(depth > 0, "phase7: no pool liquidity after modify");
@@ -618,6 +738,9 @@ contract E2EReal is Scenario {
         console.log("POOL_DEPTH", uint256(depth));
         console.log("MOVED_TOKENS", moved);
         console.log("ETH_LEG", ethLeg);
+        console.log("ETH_DEPOSITED", ethDeposited);
+        console.log("POOL_USD", poolUsd);
+        console.log("ETH_USD_FEED", uint256(answer));
     }
 
     /// same-block spot round trip around an eth sell on the real balance pool. swaps eth into the balance token to lift
