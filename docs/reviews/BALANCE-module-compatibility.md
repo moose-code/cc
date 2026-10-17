@@ -2,7 +2,7 @@
 
 Scope: engine main `a6441ea7eb2c05d3558b16f84bccf047965757d4`, token replacement PR 32 and the module in PR 33 (decisions 142 and 144).
 
-Upstream: `jckbtchr-vv/credits` at `38cdb26cc80431d103221f729cdcf63c0b93b060`, `contracts/src/experimental/AuctionLineageWithdrawals.sol` and its base `LineageWithdrawals.sol`. Compiler solc 0.8.28 via IR, optimizer 200. Creation bytecode SHA-256 `980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08`. `script/prepare-upstream-balance.py` and `test/UpstreamBalance.t.sol` both enforce the revision and the hash. The private source and bytecode are not vendored.
+Upstream: `jckbtchr-vv/credits` at `78f3a3132725af5c1fbfb1c1d5cf09b7ccb12e16` (contracts/src and contracts/foundry.toml are identical to the first review at `38cdb26cc80431d103221f729cdcf63c0b93b060`), `contracts/src/experimental/AuctionLineageWithdrawals.sol` and its base `LineageWithdrawals.sol`. Compiler solc 0.8.28 via IR, optimizer 200. Creation bytecode SHA-256 `980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08`. `script/tools/upstream-balance.sh` enforces the revision, the creation hash and the runtime hashes; `test/UpstreamBalance.t.sol` enforces the creation hash. The private source and bytecode are not vendored.
 
 ## Module rules
 
@@ -22,7 +22,7 @@ Upstream: `jckbtchr-vv/credits` at `38cdb26cc80431d103221f729cdcf63c0b93b060`, `
 ## Reproduce
 
 ```
-python3 script/prepare-upstream-balance.py /path/to/credits
+script/tools/upstream-balance.sh
 forge build src/adapters/StatementBalanceModule.sol
 STACK=live FORK_BLOCK=26205390 PORT=<free port> FORK_URL=<archive rpc> script/dev/anvil.sh
 forge test --match-path test/StatementBalanceModule.t.sol -vv

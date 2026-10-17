@@ -143,70 +143,134 @@ contract LaunchDayPhase2Test is LaunchDayBase {
         return IERC20Min(core.balanceToken()).balanceOf(core.balanceModule());
     }
 
-    // promise: SPEC 4 the same day against the pinned production balance module, run only when its artifact is present
-    // (docs/RUNBOOK.md names out/upstream-balance.json). the suite skips when the private artifact is absent
+    // promise: SPEC 4 the balance door against the pinned production module and Jack's token: the renderer is registered,
+    // the funder retires the launch supply, a statement redeems once transfers open, and a seller then takes the balance bid.
+    // the artifact comes from script/tools/upstream-balance.sh; the test skips without it and fails when
+    // REQUIRE_UPSTREAM_BALANCE=true
     function test_phase2DayWithProductionModule() public {
         if (!vm.exists("out/upstream-balance.json")) {
+            require(!vm.envOr("REQUIRE_UPSTREAM_BALANCE", false), "run script/tools/upstream-balance.sh first");
             vm.skip(true);
             return;
         }
-        // the pinned upstream token and the StatementBalanceModule, wired the way test/UpstreamBalance.t.sol builds them
-        string memory artifact = vm.readFile("out/upstream-balance.json");
-        bytes memory creation = vm.parseJsonBytes(artifact, ".bytecode.object");
-        address funderWallet = _user("phase2.upstreamFunder");
-        uint8 nextFormat = uint8(IUpstreamStatements(address(STATEMENTS)).formatCount());
+        (address token, address module, address funderWallet) = _deployProduction();
+        IUpstreamToken up = IUpstreamToken(token);
+        _registerAndRetire(up, funderWallet);
+
+        // the module advertises nothing until a statement redeems into it and transfers open
+        _skipSniperWindow();
+        _fundPot(5 ether);
+        assertEq(IBalanceModule(module).available(), 0, "no reserve before the first redemption");
+        uint256 owed = _redeemAtOpening(up, IBalanceModule(module));
+        _sellThroughModule(token, IBalanceModule(module), owed);
+    }
+
+    /// @dev the pinned upstream token and the StatementBalanceModule, wired the way test/UpstreamBalance.t.sol builds
+    /// them, with the balance pool and the controller's pool key retargeted to the token
+    function _deployProduction() internal returns (address token, address module, address funderWallet) {
+        funderWallet = _user("phase2.upstreamFunder");
         bytes memory init = abi.encodePacked(
-            creation,
+            vm.parseJsonBytes(vm.readFile("out/upstream-balance.json"), ".bytecode.object"),
             abi.encode(
                 address(STATEMENTS),
-                nextFormat,
+                uint8(IUpstreamStatements(address(STATEMENTS)).formatCount()),
                 uint64(block.number + 100),
                 funderWallet,
                 _user("phase2.upstreamAuction"),
                 _user("phase2.upstreamLiquidity")
             )
         );
-        address token;
         assembly ("memory-safe") {
             token := create(0, add(init, 32), mload(init))
         }
         require(token != address(0), "upstream deployment failed");
-        address module =
-            vm.deployCode("StatementBalanceModule.sol:StatementBalanceModule", abi.encode(address(core), token));
+        module = vm.deployCode("StatementBalanceModule.sol:StatementBalanceModule", abi.encode(address(core), token));
         _setBalanceModule(module);
         _setSwitches(true, true);
-        // the production token prices its bid through the same balance pool the dev wiring built, retargeted to it
-        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
-            currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(token),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: address(0)
-        });
-        PoolKey memory pk = PoolKey({
-            currency0: Currency.wrap(address(0)),
-            currency1: Currency.wrap(token),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: IHooks(address(0))
-        });
-        PM.initialize(pk, DEV_SQRT);
-        uint256 spot = FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, DEV_SQRT), FixedPoint96.Q96, DEV_SQRT);
+        PM.initialize(
+            PoolKey({
+                currency0: Currency.wrap(address(0)),
+                currency1: Currency.wrap(token),
+                fee: 3000,
+                tickSpacing: 60,
+                hooks: IHooks(address(0))
+            }),
+            DEV_SQRT
+        );
         vm.prank(owner);
-        ctl.setBalancePoolKey(k, spot);
+        ctl.setBalancePoolKey(
+            IControllerV1.PoolKey({
+                currency0: IControllerV1.Currency.wrap(address(0)),
+                currency1: IControllerV1.Currency.wrap(token),
+                fee: 3000,
+                tickSpacing: 60,
+                hooks: address(0)
+            }),
+            FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, DEV_SQRT), FixedPoint96.Q96, DEV_SQRT)
+        );
+    }
 
-        // the balance bid answers and pays through the real module
-        _skipSniperWindow();
-        _fundPot(5 ether);
+    /// @dev the upstream launch steps: the Statements owner registers the Balance renderer, then the funder surrenders
+    /// a composed page and retires the launch supply
+    function _registerAndRetire(IUpstreamToken up, address funderWallet) internal {
+        IUpstreamStatements source = IUpstreamStatements(address(STATEMENTS));
+        address renderer = up.renderer();
+        vm.prank(source.owner());
+        source.addFormat(renderer, "Balance");
+        uint256[] memory ids = _credits(funderWallet, 80);
+        uint256[80] memory page;
+        for (uint256 i; i < 80; ++i) {
+            page[i] = ids[i];
+        }
+        vm.startPrank(funderWallet);
+        CREDITS.setApprovalForAll(address(STATEMENTS), true);
+        uint256 funderSid = STATEMENTS.compose(page, 0);
+        source.approve(address(up), funderSid);
+        up.withdraw(funderSid, up.quote(funderSid));
+        up.retireLaunchSupply();
+        vm.stopPrank();
+        assertEq(up.totalRetired(), up.launchRetirement(), "launch supply retired");
+    }
+
+    /// @dev composes and redeems one statement at the opening block; returns the token the module then holds
+    function _redeemAtOpening(IUpstreamToken up, IBalanceModule module) internal returns (uint256 owed) {
+        uint256 sid = _composeOnce().sid;
+        _makeEligible(sid);
+        vm.roll(up.transfersOpenBlock());
+        owed = up.quote(sid);
+        assertEq(owed, core.ratingOf(sid) * module.unitPerPoint(), "upstream quote is rating times unit");
+        vm.prank(keeper);
+        core.redeemStatement(sid);
+        assertEq(module.available(), owed, "the redemption funds the module at par");
+    }
+
+    /// @dev the balance bid answers and pays through the real module
+    function _sellThroughModule(address token, IBalanceModule module, uint256 owed) internal {
         uint256 id = _credits(seller, 1)[0];
-        assertLe(core.balanceBidOf(id), _scoreOf(id) * IBalanceModule(module).unitPerPoint(), "the balance bid never exceeds par");
+        uint256 bid = core.balanceBidOf(id);
+        assertGt(bid, 0, "the balance bid is live");
+        assertLe(bid, _scoreOf(id) * module.unitPerPoint(), "the balance bid never exceeds par");
         uint256 before = IERC20Min(token).balanceOf(seller);
         vm.prank(seller);
         core.sellForBalance(_one(id));
-        assertGt(IERC20Min(token).balanceOf(seller) - before, 0, "the production balance door paid");
+        assertEq(IERC20Min(token).balanceOf(seller) - before, bid, "the balance fill equals balanceBidOf");
+        assertEq(module.available(), owed - bid, "the module paid the fill");
     }
 }
 
+interface IUpstreamToken {
+    function renderer() external view returns (address);
+    function quote(uint256) external view returns (uint256);
+    function withdraw(uint256, uint256) external returns (uint256);
+    function retireLaunchSupply() external;
+    function totalRetired() external view returns (uint256);
+    function launchRetirement() external view returns (uint256);
+    function transfersOpenBlock() external view returns (uint64);
+}
+
 interface IUpstreamStatements {
+    function owner() external view returns (address);
     function formatCount() external view returns (uint256);
+    function addFormat(address, string calldata) external returns (uint8);
+    function approve(address, uint256) external;
 }
