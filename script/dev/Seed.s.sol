@@ -10,21 +10,37 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, CreditSale, Settings, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {ICredits, IStatements, CreditSale, Settings, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {StatementBalanceModule} from "../../src/adapters/StatementBalanceModule.sol";
 import {CreditIds} from "../../test/utils/CreditIds.sol";
-import {MockBalanceToken} from "../../test/standins/MockBalanceToken.sol";
-import {MockBalanceModule} from "../../test/standins/MockBalanceModule.sol";
-import {TestLiquidityHelper} from "../../test/utils/TestLiquidityHelper.sol";
+
+/// the AuctionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
+interface IUpstreamToken {
+    function renderer() external view returns (address);
+    function quote(uint256 id) external view returns (uint256);
+    function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256);
+    function retireLaunchSupply() external;
+}
+
+interface IUpstreamStatements {
+    function owner() external view returns (address);
+    function formatCount() external view returns (uint256);
+    function addFormat(address renderer, string calldata name) external returns (uint8);
+    function approve(address to, uint256 id) external;
+}
 
 /// @notice seeds the anvil fork after `script/deploy.sh local`.
 ///
 /// PHASE=pre moves real Credits from the CreditStrategy to A1, A2 and A3.
 ///
-/// PHASE=post then deploys the balance token ("Balance") and `MockBalanceModule`, which mints `rating * unit` of the
-/// token to the Core on `redeem`. The token is minted to the Core for the balance bid, a native eth / balance token v4
-/// pool (hooks address zero, fee 3000, spacing 60) is initialized at `dev.balancePoolSqrtPriceX96` and given full range liquidity
-/// by the trader. As owner it sets the module, books the token, switches `redeemOn` and `balanceBidOn` on, points the
-/// controller at the pool, and switches the credit sale and chosen composition on.
+/// PHASE=post then wires Jack's balance side from the pinned artifact `out/upstream-balance.json`
+/// (`script/tools/upstream-balance.sh`), which is required: there is no mock fallback. It deploys Jack's
+/// `AuctionLineageWithdrawals` through the deterministic CREATE2 factory, gives a funder 80 real Credits, registers the
+/// Balance renderer as the Statements owner, has the funder compose a page, withdraw and retire the launch supply, then
+/// deploys `StatementBalanceModule` and initializes a native eth / balance token v4 pool (hooks address zero, fee 3000,
+/// spacing 60) at `dev.balancePoolSqrtPriceX96` with no trading depth (Jack's token reaches the module only through
+/// redemptions, which the scenario drives). As owner it sets the module, switches `redeemOn` and `balanceBidOn` on,
+/// points the controller at the pool, and switches the credit sale and chosen composition on.
 ///
 /// pool price: the balance token is currency1, so the pool price is balance token base units per wei and
 /// `sqrtPriceX96 = sqrt(price) * 2^96`. 100 points is 1,000,000 stored units, worth
@@ -33,8 +49,9 @@ import {TestLiquidityHelper} from "../../test/utils/TestLiquidityHelper.sol";
 /// 100 point credit equals the bid.
 ///
 /// the dev wallet `dev.wallet` of the launch config also receives `dev.walletCredits` credits from the strategy in both
-/// phases and, in post, `dev.walletBalance` of the balance token. its eth (`dev.walletEth`) is set by
-/// `script/dev/e2e.sh` and its coin comes from the Scenario stage `dev-wallet`. a config without `dev.wallet` skips it.
+/// phases. its eth (`dev.walletEth`) is set by `script/dev/e2e.sh` and its coin comes from the Scenario stage
+/// `dev-wallet`. a config without `dev.wallet` skips it. Jack's balance token is not freely mintable, so the dev wallet
+/// holds none; it receives balance token only by selling Credits into the balance bid.
 ///
 /// env: A1 A2 A3, DEPLOYER (the owner), PHASE (pre or post, default post), and for post CORE and TRADER. optional
 /// N1 N2 N3 (credits moved, default 330 10 10), LAUNCH_CONFIG (default script/config/anvil.json).
@@ -44,14 +61,13 @@ contract Seed is Script {
     uint256 internal constant LISTED_B = 28352;
     uint256 internal constant LISTED_C = 18683;
 
-    /// @dev full range for tick spacing 60, the liquidity added, and the token and eth the trader provides for it
-    int24 internal constant TICK_FULL = 887_220;
-    uint256 internal constant LIQUIDITY = 1e21;
-    uint256 internal constant LP_TOKENS = 1e24;
-    uint256 internal constant LP_ETH = 10 ether;
-
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     address internal constant STRATEGY = Mainnet.CREDIT_STRATEGY;
+
+    /// the funder that surrenders a page and retires Jack's launch supply on the fork (production post only)
+    address internal constant FUNDER = 0x6666666666666666666666666666666666666666;
+    /// Arachnid's deterministic deployment proxy, present on the mainnet fork
+    address internal constant CREATE2_PROXY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
     uint256 internal cursor;
 
@@ -67,36 +83,16 @@ contract Seed is Script {
         if (keccak256(bytes(vm.envOr("PHASE", string("post")))) == keccak256("pre")) return;
 
         ICore core = ICore(payable(vm.envAddress("CORE")));
-        address trader = vm.envAddress("TRADER");
-
-        vm.startBroadcast(owner);
-        MockBalanceToken token = new MockBalanceToken("Balance", "BALANCE");
-        MockBalanceModule module =
-            new MockBalanceModule(address(token), vm.parseJsonUint(cfg, ".dev.balanceUnitPerPoint"));
-        vm.stopBroadcast();
-
-        PoolKey memory pool = PoolKey({
-            currency0: Currency.wrap(address(0)),
-            currency1: Currency.wrap(address(token)),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: IHooks(address(0))
-        });
-        vm.startBroadcast(trader);
-        // the launch allocation mints to the module, which holds the balance token (the Core holds none)
-        token.mint(address(module), vm.parseJsonUint(cfg, ".dev.balanceMintToModule"));
-        token.mint(trader, LP_TOKENS);
-        if (hasWallet) token.mint(wallet, vm.parseJsonUint(cfg, ".dev.walletBalance"));
         uint160 poolSqrt = uint160(vm.parseJsonUint(cfg, ".dev.balancePoolSqrtPriceX96"));
-        IPoolManager(Mainnet.POOL_MANAGER).initialize(pool, poolSqrt);
-        TestLiquidityHelper lp = new TestLiquidityHelper();
-        token.approve(address(lp), type(uint256).max);
-        lp.modify{value: LP_ETH}(pool, -TICK_FULL, TICK_FULL, int256(LIQUIDITY));
-        vm.stopBroadcast();
+
+        // the artifact is required: no mock fallback on the phase 2 path (owner directive)
+        require(vm.exists("out/upstream-balance.json"), "run script/tools/upstream-balance.sh");
+        console.log("== PRODUCTION MODULE (Seed post): Jack's pinned AuctionLineageWithdrawals ==");
+        (address token, address module) = _deployProduction(owner, poolSqrt);
 
         IControllerV1 ctl = IControllerV1(core.controller());
         vm.startBroadcast(owner);
-        core.setBalanceModule(address(module));
+        core.setBalanceModule(module);
         Settings memory s = core.settings();
         s.redeemOn = true;
         s.balanceBidOn = true;
@@ -104,7 +100,7 @@ contract Seed is Script {
         ctl.setBalancePoolKey(
             IControllerV1.PoolKey({
                 currency0: IControllerV1.Currency.wrap(address(0)),
-                currency1: IControllerV1.Currency.wrap(address(token)),
+                currency1: IControllerV1.Currency.wrap(token),
                 fee: 3000,
                 tickSpacing: 60,
                 hooks: address(0)
@@ -120,9 +116,95 @@ contract Seed is Script {
         core.setChosenComposeOn(true);
         vm.stopBroadcast();
 
-        console.log("BALANCE_TOKEN", address(token));
-        console.log("BALANCE_MODULE", address(module));
-        console.log("module holding", token.balanceOf(address(module)));
+        console.log("BALANCE_TOKEN", token);
+        console.log("BALANCE_MODULE", module);
+    }
+
+    /// @dev Jack's `AuctionLineageWithdrawals` from the pinned artifact, wired the way the production-module test does:
+    /// the funder receives 80 real Credits, the Statements owner registers the renderer, the funder composes a page,
+    /// withdraws and retires the launch supply, then the module is deployed and the pool is initialized at the config
+    /// sqrt with no trading depth (Jack's token reaches the module only through redemptions, which the scenario drives).
+    /// the token is deployed through the deterministic CREATE2 factory so its address is the same in simulation and on
+    /// the node under `--broadcast`.
+    function _deployProduction(address owner, uint160 poolSqrt) internal returns (address token, address module) {
+        _moveToFunder(80);
+
+        bytes memory creation = vm.parseJsonBytes(vm.readFile("out/upstream-balance.json"), ".bytecode.object");
+        uint8 format = uint8(IUpstreamStatements(Mainnet.STATEMENTS).formatCount());
+        uint64 opensAt = uint64(block.number + 5);
+        bytes memory init = abi.encodePacked(
+            creation,
+            abi.encode(
+                Mainnet.STATEMENTS,
+                format,
+                opensAt,
+                FUNDER,
+                address(uint160(uint256(keccak256("seed.prod.auction")))),
+                address(uint160(uint256(keccak256("seed.prod.liquidity"))))
+            )
+        );
+        bytes32 salt = bytes32(0);
+        token = address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_PROXY, salt, keccak256(init))))));
+        vm.broadcast(owner);
+        (bool ok,) = CREATE2_PROXY.call(abi.encodePacked(salt, init));
+        require(ok, "seed: token CREATE2 failed");
+        require(token.code.length != 0, "seed: token not deployed at the computed address");
+
+        address renderer = IUpstreamToken(token).renderer();
+        vm.broadcast(IUpstreamStatements(Mainnet.STATEMENTS).owner());
+        IUpstreamStatements(Mainnet.STATEMENTS).addFormat(renderer, "Balance");
+
+        uint256[80] memory page;
+        uint256[] memory ids = CREDITS.tokensOf(FUNDER);
+        for (uint256 i; i < 80; ++i) {
+            page[i] = ids[i];
+        }
+        vm.broadcast(FUNDER);
+        CREDITS.setApprovalForAll(Mainnet.STATEMENTS, true);
+        vm.broadcast(FUNDER);
+        uint256 funderSid = IStatements(Mainnet.STATEMENTS).compose(page, 0);
+        vm.broadcast(FUNDER);
+        IUpstreamStatements(Mainnet.STATEMENTS).approve(token, funderSid);
+        uint256 q = IUpstreamToken(token).quote(funderSid);
+        vm.broadcast(FUNDER);
+        IUpstreamToken(token).withdraw(funderSid, q);
+        vm.broadcast(FUNDER);
+        IUpstreamToken(token).retireLaunchSupply();
+
+        vm.broadcast(owner);
+        module = address(new StatementBalanceModule(address(ICore(payable(vm.envAddress("CORE")))), token));
+
+        vm.broadcast(owner);
+        IPoolManager(Mainnet.POOL_MANAGER).initialize(
+            PoolKey({
+                currency0: Currency.wrap(address(0)),
+                currency1: Currency.wrap(token),
+                fee: 3000,
+                tickSpacing: 60,
+                hooks: IHooks(address(0))
+            }),
+            poolSqrt
+        );
+        console.log("module holding starts at 0 until the first redemption");
+    }
+
+    /// @dev moves `n` real Credits from the strategy to the funder, skipping the strategy's listings
+    function _moveToFunder(uint256 n) internal {
+        uint256 got;
+        while (got < n) {
+            uint256 id = CreditIds.at(cursor++);
+            if (id == LISTED_A || id == LISTED_B || id == LISTED_C) continue;
+            // the fork can sit past the CreditIds capture block, so some listed ids no longer exist; skip those and any
+            // the strategy no longer holds
+            try CREDITS.ownerOf(id) returns (address holder) {
+                if (holder != STRATEGY) continue;
+            } catch {
+                continue;
+            }
+            vm.broadcast(STRATEGY);
+            CREDITS.transferFrom(STRATEGY, FUNDER, id);
+            ++got;
+        }
     }
 
     /// @dev moves `n` real credits from the strategy to `to`, skipping the listed ids

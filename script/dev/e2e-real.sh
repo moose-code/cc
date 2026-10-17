@@ -29,6 +29,9 @@ A1=0x1111111111111111111111111111111111111111
 A2=0x2222222222222222222222222222222222222222
 A3=0x3333333333333333333333333333333333333333
 TRADER=0x5555555555555555555555555555555555555555
+FUNDER=0x6666666666666666666666666666666666666666   # surrenders Jack's launch page (production phase 6)
+STATEMENTS=0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b
+STRATEGY_ADDR=0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6
 FUND=0x152d02c7e14af6800000   # 100000 ether
 LISTED_A=35377; LISTED_B=28352; LISTED_C=18683
 mkdir -p "$CACHE_DIR"
@@ -259,34 +262,60 @@ check "a buyback burned CC" "$(calc "$SUP1 < $SUP0")" "supply $SUP0 -> $SUP1"
 check "the payee share latched after the sniper window" "$(callc "$CORE" 'payeeOn()(bool)' | grep -q true && echo 1 || echo 0)" "payeeOn"
 
 ############################################################################## phase 6
-say "PHASE 6: phase 2 balance side (the owner's real calls)"
+say "PHASE 6: phase 2 balance side (the owner's real calls on Jack's pinned contracts)"
+# the artifact is required: no mock fallback on any phase 2 path (owner directive)
+[ -f out/upstream-balance.json ] || { echo "  FAIL: out/upstream-balance.json missing; run script/tools/upstream-balance.sh" >&2; exit 1; }
 BTOK=""; BMOD=""
-OUT6="$(step "phase6Wire()")" && {
+echo "  >>> wiring Jack's pinned contracts from out/upstream-balance.json"
+# the funder, the strategy and the Statements owner send directly on the node (not forge broadcast), so fund their gas
+rpc anvil_setBalance "$FUNDER" "$FUND"
+rpc anvil_setBalance "$STRATEGY_ADDR" "$FUND"
+rpc anvil_setBalance "$(callc "$STATEMENTS" 'owner()(address)')" "$FUND"
+OUT6="$(step "phase6ProdDeploy()")" && {
   BTOK="$(echo "$OUT6" | grep -m1 'BALANCE_TOKEN' | awk '{print $2}')"
   BMOD="$(echo "$OUT6" | grep -m1 'BALANCE_MODULE' | awk '{print $2}')"
+  TOPEN="$(echo "$OUT6" | grep -m1 'TRANSFERS_OPEN_BLOCK' | awk '{print $2}')"
 }
-check "the owner set the balance module" "$([ -n "$BMOD" ] && echo 1 || echo 0)" "module $BMOD"
+check "the owner set the production balance module (Jack's pinned build)" "$([ -n "$BMOD" ] && echo 1 || echo 0)" "module $BMOD"
 if [ -n "$BTOK" ]; then
   jq --arg t "$BTOK" --arg m "$BMOD" '.balanceToken=$t|.balanceModule=$m' "$REC" > "$SCRATCH/rec.json" && mv "$SCRATCH/rec.json" "$REC"
-  if step "phase6BalanceSell()"; then check "a balance sell pays balanceBidOf and the bid stays under par" 1 "see step log"; fi
+  # A1 fills a page for the redemption; compose waits for the credit window
+  step "phase6ProdFill()" || true
+  PILE6="$(num "$CORE" 'pileSize()(uint256)')"
+  check "phase 6 pile holds a composable page" "$(calc "$PILE6 >= 80")" "pile $PILE6"
+  WIN6="$(num "$CTL" 'creditWindow()(uint32)')"
+  warp $((WIN6 + 60))
+  RSID="$(step "phase6ProdCompose()" | grep -m1 'REDEEM_SID' | awk '{print $2}')"
+  check "phase 6 composed a held statement" "$([ -n "$RSID" ] && echo 1 || echo 0)" "statement $RSID"
+  if [ -n "$RSID" ]; then
+    # mine to Jack's opening block, then warp the statement to its redemption floor
+    CUR="$(cast block-number --rpc-url "$RPC")"
+    if [ -n "$TOPEN" ] && [ "$CUR" -lt "$TOPEN" ]; then
+      cast rpc anvil_mine "$(printf '0x%x' $((TOPEN - CUR + 1)))" --rpc-url "$RPC" >/dev/null
+    fi
+    for _ in $(seq 1 40); do
+      [ "$(callc "$CTL" 'atFloor(uint256)(bool)' "$RSID")" = true ] && break
+      warp 86400
+    done
+    check "phase 6 statement reached its floor" "$([ "$(callc "$CTL" 'atFloor(uint256)(bool)' "$RSID")" = true ] && echo 1 || echo 0)" "atFloor $RSID"
+    if step "phase6ProdRedeem(uint256)" "$RSID"; then check "redeem at the floor pays rating times 1e14 into the module" 1 "see step log"; fi
+    if step "phase6BalanceSell()"; then check "a balance sell pays balanceBidOf and the bid stays under par" 1 "see step log"; fi
+  fi
 fi
 
 ############################################################################## phase 7
 say "PHASE 7: value mode"
-MINLIQ=1000000000000000000   # 1e18 floor; the dev balance pool is far deeper
 if [ -n "$BTOK" ]; then
+  # Jack's token reaches the module only through redemptions, so the balance pool carries no trading depth. value mode
+  # reads the initialized pool's sqrt spot as the protected value, so minLiquidity is 0 and the pool move is skipped.
+  MINLIQ=0
   if step "phase7Quote(uint128)" "$MINLIQ"; then check "value mode is on with the quote set" 1 "referencePrice $(num "$CTL" 'referencePrice()(uint256)')"; fi
-  step "phase7MovePool(address)" "$BTOK" || true
-  # the keeper refreshes the reference on its cadence (unpaid refreshReference, at least 600 s apart)
   : > "$KEEPER_LOG"
-  KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
   KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
   KEEPER_ENV="DOORS=refreshReference" keeper_once
   REFRESHES="$(grep -c '"door":"refreshReference"' "$KEEPER_LOG" 2>/dev/null | tr -d '[:space:]')"
   check "the keeper refreshed the reference on cadence" "$(calc "$REFRESHES >= 1")" "$REFRESHES refresh ticks"
-  # a value mode sell pays within the bands (the fill equals bidOf, which prices off the protected value)
   if step "phase7ValueSell()"; then check "a value mode sell pays inside the bands" 1 "see step log"; fi
-  # switch off: the eth instance resets to the shared rate
   RATE_ON="$(num "$CORE" 'ethRate()(uint256)')"
   step "phase7ValueOff()" || true
   RATE_OFF="$(num "$CORE" 'ethRate()(uint256)')"

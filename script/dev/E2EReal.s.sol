@@ -11,17 +11,42 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {Scenario, IUniversalRouterR, IPermit2R, IERC20R} from "./Scenario.s.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
-import {ICredits, ICreditScore, Mainnet, Settings, Quote, CreditSale} from "../../src/interfaces/Interfaces.sol";
-import {MockBalanceToken} from "../../test/standins/MockBalanceToken.sol";
-import {MockBalanceModule} from "../../test/standins/MockBalanceModule.sol";
-import {TestLiquidityHelper} from "../../test/utils/TestLiquidityHelper.sol";
+import {
+    ICredits,
+    ICreditScore,
+    IStatements,
+    IBalanceModule,
+    Mainnet,
+    Settings,
+    Quote,
+    CreditSale
+} from "../../src/interfaces/Interfaces.sol";
+import {StatementBalanceModule} from "../../src/adapters/StatementBalanceModule.sol";
 import {TestSwapRouter} from "../../test/utils/TestSwapRouter.sol";
+import {CreditIds} from "../../test/utils/CreditIds.sol";
 
 interface IPermit2AllowanceR {
     function allowance(address owner, address token, address spender)
         external
         view
         returns (uint160 amount, uint48 expiration, uint48 nonce);
+}
+
+/// the AuctionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
+interface IUpstreamToken {
+    function renderer() external view returns (address);
+    function decimals() external view returns (uint8);
+    function quote(uint256 id) external view returns (uint256);
+    function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256);
+    function retireLaunchSupply() external;
+    function transfersOpenBlock() external view returns (uint64);
+}
+
+interface IUpstreamStatements {
+    function owner() external view returns (address);
+    function formatCount() external view returns (uint256);
+    function addFormat(address renderer, string calldata name) external returns (uint8);
+    function approve(address to, uint256 id) external;
 }
 
 /// @notice the action half of `script/dev/e2e-real.sh`: one external function per step of the real launch end to end,
@@ -33,10 +58,6 @@ interface IPermit2AllowanceR {
 /// env: CORE, OWNER, A1 A2 A3, TRADER, and for the balance and value steps LAUNCH_CONFIG (default script/config/anvil.json).
 contract E2EReal is Scenario {
     uint160 internal constant DEV_SQRT = uint160(11318308930609191084791992905142);
-    int24 internal constant TICK_FULL = 887_220;
-    uint256 internal constant LP_LIQUIDITY = 1e21;
-    uint256 internal constant LP_TOKENS = 1e24;
-    uint256 internal constant LP_ETH = 2000 ether;
 
     function _boot() internal {
         core = ICore(payable(vm.envAddress("CORE")));
@@ -247,61 +268,9 @@ contract E2EReal is Scenario {
 
     // ------------------------------------------------------------------ phase 6: the balance side (owner's real calls)
 
-    /// deploys the dev balance token and module, a native eth / balance pool at the dev sqrt with full range liquidity,
-    /// sets the module, the controller pool key and the balance switches the way Seed.s.sol's post section does. prints
-    /// the token and module so the shell records them.
-    function phase6Wire() external {
-        _boot();
-        string memory cfg = _cfg();
-
-        vm.startBroadcast(OWNER);
-        MockBalanceToken token = new MockBalanceToken("Balance", "BALANCE");
-        MockBalanceModule module =
-            new MockBalanceModule(address(token), vm.parseJsonUint(cfg, ".dev.balanceUnitPerPoint"));
-        vm.stopBroadcast();
-
-        PoolKey memory pool = PoolKey({
-            currency0: Currency.wrap(address(0)),
-            currency1: Currency.wrap(address(token)),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: IHooks(address(0))
-        });
-        vm.startBroadcast(TRADER);
-        token.mint(address(module), vm.parseJsonUint(cfg, ".dev.balanceMintToModule"));
-        token.mint(TRADER, LP_TOKENS);
-        IPoolManager(Mainnet.POOL_MANAGER).initialize(pool, DEV_SQRT);
-        TestLiquidityHelper lp = new TestLiquidityHelper();
-        token.approve(address(lp), type(uint256).max);
-        lp.modify{value: LP_ETH}(pool, -TICK_FULL, TICK_FULL, int256(LP_LIQUIDITY));
-        vm.stopBroadcast();
-
-        uint256 spot = FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, DEV_SQRT), FixedPoint96.Q96, DEV_SQRT);
-        vm.startBroadcast(OWNER);
-        core.setBalanceModule(address(module));
-        Settings memory s = core.settings();
-        s.redeemOn = true;
-        s.balanceBidOn = true;
-        core.setSettings(s);
-        ctl.setBalancePoolKey(
-            IControllerV1.PoolKey({
-                currency0: IControllerV1.Currency.wrap(address(0)),
-                currency1: IControllerV1.Currency.wrap(address(token)),
-                fee: 3000,
-                tickSpacing: 60,
-                hooks: address(0)
-            }),
-            spot
-        );
-        vm.stopBroadcast();
-
-        require(core.balanceModule() == address(module), "phase6: module not set");
-        console.log("BALANCE_TOKEN", address(token));
-        console.log("BALANCE_MODULE", address(module));
-    }
-
     /// A1 sells one credit into the balance bid; the fill pays exactly `balanceBidOf` and the balance bid never exceeds
-    /// par (score times the module unit per point).
+    /// par (score times the module unit per point). works against the dev mock and the production module alike, reading
+    /// the unit through `IBalanceModule`.
     function phase6BalanceSell() external {
         _boot();
         _approveCredits(A1);
@@ -311,7 +280,7 @@ contract E2EReal is Scenario {
         require(balBid > 0, "phase6: balance bid is zero");
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE)
             .scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
-        uint256 unit = MockBalanceModule(core.balanceModule()).unitPerPoint();
+        uint256 unit = IBalanceModule(core.balanceModule()).unitPerPoint();
         require(balBid <= score * unit, "phase6: balance bid exceeds par");
         IERC20R token = IERC20R(core.balanceToken());
         uint256 before = token.balanceOf(A1);
@@ -320,6 +289,197 @@ contract E2EReal is Scenario {
         require(token.balanceOf(A1) - before == balBid, "phase6: balance fill not balanceBidOf");
         console.log("phase6: balance sell credit", id);
         console.log("phase6: balanceBidOf / paid", balBid, token.balanceOf(A1) - before);
+    }
+
+    // ---------------------------------------------------- phase 6 production: Jack's pinned contracts (the artifact)
+
+    /// the funder address that surrenders a page and retires Jack's launch supply on the fork
+    address internal constant FUNDER = 0x6666666666666666666666666666666666666666;
+
+    /// deploys Jack's `AuctionLineageWithdrawals` from `out/upstream-balance.json` exactly as the production-module test
+    /// does: the funder receives 80 real Credits, the Statements owner registers the Balance renderer, the funder
+    /// composes a page, withdraws and retires the launch supply, then the owner deploys `StatementBalanceModule`, sets
+    /// it, switches `redeemOn` and `balanceBidOn` on, initializes a native eth / token pool at the dev sqrt and points
+    /// the controller at it. every write goes through the node directly (`_send` / `_sendCreate`) so the deployed token
+    /// address is the one the node assigns, not a simulated one. `opensAt` is set past the current block so the shell
+    /// mines to it before the redemption, mirroring Jack's opening gate.
+    function phase6ProdDeploy() external {
+        _boot();
+        sellBucketSeconds = 0;
+        _seedFunder(80);
+
+        bytes memory creation = vm.parseJsonBytes(vm.readFile("out/upstream-balance.json"), ".bytecode.object");
+        uint8 format = uint8(IUpstreamStatements(Mainnet.STATEMENTS).formatCount());
+        uint64 opensAt = uint64(block.number + 50);
+        bytes memory init = abi.encodePacked(
+            creation,
+            abi.encode(Mainnet.STATEMENTS, format, opensAt, FUNDER, _prodAddr("auction"), _prodAddr("liquidity"))
+        );
+        address token = _sendCreate(OWNER, init);
+        require(token != address(0), "phase6prod: token deploy failed");
+
+        address renderer = IUpstreamToken(token).renderer();
+        address stOwner = IUpstreamStatements(Mainnet.STATEMENTS).owner();
+        _send(stOwner, Mainnet.STATEMENTS, abi.encodeCall(IUpstreamStatements.addFormat, (renderer, "Balance")), 0);
+
+        uint256[80] memory page = _funderPage();
+        _send(FUNDER, Mainnet.CREDITS, abi.encodeCall(ICredits.setApprovalForAll, (Mainnet.STATEMENTS, true)), 0);
+        _send(FUNDER, Mainnet.STATEMENTS, abi.encodeCall(IStatements.compose, (page, uint8(0))), 0);
+        uint256 funderSid = IStatements(Mainnet.STATEMENTS).supply();
+        _send(FUNDER, Mainnet.STATEMENTS, abi.encodeCall(IUpstreamStatements.approve, (token, funderSid)), 0);
+        uint256 q = IUpstreamToken(token).quote(funderSid);
+        _send(FUNDER, token, abi.encodeCall(IUpstreamToken.withdraw, (funderSid, q)), 0);
+        _send(FUNDER, token, abi.encodeCall(IUpstreamToken.retireLaunchSupply, ()), 0);
+
+        bytes memory moduleInit =
+            abi.encodePacked(type(StatementBalanceModule).creationCode, abi.encode(address(core), token));
+        address module = _sendCreate(OWNER, moduleInit);
+
+        bytes memory initPool = abi.encodeCall(
+            IPoolManager.initialize,
+            (
+                PoolKey({
+                    currency0: Currency.wrap(address(0)),
+                    currency1: Currency.wrap(token),
+                    fee: 3000,
+                    tickSpacing: 60,
+                    hooks: IHooks(address(0))
+                }),
+                DEV_SQRT
+            )
+        );
+        _send(OWNER, Mainnet.POOL_MANAGER, initPool, 0);
+
+        uint256 spot = FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, DEV_SQRT), FixedPoint96.Q96, DEV_SQRT);
+        _send(OWNER, address(core), abi.encodeCall(ICore.setBalanceModule, (module)), 0);
+        Settings memory s = core.settings();
+        s.redeemOn = true;
+        s.balanceBidOn = true;
+        _send(OWNER, address(core), abi.encodeCall(ICore.setSettings, (s)), 0);
+        _send(
+            OWNER,
+            address(ctl),
+            abi.encodeCall(
+                IControllerV1.setBalancePoolKey,
+                (
+                    IControllerV1.PoolKey({
+                        currency0: IControllerV1.Currency.wrap(address(0)),
+                        currency1: IControllerV1.Currency.wrap(token),
+                        fee: 3000,
+                        tickSpacing: 60,
+                        hooks: address(0)
+                    }),
+                    spot
+                )
+            ),
+            0
+        );
+
+        require(core.balanceModule() == module, "phase6prod: module not set");
+        console.log("== PRODUCTION MODULE: Jack's pinned AuctionLineageWithdrawals ==");
+        console.log("BALANCE_TOKEN", token);
+        console.log("BALANCE_MODULE", module);
+        console.log("TRANSFERS_OPEN_BLOCK", uint256(IUpstreamToken(token).transfersOpenBlock()));
+    }
+
+    /// A1 sells 80 credits into the eth bid so the Core holds a composable page for the redemption
+    function phase6ProdFill() external {
+        _boot();
+        sellBucketSeconds = core.settings().bucketSeconds;
+        vm.rpc("anvil_removeBlockTimestampInterval", "[]");
+        // approve through the node (not a deferred broadcast) so the sells in _fill, which also send on the node, see it
+        if (!ICredits(Mainnet.CREDITS).isApprovedForAll(A1, address(core))) {
+            _send(A1, Mainnet.CREDITS, abi.encodeCall(ICredits.setApprovalForAll, (address(core), true)), 0);
+        }
+        _fill(A1, 80, "phase6prod");
+        console.log("phase6prod: pileSize", core.pileSize());
+    }
+
+    /// the Core composes a page into a held statement; prints its id for the floor warp and redemption
+    function phase6ProdCompose() external {
+        _boot();
+        require(core.pileSize() >= 80, "phase6prod: fewer than 80 credits in the pile");
+        vm.broadcast(OWNER);
+        core.compose();
+        uint256[] memory held = core.heldStatements();
+        require(held.length > 0, "phase6prod: no held statement after compose");
+        uint256 sid = held[held.length - 1];
+        console.log("phase6prod: composed held statement", sid);
+        console.log("REDEEM_SID", sid);
+    }
+
+    /// redeems the floor statement into the production module: the quote and the module gain equal `rating * 1e14`.
+    function phase6ProdRedeem(uint256 sid) external {
+        _boot();
+        require(ctl.atFloor(sid), "phase6prod: statement not at its floor");
+        IBalanceModule module = IBalanceModule(core.balanceModule());
+        require(module.unitPerPoint() == 1e14, "phase6prod: unit per point is not 1e14");
+        require(IUpstreamToken(core.balanceToken()).decimals() == 18, "phase6prod: token is not 18 decimals");
+        uint256 owed = core.ratingOf(sid) * 1e14;
+        require(IUpstreamToken(core.balanceToken()).quote(sid) == owed, "phase6prod: quote is not rating * 1e14");
+        uint256 before = module.available();
+        vm.broadcast(OWNER);
+        core.redeemStatement(sid);
+        require(module.available() == before + owed, "phase6prod: redeem did not pay rating * 1e14");
+        console.log("phase6prod: redeemed statement", sid);
+        console.log("phase6prod: owed (rating * 1e14) / module available", owed, module.available());
+    }
+
+    /// moves `n` real Credits from the CreditStrategy to the funder, skipping the strategy's live listings
+    function _seedFunder(uint256 n) internal {
+        uint256 got;
+        uint256 cursor;
+        while (got < n) {
+            uint256 id = CreditIds.at(cursor++);
+            if (id == 35377 || id == 28352 || id == 18683) continue; // the strategy's listings at the pin block
+            // the fork sits past the CreditIds capture block, so some listed ids no longer exist; skip those and any the
+            // strategy no longer holds
+            try ICredits(Mainnet.CREDITS).ownerOf(id) returns (address holder) {
+                if (holder != Mainnet.CREDIT_STRATEGY) continue;
+            } catch {
+                continue;
+            }
+            _send(
+                Mainnet.CREDIT_STRATEGY,
+                Mainnet.CREDITS,
+                abi.encodeCall(ICredits.transferFrom, (Mainnet.CREDIT_STRATEGY, FUNDER, id)),
+                0
+            );
+            ++got;
+        }
+    }
+
+    /// the 80 Credits the funder now holds, for the surrender page
+    function _funderPage() internal view returns (uint256[80] memory page) {
+        uint256[] memory ids = _creditsOf(FUNDER, 80);
+        for (uint256 i; i < 80; ++i) {
+            page[i] = ids[i];
+        }
+    }
+
+    /// a distinct deterministic address for a constructor role the e2e flow does not exercise
+    function _prodAddr(string memory label) internal pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encodePacked("e2e-real.prod.", label)))));
+    }
+
+    /// deploys `initcode` as a node transaction from `who` and returns the address the node assigned, then reselects the
+    /// fork at the mined block. mirrors Scenario `_send` for a create (no `to`).
+    function _sendCreate(address who, bytes memory initcode) internal returns (address deployed) {
+        vm.rpc("evm_increaseTime", string.concat("[", vm.toString(sellBucketSeconds), "]"));
+        bytes32 txHash = abi.decode(
+            vm.rpc(
+                "eth_sendTransaction",
+                string.concat(
+                    '[{"from":"', vm.toString(who), '","data":"', vm.toString(initcode), '","gas":"0x17d7840"}]'
+                )
+            ),
+            (bytes32)
+        );
+        vm.rpc("evm_mine", "[]");
+        string memory receipt = vm.rpcJson("eth_getTransactionReceipt", string.concat('["', vm.toString(txHash), '"]'));
+        require(vm.parseJsonUint(receipt, ".status") == 1, "Anvil create reverted");
+        deployed = vm.parseJsonAddress(receipt, ".contractAddress");
+        vm.createSelectFork(vm.envString("E2E_RPC_URL"), vm.parseJsonUint(receipt, ".blockNumber"));
     }
 
     // ------------------------------------------------------------------ phase 7: value mode
