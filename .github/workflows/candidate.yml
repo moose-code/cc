@@ -22,22 +22,10 @@ jobs:
       MAINNET_RPC_URL: http://127.0.0.1:8545
       CANDIDATE_RUN: "1"
       REHEARSAL: "1"
-      UPSTREAM_CREDITS_TOKEN: ${{ secrets.UPSTREAM_CREDITS_TOKEN }}
-      REQUIRE_UPSTREAM_BALANCE: ${{ secrets.UPSTREAM_CREDITS_TOKEN != '' && 'true' || 'false' }}
+      REQUIRE_UPSTREAM_BALANCE: "true"
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-      # test/UpstreamBalance.t.sol needs the private upstream artifact: with the token set the run prepares it and fails
-      # when it is absent
-      - name: upstream balance source
-        if: ${{ env.UPSTREAM_CREDITS_TOKEN != '' }}
-        uses: actions/checkout@v4
-        with:
-          repository: jckbtchr-vv/credits
-          ref: 38cdb26cc80431d103221f729cdcf63c0b93b060
-          token: ${{ secrets.UPSTREAM_CREDITS_TOKEN }}
-          path: upstream-credits
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
         with:
@@ -57,9 +45,13 @@ jobs:
             --auto-impersonate --retries 10 --timeout 60000 > anvil.log 2>&1 &
           for _ in $(seq 1 60); do cast chain-id --rpc-url "$MAINNET_RPC_URL" >/dev/null 2>&1 && break; sleep 1; done
           cast chain-id --rpc-url "$MAINNET_RPC_URL"
+      # test/UpstreamBalance.t.sol and the production module variant of test/LaunchDayPhase2.t.sol run against Jack's
+      # contracts built from jckbtchr-vv/credits at the commit pinned in the script. REQUIRE_UPSTREAM_BALANCE makes them
+      # fail instead of skip, and the script fails without the secret or on any drift from its pins
       - name: upstream balance artifact
-        if: ${{ env.UPSTREAM_CREDITS_TOKEN != '' }}
-        run: python3 script/prepare-upstream-balance.py upstream-credits
+        env:
+          UPSTREAM_CREDITS_TOKEN: ${{ secrets.UPSTREAM_CREDITS_TOKEN }}
+        run: script/tools/upstream-balance.sh
       - run: forge build
       - run: forge test -vv --chain-id 1
       - name: deep invariants

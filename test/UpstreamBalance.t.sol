@@ -36,7 +36,7 @@ interface IUpstreamStatements {
 }
 
 /// Real upstream creation bytecode (solc 0.8.28), real engine and mainnet NFTs.
-/// Prepare the optional private-source artifact with script/prepare-upstream-balance.py.
+/// Build the private-source artifact with script/tools/upstream-balance.sh. It pins the upstream commit and the code hashes.
 contract UpstreamBalanceTest is Fixture {
     IUpstreamToken private balanceToken;
     IBalanceModule private balanceModule;
@@ -46,12 +46,11 @@ contract UpstreamBalanceTest is Fixture {
 
     function setUp() public override {
         if (!vm.exists("out/upstream-balance.json")) {
-            require(!vm.envOr("REQUIRE_UPSTREAM_BALANCE", false), "prepare pinned upstream artifact first");
+            require(!vm.envOr("REQUIRE_UPSTREAM_BALANCE", false), "run script/tools/upstream-balance.sh first");
             vm.skip(true);
             return;
         }
         string memory artifact = vm.readFile("out/upstream-balance.json");
-        assertEq(vm.parseJsonString(artifact, ".upstreamCommit"), "38cdb26cc80431d103221f729cdcf63c0b93b060");
         bytes memory creation = vm.parseJsonBytes(artifact, ".bytecode.object");
         assertEq(sha256(creation), 0x980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08);
         super.setUp();
