@@ -25,7 +25,7 @@ contract LaunchDayPhase2Test is LaunchDayBase {
 
     function setUp() public override {
         super.setUp();
-        autoBook = true; // book after each swap so the pot funds the bid and the composed page
+        autoBook = false;
     }
 
     // promise: SPEC 4 the balance door against the pinned production module and Jack's token: the renderer is registered,
@@ -39,10 +39,29 @@ contract LaunchDayPhase2Test is LaunchDayBase {
 
         // the module advertises nothing until a statement redeems into it and transfers open
         _skipSniperWindow();
-        _fundPot(5 ether);
+        _fundPotThroughKeeper(5 ether);
         assertEq(IBalanceModule(module).available(), 0, "no reserve before the first redemption");
         uint256 owed = _redeemAtOpening(up, IBalanceModule(module));
         _sellThroughModule(token, IBalanceModule(module), owed);
+    }
+
+    // promise: real hook trades leave income unbooked until the launch keeper's book gate fires, including in phase two.
+    function _fundPotThroughKeeper(uint256 target) internal {
+        uint256 books;
+        for (uint256 i; i < 16 && core.ethPot() < target; ++i) {
+            uint256 beforePot = core.ethPot();
+            uint256 need = target - beforePot;
+            _buyCoin(funder, need * 10_000 / 460 + 1000);
+            assertEq(core.ethPot(), beforePot, "the hook does not book the trade");
+            assertGt(_pending(), 0, "the real pool trade pushed fees to the Core");
+            vm.warp(block.timestamp + 601);
+            vm.roll(block.number + 1);
+            _keeperTick();
+            assertGt(core.ethPot(), beforePot, "the keeper booked the pending income");
+            ++books;
+        }
+        assertGe(core.ethPot(), target, "real trades and keeper books fund the page");
+        emit log_named_uint("phase two keeper books", books);
     }
 
     /// @dev the pinned upstream token and the StatementBalanceModule, wired the way test/UpstreamBalance.t.sol builds
