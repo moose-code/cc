@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import { A, BLOCK, REF_PTS, OPEN, makeCore, runExit, runMarket } from './grid.mjs';
 import { mulberry32, poisson, DEFAULTS, W } from './engine.js';
 
+const ROYALTY = DEFAULTS.buyToArtistBps / 1e4; // paid on top of the seller payment from the pot
+
 const REF_RATIO = (REF_PTS * 1e4) / 1_000_000;
 const LAUNCH = { drop: 115, climb: 200, rec: 200, floorBps: 1, cap: 10000 };
 const GRID = { pots: [0.5, 2, 10], ceil: [11000, 13000, 15000, 20000], step: [600, 300], loosen: [600, 1200], seeds: [1, 2, 3], hours: 24, spread: [0.10, 0.25], noSellerHours: 6 };
@@ -50,7 +52,7 @@ export function runCell(cell) {
   return {
     cell, first: mean(sp.map((r) => r.fills[0])), firstSolo: mean(solo.map((r) => r.fills[0])), firstFollow: mean(fol.map((r) => r.fills[0])),  soloPerH: mean(solo.map((r) => mean(r.fills.slice(12)))),
     perH: mean(sp.map((r) => mean(r.fills.slice(12)))), askPerH: mean(sp.map((r) => mean(r.askFills.slice(12)))),
-    dumpEth: dump.spent, dumpCredits: dump.credits, potEnd: dump.potEnd, worstMin: dump.worstMinuteEth, recMin: dump.recoveryMin, collapse: col.spent,
+    dumpEth: dump.spent, dumpRoyalty: dump.spent * ROYALTY, dumpTotal: dump.spent * (1 + ROYALTY), dumpCredits: dump.credits, potEnd: dump.potEnd, worstMin: dump.worstMinuteEth, recMin: dump.recoveryMin, collapse: col.spent, collapseRoyalty: col.spent * ROYALTY, collapseTotal: col.spent * (1 + ROYALTY),
     waveMin: wave.waveDoneMin, idle: runIdle(cell),
   };
 }
@@ -58,7 +60,7 @@ export function runCell(cell) {
 if (process.argv[1] && process.argv[1].endsWith('ceiling.mjs')) {
   const t0 = Date.now(), rows = [];
   for (const pot of GRID.pots) for (const ceilBps of GRID.ceil) for (const idleStepSeconds of GRID.step) for (const idleLoosenBps of GRID.loosen) rows.push(runCell({ ...LAUNCH, ceilBps, idleStepSeconds, idleLoosenBps, pot }));
-  const out = { grid: GRID, launch: { ...LAUNCH, rateStart: DEFAULTS.rateStart, rateCap: DEFAULTS.rateCap, pointsPerPage: DEFAULTS.pointsPerPage, climbMultiplierCapBps: DEFAULTS.climbMultiplierCapBps }, seconds: (Date.now() - t0) / 1000, rows };
+  const out = { grid: GRID, launch: { ...LAUNCH, buyToArtistBps: DEFAULTS.buyToArtistBps, reserveWei: DEFAULTS.reserveWei, rateStart: DEFAULTS.rateStart, rateCap: DEFAULTS.rateCap, pointsPerPage: DEFAULTS.pointsPerPage, climbMultiplierCapBps: DEFAULTS.climbMultiplierCapBps }, seconds: (Date.now() - t0) / 1000, rows };
   if (process.argv[2]) fs.writeFileSync(process.argv[2], JSON.stringify(out, null, 1));
   const f = (x, d = 1) => (x == null ? '-' : (+x).toFixed(d));
   for (const pot of GRID.pots) {
