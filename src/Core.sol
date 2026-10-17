@@ -655,7 +655,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
             uint256 id = _owned(ids[i]);
             CoreLib.checkReturn(s, id);
             uint256 score = _scoreOf(id);
-            uint256 pay = _bid().mulDiv(score, RATE_SCORE);
+            uint256 bid = _bid();
+            // the pot is at or under the reserve, so the bid reads zero: a named refusal, not ZeroAmount from the spend
+            if (bid == 0) revert PotTooSmall();
+            uint256 pay = bid.mulDiv(score, RATE_SCORE);
             _spend(pay, score);
             _push(id, pay);
             CREDITS.transferFrom(msg.sender, address(this), id);

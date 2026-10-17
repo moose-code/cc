@@ -67,7 +67,7 @@ contract ReserveTest is Fixture {
         _setPot(res);
         assertEq(core.ethRate(), 0, "a pot at the reserve bids nothing");
         vm.prank(seller);
-        vm.expectRevert(ICore.ZeroAmount.selector);
+        vm.expectRevert(ICore.PotTooSmall.selector); // the reserve holds the pot, a named refusal (not ZeroAmount)
         core.sellForEth(ids);
         _setPot(res + 1e12);
         assertLe(core.ethRate(), 1e12, "the read is at most the pot above the reserve");
