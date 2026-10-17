@@ -524,7 +524,7 @@ abstract contract InvariantsBase is InvariantFixture {
             uint256 room = (pot > res ? pot - res : 0) * 10_000 / (10_000 + core.settings().buyToArtistBps);
             assertEq(rate, price < room ? price : room, "the read is not the price state lowered to the pot less the reserve");
         } else {
-            uint256 bookedRoom = pot > res ? pot - res : 0;
+            uint256 bookedRoom = (pot > res ? pot - res : 0) * 10_000 / (10_000 + core.settings().buyToArtistBps);
             assertGe(rate, price < bookedRoom ? price : bookedRoom, "the read is below the price state lowered to the booked pot less the reserve");
         }
     }
