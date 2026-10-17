@@ -753,7 +753,8 @@ const R0 = 6.668e15;
 {
   const c = fresh({ creditSaleOn: true }, 10);
   near(c.floorMultBps(), 11000, 1e-12, 'launch spread 1000 at the cap 10000'); c.setSettings({ balanceBidCapBps: 11000 }, 1); near(c.floorMultBps(), 12100, 1e-12, 'at the hard cap 11000 of decision 152');
-  c.setSettings({ creditSpreadBps: 0, balanceBidCapBps: 10000 }, 2); near(c.floorMultBps(), 10000, 1e-12, 'no spread at the 10000 cap is the reference'); n += 3;
+  assert.throws(() => c.setSettings({ creditSpreadBps: 0 }, 2), /creditSpreadBps/);
+  c.setSettings({ creditSpreadBps: 203, balanceBidCapBps: 10000 }, 2); near(c.floorMultBps(), 10203, 1e-12, 'the 100 bps quote needs a 203 bps spread'); n += 4;
   // sellCreditTo floors on saleFloorBps of the cost
   const f = fresh({ creditSaleOn: true, saleFloorBps: 5000 }, 10);
   assert.equal(f.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.00199, 0), null); ok(f.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.002, 0) !== null, 'half the cost at saleFloorBps 5000'); n++;
@@ -781,7 +782,7 @@ const R0 = 6.668e15;
 // drops the shared instance, valueOf is the sale value with the floor rate and cost terms dropped, an unusable quote bids and
 // sells nothing, and only the switch and the bid turning on reset the shared instance
 {
-  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 450); assert.equal(QUOTE.referenceMaxStale, 0); n += 3; // the launch config: off, owner inputs pending
+  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 100); assert.equal(QUOTE.referenceMaxStale, 0); n += 3; // the launch config: off, owner inputs pending
   assert.equal(quoteViolation({ ...QUOTE, referenceStepBps: 10001 }), 'referenceStepBps'); assert.equal(quoteViolation({ ...QUOTE, tolBps: 10000 }), 'tolBps'); assert.equal(quoteViolation(QUOTE), null); n += 3;
   const BPS = 10000, U = 0.001 / 100; // eth per point at the unit price
   const Q = { referenceRateBpsPerHour: 100, referenceStepBps: 200, tolBps: 500, referenceMaxStale: 3600, referenceMinSeconds: 0, balancePoolSet: true, balanceBidCapBps: 11000, balanceBidMarginBps: 1000 };

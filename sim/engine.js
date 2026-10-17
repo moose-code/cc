@@ -130,7 +130,7 @@ function uint(value, bits, scale = 1) {
 export function creditViolation(c) {
   if (!uint(c.creditCostToPotBps, 16) || c.creditCostToPotBps > BPS) return 'creditCostToPotBps';
   if (!uint(c.creditWindow, 32) || c.creditWindow < 1) return 'creditWindow';
-  if (!uint(c.creditSpreadBps, 16)) return 'creditSpreadBps';
+  if (!uint(c.creditSpreadBps, 16) || c.creditSpreadBps < 200) return 'creditSpreadBps';
   if (!uint(c.creditStartBps, 32) || c.creditStartBps < BPS) return 'creditStartBps';
   if (!uint(c.minCcToChoose, 256)) return 'minCcToChoose';
   return null;

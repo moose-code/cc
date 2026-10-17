@@ -77,7 +77,7 @@ abstract contract LaunchChecks is PostflightChecks {
     bytes32 internal constant BUILD_HASH_CORE = 0x3adeebb2b7264d0d95521246a7ba40167e08b29d3745f6f4c1a1d6934930d3e0;
     bytes32 internal constant BUILD_HASH_CORELIB = 0x5ec66de324445a0964ada3373ff5e18e89ed3a005d8408e5700ed4e605527bae;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
-        0x57fc088add307e84a3dd51a953e20d00580b4f3149d6bf7153618966a2f5f7bb;
+        0xdb32e2a8c9b1b59a3dc9d7730825448c7d27fa4a66f923f879a3aa815fb8cae9;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
         0xf5c8fd4b675f717f11908ff47d000431035956c15a5f38d74b63a3d40310d30c;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
@@ -213,7 +213,7 @@ abstract contract LaunchChecks is PostflightChecks {
             "credit settings inside the bounds",
             badCredit == 0,
             badCredit == 0
-                ? "creditCostToPotBps creditWindow creditStartBps (creditSpreadBps takes any value)"
+                ? "creditCostToPotBps creditWindow creditStartBps (creditSpreadBps at least max(200, loop bound))"
                 : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);

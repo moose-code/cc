@@ -231,7 +231,7 @@ const LAUNCH_RAW = {
   "quote": {
     "referenceRateBpsPerHour": 0,
     "referenceStepBps": 0,
-    "tolBps": 450,
+    "tolBps": 100,
     "referenceMaxStale": 0,
     "referenceMinSeconds": 600,
     "minLiquidity": 0
@@ -387,7 +387,7 @@ function uint(value, bits, scale = 1) {
 function creditViolation(c) {
   if (!uint(c.creditCostToPotBps, 16) || c.creditCostToPotBps > BPS) return 'creditCostToPotBps';
   if (!uint(c.creditWindow, 32) || c.creditWindow < 1) return 'creditWindow';
-  if (!uint(c.creditSpreadBps, 16)) return 'creditSpreadBps';
+  if (!uint(c.creditSpreadBps, 16) || c.creditSpreadBps < 200) return 'creditSpreadBps';
   if (!uint(c.creditStartBps, 32) || c.creditStartBps < BPS) return 'creditStartBps';
   if (!uint(c.minCcToChoose, 256)) return 'minCcToChoose';
   return null;
