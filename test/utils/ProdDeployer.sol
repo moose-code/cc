@@ -28,7 +28,7 @@ abstract contract ProdDeployer is SystemDeployer {
     }
 
     function _newRenderer(LaunchConfig memory c) internal virtual override returns (address) {
-        bytes memory init = abi.encodePacked(vm.getCode("CoinRenderer.sol:CoinRenderer"), abi.encode(c.owner));
+        bytes memory init = abi.encodePacked(vm.getCode("LogoCoinRenderer.sol:LogoCoinRenderer"), abi.encode(c.owner));
         return Prod.create2(init, rendererSalt(c), CREATE2_DEPLOYER);
     }
 }

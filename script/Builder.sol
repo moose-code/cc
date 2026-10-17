@@ -24,7 +24,7 @@ abstract contract SystemBuilder is ConfigReader {
     /// config names the renderer before the Core exists. a renderer is bound to one Core, so a launch with a different
     /// Core under the same owner and `salt` needs another `salt`
     function rendererAddress(LaunchConfig memory l) internal view returns (address) {
-        bytes memory init = abi.encodePacked(vm.getCode("CoinRenderer.sol:CoinRenderer"), abi.encode(l.owner));
+        bytes memory init = abi.encodePacked(vm.getCode("LogoCoinRenderer.sol:LogoCoinRenderer"), abi.encode(l.owner));
         return vm.computeCreate2Address(rendererSalt(l), keccak256(init), 0x4e59b44847b379578588920cA78FbF26c0B4956C);
     }
 

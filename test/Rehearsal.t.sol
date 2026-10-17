@@ -149,7 +149,7 @@ contract RehearsalTest is Test, ProdDeployer {
                 vm.getCode("SeaportBasicAdapter.sol:SeaportBasicAdapter"), abi.encode(first.core, c.seaportRecipients)
             ),
             vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter"),
-            abi.encodePacked(vm.getCode("CoinRenderer.sol:CoinRenderer"), abi.encode(c.owner))
+            abi.encodePacked(vm.getCode("LogoCoinRenderer.sol:LogoCoinRenderer"), abi.encode(c.owner))
         ];
         for (uint256 i; i < 6; ++i) {
             // 21000 intrinsic and the calldata (4 gas per zero byte, 16 per other byte)
