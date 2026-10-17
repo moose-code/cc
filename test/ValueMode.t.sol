@@ -717,6 +717,138 @@ contract ValueModeTest is ValueBase {
         vm.stopPrank();
     }
 
+    /// value mode setup with a usable reference, a funded pot and the credit sale open
+    function _balanceCapSetup() internal returns (uint256[] memory ids) {
+        ids = _fillEthPile(4);
+        _valueOn();
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(5 ether);
+        ctl.refreshReference();
+    }
+
+    /// the protected sale price per token (wei per 1e18 base units) recovered from the sell side point value
+    function _pSell() internal view returns (uint256) {
+        (uint256 v,) = ctl.valuePerPoint(true);
+        return v * 1e18 / (POINT_UNIT * _moduleUnit());
+    }
+
+    function test_pSellHelperMatchesTheController() public {
+        _balanceCapSetup();
+        uint256 score = 433 * POINT_UNIT;
+        (uint256 paid,) = ctl.balanceClampFor(score, type(uint128).max);
+        uint256 bid = FullMath.mulDiv(core.ethPrice(), score, RATE_SCORE);
+        assertApproxEqRel(FullMath.mulDiv(bid, 1e18, _pSell()), paid, 1e12, "helper pSell matches the controller");
+    }
+
+    function _capOf(uint256 score) internal view returns (uint256 cap) {
+        uint256 pSell = _pSell();
+        cap = FullMath.mulDiv(FullMath.mulDiv(core.ethPrice(), score, RATE_SCORE), 1e18, pSell);
+    }
+
+    // promise: the value mode balance cap derives from the value rate before the eth pot clamp, so an eth pot at
+    // its reserve does not silence a funded balance module
+    function test_balanceCapIgnoresEthPotClamp() public {
+        uint256[] memory ids = _balanceCapSetup();
+        uint256 id = ids[0];
+        uint256 score = _scoreOf(id);
+        uint256 cap = _capOf(score);
+        assertGt(cap, 0);
+        // pot room: the cap is the value rate cap and the view equals the fill
+        assertGt(core.bidForScore(score), 0);
+        // raise the reserve over the pot so the eth bid is 0
+        Settings memory st = core.settings();
+        st.reserveWei = 18 ether;
+        _setSettings(st);
+        assertEq(core.bidForScore(score), 0, "the eth bid is clamped to zero");
+        uint256 posted = score * _moduleUnit() * core.balanceRate() / 10_000;
+        uint256 want = cap < posted ? cap : posted;
+        assertGt(want, 0);
+        assertApproxEqRel(core.balanceBidForScore(score), want, 1e12, "the cap is the unclamped value rate cap");
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(TRIPPER, price * 2);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price * 2}(id);
+        _nextSecond();
+        _tripBack(id, true);
+        assertEq(xt.balanceOf(TRIPPER), core.balanceBidForScore(score), "sellForBalance pays the view");
+    }
+
+    // promise: with pot room the cap equals the earlier eth bid based cap, and the view equals the fill
+    function test_balanceCapUnchangedWithPotRoom() public {
+        uint256[] memory ids = _balanceCapSetup();
+        _fundPot(40 ether);
+        assertEq(core.ethPrice(), core.ethRate(), "the pot does not clamp");
+        uint256 score = _scoreOf(ids[0]);
+        uint256 pSell = _pSell();
+        uint256 oldCap = FullMath.mulDiv(core.bidForScore(score), 1e18, pSell);
+        uint256 cap = _capOf(score);
+        assertGe(cap + cap / 1e9, oldCap);
+        uint256 posted = score * _moduleUnit() * core.balanceRate() / 10_000;
+        uint256 want = cap < posted ? cap : posted;
+        assertApproxEqRel(cap, oldCap, 1e12, "equal when the pot does not clamp");
+        uint256 viewed = core.balanceBidForScore(score);
+        assertApproxEqRel(viewed, want, 1e12);
+        uint256 price = ctl.creditPrice(ids[0]);
+        vm.deal(TRIPPER, price * 2);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price * 2}(ids[0]);
+        _nextSecond();
+        _tripBack(ids[0], true);
+        assertEq(xt.balanceOf(TRIPPER), viewed, "view equals the sell path");
+    }
+
+    // promise: with the spot leading the reference the payout valued at pSell never exceeds the unclamped value
+    // rate bid, including with the eth pot at its reserve
+    function test_balanceCapBoundedByValueRateWhenSpotLeads() public {
+        _balanceCapSetup();
+        _swapToSpot(ctl.referencePrice() * 355 / 100);
+        for (uint256 i; i < 3; ++i) {
+            _nextSecond();
+            ctl.refreshReference();
+        }
+        _nextSecond();
+        Settings memory st = core.settings();
+        st.reserveWei = 18 ether;
+        _setSettings(st);
+        uint256 score = 433 * POINT_UNIT;
+        uint256 pSell = _pSell();
+        (uint256 paid,) = ctl.balanceClampFor(score, type(uint128).max);
+        assertGt(paid, 0);
+        uint256 bid = FullMath.mulDiv(core.ethPrice(), score, RATE_SCORE);
+        assertLe(FullMath.mulDiv(paid, pSell, 1e18), bid + bid / 1e9, "payout at pSell is within the unclamped bid");
+    }
+
+    // promise: with room under the unclamped bid the balance cap ignores the pot clamp and the fill pays min(posted, cap)
+    function test_balanceCapIgnoresPartialPotClamp() public {
+        uint256[] memory ids = _balanceCapSetup();
+        uint256 id = ids[0];
+        uint256 score = _scoreOf(id);
+        uint256 full = FullMath.mulDiv(core.ethPrice(), score, RATE_SCORE);
+        Settings memory st = core.settings();
+        // the clamp room is a rate per 100 points: leave half the unclamped rate in the pot above the reserve
+        uint256 room = core.ethPrice() / 2;
+        st.reserveWei = uint64(core.ethPot() - room);
+        _setSettings(st);
+        uint256 clamped = core.bidForScore(score);
+        assertGt(clamped, 0);
+        assertLt(clamped, full, "the pot clamps the eth bid part way");
+        uint256 cap = _capOf(score);
+        uint256 posted = score * _moduleUnit() * core.balanceRate() / 10_000;
+        uint256 want = cap < posted ? cap : posted;
+        assertGt(cap, FullMath.mulDiv(clamped, 1e18, _pSell()), "the cap ignores the clamp");
+        uint256 viewed = core.balanceBidForScore(score);
+        assertApproxEqRel(viewed, want, 1e12);
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(TRIPPER, price * 2);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price * 2}(id);
+        _nextSecond();
+        _tripBack(id, true);
+        assertEq(xt.balanceOf(TRIPPER), viewed, "the fill pays the view");
+    }
+
     // promise: SPEC 10 outside value mode the balance payout is par, the clamp does not apply (decision 165). a usable
     // reference quote is set by the fixture, so the clamp would lower the payout if it ran; with value mode off it does not
     function test_balancePayoutIsParOutsideValueMode() public view {

@@ -430,18 +430,20 @@ contract ControllerV1 is IController {
     }
 
     /// the `posted` balance payout for a credit of `score` stored units lowered to its value mode cap, balance base
-    /// units: the smaller of `posted` and the eth bid for the score valued in tokens at the protected sale price per
-    /// token (`pSell / 1e18` wei), where `pSell` is `max(prior-block sampled spot, reference * (10_000 - tolBps) /
-    /// 10_000)`. paying tokens is the engine selling tokens, so a filled payout is worth at most the eth bid when sold
-    /// and a round trip cannot extract a spot that leads the reference. while the reference is unusable
-    /// no cap can be computed, so the answer is `(0, true)`: a zero payout, which the balance fill and the payout view
-    /// treat as unavailable. a credit held outside the return lock, for example one bought before the outage and moved
-    /// to another wallet, therefore cannot sell for balance until the reference recovers
+    /// units: the smaller of `posted` and the value rate bid for the score valued in tokens at the protected sale price
+    /// per token (`pSell / 1e18` wei). the value rate is `CORE.ethPrice()` in value mode, before the eth pot clamp, so
+    /// the pot balance does not change the cap; the module's `available()` bound applies in the Core. `pSell` is
+    /// `max(prior-block sampled spot, reference * (10_000 - tolBps) / 10_000)`. paying tokens is the engine selling
+    /// tokens, so a filled payout is worth at most the value rate bid when sold and a round trip cannot extract a spot
+    /// that leads the reference. while the reference is unusable no cap can be computed, so the answer is `(0, true)`:
+    /// a zero payout, which the balance fill and the payout view treat as unavailable. a credit held outside the
+    /// return lock, for example one bought before the outage and moved to another wallet, therefore cannot sell for
+    /// balance until the reference recovers
     function balanceClampFor(uint256 score, uint256 posted) external view returns (uint256 paid, bool ok) {
         uint256 pSell;
         (, pSell,, ok) = _protected(false);
         if (!ok || pSell == 0) return (0, true);
-        uint256 cap = FullMath.mulDiv(CORE.bidForScore(score), 1e18, pSell);
+        uint256 cap = FullMath.mulDiv(FullMath.mulDiv(CORE.ethPrice(), score, RATE_SCORE), 1e18, pSell);
         paid = posted < cap ? posted : cap;
         ok = true;
     }
