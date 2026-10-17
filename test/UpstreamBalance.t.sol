@@ -5,7 +5,6 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {IBalanceModule} from "../src/interfaces/Interfaces.sol";
-import {console} from "forge-std/console.sol";
 
 interface IReserveMigration {
     function migrateReserve() external returns (uint256);
@@ -302,8 +301,6 @@ contract UpstreamBalanceTest is Fixture {
         assertEq(balanceToken.balanceOf(art) + owedNow, royalty);
         assertEq(balanceModule.available(), funded - posted - royalty);
         assertEq(IOwedModule(address(balanceModule)).totalOwed(), owedNow);
-        console.log("royalty paid directly", balanceToken.balanceOf(art));
-        console.log("royalty owed", owedNow);
     }
 
     // promise: with full gas the payment transfers directly; logs the measured gas of a cold and a warm recipient
@@ -319,8 +316,8 @@ contract UpstreamBalanceTest is Fixture {
         IOwedModule(address(balanceModule)).pay(cold, amount);
         uint256 warmGas = g - gasleft();
         vm.stopPrank();
-        console.log("pay gas cold", coldGas);
-        console.log("pay gas warm", warmGas);
+        assertGt(coldGas, 200_000, "a cold transfer exceeds the stipend the Core forwards");
+        assertLt(warmGas, coldGas);
         assertEq(balanceToken.balanceOf(cold), 2 * amount);
         assertEq(IOwedModule(address(balanceModule)).owed(cold), 0);
     }
@@ -333,10 +330,16 @@ contract UpstreamBalanceTest is Fixture {
         address to = _user("starvedArtist");
         uint256 amount = 5e18;
         vm.prank(address(core));
-        m.pay{gas: 100_000}(to, amount);
+        m.pay{gas: 70_000}(to, amount);
         assertEq(m.owed(to), amount, "accrued");
         assertEq(m.totalOwed(), amount);
         assertEq(balanceToken.balanceOf(to), 0);
+        address direct = _user("directArtist");
+        vm.prank(address(core));
+        m.pay{gas: 1_000_000}(direct, amount);
+        assertEq(balanceToken.balanceOf(direct), amount, "paid directly");
+        assertEq(m.owed(direct), 0);
+        funded -= amount;
         assertEq(balanceModule.available(), funded - amount, "owed is outside available");
         vm.prank(address(core));
         vm.expectRevert();

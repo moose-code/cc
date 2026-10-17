@@ -105,24 +105,27 @@ contract StatementBalanceModule is IBalanceModule {
         return bal > debt ? bal - debt : 0;
     }
 
-    /// transfers `amount` with all gas except `ACCRUE_RESERVE`. a failed or out of gas transfer records the amount in
-    /// `owed[to]`, which `claim` settles. the token's transfer callbacks can exceed the gas the Core forwards for the
-    /// artist royalty, so the royalty is recorded instead of lost. the Core checks the seller's balance after paying
-    /// the seller and reverts if it did not rise.
+    /// transfers `amount` with all gas except `ACCRUE_RESERVE`, then records the shortfall in the module's balance
+    /// (`amount` less the balance decrease) in `owed[to]` for `claim`. the token's return value is not read: a transfer
+    /// that reverts, runs out of gas, returns false, returns no data or moves less than `amount` accrues exactly the
+    /// undelivered part. the token's transfer callbacks can exceed the gas the Core forwards for the artist royalty. the
+    /// Core checks the seller's balance after paying the seller and reverts if it did not rise.
     function pay(address to, uint256 amount) external override onlyCore {
         if (amount > available()) revert InsufficientAvailable();
-        bool ok;
+        uint256 before = SafeTransferLib.balanceOf(balanceToken, address(this));
         uint256 g = gasleft();
         if (g > ACCRUE_RESERVE) {
-            (bool success, bytes memory ret) = balanceToken.call{gas: g - ACCRUE_RESERVE}(
-                abi.encodeCall(IERC20Transfer.transfer, (to, amount))
-            );
-            ok = success && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (bool))));
+            (bool sent,) =
+                balanceToken.call{gas: g - ACCRUE_RESERVE}(abi.encodeCall(IERC20Transfer.transfer, (to, amount)));
+            sent;
         }
-        if (!ok) {
-            owed[to] += amount;
-            totalOwed += amount;
-            emit PaymentAccrued(to, amount);
+        uint256 afterBal = SafeTransferLib.balanceOf(balanceToken, address(this));
+        uint256 delivered = before > afterBal ? before - afterBal : 0;
+        if (delivered < amount) {
+            uint256 short = amount - delivered;
+            owed[to] += short;
+            totalOwed += short;
+            emit PaymentAccrued(to, short);
         }
     }
 
@@ -131,8 +134,10 @@ contract StatementBalanceModule is IBalanceModule {
         amount = owed[to];
         owed[to] = 0;
         totalOwed -= amount;
-        if (amount != 0) SafeTransferLib.safeTransfer(balanceToken, to, amount);
-        emit OwedClaimed(to, amount);
+        if (amount != 0) {
+            SafeTransferLib.safeTransfer(balanceToken, to, amount);
+            emit OwedClaimed(to, amount);
+        }
     }
 
     /// anyone may move the retired Core's reserve to its successor's currently bound module, including later proceeds.

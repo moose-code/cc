@@ -114,12 +114,32 @@ contract BalanceGateTokenDouble {
         balanceOf[msg.sender] += amount;
     }
 
+    /// 0 normal, 1 moves half then returns false, 2 reverts, 3 moves nothing and returns no data, 4 moves all then returns false
+    uint8 public mode;
+    address public reenter;
+
+    function setMode(uint8 m) external {
+        mode = m;
+    }
+
+    function setReenter(address module_) external {
+        reenter = module_;
+    }
+
     function transfer(address to, uint256 amount) external returns (bool) {
         if (rejectTransfer) return false;
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
+        if (mode == 2) revert("transfer reverts");
+        if (mode == 3) {
+            assembly {
+                return(0, 0)
+            }
+        }
+        uint256 moved = mode == 1 ? amount / 2 : amount;
+        balanceOf[msg.sender] -= moved;
+        balanceOf[to] += moved;
         if (hook != address(0)) ReentrantHook(hook).onTransfer();
-        return !rejectTransfer;
+        if (reenter != address(0)) IOwedClaim(reenter).claim(to);
+        return mode == 0;
     }
 }
 
@@ -307,6 +327,59 @@ contract StatementBalanceModuleTest is Test {
         assertEq(IOwedClaim(address(module)).claim(recipient), 40 ether);
         assertEq(token.balanceOf(recipient), 40 ether);
         assertEq(module.available(), 60 ether);
+    }
+
+    // promise: accrual equals the undelivered part for every token failure shape
+    function test_accrualEqualsShortfallForEachFailureShape() public {
+        _open();
+        token.mint(address(module), 400 ether);
+        IOwedClaim m = IOwedClaim(address(module));
+        token.setMode(1); // moves half, returns false
+        this.payFromCore(40 ether);
+        assertEq(m.owed(recipient), 20 ether);
+        assertEq(token.balanceOf(recipient), 20 ether);
+        token.setMode(4); // moves all, returns false: not paid twice
+        this.payFromCore(40 ether);
+        assertEq(m.owed(recipient), 20 ether);
+        assertEq(token.balanceOf(recipient), 60 ether);
+        token.setMode(2); // reverts
+        this.payFromCore(40 ether);
+        assertEq(m.owed(recipient), 60 ether);
+        token.setMode(3); // no return data, nothing moved
+        this.payFromCore(40 ether);
+        assertEq(m.owed(recipient), 100 ether);
+        assertEq(token.balanceOf(recipient), 60 ether);
+    }
+
+    // promise: a token callback that calls claim during the claim transfer receives nothing more
+    function test_claimReentrancyPaysOnce() public {
+        _open();
+        token.mint(address(module), 100 ether);
+        token.setMode(2);
+        this.payFromCore(40 ether);
+        token.setMode(0);
+        token.setReenter(address(module));
+        assertEq(IOwedClaim(address(module)).claim(recipient), 40 ether);
+        assertEq(token.balanceOf(recipient), 40 ether);
+        assertEq(token.balanceOf(address(module)), 60 ether);
+        assertEq(IOwedClaim(address(module)).owed(recipient), 0);
+    }
+
+    // promise: migration moves the unowed balance and leaves owed amounts in the retired module for claim
+    function test_migrationLeavesOwedInTheModule() public {
+        retired = true;
+        (BalanceSuccessorDouble next, IBalanceModule target) = _migrationTarget();
+        _open();
+        token.mint(address(module), 100 ether);
+        token.setMode(2);
+        this.payFromCore(40 ether);
+        token.setMode(0);
+        assertEq(_migrateReserve(), 60 ether);
+        assertEq(token.balanceOf(address(module)), 40 ether);
+        assertEq(token.balanceOf(address(target)), 60 ether);
+        assertEq(IOwedClaim(address(module)).claim(recipient), 40 ether);
+        assertEq(token.balanceOf(recipient), 40 ether);
+        next;
     }
 
     // promise: a live Core's reserve cannot leave through permissionless migration.

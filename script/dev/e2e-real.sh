@@ -309,9 +309,14 @@ if [ -n "$BTOK" ]; then
     if step "phase6BalanceSell()"; then
       check "a balance sell pays balanceBidOf and the bid stays under par" 1 "see step log"
       PAID6="$(grep -m1 'balanceBidOf / paid' "$SCRATCH/step.log" | awk '{print $(NF-1)}')"
-      # the royalty is the artist's token balance plus its owed amount in the module (launch buyToArtistBps 250)
-      check "the balance sell royalty reached the artist or is owed to the artist" \
-        "$(calc "$(royalty_held) - $ROY0 == $PAID6 * 250 // 10000")" "royalty held $(royalty_held) before $ROY0 bid $PAID6"
+      BPS6="$(grep -m1 'buyToArtistBps' "$SCRATCH/step.log" | awk '{print $NF}')"
+      # the royalty is the artist's token balance plus its owed amount in the module
+      if [ -n "$PAID6" ] && [ -n "$BPS6" ]; then
+        check "the balance sell royalty reached the artist or is owed to the artist" \
+          "$(calc "$(royalty_held) - $ROY0 == $PAID6 * $BPS6 // 10000")" "royalty held $(royalty_held) before $ROY0 bid $PAID6 bps $BPS6"
+      else
+        check "the balance sell royalty reached the artist or is owed to the artist" 0 "step log lacks paid or buyToArtistBps"
+      fi
     fi
   fi
 fi
