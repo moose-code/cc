@@ -96,7 +96,7 @@ one `Settings` struct in Core storage, `setSettings(Settings)` owner only and ef
 | `rateCap` | 1.47e16 (3 times `rateStart`) | 1 to uint64.max | the most the bid can be, wei per 100 points |
 | `callerFee` | 0.0003 ether (decision 138) | 0 to uint64.max wei | fee to the caller of `compose`, `composeChosen` and `redeemStatement`, from the pot |
 | `callerMaxBaseFee` | 3 gwei (decision 138) | 0 to uint48.max wei | base fee ceiling of those refunds; 0 pays no gas |
-| `feeToRedeemBurnBps` | 1,000 | 0 to 10,000 | share of fee income to the redeem burn pot, the rest to the pot |
+| `feeToRedeemBurnBps` | 0 | 0 to 10,000 | share of fee income to the redeem burn pot, the rest to the pot. 0 at launch, so the whole engine share of the skim goes to the buying pot; the phase-2 wiring run sets it to 1,000 in the same transaction as `setBalanceModule` (decision 155, docs/RUNBOOK.md) |
 | `payeePpm` | 0 | 0 to 1,000,000 | share of fee income pushed to the payee, parts per million |
 | `pointsPerPage` | 35,200 | 1 to uint32.max | points in one page for the ceiling pot multiplier (section 4): one page costs `rate * pointsPerPage / 100`. launch is 80 credits times the census 440 |
 | `swapFeeCc` | 10,000e18 | 0 to uint96.max | coin the caller of `swapCredit` burns to swap a pile credit for one of equal or higher score. base units, ten thousand coins at launch |
