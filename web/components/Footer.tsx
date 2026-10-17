@@ -10,27 +10,45 @@ const THEME_KEY = "cc:theme"; // read before first paint by the script in app/la
 const THEMES = ["auto", "light", "dark"] as const;
 type Theme = (typeof THEMES)[number];
 
-// auto removes data-theme so the CSS follows prefers-color-scheme.
+const THEME_ICON: Record<Theme, React.ReactNode> = {
+  // half-filled circle: follow the system
+  auto: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 2a6 6 0 000 12z" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  light: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden>
+      <circle cx="8" cy="8" r="3" />
+      <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M12.6 3.4l-1 1M4.4 11.6l-1 1" />
+    </svg>
+  ),
+  dark: (
+    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+      <path d="M6.2 2.3A6 6 0 108 14a6 6 0 01-1.8-11.7z" />
+    </svg>
+  ),
+};
+
+// One icon button cycling auto -> light -> dark. auto removes data-theme so the CSS follows prefers-color-scheme.
 function ThemeControl() {
   const [theme, setTheme] = useState<Theme>("auto");
   useEffect(() => {
     const t = lsGet<Theme>(THEME_KEY);
     if (t && THEMES.includes(t)) setTheme(t);
   }, []);
-  const pick = (t: Theme) => {
+  const cycle = () => {
+    const t = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
     setTheme(t);
     lsSet(THEME_KEY, t);
     if (t === "auto") delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = t;
   };
   return (
-    <div className="seg" role="group" aria-label="theme">
-      {THEMES.map((t) => (
-        <button key={t} className={theme === t ? "on" : ""} aria-pressed={theme === t} onClick={() => pick(t)}>
-          {t}
-        </button>
-      ))}
-    </div>
+    <button className="theme-toggle" aria-label={`theme: ${theme}`} title={`theme: ${theme}`} onClick={cycle}>
+      {THEME_ICON[theme]}
+    </button>
   );
 }
 

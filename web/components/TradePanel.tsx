@@ -398,6 +398,19 @@ export function TradePanel({ market }: { market?: Market }) {
               />
             </div>
           )}
+          {hookFee?.active && (
+            <div className="tp-launch">
+              <div className="tp-row">
+                <span>LAUNCH FEE {(hookFee.bps / 100).toFixed(1)}%</span>
+                {hookFee.endsAt != null && hookFee.endsAt > now && <span>{leftLabel(hookFee.endsAt - now)} left</span>}
+              </div>
+              {hookFee.perMin != null && (
+                <p>
+                  decays {(hookFee.perMin / 100).toFixed(1)}% per minute until it reaches the base fee of {(hookFee.baseBps / 100).toFixed(1)}%
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -463,19 +476,7 @@ export function TradePanel({ market }: { market?: Market }) {
         </button>
       )}
 
-      {hookFee?.active ? (
-        <div className="tp-fee tp-launch">
-          <div className="tp-row">
-            <span>LAUNCH FEE {(hookFee.bps / 100).toFixed(1)}%</span>
-            {hookFee.endsAt != null && hookFee.endsAt > now && <span>{leftLabel(hookFee.endsAt - now)} left</span>}
-          </div>
-          {hookFee.perMin != null && (
-            <p>
-              decays {(hookFee.perMin / 100).toFixed(1)}% per minute until it reaches the base fee of {(hookFee.baseBps / 100).toFixed(1)}%
-            </p>
-          )}
-        </div>
-      ) : (
+      {!hookFee?.active && (
         <p className="tp-fee caption">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
       )}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}

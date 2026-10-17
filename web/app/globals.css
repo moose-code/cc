@@ -110,6 +110,9 @@ a:hover {
   align-items: baseline;
   color: var(--ink);
 }
+.brand:hover {
+  text-decoration: none;
+}
 .brand b {
   margin-left: 12px;
   font-size: 15px;
@@ -180,8 +183,6 @@ a:hover {
   gap: 12px;
   height: 32px;
   margin-left: auto;
-  padding-right: 16px;
-  border-right: 1px solid var(--divider);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -217,13 +218,31 @@ a:hover {
 .hdr-next-bid {
   color: var(--muted);
 }
+.hdr-nl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.hdr-nl-bar {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  width: 56px;
+  height: 6px;
+}
+.hdr-nl-bar i {
+  background: var(--hairline);
+}
+.hdr-nl-bar i.on {
+  background: var(--ink);
+}
 .hdr-acq {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--divider);
+  border: 1px solid var(--hairline);
   background: none;
   color: var(--faint);
   font-family: var(--mono);
@@ -231,19 +250,11 @@ a:hover {
   white-space: nowrap;
   cursor: default;
 }
-.hdr-acq i {
-  width: 5px;
-  height: 5px;
-  background: var(--disabled);
-}
-/* a listing clears: the button reads as live, still quieter than the wallet button */
+/* a listing clears: the frame stays quiet, a touch darker than the idle state */
 .hdr-acq.on {
-  border-color: var(--ink);
-  color: var(--ink);
+  border-color: var(--divider);
+  color: var(--muted);
   cursor: pointer;
-}
-.hdr-acq.on i {
-  background: var(--m);
 }
 .hdr-acq.on:disabled {
   opacity: 0.6;
@@ -552,6 +563,10 @@ a:hover {
   font-weight: 400;
   color: var(--muted);
 }
+/* pre-balance phase: the balance token is not deployed yet; the value size, faded */
+.stat-cell .value .stat-wait {
+  color: var(--faint);
+}
 .stat-cell.ink-pot {
   background: var(--ink);
   color: var(--on-ink);
@@ -651,8 +666,27 @@ a:hover {
   font-size: 14px;
   font-weight: 600;
 }
+/* feed view tabs: plain muted text, the active one in ink; no boxed segment */
 .ledger-head .seg {
   margin-left: auto;
+  border: 0;
+  gap: 16px;
+}
+.ledger-head .seg button {
+  padding: 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+.ledger-head .seg button + button {
+  border-left: 0;
+}
+.ledger-head .seg button:hover {
+  color: var(--muted);
+}
+.ledger-head .seg button.on {
+  background: none;
+  color: var(--ink);
+  font-weight: 600;
 }
 .live {
   display: inline-flex;
@@ -1270,9 +1304,23 @@ button.tp-row:disabled {
 .footer a:hover {
   color: var(--ink);
 }
-.footer .seg button {
-  padding: 2px 8px;
-  font-size: 11px;
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: 0;
+  color: var(--faint);
+  cursor: pointer;
+}
+.theme-toggle:hover {
+  color: var(--ink);
+}
+.theme-toggle svg {
+  width: 15px;
+  height: 15px;
 }
 .plates {
   display: flex;
@@ -1576,15 +1624,18 @@ button.tp-row:disabled {
 }
 .nav-toggle {
   display: none;
+  align-items: center;
+  justify-content: center;
   width: 44px;
   height: 44px;
   background: none;
-  border: 1px solid var(--ink);
+  border: 0;
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 20px;
-  line-height: 1;
   cursor: pointer;
+}
+.nav-toggle svg {
+  width: 20px;
+  height: 20px;
 }
 
 /* ---- statements / credits pages ------------------------------------------ */
@@ -2245,19 +2296,13 @@ button.tp-row:disabled {
 
 @media (max-width: 860px) {
   .header {
-    flex-wrap: wrap;
-    height: auto;
-    min-height: 52px;
+    position: relative;
+    height: 52px;
     padding: 4px 16px;
     gap: 0 12px;
   }
   .brand {
     order: 1;
-  }
-  .wallet {
-    order: 2;
-    margin-left: auto;
-    gap: 8px;
   }
   .brand-sub {
     display: none;
@@ -2272,19 +2317,27 @@ button.tp-row:disabled {
   .btn-fill .narrow {
     display: inline;
   }
+  /* the toggle is the only other top-row item, so it sits at the right edge */
   .nav-toggle {
-    display: block;
-    order: 3;
+    display: flex;
+    order: 2;
+    margin-left: auto;
   }
+  /* the menu drops below the header as an overlay, so opening it does not push the page down */
   .menu {
-    order: 4;
-    width: 100%;
-    flex: 0 0 100%;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
     display: none;
     flex-direction: column;
     align-items: flex-start;
-    padding: 12px 0;
+    gap: 4px;
+    padding: 12px 16px;
+    background: var(--paper);
     border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--structure);
+    z-index: 50;
   }
   .menu.open {
     display: flex;
@@ -2296,6 +2349,12 @@ button.tp-row:disabled {
   }
   .nav a {
     padding: 12px 0;
+  }
+  .menu .wallet {
+    margin-left: 0;
+    width: 100%;
+    padding-top: 8px;
+    gap: 8px;
   }
 }
 
@@ -3419,4 +3478,12 @@ button.slot:disabled {
   display: block;
   font-size: 11px;
   color: var(--quiet);
+}
+/* the listings tab sits in the feed column, narrower than the listings page: tighter tracks so the credit id keeps
+   its width instead of collapsing under the page-width fixed columns */
+@media (min-width: 861px) {
+  .ledger .ltable-row {
+    grid-template-columns: 28px minmax(72px, 1fr) 96px 48px 72px 72px 120px 56px 108px 76px;
+    column-gap: 8px;
+  }
 }

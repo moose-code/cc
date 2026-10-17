@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { formatUnits } from "viem";
 import { useStats } from "@/lib/data";
 import { useBalanceToken, useSnapshot } from "@/lib/live";
-import { engineDeployed } from "@/lib/config";
+import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { BALANCE_SYMBOL, commas } from "@/lib/format";
 import { Tween } from "./EngineFeed";
 
@@ -26,14 +26,14 @@ export function StatsBar() {
     <div className="stats">
       <Cell ink="m" label="credits held">
         {on ? commas(Number(snap.pileSize)) : "—"}
-        {on && s && <small>/ {commas(s.creditsAcquired)}</small>}
+        {on && s && <small>{commas(s.composed * STATEMENT_SIZE)} composed</small>}
       </Cell>
       <Cell ink="y" label="statements held">
         {on ? commas(snap.held.length) : "—"}
-        {on && s && <small>/ {commas(s.composed)}</small>}
+        {on && s && <small>{commas(s.composed)} created</small>}
       </Cell>
       <Cell ink="c" label={BALANCE_SYMBOL}>
-        {on ? balance : "—"}
+        {!on ? "—" : snap.balanceOn ? balance : <span className="stat-wait">awaiting deployment</span>}
       </Cell>
       <Cell ink="k" label="$CC burned">
         {engineDeployed && s ? commas(s.ccBurned) : "—"}

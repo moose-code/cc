@@ -21,3 +21,8 @@
   # NEXT_PUBLIC_DEPLOY_BLOCK = ""
   # NEXT_PUBLIC_STRATEGY_ADAPTER = ""
   # NEXT_PUBLIC_SEAPORT_ADAPTER = ""
+  # Optional. A real WalletConnect project id improves wallet reliability; a placeholder is used when unset.
+  # NEXT_PUBLIC_WC_PROJECT_ID = ""
+  # NEXT_PUBLIC_RPC_URL: a public fallback is used when unset. A paid RPC URL usually embeds an API key, so set it
+  # in the Netlify UI (scopes: Builds + Functions), never in this committed file. Pool params (NEXT_PUBLIC_POOL_HOOK,
+  # NEXT_PUBLIC_POOL_FEE, NEXT_PUBLIC_POOL_TICK_SPACING) default to the mainnet values in web/lib/config.ts.
