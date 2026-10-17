@@ -247,7 +247,7 @@ export const transferEventAbi = parseAbi(["event Transfer(address indexed from, 
 // keeper reads: the listing adapters, the CreditStrategy, Seaport 1.6 order status, the fee escrow, the factory launch
 // record (DeploymentInfoV2, src/interfaces/ArtCoinsV2.sol)
 export const listingAdapterAbi = parseAbi([
-  "function price(uint256 id, bytes params) view returns (address target, uint256 value, bytes data)",
+  "function price(uint256 id, bytes params) view returns (address target, uint256 value, bytes data, address offerer)",
   "function allowedRecipient(address a) view returns (bool)",
 ]);
 export const creditStrategyAbi = parseAbi(["function nftForSale(uint256 id) view returns (uint256)"]);

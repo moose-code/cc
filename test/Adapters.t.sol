@@ -30,11 +30,19 @@ contract AdaptersTest is SeaportBase {
         p = abi.decode(_basicData(c), (BasicOrderParameters));
     }
 
-    function _price(uint256 id, BasicOrderParameters memory p) internal view returns (address, uint256, bytes memory) {
+    function _price(uint256 id, BasicOrderParameters memory p)
+        internal
+        view
+        returns (address, uint256, bytes memory, address)
+    {
         return sea.price(id, abi.encode(p));
     }
 
-    function _priceExt(uint256 id, BasicOrderParameters memory p) external view returns (address, uint256, bytes memory) {
+    function _priceExt(uint256 id, BasicOrderParameters memory p)
+        external
+        view
+        returns (address, uint256, bytes memory, address)
+    {
         return _price(id, p);
     }
 
@@ -48,10 +56,11 @@ contract AdaptersTest is SeaportBase {
         OrderComponents memory c = _open(id, 0.9 ether, 0.03 ether);
         c.consideration[1].recipient = payable(Mainnet.OPENSEA_FEE_COLLECTOR);
         BasicOrderParameters memory p = abi.decode(_basicData(c), (BasicOrderParameters));
-        (address target, uint256 value, bytes memory data) = _price(id, p);
+        (address target, uint256 value, bytes memory data, address offerer) = _price(id, p);
         assertEq(target, Mainnet.SEAPORT);
         assertEq(value, 0.93 ether, "the seller part plus the fee collector part");
         assertEq(data, abi.encodeCall(ISeaport.fulfillBasicOrder_efficient_6GL6yc, (p)));
+        assertEq(offerer, p.offerer, "the quote reports the order offerer");
     }
 
     // promise: INTEGRATION SeaportBasicAdapter recipient allowlist
@@ -60,7 +69,7 @@ contract AdaptersTest is SeaportBase {
         BasicOrderParameters memory p = _order(id);
         p.additionalRecipients = new AdditionalRecipient[](1);
         p.additionalRecipients[0] = AdditionalRecipient(5, payable(Mainnet.OPENSEA_FEE_COLLECTOR));
-        (, uint256 value,) = _price(id, p);
+        (, uint256 value,,) = _price(id, p);
         assertEq(value, 1 ether + 5);
 
         p.additionalRecipients[0] = AdditionalRecipient(5, payable(keeper));

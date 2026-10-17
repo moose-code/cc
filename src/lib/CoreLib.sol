@@ -94,9 +94,10 @@ struct State {
     /// bps of par, bounded to [10_000 - balanceBidMarginBps, balanceBidCapBps] and clamped to the module's available(); the climb
     /// and drop are the eth bid's, shared through CoreLib
     CoreLib.Rate balance;
-    /// the timestamp of the last `sellCreditTo` per credit id, kept after the credit leaves the pile. every intake door
-    /// (`sellForEth`, `sellForBalance`, `buyListing`, `swapCredit` as `inId`) refuses a credit the engine sold within
-    /// `returnLockSeconds` of now (`checkReturn`)
+    /// the last `sellCreditTo` per credit id, the buyer packed in the high 160 bits and the sale time in the low 96,
+    /// kept after the credit leaves the pile. every intake door (`sellForEth`, `sellForBalance`, `buyListing`,
+    /// `swapCredit` as `inId`) refuses the credit for `returnLockSeconds` from the sale when the counterparty returning
+    /// it is that buyer (`checkReturn`); a secondary holder is not the buyer and is not locked
     mapping(uint256 => uint256) creditSoldAt;
     /// the ETH purchase budget of the current bucket, charged by every ETH purchase door
     CoreLib.Spend spend;
@@ -207,7 +208,7 @@ library CoreLib {
     error BalanceBidOff();
     /// `sellForBalance(ids, minOut, expectedToken)` when `balanceToken()` differs from `expectedToken`
     error BalanceTokenChanged();
-    /// a credit the engine sold through `sellCreditTo` is offered back to an intake door before `until`
+    /// a credit the engine sold through `sellCreditTo` is offered back to an intake door by its buyer before `until`
     error ReturnLocked(uint256 id, uint256 until);
     /// an eth bid read in value mode while the controller's value read fails, answers short, zero or not ok
     error NoQuote();
@@ -584,15 +585,19 @@ library CoreLib {
         return uint256(s.reserveWei).max(queued * 15 / 10);
     }
 
-    /// reverts `ReturnLocked` while credit `id`, sold through `sellCreditTo` at `creditSoldAt[id]`, is inside the return
-    /// lock: before `soldAt + returnLockSeconds`. a `returnLockSeconds` of 0 is no lock, so a credit may return in the
-    /// second of its sale. a credit never sold reads a sale time of 0 and passes at any clock. every intake door calls it per credit
-    function checkReturn(State storage c, uint256 id) internal view {
+    /// reverts `ReturnLocked` while credit `id` is offered back by the buyer the engine sold it to, before
+    /// `soldAt + returnLockSeconds`. `creditSoldAt[id]` packs that buyer in the high 160 bits and the sale time in the
+    /// low 96. the lock binds only when `counterparty` is the stored buyer, so a secondary holder who bought the credit
+    /// from the engine's buyer sells at once. a `returnLockSeconds` of 0, a word of 0 (never sold), or a counterparty
+    /// other than the buyer passes at any clock. every intake door calls it per credit with the counterparty:
+    /// `msg.sender` for `sellForEth`, `sellForBalance` and `swapCredit`, the listing offerer for `buyListing`
+    function checkReturn(State storage c, uint256 id, address counterparty) internal view {
         uint256 lock = c.settings.returnLockSeconds;
         if (lock == 0) return;
-        uint256 soldAt = c.creditSoldAt[id];
-        if (soldAt == 0) return;
-        uint256 until = soldAt + lock;
+        uint256 word = c.creditSoldAt[id];
+        if (word == 0) return;
+        if (counterparty != address(uint160(word >> 96))) return;
+        uint256 until = uint96(word) + lock;
         if (block.timestamp < until) revert ReturnLocked(id, until);
     }
 
@@ -862,7 +867,7 @@ library CoreLib {
         if (c.retired) revert Retired();
         if (c.paused) revert Paused();
         if (inId == 0) revert ZeroId();
-        checkReturn(c, inId);
+        checkReturn(c, inId, msg.sender);
         Credit storage out = c.credits[outId];
         if (!out.inPile) revert NotInPile(outId);
         if (c.credits[inId].inPile) revert InPile();
@@ -1140,7 +1145,7 @@ library CoreLib {
         Rate storage bal = c.balance;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = owned(ids[i]);
-            checkReturn(c, id);
+            checkReturn(c, id, msg.sender);
             uint256 score = scoreOf(id);
             // the paid rate never falls below the floor: a module too short to pay the floor closes the bid
             uint256 rate = bal.rateAtCheckpoint.min(availBps);
