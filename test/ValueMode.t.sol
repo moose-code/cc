@@ -6,12 +6,14 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Quote, CreditSale, RATE_SCORE, POINT_UNIT} from "../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {QuoteController} from "./attackers/QuoteController.sol";
+import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 
 /// the value switch (decisions 148, 150 to 154): the controller's rate limited reference of the balance token, its
 /// protected buy and sale prices, `valuePerPoint`, and the Core in value mode: the eth bid is the shared balance instance
@@ -21,8 +23,13 @@ abstract contract ValueBase is Fixture {
     /// wei per balance token base unit is 0.49, so one point (`POINT_UNIT * UNIT` base units) is worth 4.9e13 wei, the
     /// opening eth rate of 4.9e15 per 100 points: `2^96 / sqrt(0.49)`
     uint160 internal constant SP = uint160(FixedPoint96.Q96 * 10 / 7);
-    uint128 internal constant LIQ = 1e24;
+    /// full range liquidity the test provides to the real native eth / balance token pool. above `minLiquidity` (1e18),
+    /// so the quote reads the pool, and deep enough that a `_swapSpot` move lands near its target sqrt
+    uint128 internal constant POOL_LIQ = 1e20;
+    /// full range for tick spacing 60 (a multiple of 60)
+    int24 internal constant TICK_FULL = 887_220;
     PoolKey internal key;
+    TestLiquidityHelper internal lp;
 
     function setUp() public virtual override {
         super.setUp();
@@ -35,7 +42,11 @@ abstract contract ValueBase is Fixture {
             hooks: IHooks(address(0))
         });
         PM.initialize(key, SP);
-        _poolState(SP, LIQ);
+        lp = new TestLiquidityHelper();
+        xt.mint(address(this), 1e24);
+        xt.approve(address(lp), type(uint256).max);
+        xt.approve(address(router), type(uint256).max);
+        _addFullRange(int256(uint256(POOL_LIQ)));
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
             currency1: IControllerV1.Currency.wrap(address(xt)),
@@ -51,14 +62,44 @@ abstract contract ValueBase is Fixture {
         mod.setAvailable(1e30);
     }
 
-    /// writes the pool's slot 0 sqrt price and its liquidity in the pool manager storage (`StateLibrary` layout: the
-    /// pools mapping at slot 6, slot 0 first, the liquidity at offset 3)
-    function _poolState(uint160 sp, uint128 liq) internal {
-        bytes32 base = keccak256(abi.encodePacked(PoolId.unwrap(key.toId()), bytes32(uint256(6))));
-        bytes32 word = vm.load(address(PM), base);
-        uint256 rest = uint256(word) & ~uint256(type(uint160).max);
-        vm.store(address(PM), base, bytes32(rest | uint256(sp)));
-        vm.store(address(PM), bytes32(uint256(base) + 3), bytes32(uint256(liq)));
+    using StateLibrary for IPoolManager;
+
+    /// adds `liq` of full range liquidity to the real pool through the pool manager. the test contract pays both legs:
+    /// eth sent along (leftover refunded) and the balance token it approved. a positive `liq` adds, a negative removes
+    function _addFullRange(int256 liq) internal {
+        vm.deal(address(this), address(this).balance + 2_000 ether);
+        lp.modify{value: 2_000 ether}(key, -TICK_FULL, TICK_FULL, liq);
+    }
+
+    /// the pool's live liquidity at the current tick
+    function _liquidityNow() internal view returns (uint128) {
+        return PM.getLiquidity(key.toId());
+    }
+
+    /// moves the pool spot by `bps` with a real swap (positive raises the spot, negative lowers it) and returns the new
+    /// spot. a swap to the target sqrt price limit lands the spot at the target within tick rounding: buying the balance
+    /// token with eth lowers the sqrt price and raises the spot, selling it does the reverse
+    function _swapSpot(int256 bps) internal returns (uint256 newSpot) {
+        (uint256 start, bool ok) = ctl.spotPrice();
+        require(ok, "spot unreadable");
+        if (bps == 0) return start;
+        uint256 target =
+            bps > 0 ? start * (10_000 + uint256(bps)) / 10_000 : start * (10_000 - uint256(-bps)) / 10_000;
+        return _swapToSpot(target);
+    }
+
+    /// swaps the real pool until its spot reaches `target` wei per 1e18 base units, stopping at the target sqrt price
+    /// limit within tick rounding. returns the new spot
+    function _swapToSpot(uint256 target) internal returns (uint256 newSpot) {
+        (uint256 start,) = ctl.spotPrice();
+        uint160 limit = _sqrtOf(target);
+        if (target > start) {
+            vm.deal(address(this), address(this).balance + 2_000 ether);
+            router.swapWithLimit{value: 2_000 ether}(key, true, -int256(2_000 ether), limit, address(this), "");
+        } else if (target < start) {
+            router.swapWithLimit(key, false, -int256(1e24), limit, address(this), "");
+        }
+        (newSpot,) = ctl.spotPrice();
     }
 
     /// the spot of sqrt price `sp`, wei per 1e18 base units
@@ -120,7 +161,7 @@ contract ValueReferenceTest is ValueBase {
     // promise: SPEC 8 an update moves the reference toward the spot by at most referenceRateBpsPerHour times the elapsed time
     function test_observeMovesAtMostTheRate() public {
         uint256 ref0 = ctl.referencePrice();
-        _poolState(_sqrtOf(ref0 * 2), LIQ); // the spot doubles
+        _swapSpot(10_000); // a real swap pushes the spot to about double the reference, past the step cap
         vm.warp(block.timestamp + 30 minutes);
         ctl.refreshReference();
         assertEq(ctl.referencePrice(), ref0 * 10_500 / 10_000, "half an hour at 1,000 bps an hour moves the 5 percent step");
@@ -132,7 +173,7 @@ contract ValueReferenceTest is ValueBase {
     // promise: SPEC 8 a long idle gains one step, the referenceStepBps bound
     function test_longIdleGainsOneStep() public {
         uint256 ref0 = ctl.referencePrice();
-        _poolState(_sqrtOf(ref0 / 2), LIQ); // the spot halves
+        _swapSpot(-5_000); // a real swap pushes the spot to about half the reference, past the step cap
         vm.warp(block.timestamp + 20 hours);
         ctl.refreshReference();
         assertEq(ctl.referencePrice(), ref0 * 9_500 / 10_000, "twenty idle hours move one step of 5 percent");
@@ -142,7 +183,7 @@ contract ValueReferenceTest is ValueBase {
     // compounded rate of one update over the same hour
     function test_spamGainsNothingBeyondTheRate() public {
         uint256 ref0 = ctl.referencePrice();
-        _poolState(_sqrtOf(ref0 * 2), LIQ);
+        _swapSpot(10_000);
         uint256 snap = vm.snapshotState();
         // half an hour of 12 second spam: rate 1,000 bps an hour reaches the 500 bps step over the window
         for (uint256 i; i < 150; ++i) {
@@ -175,7 +216,7 @@ contract ValueReferenceTest is ValueBase {
             })
         );
         uint256 ref0 = ctl.referencePrice();
-        _poolState(_sqrtOf(ref0 * 2), LIQ); // the spot doubles, so the move is always rate limited upward
+        _swapSpot(10_000); // the spot is pushed to about double, so the move is always rate limited upward
         // a call every 12 seconds: 100 bps an hour over 12 seconds is 0.33 bps, which floors to a zero integer move
         for (uint256 i; i < 300; ++i) {
             vm.warp(block.timestamp + 12);
@@ -201,7 +242,7 @@ contract ValueReferenceTest is ValueBase {
             })
         );
         uint256 ref0 = ctl.referencePrice();
-        _poolState(_sqrtOf(ref0 * 2), LIQ);
+        _swapSpot(10_000);
         vm.warp(block.timestamp + 599);
         ctl.refreshReference();
         assertEq(ctl.referencePrice(), ref0, "no refresh before the cadence elapses");
@@ -214,15 +255,17 @@ contract ValueReferenceTest is ValueBase {
     function test_protectedPricesAtSpotAboveAndBelow() public {
         uint256 ref = ctl.referencePrice();
         uint256 unitPoint = POINT_UNIT * UNIT;
-        _poolState(_sqrtOf(ref * 2), LIQ); // spot far above the reference
+        uint256 spotHi = _swapToSpot(ref * 2); // a real swap pushes the spot far above the reference
+        assertGt(spotHi, ref * 10_450 / 10_000, "the spot sits above the reference plus the band");
         (uint256 buyHi,) = ctl.valuePerPoint(false);
         (uint256 sellHi,) = ctl.valuePerPoint(true);
-        assertEq(buyHi, unitPoint * (ref * 10_450 / 10_000) / 1e18, "a pushed up spot buys at the reference plus the band");
-        assertGe(sellHi, unitPoint * ref * 2 / 1e18 * 9_999 / 10_000, "and sells at the spot");
-        _poolState(_sqrtOf(ref / 2), LIQ); // spot far below
+        assertEq(buyHi, FullMath.mulDiv(unitPoint, ref * 10_450 / 10_000, 1e18), "a pushed up spot buys at the reference plus the band");
+        assertEq(sellHi, FullMath.mulDivRoundingUp(unitPoint, spotHi, 1e18), "and sells at the spot");
+        uint256 spotLo = _swapToSpot(ref / 2); // a real swap pushes the spot far below the reference
+        assertLt(spotLo, ref * 9_550 / 10_000, "the spot sits below the reference less the band");
         (uint256 buyLo,) = ctl.valuePerPoint(false);
         (uint256 sellLo,) = ctl.valuePerPoint(true);
-        assertLe(buyLo, unitPoint * ref / 2 / 1e18 * 10_001 / 10_000, "a pushed down spot buys at the spot");
+        assertEq(buyLo, FullMath.mulDiv(unitPoint, spotLo, 1e18), "a pushed down spot buys at the spot");
         assertEq(sellLo, FullMath.mulDivRoundingUp(unitPoint, ref * 9_550 / 10_000, 1e18), "and sells at the reference less the band");
         assertLt(buyLo, sellLo, "the buy value stays under the sale value");
     }
@@ -237,10 +280,11 @@ contract ValueReferenceTest is ValueBase {
         ctl.refreshReference();
         (, ok) = ctl.valuePerPoint(false);
         assertTrue(ok, "an update refreshes it");
-        _poolState(SP, 1e18 - 1);
+        // raise the required liquidity above the pool's real liquidity: the quote reads the live pool depth
+        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: uint128(POOL_LIQ) * 2}));
         (, ok) = ctl.valuePerPoint(false);
         assertFalse(ok, "liquidity under the minimum");
-        _poolState(SP, LIQ);
+        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18}));
         mod.setRevertUnit(true);
         (, ok) = ctl.valuePerPoint(true);
         assertFalse(ok, "a failing unit read");
@@ -278,7 +322,7 @@ contract ValueReferenceTest is ValueBase {
     // more than tolBps from the owner's expected spot. the pool spot is moved on the fixture pool before the call
     function test_poolKeySeedRevertsOnManipulation() public {
         uint256 expected = _spotOf(SP);
-        _poolState(_sqrtOf(expected * 2), LIQ); // the spot doubles, far beyond the 4.5 percent band
+        _swapToSpot(expected * 2); // a real swap doubles the spot, far beyond the 4.5 percent band
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
             currency1: IControllerV1.Currency.wrap(address(xt)),
@@ -407,7 +451,9 @@ contract ValueModeTest is ValueBase {
         ctl.refreshReference();
         uint256 score = _scoreOf(id);
         (uint256 vSell,) = ctl.valuePerPoint(true);
-        assertEq(ctl.valueOf(score), FullMath.mulDivRoundingUp(score * UNIT, _spotOf(SP) > ctl.referencePrice() * 9_550 / 10_000 ? _spotOf(SP) : ctl.referencePrice() * 9_550 / 10_000, 1e18), "valueOf is the protected sale value");
+        (uint256 spot,) = ctl.spotPrice();
+        uint256 floor = ctl.referencePrice() * 9_550 / 10_000;
+        assertEq(ctl.valueOf(score), FullMath.mulDivRoundingUp(score * UNIT, spot > floor ? spot : floor, 1e18), "valueOf is the protected sale value");
         uint256 price = ctl.creditPrice(id);
         assertEq(price, ctl.valueOf(score) * ctl.floorMultBps() / 10_000, "the floor drops the cost term");
         assertEq(ctl.floorMultBps(), 12_100, "the spread of 1,000 over the hard cap of 11,000");
@@ -492,11 +538,11 @@ contract ValueModeTest is ValueBase {
         _warp(6 hours);
         (paid, back) = _trip(ids[k++], true);
         _assertLoses(paid, back, "balance at the cap");
-        // the spot pushed up and down against the reference, the reference following at its rate
+        // the spot pushed up and down against the reference with real swaps, the reference following at its rate
         uint256 ref = ctl.referencePrice();
-        uint160[2] memory moved = [_sqrtOf(ref * 3 / 2), _sqrtOf(ref * 6 / 10)];
+        uint256[2] memory moved = [ref * 3 / 2, ref * 6 / 10];
         for (uint256 i; i < 2; ++i) {
-            _poolState(moved[i], LIQ);
+            _swapToSpot(moved[i]);
             _warp(6 hours);
             (paid, back) = _trip(ids[k++], false);
             _assertLoses(paid, back, i == 0 ? "eth at spot above the reference" : "eth at spot below the reference");
@@ -505,7 +551,7 @@ contract ValueModeTest is ValueBase {
             _assertLoses(paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference");
         }
         // the reference stale after the buy: the eth door refuses, the balance door still loses the spread
-        _poolState(SP, LIQ);
+        _swapToSpot(ctl.referencePrice());
         ctl.refreshReference();
         uint256 id = ids[k++];
         uint256 price = ctl.creditPrice(id);
@@ -539,7 +585,7 @@ contract ValueModeTest is ValueBase {
         uint256 id = _fillEthPile(1)[0];
         _setCreditSaleOn(true);
         uint256 ref0 = ctl.referencePrice();
-        _poolState(_sqrtOf(ref0 * 2), LIQ);
+        _swapSpot(10_000);
         vm.warp(block.timestamp + 1 hours);
         uint256 price = ctl.creditPrice(id);
         vm.deal(seller, price * 2);
@@ -600,5 +646,135 @@ contract ValueModeTest is ValueBase {
         assertGt(seller.balance, before, "the eth bid fills while paused in value mode");
         vm.prank(owner);
         core.setPaused(false);
+    }
+}
+
+/// the real pool under manipulation: a single block spot swing, just-in-time liquidity against `minLiquidity`, the
+/// reference walking at the max rate against a pushed spot, a 10x spike against the rate cap and the pot, and a loop
+/// closure round trip at the launch quote. every spot move is a real swap through the pool manager
+contract ValueRealPoolTest is ValueBase {
+    /// the fixture quote with `minLiquidity` replaced, every other field at the launch values
+    function _quoteWithMinLiquidity(uint128 minLiq) internal pure returns (Quote memory) {
+        return Quote({
+            referenceRateBpsPerHour: 1_000,
+            referenceStepBps: 500,
+            tolBps: 450,
+            referenceMaxStale: 1 days,
+            referenceMinSeconds: 0,
+            minLiquidity: minLiq
+        });
+    }
+
+    // promise: SPEC 8 a single block spot swing around a victim trade cannot move the priced value past the band: a
+    // spike up lifts the buy value by at most tolBps and a crash down drops the sale value by at most tolBps, not toward
+    // the manipulated spot. the swaps and the victim trade share one block
+    function test_singleBlockManipulationStaysInsideTheBand() public {
+        uint256 id = _fillEthPile(1)[0];
+        _valueOn();
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        ctl.refreshReference();
+        uint256 ref = ctl.referencePrice();
+        uint256 victim = _credits(seller, 1)[0];
+
+        // an attacker spikes the spot up, the victim sells into the eth bid, the attacker restores, all in one block
+        (uint256 vBuy0,) = ctl.valuePerPoint(false);
+        _swapSpot(10_000);
+        (uint256 vBuy1,) = ctl.valuePerPoint(false);
+        assertLe(vBuy1, vBuy0 * 10_460 / 10_000, "the spike up lifts the buy value by at most the 4.5 percent band");
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(_one(victim));
+        assertGt(seller.balance - before, 0, "the victim sell fills through the manipulated block");
+        _swapToSpot(ref);
+
+        // an attacker crashes the spot, a buyer prices a credit: the price drops by at most the band, not to the spot
+        uint256 price0 = ctl.creditPrice(id);
+        _swapSpot(-7_000);
+        uint256 price1 = ctl.creditPrice(id);
+        assertGe(price1 * 10_000, price0 * 9_500, "the crash drops the price by at most the band, not toward the spot");
+        _swapToSpot(ref);
+    }
+
+    // promise: SPEC 8 the minLiquidity gate reads the live pool depth; just-in-time liquidity added in the same block
+    // lifts the pool above the minimum and makes the quote usable, the known ceiling of a block local liquidity check
+    function test_jitLiquidityPassesMinLiquidity() public {
+        uint128 liq0 = _liquidityNow();
+        _setQuote(_quoteWithMinLiquidity(liq0 + uint128(POOL_LIQ)));
+        (, bool ok) = ctl.valuePerPoint(false);
+        assertFalse(ok, "the quote is unusable while the pool is under the raised minimum");
+        _addFullRange(int256(uint256(POOL_LIQ)));
+        assertGe(_liquidityNow(), liq0 + POOL_LIQ, "the just-in-time add deepened the pool");
+        (, ok) = ctl.valuePerPoint(false);
+        assertTrue(ok, "the just-in-time liquidity makes the quote usable in the same block");
+        _setQuote(_quoteWithMinLiquidity(1e18));
+    }
+
+    // promise: SPEC 8 refreshing every block at the max rate for an hour against a spot pushed far above walks the
+    // reference up by about the hourly rate and never past the spot, so block by block spam gains nothing beyond the rate
+    function test_referenceWalksAtTheMaxRateForAnHour() public {
+        uint256 ref0 = ctl.referencePrice();
+        uint256 spot = _swapSpot(20_000); // a real swap pushes the spot to about three times the reference
+        for (uint256 i; i < 300; ++i) {
+            vm.warp(block.timestamp + 12);
+            vm.roll(block.number + 1);
+            ctl.refreshReference();
+        }
+        uint256 ref1 = ctl.referencePrice();
+        assertGt(ref1, ref0, "the reference walked toward the pushed spot");
+        assertLe(ref1, spot, "but never past the spot");
+        assertApproxEqRel(ref1, ref0 * 11_000 / 10_000, 2e16, "an hour at 1,000 bps an hour moved about 10 percent");
+        assertLe(ref1, ref0 * 11_050 / 10_000, "and never beyond the compounded hourly rate");
+    }
+
+    // promise: SPEC 1 a 10x spot spike in one block lifts the eth buy value by at most the band, so the eth bid stays
+    // under the rate cap and inside the pot: the protected buy price caps the spike at reference plus the band
+    function test_tenXSpotSpikeStaysUnderTheRateCapAndPot() public {
+        _fundPot(20 ether);
+        _valueOn();
+        _warp(2 hours);
+        ctl.refreshReference();
+        uint256 ref = ctl.referencePrice();
+        (uint256 vBuy0,) = ctl.valuePerPoint(false);
+        uint256 bid0 = core.ethRate();
+        _swapToSpot(ref * 10); // a real swap spikes the spot ten fold in one block
+        (uint256 vBuy1,) = ctl.valuePerPoint(false);
+        uint256 bid1 = core.ethRate();
+        Settings memory s = core.settings();
+        assertLe(vBuy1, vBuy0 * 10_460 / 10_000, "the buy value rises by at most the band, not ten fold");
+        assertLe(bid1, s.rateCap, "the eth bid stays under the rate cap through the spike");
+        assertLe(bid1, bid0 * 10_460 / 10_000 + 1, "the eth bid rises by at most the band");
+        assertLe(bid1, core.ethPot(), "the eth bid rides the pot");
+    }
+
+    // promise: SPEC 10 a credit bought from the engine at its launch quote floor and sold straight back loses at least
+    // the credit spread. the eth worst case is printed
+    function test_loopClosureRoundTripAtLaunchValues() public {
+        uint256 id = _fillEthPile(1)[0];
+        _valueOn();
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(50 ether);
+        ctl.refreshReference();
+
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(address(this), 100 ether);
+        uint256 b0 = address(this).balance;
+        ctl.buyCredit{value: price * 2}(id);
+        uint256 paid = b0 - address(this).balance;
+        _nextSecond();
+        CREDITS.setApprovalForAll(address(core), true);
+        uint256 b1 = address(this).balance;
+        core.sellForEth(_one(id));
+        uint256 back = address(this).balance - b1;
+
+        assertGt(back, 0, "the round trip returned eth");
+        uint256 m = 10_000 + ctl.creditSpreadBps();
+        assertLe(back * m, (paid + 1) * 10_000, "a launch value round trip loses at least the spread");
+        emit log_named_uint("loop closure: eth paid to buy the credit", paid);
+        emit log_named_uint("loop closure: eth returned on the sell back", back);
+        emit log_named_uint("loop closure: eth lost on the round trip", paid - back);
     }
 }

@@ -23,7 +23,7 @@ import {OrderComponents} from "./utils/SeaportTypes.sol";
 /// `test_bidClimbsFromUnbookedIncomeWithNoSellersOrListings` isolates it: zero sellers and zero under-bid listings for
 /// the first 30 minutes, the bid must still climb from the opening rate. it fails without the fix (the bid is flat) and
 /// passes with it.
-contract LaunchDayTest is SeaportBase {
+abstract contract LaunchDayBase is SeaportBase {
     using FixedPointMathLib for uint256;
 
     /// @dev the keeper's buyListing gas guess (keeper/src/decide.ts GAS_GUESS.buyListing), restated
@@ -69,7 +69,7 @@ contract LaunchDayTest is SeaportBase {
     uint256 internal sell2h;
     uint256 internal sell6h;
 
-    function setUp() public override {
+    function setUp() public virtual override {
         // the sniper window must stay open (SeaportBase.setUp skips it), so build the fixture and the Seaport maker here
         Fixture.setUp();
         (maker, makerKey) = makeAddrAndKey("creditsengine.launchday.maker");
@@ -302,6 +302,12 @@ contract LaunchDayTest is SeaportBase {
         prevCheckRate = r;
         fillSinceCheck = false;
     }
+}
+
+/// @notice the launch day scenario one (keeper the only caller) and the isolated climb from unbooked income, driven
+/// through the shared `LaunchDayBase`
+contract LaunchDayTest is LaunchDayBase {
+    using FixedPointMathLib for uint256;
 
     /*//////////////////////////////////////////////////////////////
                     1. the launch day, keeper only
@@ -435,5 +441,161 @@ contract LaunchDayTest is SeaportBase {
         // the whole climb happened with an empty booked pot: the defect is the clamp to this pot
         assertEq(core.ethPot(), 0, "no door booked in the first 30 minutes");
         assertLe(r29, core.ethPot() + _pendingPot(core.settings()), "the climb stayed inside the pending pot clamp");
+    }
+}
+
+/// @notice a seven day launch driven by buyers: credit sale buyers each hour, statement buyers at the decayed price on
+/// day 2 and day 5, pages composing between, sales paying the artist and operator cuts and 25 percent of the rest to the
+/// buyback, buybacks firing, and the payee latching through a book door. the eth bid view equals the next fill at every
+/// day. events are stepped in large jumps between the active hours, so the fork work stays small
+contract LaunchDayBuyersTest is LaunchDayBase {
+    using FixedPointMathLib for uint256;
+
+    address internal creditBuyer;
+    address internal statementBuyer;
+    uint256 internal pagesComposed;
+    uint256 internal buybacks;
+
+    function setUp() public override {
+        super.setUp();
+        // the buyers scenario books after every swap, so the pot funds the climbing bid and the composed pages
+        autoBook = true;
+        creditBuyer = _user("launchday.creditbuyer");
+        statementBuyer = _user("launchday.statementbuyer");
+        statementsBefore = STATEMENTS.supply();
+        _setCreditSaleOn(true);
+    }
+
+    // promise: SPEC 1 the buyers path: credit and statement sales split to the artist, operator and buyback, pages
+    // compose over the week, buybacks fire, the payee latches through a door, and ethRate() is the next fill at each day
+    function test_sevenDaysWithBuyers() public {
+        // the window closes, then the first fee income books and latches the payee share through the book door
+        _skipSniperWindow();
+        _fundPot(2 ether);
+        assertTrue(core.payeeOn(), "the first post-window book latched the payee share");
+
+        // two pages of credits enter the pile for the week's composes
+        _fillEthPile(85);
+        _fillEthPile(85);
+        assertGe(core.pileSize(), 160, "two pages of credits are in the pile");
+
+        // day 0 active hours: a credit sale buyer buys one pile credit each hour at the quoted price
+        uint256[] memory page = core.pilePage(0, 10);
+        for (uint256 h; h < 3; ++h) {
+            _buyCreditChecked(page[h], h == 0);
+            vm.warp(block.timestamp + 1 hours);
+            vm.roll(block.number + 1);
+        }
+        _dayCheckpoint("day 0");
+
+        // day 1: past the credit window, compose page one
+        _warpTo(launchTime + 1 days);
+        _composePage();
+        uint256 sid1 = STATEMENTS.supply();
+        _dayCheckpoint("day 1");
+
+        // day 2: a statement buyer buys the composed statement at its decayed price, then a buyback fires
+        _warpTo(launchTime + 2 days);
+        _buyStatementChecked(sid1);
+        _fireBuyback();
+        _dayCheckpoint("day 2");
+
+        // day 4: compose page two
+        _warpTo(launchTime + 4 days);
+        _composePage();
+        uint256 sid2 = STATEMENTS.supply();
+        _dayCheckpoint("day 4");
+
+        // day 5: a second statement buyer at the decayed price, another buyback
+        _warpTo(launchTime + 5 days);
+        _buyStatementChecked(sid2);
+        _fireBuyback();
+        _dayCheckpoint("day 5");
+
+        // day 7: idle to the week's end
+        _warpTo(launchTime + 7 days);
+        _dayCheckpoint("day 7");
+
+        assertEq(pagesComposed, 2, "two pages composed over the week");
+        assertGe(buybacks, 2, "a buyback fired after each statement sale");
+        console.log("pages composed:", pagesComposed);
+        console.log("buybacks fired:", buybacks);
+    }
+
+    /// @dev warps to `ts` and advances one block, for the large steps between the active hours
+    function _warpTo(uint256 ts) internal {
+        if (block.timestamp < ts) vm.warp(ts);
+        vm.roll(block.number + 1);
+    }
+
+    /// @dev a credit sale buyer buys pile credit `id` at the quoted price. when `split`, asserts the artist and operator
+    /// cuts come off the payment (250 and 50 bps of the launch settings)
+    function _buyCreditChecked(uint256 id, bool split) internal {
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(creditBuyer, price);
+        uint256 art0 = core.artist().balance;
+        uint256 op0 = core.payee().balance;
+        vm.prank(creditBuyer);
+        ctl.buyCredit{value: price}(id);
+        assertEq(CREDITS.ownerOf(id), creditBuyer, "the credit sale delivered the credit");
+        if (split) {
+            assertEq(core.artist().balance - art0, price * 250 / 10_000, "credit sale artist cut");
+            assertEq(core.payee().balance - op0, price * 50 / 10_000, "credit sale operator cut");
+        }
+    }
+
+    /// @dev a statement buyer buys `sid` at its decayed price. asserts the artist and operator cuts and that 25 percent
+    /// of the rest goes to the buyback pot
+    function _buyStatementChecked(uint256 sid) internal {
+        assertTrue(_isHeld(sid), "the statement is held for sale");
+        uint256 art0 = core.artist().balance;
+        uint256 op0 = core.payee().balance;
+        uint256 bb0 = core.ethToBuyback();
+        uint256 price = _buy(statementBuyer, sid);
+        uint256 toArtist = price * 250 / 10_000;
+        uint256 toOperator = price * 50 / 10_000;
+        uint256 rest = price - toArtist - toOperator;
+        assertEq(core.artist().balance - art0, toArtist, "statement artist cut");
+        assertEq(core.payee().balance - op0, toOperator, "statement operator cut");
+        assertEq(core.ethToBuyback() - bb0, rest * 2_500 / 10_000, "25 percent of the rest to the buyback");
+        assertEq(STATEMENTS.ownerOf(sid), statementBuyer, "the buyer holds the statement");
+    }
+
+    /// @dev composes the oldest past-window page as the keeper and checks the pile dropped by one page
+    function _composePage() internal {
+        vm.fee(composeBasefee);
+        uint256 supplyBefore = STATEMENTS.supply();
+        uint256 pileBefore = core.pileSize();
+        vm.prank(keeper);
+        core.compose();
+        assertEq(STATEMENTS.supply(), supplyBefore + 1, "a page composed");
+        assertEq(core.pileSize(), pileBefore - 80, "80 credits left the pile");
+        ++pagesComposed;
+    }
+
+    /// @dev fires a buyback as the keeper once the delay has passed, and checks coin was bought and burned
+    function _fireBuyback() internal {
+        if (core.ethToBuyback() == 0) return;
+        vm.roll(block.number + core.settings().buybackDelay + 1);
+        uint256 supply0 = coin.totalSupply();
+        uint256 bb0 = core.ethToBuyback();
+        vm.prank(keeper);
+        core.buyback();
+        assertLt(coin.totalSupply(), supply0, "the buyback bought and burned coin");
+        assertLt(core.ethToBuyback(), bb0, "the buyback spent from the buyback pot");
+        ++buybacks;
+    }
+
+    /// @dev the daily checkpoint: the eth bid stays within the cap, and its view equals the next fill a fresh credit pays
+    function _dayCheckpoint(string memory tag) internal {
+        Settings memory s = core.settings();
+        assertLe(core.ethRate(), s.rateCap, string.concat(tag, ": the eth bid stays within the cap"));
+        uint256 id = _credits(seller, 1)[0];
+        (uint256 quoted, uint256 paid,) = _organicSell(id);
+        assertEq(paid, quoted, string.concat(tag, ": the eth bid view equals the next fill"));
+        _solvent();
+        console.log(tag);
+        console.log("  pile size:", core.pileSize());
+        console.log("  statements composed:", STATEMENTS.supply() - statementsBefore);
     }
 }
