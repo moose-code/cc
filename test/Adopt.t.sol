@@ -44,7 +44,7 @@ contract AdoptTest is Fixture {
         }
     }
 
-    /// the cost basis adopt records for `id`: the price state times its score over refScore, at least 1 wei
+    /// the cost basis adopt records for `id`: the price state times its score over RATE_SCORE, at least 1 wei
     function _basis(uint256 id) internal view returns (uint256) {
         // the price state scaled by score plus the artist royalty the eth bid would pay, at least 1 wei (decision 163)
         uint256 pay = core.ethPrice() * _scoreOf(id) / RATE_SCORE;
@@ -71,8 +71,8 @@ contract AdoptTest is Fixture {
         assertGt(want, 0);
         assertEq(
             want,
-            core.RATE_START() * _scoreOf(id) / RATE_SCORE,
-            "the basis is the price state scaled by score / refScore"
+            core.RATE_START() * _scoreOf(id) * (10_000 + core.settings().buyToArtistBps) / RATE_SCORE / 10_000,
+            "the basis is the price state scaled by score / RATE_SCORE plus the artist royalty"
         );
 
         vm.expectEmit(true, false, false, true, address(core));
@@ -238,11 +238,12 @@ contract AdoptTest is Fixture {
         succ.adopt(ids);
         assertEq(succ.pileSize(), ids.length, "the pile is restored");
         assertEq(succ.pilePage(0, 1)[0], ids[0], "in the order of the call");
-        uint256 refScore = RATE_SCORE;
+        uint256 royaltyBps = succ.settings().buyToArtistBps;
         for (uint256 i; i < ids.length; ++i) {
             (bool p, uint256 cost,) = succ.creditInfo(ids[i]);
             assertTrue(p);
-            uint256 want = price * _scoreOf(ids[i]) / refScore;
+            uint256 pay = price * _scoreOf(ids[i]) / RATE_SCORE;
+            uint256 want = pay + pay * royaltyBps / 10_000;
             if (want == 0) want = 1;
             assertEq(cost, want);
             sum += cost;
@@ -347,7 +348,7 @@ contract AdoptTest is Fixture {
         assertEq(cost, _basis(ids[0]), "the basis is read after the book");
     }
 
-    // promise: SPEC 4 an adopted credit enters at the price state times its score over refScore (cost basis)
+    // promise: SPEC 4 an adopted credit enters at the price state scaled by score / RATE_SCORE plus the artist royalty (cost basis)
     function test_FUZZ_theBasisIsThePriceStateScaledByScore(uint256 wait, uint8 count) public {
         wait = bound(wait, 0, 30 days);
         count = uint8(bound(count, 1, 6));
@@ -358,9 +359,10 @@ contract AdoptTest is Fixture {
         _adopt(ids);
         for (uint256 i; i < count; ++i) {
             (, uint256 cost,) = core.creditInfo(ids[i]);
-            uint256 want = price * _scoreOf(ids[i]) / RATE_SCORE;
+            uint256 pay = price * _scoreOf(ids[i]) / RATE_SCORE;
+            uint256 want = pay + pay * core.settings().buyToArtistBps / 10_000;
             if (want == 0) want = 1;
-            assertEq(cost, want, "basis is the price state scaled by score / refScore");
+            assertEq(cost, want, "basis is the price state scaled by score / RATE_SCORE plus the artist royalty");
             assertGt(cost, 0);
         }
     }
