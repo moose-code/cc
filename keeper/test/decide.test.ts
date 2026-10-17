@@ -245,6 +245,37 @@ test("refreshReference: due referenceMinSeconds after the last sample, never bef
   assert.match(reason(high, "refreshReference"), /above the door ceiling/);
 });
 
+// promise: a refresh intended with only unbooked hook income must be paid by the Core's booked-pot rule
+test("refreshReference: pending-only cold pot is projected as paid while the Core pays zero", () => {
+  const s = state({
+    timestamp: 1_600n,
+    launchedAt: 1_000n,
+    payeeOn: false,
+    ethPot: 0n,
+    pendingIncome: parseEther("0.00445"),
+    potWithPending: parseEther("0.004005"),
+    potRoom: 0n,
+    valueModeOn: true,
+    referencePrice: parseEther("0.49"),
+    referenceTime: 1_000n,
+    referenceMaxStale: 3_600n,
+    referenceMinSeconds: 600n,
+  });
+  const p = policy();
+  const r = decide(s, [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(r), ["refreshReference"]);
+  assert.match(reason(r, "book"), /anti sniper window/);
+  const intended = r.calls[0];
+  assert.ok(intended.payment > 0n);
+  assert.equal(recheck(intended, s, undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true);
+  assert.equal(s.ethPot, 0n, "CoreLib.refreshReference caps the actual payment at this empty booked pot");
+  const afterLatch = state({ ...s, payeeOn: true, ethPot: 1n, potWithPending: parseEther("0.000405") + 1n, pendingIncome: parseEther("0.00045"), lastBookAt: 1_000n });
+  const latched = decide(afterLatch, [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(latched), ["refreshReference"]);
+  assert.match(reason(latched, "book"), /not above/);
+  assert.ok(latched.calls[0].payment > 1n, "the keeper still projects a caller fee from pending income");
+});
+
 test("listing: the best gap goes first (Activity.s.sol rule), and every sweep precedes the buyback", () => {
   const p = policy({}, 0);
   const a = listing({ id: 1n, price: parseEther("0.010") });
