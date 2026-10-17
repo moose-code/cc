@@ -30,9 +30,9 @@ The page defaults to 60-second steps from the first hour. Steps must be integer 
 
 The bid climbs per 60 seconds with a separate recovery speed below the decayed peak. `idleStepSeconds` controls ceiling-loosening intervals without changing those climb units. The last fill rate determines the pages multiplier, capped by `climbMultiplierCapBps`; the multiplier scales ceiling loosening only. `hourlyBound` and `multiplierScalesClimb` are historical experiment switches and do not describe the shipped rule.
 
-The balance bid uses the shared rate mechanics, a floor of `10000 - balanceBidMarginBps`, and the configurable `balanceBidCapBps`, which can exceed par. Its available clamp and pages multiplier preserve their separate caps. A zero opening floor stays zero unless a later reset gives it a positive floor.
+The balance bid is a posted price, `10000 - balanceDiscountBps` bps of par per point, flat: no climb while idle and no drop on a fill, bounded by the module holding alone (decision 164). The shared instance (`balanceBidMarginBps`, `balanceBidCapBps`) is value mode's eth price state, read with `sharedRate` and driven by eth fills.
 
-The controller uses `max(cost, valueOf(score))` for credit pricing and the corresponding rating reference for statements. `anchorMoveBps` determines the fraction of a qualifying sale gap that moves the anchor, rounded down; zero preserves the anchor clock. Artist and operator cuts come from sale payments. There is no additional royalty in this model.
+The controller uses `max(cost, valueOf(score))` for credit pricing and the corresponding rating reference for statements. `anchorMoveBps` determines the fraction of a qualifying sale gap that moves the anchor, rounded down; zero preserves the anchor clock. Artist and operator cuts come from sale payments. The artist royalty on every purchase (`buyToArtistBps`, decision 163) rides on top of each eth and balance purchase and is counted in `royaltyPaid` and `royaltyPaidBalance`; the eth clamp divides the room by `1 + buyToArtistBps / 10000`.
 
 `sniperSeconds` controls when the Core payee latch can activate. `payeePpm` is zero at launch. The hook skim window is a separate launch input, `skimSeconds`; editing the payee latch does not change it. Market supply, fee volume, score mix and buyer behavior remain separate model assumptions.
 

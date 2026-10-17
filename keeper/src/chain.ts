@@ -105,6 +105,7 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
       redeemOn: st.redeemOn,
       spendCapBps: st.spendCapBps,
       bucketSeconds: st.bucketSeconds,
+      buyToArtistBps: st.buyToArtistBps,
     },
     spend: { bucket: spendState[0], budget: spendState[1], spent: spendState[2] },
     ethPot: snap.ethPot,

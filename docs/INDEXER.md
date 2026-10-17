@@ -76,7 +76,7 @@ All addresses and start blocks come from `deployments/<chainId>.json`. The confi
 | Core | record `core` (CoreLib events are emitted under the Core address) | all events | record `deployBlock` | every Core and CoreLib event (inventory B1, about 35) |
 | Controller | factory over Core `ControllerSet(address controller)` | all events | block of each `ControllerSet` | `Bought`, `AnchorMoved`, `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`, `QuoteSet`, `ReferenceRefreshed` |
 | CC burns | record `coin` | `Transfer` with `to = 0x0` | record `deployBlock` | all burns; attribution to the engine via the tx (Buyback tx, `CreditSwapped.fee`) |
-| $BALANCE paid | Core | `BalanceRateFill.spent`, associated with preceding `CreditBought` and latest prior `BalanceModuleSet` | Core deployment | module custody, per-credit payment in log order |
+| $BALANCE paid | Core | `BalanceFill.paid` (the seller's posted payout) and `BalanceFill.toArtist` (the artist royalty, decision 163), associated with preceding `CreditBought` and latest prior `BalanceModuleSet` | Core deployment | module custody, per-credit payment in log order |
 | Credits | `0x97630aA70AB14ed9883B41dAfccBc11349723043` | `Transfer` | collection deploy block (to be read) | owners for every credit, engine ins and outs, migrate moves |
 | Statements | `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b` | `Transfer` | collection deploy block (to be read) | statement owners after sale |
 | CreditStrategy | `0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6` (proxy) | `NFTBoughtByProtocol`, `NFTSoldByProtocol` | env `STRATEGY_START_BLOCK`; chain 1 requires it (`26037623`, the first block with code); local fork: 60000 blocks before the Core deploy block | strategy listings (6.11) |
@@ -120,7 +120,7 @@ One row per snapshot block (section 5.2) with the snapshot fields. Drives charts
 
 ### 6.4 `setting_change`
 
-One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `PausedSet`, `PayeeSet`, `ArtistSet`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet`, lock events, ownership events, controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`, `QuoteSet`): `name`, `before` json, `after` json. Answers "what was X at block B" without archive calls.
+One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCostToPotBpsSet`, `ChosenComposeOnSet`, `MinCcToChooseSet`, `PausedSet`, `PayeeSet`, `ArtistSet`, `ControllerSet`, `BalanceModuleSet`, `AdapterSet`, lock events, ownership events, controller `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`, `QuoteSet`): `name`, `before` json, `after` json. Answers "what was X at block B" without archive calls. `BalanceRateSet` records value mode's shared instance reset under a `sharedRateBps` key, not the posted balance bid rate: the posted rate is `10,000 - balanceDiscountBps` in the `balanceRate` column, sourced from `SettingsSet` and the snapshot read (decision 164). The handler change needs a full reindex to drop the old `balanceRate` before/after rows this event wrote.
 
 ### 6.5 `controller`
 
@@ -136,7 +136,8 @@ One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCos
 | `state` | `outside`, `held`, `composed`, `sold`, `swapped_out`, `migrated` |
 | `costBasis`, `acquiredAt`, `acquiredBlock`, `acquiredTx`, `acquiredHow` | `eth_bid`, `balance_bid`, `listing`, `adopted`, `swap_in`; a swap-in copies the swapped-out credit's cost and time (the event omits them) |
 | `seller` | `CreditBought.from` or listing seller |
-| `balancePaid` | `BalanceRateFill.spent` for a balance bid |
+| `balancePaid` | `BalanceFill.paid` for a balance bid, the seller's posted payout |
+| `royalty` | the artist royalty paid at acquisition (decision 163): `CreditBought.toArtist` for an eth bid (wei), `ListingBought.toArtist` for a listing (wei), `BalanceFill.toArtist` for a balance bid (`balancePaidToken` units); null for an adopted or swapped-in credit |
 | `pileOrder` | sort key for pile order: insertion sequence; a swap-in takes the out credit's key; `Migrated` removes from the head |
 | `statementId`, `pagePosition` | after `Composed` |
 | `salePrice`, `buyer`, `toArtist`, `toOperator`, `toPot`, `toBuyback`, `costToPotBps` | after `CreditSold`, split computed with the bps in force at that block |
@@ -158,7 +159,7 @@ One row per user-visible event, newest first by (`blockNumber`, `logIndex`): `ki
 
 ### 6.9 aggregates
 
-`stats` (singleton per Core): counts per activity kind, `ethIntoCredits`, `feesBooked`, `toPayee`, `toArtist`, `toOperator`, `ccBurned` (Buyback burns plus swap-fee burns), `ethToBuybackSpent`, `balancePaidByToken` (raw-unit decimal strings keyed by lowercase token address, also hourly; currencies are never summed).
+`stats` (singleton per Core): counts per activity kind, `ethIntoCredits`, `feesBooked`, `toPayee`, `toArtist` (the artist cut of sales), `toArtistBuys` (the artist royalty on eth bid and listing purchases, wei, decision 163; balance bid royalties are inside `balancePaidByToken`), `toOperator`, `ccBurned` (Buyback burns plus swap-fee burns), `ethToBuybackSpent`, `balancePaidByToken` (raw-unit decimal strings keyed by lowercase token address, also hourly; currencies are never summed).
 
 `stats_hourly`: the same counters per hour bucket, plus `creditsBought`. The buy rate for compose estimates reads the last 24 rows.
 
@@ -233,7 +234,7 @@ Ponder rolls back writes inside `reorgWindow`. Snapshot rows written by block ha
 
 ### 8.2 ordering facts the handlers rely on
 
-- `EthRateFill` (in value mode `ValueRateFill`, decision 148) precedes its `CreditBought` in the same tx; a bought credit with a preceding fill in the tx is an `eth_bid`, with a `BalanceRateFill` after it a `balance_bid`.
+- `EthRateFill` (in value mode `ValueRateFill`, decision 148) precedes its `CreditBought` in the same tx; a bought credit with a preceding fill in the tx is an `eth_bid`, with a `BalanceFill` after it a `balance_bid`. `CreditBought.cost` is the pile cost basis (eth bid: the price plus the artist royalty; balance bid: the eth floor basis) and `CreditBought.toArtist` the royalty in the route's currency; `ListingBought.toArtist` is the royalty on the listing price and the pile basis is `cost + toArtist + paid` (decision 163, docs/reviews/SPEC-royalty-balance-161.md).
 - `Bought` (controller) and `StatementSoldTo` (Core) are one sale; the activity row comes from `StatementSoldTo`.
 - `CreditSwapped`: the in credit takes the out credit's pile key, cost basis and acquisition time.
 - `Migrated` moves credits with no per-id event; Credits `Transfer(core, successor)` in the same tx gives the ids.
@@ -283,7 +284,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | $CC burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
 | explainer fee wording | L hook skim and bounty (`useHookFeeBps`); D engine share |
 | statement sale split | D from I `engine.settings` |
-| ledger rows | Currency is I `activity.balanceToken` for balance purchases/redemptions (chain mode: prior `BalanceModuleSet` in log order); amount is `BalanceRateFill.spent` per credit or `StatementRedeemed.received`. Historical metadata is used only for the matching token, otherwise show exact raw units and token address. I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
+| ledger rows | Currency is I `activity.balanceToken` for balance purchases/redemptions (chain mode: prior `BalanceModuleSet` in log order); amount is `BalanceFill.paid` per credit (the seller's posted payout; the artist royalty `BalanceFill.toArtist` is the module's extra outflow) or `StatementRedeemed.received`. Historical metadata is used only for the matching token, otherwise show exact raw units and token address. I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
 | next credit progress | D pot over bid from L snapshot |
 | next statement progress | L snapshot `pileSize` mod 80 |
 

@@ -13,6 +13,12 @@ import {Settings, Mainnet, ICreditStrategy} from "../src/interfaces/Interfaces.s
 /// that the pot affords), the settings bounds, and the recovery after a gap in the market price. exact numbers at the launch
 /// settings, hand arithmetic throughout
 contract BidRuleTest is Fixture {
+    /// the price state rules read the clamp alone: the royalty's share of the room is test/ArtistRoyalty.t.sol's
+    function _settings() internal view override returns (Settings memory s) {
+        s = super._settings();
+        s.buyToArtistBps = 0;
+    }
+
     using stdStorage for StdStorage;
 
     uint256 internal constant START = OPEN_RATE;

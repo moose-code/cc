@@ -219,21 +219,27 @@ contract UpstreamBalanceTest is Fixture {
 
         uint256[] memory ids = _affordablePage();
         uint256 score;
-        uint256 floorTotal;
+        uint256 postedTotal;
+        uint256 royaltyTotal;
         uint256 parTotal;
         for (uint256 i; i < ids.length; ++i) {
             uint256 points = _scoreOf(ids[i]);
             score += points;
             parTotal += points * UNIT_PER_SCORE;
-            floorTotal += points * UNIT_PER_SCORE * (10_000 - core.settings().balanceBidMarginBps) / 10_000;
+            // the posted payout per credit, 10_000 - balanceDiscountBps of par, and its artist royalty on top, both from
+            // the module (decisions 163, 164)
+            uint256 perCredit = points * UNIT_PER_SCORE * (10_000 - core.settings().balanceDiscountBps) / 10_000;
+            postedTotal += perCredit;
+            royaltyTotal += perCredit * core.settings().buyToArtistBps / 10_000;
         }
         assertLe(parTotal, owed, "first redemption funds this complete page at par");
         vm.prank(seller);
-        core.sellForBalance(ids, floorTotal, address(balanceToken));
+        core.sellForBalance(ids, postedTotal, address(balanceToken));
         uint256 paid = balanceToken.balanceOf(seller);
-        assertGe(paid, floorTotal);
+        assertEq(paid, postedTotal, "the seller receives the posted total exactly");
         assertLe(paid, parTotal);
-        assertEq(balanceModule.available(), owed - paid);
+        // the module paid the seller the posted total and the artist the royalty on top
+        assertEq(balanceModule.available(), owed - paid - royaltyTotal);
         for (uint256 i; i < ids.length; ++i) {
             assertEq(CREDITS.ownerOf(ids[i]), address(core));
         }
@@ -245,7 +251,7 @@ contract UpstreamBalanceTest is Fixture {
         _makeEligible(next);
         core.redeemStatement(next);
         assertEq(STATEMENTS.ownerOf(next), address(balanceToken));
-        assertEq(balanceModule.available(), owed - paid + score * UNIT_PER_SCORE);
+        assertEq(balanceModule.available(), owed - paid - royaltyTotal + score * UNIT_PER_SCORE);
         assertEq(balanceToken.balanceOf(address(core)), 0);
         vm.expectRevert(ICore.NotHeld.selector);
         core.redeemStatement(sid);

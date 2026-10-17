@@ -348,7 +348,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
         { ...c, functionName: "settings" },
         { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [core!] },
         { ...c, functionName: "reserve" },
-        { ...c, functionName: "balanceRate" },
+        { ...c, functionName: "sharedRate" },
         { ...c, functionName: "controller" },
       ] as const,
     }),
@@ -381,6 +381,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
       dropPer100PointsBps: BigInt(st.dropPer100PointsBps),
       dropFloorBps: BigInt(st.dropFloorBps),
       floorBps: 10000n - BigInt(st.balanceBidMarginBps),
+      buyToArtistBps: BigInt(st.buyToArtistBps),
     });
   }
   return replayEthFills(scores, {
@@ -393,6 +394,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
     ceilBps: BigInt(st.ceilBps),
     rateCap: BigInt(st.rateCap),
     scorePer100Points: SCORE_PER_100_POINTS,
+    buyToArtistBps: BigInt(st.buyToArtistBps),
   });
 }
 

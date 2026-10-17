@@ -338,10 +338,12 @@ contract ReviewFundedTest is Fixture {
     }
 
     function _check(ICore c) internal view {
-        uint256 room = _room(c);
+        // the bid's room is the pot less the reserve over 1 + buyToArtistBps / 10_000, so a credit at the read is payable
+        // with its artist royalty (decision 163)
+        uint256 room = _room(c) * 10_000 / (10_000 + c.settings().buyToArtistBps);
         uint256 stored = c.rateAtCheckpoint();
         uint256 r = c.ethRate();
-        assertLe(r, room, "the pot less the reserve affords a credit at the live rate");
+        assertLe(r, room, "the pot less the reserve affords a credit and its royalty at the live rate");
         // the price state never climbs while the room cannot afford a credit, and the read is the clamp
         if (room < stored) {
             assertEq(r, room, "the read is the clamp while unaffordable");

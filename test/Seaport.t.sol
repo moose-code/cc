@@ -193,11 +193,17 @@ abstract contract SeaportBase is Fixture {
         (bool inPile, uint256 booked,) = core.creditInfo(id);
         assertTrue(inPile, "in the pile");
         paid = keeper.balance - before.keeper;
-        assertEq(booked, cost + paid, "costOf is cost plus the payment");
+        // the artist royalty on the price rides on top and is part of the cost basis (decision 163)
+        uint256 royalty = cost * core.settings().buyToArtistBps / 10_000;
+        assertEq(booked, cost + royalty + paid, "costOf is cost plus the royalty plus the payment");
         assertEq(core.pileSize(), before.pile + 1);
-        _assertListingPay(paid, ceiling - cost);
-        assertEq(core.ethPot(), before.pot - cost - paid, "pot down by exactly cost and the payment");
-        assertEq(address(core).balance, before.balance - cost - paid, "balance down by exactly cost and the payment");
+        uint256 gap = ceiling - cost;
+        uint256 roomGap = before.pot - core.reserve() - cost - royalty;
+        _assertListingPay(paid, gap < roomGap ? gap : roomGap);
+        assertEq(core.ethPot(), before.pot - cost - royalty - paid, "pot down by exactly cost, the royalty and the payment");
+        assertEq(
+            address(core).balance, before.balance - cost - royalty - paid, "balance down by exactly cost, the royalty and the payment"
+        );
         assertEq(core.ethToBuyback(), before.toBuyback);
         assertEq(
             core.rateAtCheckpoint(), BidModel.dropOnce(core.settings(), rate, rate, score, RATE_SCORE), "rate drop"
@@ -277,7 +283,11 @@ contract SeaportTest is SeaportBase {
         core.buyListing(seaportAdapter, id, order);
         assertEq(keeper.balance - kb, gap, "the keeper payment is capped at the scaled bid less value");
         (, uint256 basis,) = core.creditInfo(id);
-        assertEq(basis, handBid, "the cost basis is the scaled bid: value plus the capped payment");
+        assertEq(
+            basis,
+            handBid + value * core.settings().buyToArtistBps / 10_000,
+            "the cost basis is the scaled bid plus the royalty on value: value, its royalty and the capped payment"
+        );
         assertEq(CREDITS.ownerOf(id), address(core), "the engine owns the credit");
     }
 
@@ -311,7 +321,11 @@ contract SeaportTest is SeaportBase {
         assertEq(maker.balance - makerBefore, total - fee, "maker got the price less the fee");
         assertEq(feeTaker.balance - feeBefore, fee, "fee recipient got one percent");
         (, uint256 booked,) = core.creditInfo(id);
-        assertEq(booked, total + paid, "cost is the sum of every payout plus the payment");
+        assertEq(
+            booked,
+            total + total * core.settings().buyToArtistBps / 10_000 + paid,
+            "cost is the sum of every payout plus the royalty on it plus the payment"
+        );
     }
 
     // promise: INTEGRATION SeaportBasicAdapter: a payout off the allowlist makes price revert, BadQuote
@@ -363,7 +377,8 @@ contract SeaportTest is SeaportBase {
         vm.prank(maker);
         core.buyListing(seaportAdapter, id, data);
         gained = maker.balance + feeTaker.balance - before;
-        paid = pot - core.ethPot() - price;
+        // the artist royalty on the price leaves the pot as well (decision 163)
+        paid = pot - core.ethPot() - price - price * core.settings().buyToArtistBps / 10_000;
         assertEq(CREDITS.ownerOf(id), address(core));
         assertEq(gained, price + paid, "the maker side got the price and the payment");
     }

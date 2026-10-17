@@ -35,14 +35,13 @@ contract BalanceCustodyTest is Fixture {
         core.redeemStatement(sid);
     }
 
-    // promise: SPEC 9 sellForBalance reverts PotTooSmall when the module's available is below the batch
+    // promise: SPEC 9 sellForBalance reverts PotTooSmall when the module's available is below the batch's payouts plus
+    // their artist royalties
     function test_sellForBalance_availableBelowBatchRevertsPotTooSmall() public {
         uint256[] memory ids = _credits(user, 6);
-        uint256 refScore = RATE_SCORE;
-        uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
-        // available fixed so its bps of par is exactly the floor: each credit pays score * unit * floor / 10_000. six
-        // credits keep the summed score above refScore, so the running total passes available before the batch ends
-        mod.setAvailable(UNIT * floorBps * refScore / 10_000);
+        // available at the posted payout of one 100 point credit: six credits sum far above it, so the running total of
+        // payouts and royalties passes available before the batch ends
+        mod.setAvailable(UNIT * RATE_SCORE * core.balanceRate() / 10_000);
         vm.prank(user);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(ids);

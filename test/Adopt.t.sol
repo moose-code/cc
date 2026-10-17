@@ -46,7 +46,9 @@ contract AdoptTest is Fixture {
 
     /// the cost basis adopt records for `id`: the price state times its score over refScore, at least 1 wei
     function _basis(uint256 id) internal view returns (uint256) {
-        uint256 b = core.ethPrice() * _scoreOf(id) / RATE_SCORE;
+        // the price state scaled by score plus the artist royalty the eth bid would pay, at least 1 wei (decision 163)
+        uint256 pay = core.ethPrice() * _scoreOf(id) / RATE_SCORE;
+        uint256 b = pay + pay * core.settings().buyToArtistBps / 10_000;
         return b == 0 ? 1 : b;
     }
 

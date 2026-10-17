@@ -39,7 +39,15 @@ contract MockBalanceToken is ERC20 {
         transferMode = mode;
     }
 
+    /// a recipient the token refuses: a transfer to it reverts, a blacklisting token toward one address
+    address public banned;
+
+    function setBanned(address a) external {
+        banned = a;
+    }
+
     function transfer(address to, uint256 amount) public override returns (bool) {
+        if (to == banned) revert("banned recipient");
         if (transferMode == 1) revert("transfer refused");
         if (transferMode == 2) return false;
         return super.transfer(to, amount);

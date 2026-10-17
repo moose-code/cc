@@ -192,7 +192,8 @@ struct Settings {
     /// a redemption must raise the balance token balance by at least `rating * unitPerPoint * (10_000 - redeemSlippageBps)
     /// / 10_000`, bps
     uint16 redeemSlippageBps;
-    /// the floor and opening value of the balance bid rate is `10_000 - balanceBidMarginBps`, bps of par
+    /// value mode only: the floor and opening value of the shared eth instance is `10_000 - balanceBidMarginBps`, bps of
+    /// par. the posted balance bid does not read it
     uint16 balanceBidMarginBps;
     /// share of `ethRedeemBurn` moved into the coin buyback on each redemption, bps
     uint16 redeemBurnBps;
@@ -237,7 +238,8 @@ struct Settings {
     uint16 spendCapBps;
     /// seconds per shared purchase-budget and bid-drop bucket
     uint32 bucketSeconds;
-    /// maximum balance bid rate, bps of par, at least 10,000
+    /// value mode only: the cap of the shared eth instance, bps of par, at least 10,000. the posted balance bid does not
+    /// read it
     uint32 balanceBidCapBps;
     /// seconds per full ceiling-loosening step; per-minute climb units remain 60 seconds
     uint32 idleStepSeconds;
@@ -254,6 +256,12 @@ struct Settings {
     /// every eth fill drops that instance, and the controller prices sales on the value with the floor rate and cost
     /// terms dropped. turning it on resets the shared instance to its floor
     bool valueModeOn;
+    /// the artist royalty on every engine purchase, bps of the amount the engine pays for a credit, paid on top in the
+    /// same currency: the seller receives the bid whole, the artist `pay * this / 10,000`. 0 to 1,000
+    uint16 buyToArtistBps;
+    /// the balance bid's discount to par, bps: the balance route pays `score * unitPerPoint * (10,000 - this) / 10,000`
+    /// per credit, flat. 0 to 9,999, so the payout is never zero
+    uint16 balanceDiscountBps;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
@@ -408,7 +416,9 @@ library Mainnet {
             sniperSeconds: 1800,
             reserveWei: 0.1 ether,
             returnLockSeconds: 21_600,
-            valueModeOn: false
+            valueModeOn: false,
+            buyToArtistBps: 250,
+            balanceDiscountBps: 1_000
         });
     }
 
