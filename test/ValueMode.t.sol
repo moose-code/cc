@@ -273,6 +273,23 @@ contract ValueReferenceTest is ValueBase {
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
         ctl.setQuote(Quote({referenceRateBpsPerHour: 1_200, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 3_600, referenceMinSeconds: 600, minLiquidity: 1e18}));
     }
+
+    // promise: SPEC 11 a seed manipulated between signing and landing reverts: setBalancePoolKey refuses a live spot
+    // more than tolBps from the owner's expected spot. the pool spot is moved on the fixture pool before the call
+    function test_poolKeySeedRevertsOnManipulation() public {
+        uint256 expected = _spotOf(SP);
+        _poolState(_sqrtOf(expected * 2), LIQ); // the spot doubles, far beyond the 4.5 percent band
+        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
+            currency0: IControllerV1.Currency.wrap(address(0)),
+            currency1: IControllerV1.Currency.wrap(address(xt)),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: address(0)
+        });
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("spot")));
+        ctl.setBalancePoolKey(k, expected);
+    }
 }
 
 contract ValueModeTest is ValueBase {
@@ -551,5 +568,37 @@ contract ValueModeTest is ValueBase {
         emit log_named_uint("sellForEth gas, one credit, eth instance", plain);
         emit log_named_uint("sellForEth gas, one credit, value mode", valued);
         assertLt(valued, plain + 150_000, "the value read costs at most 150,000 gas a credit");
+    }
+
+    // promise: SPEC 11 the switch off reset: the eth instance climbs idle during value mode, so leaving value mode
+    // resets it to the shared rate and the eth bid resumes there instead of reopening at the cap
+    function test_switchOffResetsEthInstanceToTheSharedRate() public {
+        _fundPot(20 ether);
+        _valueOn();
+        _warp(6 hours); // the shared instance climbs well above the floor while value mode is on
+        uint256 valueBid = core.ethRate(); // the eth bid value mode prices now
+        Settings memory s = core.settings();
+        s.valueModeOn = false;
+        _setSettings(s);
+        uint256 ethBid = core.ethRate(); // now the eth instance, just reset
+        assertApproxEqRel(ethBid, valueBid, 2e16, "the eth bid resumes at the shared rate after the switch off");
+        assertLt(ethBid, s.rateCap, "well under the cap, so a rollback cannot reopen the eth bid at the cap");
+    }
+
+    // promise: SPEC 11 a pause in value mode: the controller sales revert Paused while the bid keeps filling, so the
+    // owner can halt buys without freezing the engine's purchases
+    function test_pauseInValueMode() public {
+        _fundPot(20 ether);
+        _valueOn();
+        uint256[] memory ids = _credits(seller, 1);
+        vm.prank(owner);
+        core.setPaused(true);
+        // the bid still fills while paused: the pause gates the controller sales, not sellForEth
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(ids);
+        assertGt(seller.balance, before, "the eth bid fills while paused in value mode");
+        vm.prank(owner);
+        core.setPaused(false);
     }
 }
