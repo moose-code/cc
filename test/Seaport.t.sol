@@ -193,7 +193,7 @@ abstract contract SeaportBase is Fixture {
         (bool inPile, uint256 booked,) = core.creditInfo(id);
         assertTrue(inPile, "in the pile");
         paid = keeper.balance - before.keeper;
-        // the artist royalty on the price rides on top and is part of the cost basis (decision 160)
+        // the artist royalty on the price rides on top and is part of the cost basis (decision 163)
         uint256 royalty = cost * core.settings().buyToArtistBps / 10_000;
         assertEq(booked, cost + royalty + paid, "costOf is cost plus the royalty plus the payment");
         assertEq(core.pileSize(), before.pile + 1);
@@ -377,7 +377,7 @@ contract SeaportTest is SeaportBase {
         vm.prank(maker);
         core.buyListing(seaportAdapter, id, data);
         gained = maker.balance + feeTaker.balance - before;
-        // the artist royalty on the price leaves the pot as well (decision 160)
+        // the artist royalty on the price leaves the pot as well (decision 163)
         paid = pot - core.ethPot() - price - price * core.settings().buyToArtistBps / 10_000;
         assertEq(CREDITS.ownerOf(id), address(core));
         assertEq(gained, price + paid, "the maker side got the price and the payment");

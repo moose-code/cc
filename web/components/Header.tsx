@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAcquireCandidate, useAcquireTx } from "@/lib/useAcquire";
+import { useAcquireCandidate } from "@/lib/useAcquire";
+import { useSnapshot } from "@/lib/live";
 import { useEns } from "@/lib/ens";
-import { commas, eth, evmNowTx, shortAddr } from "@/lib/format";
+import { commas, eth, shortAddr } from "@/lib/format";
 import { usePotPage } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
 
@@ -37,10 +38,12 @@ export function Header() {
         aria-label="menu"
         aria-expanded={open}
       >
-        {open ? "✕" : "≡"}
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
+          {open ? <path d="M4 4l10 10M14 4L4 14" /> : <path d="M3 5h12M3 9h12M3 13h12" />}
+        </svg>
       </button>
 
-      {/* nav + connect collapse into the hamburger menu on mobile */}
+      {/* nav, pot figures and the wallet; collapse into the hamburger menu on mobile */}
       <div className={`menu${open ? " open" : ""}`}>
         <nav className="nav">
           {NAV.map((n) => (
@@ -53,16 +56,9 @@ export function Header() {
             </Link>
           ))}
         </nav>
-      </div>
-
-      {path === "/" ? (
-        <div className="hdr-next">
-          <Acquire />
-        </div>
-      ) : (
         <PotPage />
-      )}
-      <WalletButton />
+        <WalletButton />
+      </div>
     </header>
   );
 }
@@ -87,15 +83,10 @@ function WalletButton() {
                 wrong network
               </button>
             ) : (
-              <>
-                <Link href="/sell" className="ulink wallet-sell">
-                  sell yours →
-                </Link>
-                <button className="btn-outline" onClick={openAccountModal}>
-                  <i className="sq" />
-                  <AccountName address={account.address} />
-                </button>
-              </>
+              <button className="btn-outline" onClick={openAccountModal}>
+                <i className="sq" />
+                <AccountName address={account.address} />
+              </button>
             )}
           </div>
         );
@@ -109,21 +100,15 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// The points the pot covers (segments: the share of one page), the bid per 100 points and the acquire button beside
-// the wallet. The home page shows the pot in the rail, so its header holds the acquire button alone.
+// The points the pot covers, the bid per 100 points and the next-listing bar, beside the wallet on every page.
 function PotPage() {
-  const { pts, segs, per100 } = usePotPage();
+  const { pts, per1 } = usePotPage();
   return (
     <div className="hdr-next">
       <span className="hdr-next-label">pot covers</span>
-      <div className="hdr-next-segs" aria-hidden>
-        {Array.from({ length: 8 }, (_, i) => (
-          <i key={i} className={i < segs ? "on" : undefined} />
-        ))}
-      </div>
       <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
-      {per100 && <span className="hdr-next-bid">· bid {per100} ETH / 100 pts</span>}
-      <Acquire />
+      {per1 && <span className="hdr-next-bid">· current bid {per1} ETH / 1 pt</span>}
+      <NextListing />
     </div>
   );
 }
@@ -141,45 +126,38 @@ function useWide() {
   return wide;
 }
 
-function Acquire() {
-  return useWide() ? <AcquireButton /> : null;
+// The next listing the engine will reach: the cheapest row still above its bid, with its ask and the bid's progress
+// toward it (bid / price) in eight cells. Reuses the acquire query, so it adds no reads, and runs on wide screens only.
+const NL_CELLS = 8;
+
+function NextListing() {
+  return useWide() ? <NextListingBar /> : null;
 }
 
-// Buys the listing that clears (price at or below its bid, the pot and the bucket's spend cap) through
-// Core.buyListing. The call is simulated before the button enables and again right before sending; a revert drops
-// that listing for the block and the next one is tried.
-function AcquireButton() {
-  const { cleared, block, waiting, nextIn, reverted } = useAcquireCandidate();
-  const { buy, available, pending, err, done } = useAcquireTx(block);
-  const next = available(cleared)[0];
-
-  if (done)
-    return (
-      <a className="hdr-acq-done" href={evmNowTx(done.hash)} target="_blank" rel="noreferrer">
-        acquired #{done.id.toString()} ↗
-      </a>
-    );
-  // always shown; inactive while no listing clears its bid and the pot
+function NextListingBar() {
+  const { top } = useAcquireCandidate();
+  const { data: snap } = useSnapshot();
+  const n = top.find((t) => BigInt(t.bid) < BigInt(t.price)) ?? top[0];
+  if (!n) return null;
+  const price = BigInt(n.price);
+  const bid = BigInt(n.bid);
+  const fill = price > 0n ? Math.min(1, Number((bid * 1000n) / price) / 1000) : 0;
+  const on = Math.round(fill * NL_CELLS);
+  // this listing's ask per rating point: price / points, where points = bid * 100 / ethRate
+  const perPoint = snap && snap.ethRate > 0n && bid > 0n ? `${eth((price * snap.ethRate) / (bid * 100n), 7)} ETH / point` : null;
   return (
-    <>
-      {err && <span className="hdr-acq-err">{err}</span>}
-      <button
-        className={next ? "hdr-acq on" : "hdr-acq"}
-        onClick={() => buy(cleared)}
-        disabled={!next || pending}
-        title={
-          next
-            ? `credit #${next.id} bids ${eth(next.bid)} ETH (${next.source})`
-            : reverted
-              ? `the purchase would revert: ${reverted}`
-              : waiting
-                ? `${waiting} at or under the bid; the spend cap resets in ${nextIn}s`
-                : "no listed credit is at or under its bid"
-        }
-      >
-        <i aria-hidden />
-        {pending ? "acquiring…" : next ? `acquire · ${eth(next.price)} ETH` : "acquire"}
-      </button>
-    </>
+    <span
+      className="hdr-nl"
+      title={perPoint ? `credit #${n.id} · ${eth(price)} ETH · ${perPoint}` : `credit #${n.id} · listed ${eth(price)} ETH (${n.source})`}
+    >
+      <span className="hdr-next-label">next credit</span>
+      <span className="hdr-nl-bar" aria-hidden>
+        {Array.from({ length: NL_CELLS }, (_, i) => (
+          <i key={i} className={i < on ? "on" : undefined} />
+        ))}
+      </span>
+      <b>{eth(price)} ETH</b>
+    </span>
   );
 }
+

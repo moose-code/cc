@@ -543,7 +543,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// the shared instance now, bps of par: value mode's eth price state before the value multiply and the pot clamp
-    /// (`CoreLib.sharedRate`). no bearing on the balance bid, which is posted (decision 161)
+    /// (`CoreLib.sharedRate`). no bearing on the balance bid, which is posted (decision 164)
     function sharedRate() external view returns (uint256) {
         return CoreLib.sharedRate();
     }
@@ -672,7 +672,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// sell credits into the eth bid. each credit is paid `ethRate() * score / RATE_SCORE`, and the artist is paid
-    /// `buyToArtistBps` of that on top, once per batch with a forced push (decision 160). caller must have approved the
+    /// `buyToArtistBps` of that on top, once per batch with a forced push (decision 163). caller must have approved the
     /// core. The first purchase of a bucket always passes; a later credit above the bucket budget reverts the whole batch.
     /// reverts `Retired` after `migrate`
     function sellForEth(uint256[] calldata ids) external nonReentrant {
@@ -721,7 +721,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// bytes. `value` is at most the bid for this credit (`bidOf(id)`, `ethRate() * score / RATE_SCORE`) and at most
     /// `ethPot` less the reserve. the Core must own `id` after the call and its credit balance must have risen by one. the
     /// caller is paid from `ethPot`: the gas of the call at the base fee, capped at `keeperMaxBaseFee` and `BUYLISTING_GAS`,
-    /// plus `keeperFee`. the artist is paid `buyToArtistBps` of `value` on top (decision 160). the payment is at most the
+    /// plus `keeperFee`. the artist is paid `buyToArtistBps` of `value` on top (decision 163). the payment is at most the
     /// bid less `value` and at most the room less `value` less the royalty, so the pot pays at most the bid plus its
     /// royalty for the credit, as `sellForEth` does. reverts `Retired` after `migrate`
     function buyListing(address adapter, uint256 id, bytes calldata params) external nonReentrant {
@@ -1441,7 +1441,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.everBalanceTarget[token] = true;
         if (s.allowedAdapter[module]) delete s.allowedAdapter[module];
         if (s.allowedAdapter[token]) delete s.allowedAdapter[token];
-        // the balance bid pays the posted price whatever the module (decision 161); in value mode the shared instance
+        // the balance bid pays the posted price whatever the module (decision 164); in value mode the shared instance
         // carries the eth bid and a module change leaves it
         emit BalanceModuleSet(module, token, unit);
     }

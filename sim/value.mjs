@@ -2,7 +2,7 @@
 // usage: node sim/value.mjs [out.json]
 // the shared percentage bid is the shipped shared instance of engine.js (CoreLib's second Rate instance, value mode's eth
 // price state): a rate in bps of par, floor 10000 - balanceBidMarginBps, cap balanceBidCapBps, the shared climb, recovery
-// climb, drop and peak, driven here through sharedRate and sharedFill. the balance bid itself is posted (decision 161).
+// climb, drop and peak, driven here through sharedRate and sharedFill. the balance bid itself is posted (decision 164).
 // par of a credit is score * V where V is the eth value of one point. nothing here changes the shipped rules; only the
 // cap, the climb and the drop vary, and the budget, the sale floor and the attacker are modelled on top.
 import fs from 'node:fs';

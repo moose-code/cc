@@ -37,7 +37,7 @@ export interface Settings {
   // the ETH purchase budget: spendCapBps 10,000 disables it; a bucket lasts bucketSeconds
   spendCapBps: number;
   bucketSeconds: number;
-  // the artist royalty on every purchase, bps of the price, paid on top from the pot (decision 160)
+  // the artist royalty on every purchase, bps of the price, paid on top from the pot (decision 163)
   buyToArtistBps: number;
 }
 
@@ -157,7 +157,7 @@ export function profitable(payment: bigint, cost: bigint, margin: bigint): boole
 
 // Core.buyListing: min(min(counted, BUYLISTING_GAS) * min(basefee, keeperMaxBaseFee) + keeperFee, bid - price,
 // room - price - royalty), where the room is the pot read after the door's book less the reserve (Core.room) and the
-// royalty is buyToArtistBps of the price, paid to the artist on top (decision 160). a listing whose price plus
+// royalty is buyToArtistBps of the price, paid to the artist on top (decision 163). a listing whose price plus
 // royalty passes the room reverts PotTooSmall
 export function listingPayment(s: State, l: Listing, gasUsed: bigint, b: bigint): bigint {
   const royalty = (l.price * BigInt(s.settings.buyToArtistBps)) / 10_000n;

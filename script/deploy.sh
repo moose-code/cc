@@ -17,6 +17,7 @@
 # chain; record sends nothing and runs postflight, the record write and verification for a launch that has landed.
 # the scripts require chain id 1 (Checks.sol), so forge runs with --chain-id 1; a local node keeps its own chain id
 # and the record carries it.
+# env rehearsal with REHEARSAL_DEPLOYER signs with a keystore on the anvil fork (docs/RUNBOOK.md section 6, signer drill).
 # secrets: the keystore and its password file are named in the env file and read by forge only. a private key on the
 # command line or in the environment of a keystore env is refused. API keys and the broadcast rpc come from the shell.
 set -euo pipefail
@@ -52,11 +53,19 @@ CONFIG_OVERRIDE="${LAUNCH_CONFIG:-}"
 CHAIN_OVERRIDE="${CHAIN_ID:-}"
 KEYSTORE_SHELL="${KEYSTORE_ACCOUNT:-}"
 PASSWORD_SHELL="${PASSWORD_FILE:-}"
+RECORD_SHELL="${RECORD_FILE:-}"
+REH_DEPLOYER="${REHEARSAL_DEPLOYER:-}"
+REH_SKIP_GIT="${REHEARSAL_SKIP_GIT:-}"
 set -a; . "$ENV_FILE"; set +a
 # the keystore name and the password file path are not secrets. an env file that leaves them empty takes them from the
 # shell, so a frozen checkout needs no edit
 if [ -z "${KEYSTORE_ACCOUNT:-}" ]; then KEYSTORE_ACCOUNT="$KEYSTORE_SHELL"; fi
 if [ -z "${PASSWORD_FILE:-}" ]; then PASSWORD_FILE="$PASSWORD_SHELL"; fi
+# env rehearsal only: REHEARSAL_DEPLOYER=<addr> makes <addr> the owner, signer and DEPLOYER and signs with the keystore
+# (script/dev/rehearse-signer.sh); REHEARSAL_SKIP_GIT=1 drops the git guards. both are refused in every other env
+if [ -n "$REH_DEPLOYER$REH_SKIP_GIT" ] && [ "$ENV" != rehearsal ]; then die "REHEARSAL_DEPLOYER and REHEARSAL_SKIP_GIT apply to env rehearsal only"; fi
+if [ -n "$REH_DEPLOYER" ]; then DEPLOYER="$REH_DEPLOYER"; WALLET=keystore; fi
+if [ "$REH_SKIP_GIT" = 1 ]; then GIT_GUARD=0; fi
 if [ -n "$RPC_OVERRIDE" ]; then RPC_URL="$RPC_OVERRIDE"; fi
 if [ -n "$CONFIG_OVERRIDE" ]; then LAUNCH_CONFIG="$CONFIG_OVERRIDE"; fi
 for k in NODE CHAIN_ID RPC_URL LAUNCH_CONFIG DEPLOYER WALLET VERIFY GIT_GUARD SIGNOFF; do
@@ -66,8 +75,8 @@ if [ -n "$CHAIN_OVERRIDE" ]; then
   [ "$NODE" = anvil ] || die "CHAIN_ID in the shell applies to an anvil node only"
   CHAIN_ID="$CHAIN_OVERRIDE"
 fi
-case "$NODE:$WALLET" in anvil:unlocked|live:keystore) ;; *) die "NODE $NODE with WALLET $WALLET is not a supported pair in $ENV_FILE" ;; esac
-RECORD="${RECORD_FILE:-deployments/$CHAIN_ID.json}"
+case "$NODE:$WALLET" in anvil:unlocked|anvil:keystore|live:keystore) ;; *) die "NODE $NODE with WALLET $WALLET is not a supported pair in $ENV_FILE" ;; esac
+RECORD="${RECORD_SHELL:-${RECORD_FILE:-deployments/$CHAIN_ID.json}}"
 
 NFAIL=0
 FAILMSG=""
@@ -251,6 +260,13 @@ case "$RESUME" in
     if [ "$NONCE" -lt "$FIRST" ] || [ "$NONCE" -gt $((FIRST + COUNT)) ]; then
       die "the signer nonce $NONCE is outside the saved run's nonces $FIRST to $((FIRST + COUNT)). the saved run no longer applies; RESUME=state continues from the chain"
     fi
+    # every nonce below the signer nonce must belong to a saved transaction that landed: a transaction from the signer
+    # that is not in the saved run (nonce taken by something else) makes the saved nonces stale
+    for ((i = 0; i < NONCE - FIRST; i++)); do
+      H="$(jq -r ".transactions[$i].hash // empty" "$SAVED")"
+      [ -n "$H" ] && [ "$(cast tx "$H" nonce --rpc-url "$RPC_URL" 2>/dev/null)" = "$((FIRST + i))" ] \
+        || die "the signer nonce $NONCE is past saved transaction $i (nonce $((FIRST + i))), which has no landed hash in $SAVED. another transaction took a nonce of the saved run; RESUME=state continues from the chain"
+    done
     echo "deploy.sh: replay of $SAVED, signer nonce $NONCE of $FIRST..$((FIRST + COUNT))"
     if [ "$NONCE" -eq $((FIRST + COUNT)) ]; then
       echo "deploy.sh: every saved transaction has landed"
@@ -353,7 +369,7 @@ if [ "$VERIFY" = 1 ]; then
   verify "$(jq -r .controller "$RECORD")" src/ControllerV1.sol:ControllerV1 "$(carg 'verify: controller constructor args')" "$LIBFLAG"
   verify "$(jq -r .seaportAdapter "$RECORD")" src/adapters/SeaportBasicAdapter.sol:SeaportBasicAdapter "$(carg 'verify: seaport adapter constructor args')" "$LIBFLAG"
   verify "$(jq -r .strategyAdapter "$RECORD")" src/adapters/CreditStrategyAdapter.sol:CreditStrategyAdapter "" "$LIBFLAG"
-  verify "$(jq -r .renderer "$RECORD")" src/CoinRenderer.sol:CoinRenderer "$(cast abi-encode 'constructor(address)' "$CFG_OWNER")" "$LIBFLAG"
+  verify "$(jq -r .renderer "$RECORD")" src/LogoCoinRenderer.sol:LogoCoinRenderer "$(cast abi-encode 'constructor(address)' "$CFG_OWNER")" "$LIBFLAG"
   verify "$LIB" src/lib/CoreLib.sol:CoreLib
   [ "$NVERIFY" = 0 ] || die "$NVERIFY verification(s) failed. the record is written; rerun the failed forge verify-contract commands (docs/RUNBOOK.md section 3)"
 fi

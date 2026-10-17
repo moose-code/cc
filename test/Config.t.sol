@@ -116,7 +116,7 @@ contract ConfigTest is Fixture {
         assertEq(f.credit.spreadBps, 1_000);
         assertFalse(f.settings.valueModeOn);
         assertEq(abi.encode(f.quote), abi.encode(Mainnet.defaultQuote()), "the quote block is the launch quote");
-        assertEq(f.quote.tolBps, 450);
+        assertEq(f.quote.tolBps, 100);
         assertEq(f.quote.referenceMaxStale, 0);
         assertEq(f.sale.anchorMoveBps, 0);
         assertEq(f.payee, v2.owner);
@@ -525,7 +525,7 @@ contract ConfigTest is Fixture {
 
     /// the coin's renderer is the CoinRenderer of the config, bound to the Core, and `tokenURI()` answers. an admin
     /// replacement fails the renderer row until the operator names the change (COIN_CHANGED=1); a renderer that reverts
-    /// fails the tokenURI row; a renderer bound to another address fails its Core row
+    /// fails the tokenURI row; a renderer bound to another address fails its Core row while the fixed logo still renders
     // promise: the postflight reads the coin renderer, its Core and the coin's tokenURI
     function test_FIXED_postflightReadsTheCoinRenderer() public {
         string memory rendererRow = "coin: metadata renderer is the CoinRenderer of the config";
@@ -538,7 +538,7 @@ contract ConfigTest is Fixture {
         // the Core slot of the renderer is storage slot 0 (the owner is immutable)
         vm.store(rendererAddress(lc), bytes32(0), bytes32(uint256(uint160(address(0xBEEF)))));
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), string.concat(coreRow, ", ", uriRow), "a renderer bound to another address");
+        assertEq(_failedNames(), coreRow, "a renderer bound to another address");
         vm.store(rendererAddress(lc), bytes32(0), bytes32(uint256(uint160(address(core)))));
 
         _setRenderer(address(new StandinRenderer(0)));

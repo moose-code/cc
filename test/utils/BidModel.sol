@@ -78,7 +78,7 @@ library BidModel {
     }
 
     /// @dev the eth bid's room: the pot less the reserve over `1 + buyToArtistBps / 10_000`, so a bid the read shows is
-    /// payable with its artist royalty on top (decision 160). mirrors `CoreLib._bidRoom`
+    /// payable with its artist royalty on top (decision 163). mirrors `CoreLib._bidRoom`
     function room(Settings memory s, uint256 pot) internal pure returns (uint256) {
         return pot * 10_000 / (10_000 + uint256(s.buyToArtistBps));
     }
@@ -114,7 +114,7 @@ library BidModel {
     /// `climbPerMinBps`, up to the clamp (a price state above the clamp holds). reproduces `CoreLib._climb` so the read
     /// matches exactly
     function priceNow(Settings memory s, Bid memory b) internal pure returns (uint256) {
-        // the eth instance climbs toward the room over `1 + buyToArtistBps / 10_000` (decision 160)
+        // the eth instance climbs toward the room over `1 + buyToArtistBps / 10_000` (decision 163)
         Bid memory e = b;
         e.pot = room(s, b.pot);
         return priceNow(s, e, s.rateCap);

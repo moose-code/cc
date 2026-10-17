@@ -914,7 +914,7 @@ abstract contract HandlerBase is Test {
             // before this credit) times the credit's score over 100 points, from the handler's own rate model
             uint256 room = pot.zeroFloorSub(_reserveAt(st, p.pile + i, p.held));
             uint256 expected = FullMath.mulDiv(BidModel.read(st, room, stored), scores[i], RATE_SCORE);
-            // the recorded cost is the payout plus its artist royalty (decision 160)
+            // the recorded cost is the payout plus its artist royalty (decision 163)
             expected += expected * st.buyToArtistBps / 10_000;
             if (costs[i] != expected) {
                 _flag(V_MODEL, "sellForEth payout differs from read times score over 100 points");
@@ -1528,7 +1528,7 @@ abstract contract HandlerBase is Test {
             uint256 room = p.pot.zeroFloorSub(_reserveAt(st, p.pile + i, p.held));
             uint256 cost = FullMath.mulDiv(BidModel.read(st, room, p.price), score, RATE_SCORE);
             if (cost == 0) return true;
-            cost += cost * st.buyToArtistBps / 10_000; // the spend carries the royalty (decision 160)
+            cost += cost * st.buyToArtistBps / 10_000; // the spend carries the royalty (decision 163)
             if (cost > room) return false;
             if (st.spendCapBps != 10_000 && spent != 0 && (spent > budget || cost > budget - spent)) return false;
             spent += cost;
@@ -1548,7 +1548,7 @@ abstract contract HandlerBase is Test {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
             uint256 id = uint256(logs[i].topics[1]);
-            // the cost basis is the price plus the artist royalty (decision 160); the seller receives the price
+            // the cost basis is the price plus the artist royalty (decision 163); the seller receives the price
             (uint256 cost, uint256 toArtist) = abi.decode(logs[i].data, (uint256, uint256));
             if (toArtist != (cost - toArtist) * st.buyToArtistBps / 10_000) {
                 _flag(V_MODEL, "sellForEth royalty is not buyToArtistBps of the price");
@@ -1713,7 +1713,7 @@ abstract contract HandlerBase is Test {
         uint256 paid = keeper.balance - p.keeperBal;
         uint256 cost = value;
         uint256 score = _scoreOf(id);
-        // the artist royalty on the listing price rides on top (decision 160)
+        // the artist royalty on the listing price rides on top (decision 163)
         uint256 royalty = value * st.buyToArtistBps / 10_000;
         // the per-credit bid from the handler's own rate model, not from `bidOf`: the read before the action times the
         // credit's score over 100 points. the value and the payment are capped at it
@@ -2736,7 +2736,7 @@ abstract contract HandlerBase is Test {
     }
 
     /// @dev the exact balance token total a batch of `ids` pays: the posted payout `score * unit * (10_000 -
-    /// balanceDiscountBps) / 10_000` per credit, flat (decision 161)
+    /// balanceDiscountBps) / 10_000` per credit, flat (decision 164)
     function _balanceExpected(uint256[] memory ids, uint256 n, uint256 unit) internal view returns (uint256 total) {
         uint256 rate = 10_000 - core.settings().balanceDiscountBps;
         for (uint256 i; i < n; ++i) {
@@ -2825,7 +2825,7 @@ abstract contract HandlerBase is Test {
             uint256 id = uint256(logs[i].topics[1]);
             // the recorded eth cost is the score-scaled floor rate backstop, at least 1 wei
             if (cost == 0) _flag(V_MODEL, "sellForBalance recorded a zero eth cost basis");
-            // the royalty is buyToArtistBps of the posted payout, in balance token (decision 160)
+            // the royalty is buyToArtistBps of the posted payout, in balance token (decision 163)
             uint256 posted = _scoreOf(id) * p.unit * (10_000 - core.settings().balanceDiscountBps) / 10_000;
             if (toArtist != posted * royaltyBps / 10_000) _flag(V_MODEL, "sellForBalance royalty is not bps of the payout");
             royalties += toArtist;
@@ -2833,7 +2833,7 @@ abstract contract HandlerBase is Test {
             _removeFrom(inventory[who], id);
         }
         uint256 paid = _xBal(who) - p.actorX;
-        // the balance tokens paid are the posted payouts summed, flat (decision 161)
+        // the balance tokens paid are the posted payouts summed, flat (decision 164)
         if (paid != bound_) _flag(V_ABOVE_CAP, "sellForBalance paid differs from the posted payouts");
         if (_xBal(core.artist()) - p.artistX != royalties) _flag(V_MODEL, "the artist did not receive the royalties");
         // the module paid the seller and the artist: its holding fell by both, the core holds no balance token

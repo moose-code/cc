@@ -5,7 +5,7 @@ import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {CreditSale, Settings} from "../src/interfaces/Interfaces.sol";
+import {CreditSale, Settings, Quote, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -92,8 +92,32 @@ contract CreditSaleTest is Fixture {
         _creditBad(c, "creditWindow");
         c.window = type(uint32).max;
 
-        // the spread couples with the reference tolerance (loop closure, decision 157): at the launch tol 450 the
-        // spread must be at least 943, so a zero spread reverts and a spread above it stores
+        // the floor remains at 200 with zero tolerance; 100 tolerance needs 203 to close the loop
+        c.spreadBps = 0;
+        _creditBad(c, "creditSpreadBps");
+        c.spreadBps = 200;
+        _creditBad(c, "creditSpreadBps");
+        c.spreadBps = 203;
+        ctl.setCredit(c);
+        assertEq(ctl.floorMultBps(), 10_203, "100 tolerance requires a 203 bps spread");
+        Quote memory q = Mainnet.defaultQuote();
+        q.tolBps = 0;
+        ctl.setQuote(q);
+        c.spreadBps = 199;
+        _creditBad(c, "creditSpreadBps");
+        c.spreadBps = 200;
+        ctl.setCredit(c);
+        assertEq(ctl.floorMultBps(), 10_200, "the spread floor remains with zero tolerance");
+        q.tolBps = 100;
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
+        ctl.setQuote(q);
+        c.spreadBps = 203;
+        ctl.setCredit(c);
+        ctl.setQuote(q);
+        c.spreadBps = 1_000;
+        ctl.setCredit(c);
+        q.tolBps = 450;
+        ctl.setQuote(q);
         c.spreadBps = 0;
         _creditBad(c, "creditSpreadBps");
         c.spreadBps = 1_000;

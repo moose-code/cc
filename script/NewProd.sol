@@ -5,7 +5,7 @@ import {Core} from "../src/Core.sol";
 import {ControllerV1} from "../src/ControllerV1.sol";
 import {SeaportBasicAdapter} from "../src/adapters/SeaportBasicAdapter.sol";
 import {CreditStrategyAdapter} from "../src/adapters/CreditStrategyAdapter.sol";
-import {CoinRenderer} from "../src/CoinRenderer.sol";
+import {LogoCoinRenderer} from "../src/LogoCoinRenderer.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer} from "./SystemDeployer.sol";
@@ -36,6 +36,6 @@ abstract contract NewProd is SystemDeployer {
     }
 
     function _newRenderer(LaunchConfig memory c) internal virtual override returns (address) {
-        return address(new CoinRenderer{salt: rendererSalt(c)}(c.owner));
+        return address(new LogoCoinRenderer{salt: rendererSalt(c)}(c.owner));
     }
 }

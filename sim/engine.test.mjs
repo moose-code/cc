@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { runSpendCapStudy } from './market.mjs';
-import { Core, SpendBucket, balanceConversion, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, quoteViolation, QUOTE, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, stepVolume, W } from './engine.js';
+import { Core, SpendBucket, balanceConversion, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, quoteViolation, QUOTE, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, stepVolume, W, UNIT_PER_POINT, DECIMALS, redeemQuote } from './engine.js';
 
 let n = 0;
 const near = (a, b, tol, msg) => {
@@ -24,7 +24,7 @@ const fresh = (over = {}, pot = 1000) => {
   // the ported single rate climb tests set only climbPerMin; match the recovery rate to it unless a test opts into the
   // dual speed, so a fill below the peak climbs at the same rate the assertions were written for
   if (over.recoveryClimbPerMin === undefined) p.recoveryClimbPerMin = p.climbPerMin;
-  // the ported bid tests read the price alone; the artist royalty on purchases (decision 160) has its own block below
+  // the ported bid tests read the price alone; the artist royalty on purchases (decision 163) has its own block below
   if (over.buyToArtistBps === undefined) p.buyToArtistBps = 0;
   const c = new Core(p, 0);
   c.addFees(pot, 0);
@@ -566,8 +566,8 @@ const R0 = 6.668e15;
   const f = mk({ redeemBurnBps: 10000 }); f.redeemStatement(f.compose(1, 0, 1), 60 * H); near(f.ethToBuyback, 10, 1e-12, 'redeemBurnBps 10000'); near(f.ethRedeemBurn, 0, 1e-12, 'whole reserve');
   const live = mk(); live.setSettings({ redeemBurnBps: 5000 }, 1); live.redeemStatement(live.compose(1, 0, 1), 60 * H); near(live.ethToBuyback, 5, 1e-12, 'the setting applies at once');
 }
-// the posted balance token bid (Core.sellForBalance, decision 161): pts * unit * (10000 - balanceDiscountBps) / 10000 per credit,
-// flat: no climb while idle, no drop on a fill, bounded by the module holding alone; the artist royalty (decision 160) rides on top
+// the posted balance token bid (Core.sellForBalance, decision 164): pts * unit * (10000 - balanceDiscountBps) / 10000 per credit,
+// flat: no climb while idle, no drop on a fill, bounded by the module holding alone; the artist royalty (decision 163) rides on top
 // promise: the balance bid is posted at the discount, pays it flat, and the module pays the payout and the royalty
 {
   const unit = 1e-5;
@@ -599,7 +599,7 @@ const R0 = 6.668e15;
   const h = mk(); const px = h.xBuy(35200 / 80, 0); const rec = h.redeemStatement(h.compose(0, 0, 440 * 80), 5000 * H); // redeemed once the curve has reached its floor
   near(rec.received, 440 * 80 * unit, 1e-12, 'the redemption returns the full value'); ok(rec.received > 80 * px * (1 + h.s.buyToArtistBps / 10000), 'more than the 80 credits and their royalties were bought for');
 }
-// the artist royalty on every purchase (decision 160): the seller receives the bid whole, the pot pays buyToArtistBps of it on top,
+// the artist royalty on every purchase (decision 163): the seller receives the bid whole, the pot pays buyToArtistBps of it on top,
 // the listing pays it on the ask, and the eth clamp divides the room by 1 + the royalty so a bid at the clamp is payable with it
 // promise: the royalty rides on top of every eth purchase and the clamp leaves room for it
 {
@@ -774,7 +774,8 @@ const R0 = 6.668e15;
 {
   const c = fresh({ creditSaleOn: true }, 10);
   near(c.floorMultBps(), 11000, 1e-12, 'launch spread 1000 at the cap 10000'); c.setSettings({ balanceBidCapBps: 11000 }, 1); near(c.floorMultBps(), 12100, 1e-12, 'at the hard cap 11000 of decision 152');
-  c.setSettings({ creditSpreadBps: 0, balanceBidCapBps: 10000 }, 2); near(c.floorMultBps(), 10000, 1e-12, 'no spread at the 10000 cap is the reference'); n += 3;
+  assert.throws(() => c.setSettings({ creditSpreadBps: 0 }, 2), /creditSpreadBps/);
+  c.setSettings({ creditSpreadBps: 203, balanceBidCapBps: 10000 }, 2); near(c.floorMultBps(), 10203, 1e-12, 'the 100 bps quote needs a 203 bps spread'); n += 4;
   // sellCreditTo floors on saleFloorBps of the cost
   const f = fresh({ creditSaleOn: true, saleFloorBps: 5000 }, 10);
   assert.equal(f.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.00199, 0), null); ok(f.sellCreditTo({ pts: 1, cost: 0.004, t0: 0 }, 0.002, 0) !== null, 'half the cost at saleFloorBps 5000'); n++;
@@ -802,7 +803,7 @@ const R0 = 6.668e15;
 // drops the shared instance, valueOf is the sale value with the floor rate and cost terms dropped, an unusable quote bids and
 // sells nothing, and only the switch and the bid turning on reset the shared instance
 {
-  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 450); assert.equal(QUOTE.referenceMaxStale, 0); n += 3; // the launch config: off, owner inputs pending
+  assert.equal(SETTINGS.valueModeOn, false); assert.equal(QUOTE.tolBps, 100); assert.equal(QUOTE.referenceMaxStale, 0); n += 3; // the launch config: off, owner inputs pending
   assert.equal(quoteViolation({ ...QUOTE, referenceStepBps: 10001 }), 'referenceStepBps'); assert.equal(quoteViolation({ ...QUOTE, tolBps: 10000 }), 'tolBps'); assert.equal(quoteViolation(QUOTE), null); n += 3;
   const BPS = 10000, U = 0.001 / 100; // eth per point at the unit price
   const Q = { referenceRateBpsPerHour: 100, referenceStepBps: 200, tolBps: 500, referenceMaxStale: 3600, referenceMinSeconds: 0, balancePoolSet: true, balanceBidCapBps: 11000, balanceBidMarginBps: 1000 };
@@ -845,7 +846,7 @@ const R0 = 6.668e15;
   const k = mk({ rateCap: 1e18 }); k.setSettings({ valueModeOn: true, balanceBidOn: true }, 0); k.balRate = 10500;
   k.setSettings({ climbPerMin: 0.5 }, 0); near(k.balRate, 10500, 1e-12, 'a settings change leaves it');
   k.setSettings({ balanceBidOn: false }, 0); near(k.balRate, 10500, 1e-12, 'the balance door off leaves it');
-  k.setSettings({ balanceBidOn: true }, 0); near(k.balRate, 10500, 1e-12, 'the balance door turning on leaves it: the balance bid is posted (decision 161)');
+  k.setSettings({ balanceBidOn: true }, 0); near(k.balRate, 10500, 1e-12, 'the balance door turning on leaves it: the balance bid is posted (decision 164)');
   k.balRate = 10500; k.setBalanceModule(0, U); near(k.balRate, 10500, 1e-12, 'a module change in value mode leaves it');
   // the eth rate is bounded by rateCap and by the room
   const capped = mk({ rateCap: 1e14 }); capped.setSettings({ valueModeOn: true }, 0); near(capped.ethRate(0), 1e14, 1e-12, 'rateCap bounds a hostile value'); n++;
@@ -1285,7 +1286,7 @@ const R0 = 6.668e15;
   c.setBalanceModule(0, 0.001); c.balancePot = 100;
   near(c.balAvailBps(), 20000, 1e-12, 'available clamp can exceed par');
   near(c.sharedRate(1000000), 20000, 1e-12, 'the shared instance climbs above par to the configured cap (value mode\'s eth bid)');
-  near(c.balanceRate(1000000), 9000, 1e-12, 'the balance bid stays posted whatever the cap (decision 161)');
+  near(c.balanceRate(1000000), 9000, 1e-12, 'the balance bid stays posted whatever the cap (decision 164)');
   ok(c.xBuy(433, 1000000) > 0, 'the ETH spend cap does not constrain balance purchases');
   assert.equal(c.spendBucket.id, null); n++;
 }
@@ -1304,7 +1305,7 @@ const R0 = 6.668e15;
   m.buy(m.compose(1, 0), 0); assert.equal(m.anchorStored, 11250); n++;
   const z = fresh({ balanceBidOn: true, balanceBidMarginBps: 10000 }, 1);
   z.setBalanceModule(0, 0.001); z.balancePot = 100;
-  assert.equal(z.balanceRate(100000), 9000); n++; // the margin is value mode's floor; the balance bid stays posted (decision 161)
+  assert.equal(z.balanceRate(100000), 9000); n++; // the margin is value mode's floor; the balance bid stays posted (decision 164)
 }
 // promise: both bucket alignments retain accounting and distinguish a non-crossing from market recovery.
 {
@@ -1332,7 +1333,7 @@ const R0 = 6.668e15;
     c.balRate = 10000; c.balLastFillRate = 10000; c.balPeakRate = 10000;
     c.balCheckpointTime = 120; c.balLastFillTime = 120; c.balPeakTime = 120;
     ok(c.sellForEth(120) > 0, 'the ETH fill opens bucket two');
-    ok(c.sharedFill(433, 120) > 0, 'the shared instance fill opens bucket two (the balance bid is posted and has no bucket, decision 161)');
+    ok(c.sharedFill(433, 120) > 0, 'the shared instance fill opens bucket two (the balance bid is posted and has no bucket, decision 164)');
     return c;
   };
   const active = make();
@@ -1411,5 +1412,20 @@ const R0 = 6.668e15;
   ok(hb.S.pot.every((x) => x >= -1e-12), 'hourly book: the pot never goes negative');
   ok(hb.core.unbooked === 0, 'hourly book: the final flush left no unbooked drip');
   n += 4;
+}
+// the balance token constants mirror Jack's pinned contract, from the single source sim/upstream.js. test/UpstreamBalance.t.sol
+// promise: and test_phase2DayWithProductionModule assert these against the real bytecode on a fork: a redeem of a statement of
+// stored rating R pays R * 1e14 base units at 18 decimals. a known 100 point statement (RATE_SCORE = 1e6 score units) redeems
+// 1e20 base units, matching the forge assertion balanceToken.quote(sid) == ratingOf(sid) * 1e14
+{
+  ok(UNIT_PER_POINT === 1e14, 'upstream unitPerPoint is 1e14');
+  ok(DECIMALS === 18, 'upstream balance token is 18 decimals');
+  const rating = 1_000_000; // 100 points in stored score units, the eth rate divisor RATE_SCORE
+  ok(redeemQuote(rating) === rating * 1e14, 'redeemQuote is rating * unitPerPoint');
+  ok(redeemQuote(rating) === 1e20, 'a 100 point statement redeems 1e20 base units (the forge number)');
+  const c = new Core(Object.assign({}, DEFAULTS), 0);
+  ok(c.redeemBaseUnits(rating) === rating * UNIT_PER_POINT, 'the balance model redemption reads UNIT_PER_POINT');
+  ok(c.tokenOne() === 1e18, 'the balance model token unit reads DECIMALS');
+  n += 6;
 }
 console.log(`ok, ${n} checks passed`);

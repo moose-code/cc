@@ -1,4 +1,4 @@
-# The artist royalty on purchases and the flat balance bid: the implementation spec after decisions 160 and 161
+# The artist royalty on purchases and the flat balance bid: the implementation spec after decisions 163, 164
 
 Date 2026-10-17. Base: main `48be14c` (PR 66, the cold audit fixes, merged). Source of each rule: the decision in docs/DECISIONS.md named in brackets. Nothing here is built; this is what to build. The vocabulary is "balance", never "exit".
 

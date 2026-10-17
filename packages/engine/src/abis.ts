@@ -56,6 +56,7 @@ export const coreAbi = parseAbi([
   "function composeChosen(uint256[80] ids, uint8 format)",
   "function setHeldFormat(uint256 sid, uint8 format)",
   "function redeemStatement(uint256 sid)",
+  "function refreshReference()",
   "function buyback()",
   "function book()",
   "function setArtist(address to)",

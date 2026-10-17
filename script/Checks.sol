@@ -82,7 +82,7 @@ abstract contract LaunchChecks is PostflightChecks {
         0xf5c8fd4b675f717f11908ff47d000431035956c15a5f38d74b63a3d40310d30c;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
         0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38;
-    bytes32 internal constant BUILD_HASH_RENDERER = 0x21bc6e3d0b34d0e43e48bdc78e106393a18ba34e6cc9dc81a722844d60b12ce6;
+    bytes32 internal constant BUILD_HASH_RENDERER = 0x789770d6ad6b21255e6aa816a264650ed079691ad3ee36359a2972b75b7d9be9;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
         0xd0f5646c3b253077942553cee4b9f722b1d80fedc6969f4f70d7b1c891bbf910;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
@@ -213,7 +213,7 @@ abstract contract LaunchChecks is PostflightChecks {
             "credit settings inside the bounds",
             badCredit == 0,
             badCredit == 0
-                ? "creditCostToPotBps creditWindow creditStartBps (creditSpreadBps takes any value)"
+                ? "creditCostToPotBps creditWindow creditStartBps (creditSpreadBps at least max(200, loop bound))"
                 : string(abi.encodePacked("out of bounds: ", badCredit))
         );
         _eq("supply equals the launch coin supply", c.supply, COIN_SUPPLY);
@@ -432,7 +432,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _pinBuild("ControllerV1", BUILD_HASH_CONTROLLER);
         _pinBuild("SeaportBasicAdapter", BUILD_HASH_SEAPORT_ADAPTER);
         _pinBuild("CreditStrategyAdapter", BUILD_HASH_STRATEGY_ADAPTER);
-        _pinBuild("CoinRenderer", BUILD_HASH_RENDERER);
+        _pinBuild("LogoCoinRenderer", BUILD_HASH_RENDERER);
         bytes32 got = keccak256(vm.getCode("CoreLib.sol:CoreLib"));
         _check(
             "build: CoreLib creation code hash equals the pinned build",
@@ -730,7 +730,7 @@ abstract contract LaunchChecks is PostflightChecks {
         uint256 snap = vm.snapshotState();
         // the token config names the renderer, which the launch deploys before it. the simulation places its code
         address renderer = cfg.token.renderer;
-        if (renderer.code.length == 0) vm.etch(renderer, vm.getDeployedCode("CoinRenderer.sol:CoinRenderer"));
+        if (renderer.code.length == 0) vm.etch(renderer, vm.getDeployedCode("LogoCoinRenderer.sol:LogoCoinRenderer"));
         vm.deal(deployer, deployer.balance + fee);
         vm.prank(deployer);
         bytes memory out;
@@ -836,7 +836,7 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(BUILD_HASH_SEAPORT_ADAPTER),
                 " CreditStrategyAdapter ",
                 vm.toString(BUILD_HASH_STRATEGY_ADAPTER),
-                " CoinRenderer ",
+                " LogoCoinRenderer ",
                 vm.toString(BUILD_HASH_RENDERER),
                 " CoreLib creation ",
                 vm.toString(BUILD_CREATION_HASH_CORELIB)

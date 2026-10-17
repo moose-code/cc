@@ -25,7 +25,7 @@ contract BuildIdentityTest is Fixture {
     uint256 internal constant LIB_RUNTIME = 24452;
     uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_536;
     uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 534;
-    uint256 internal constant RENDERER_RUNTIME = 8_241;
+    uint256 internal constant RENDERER_RUNTIME = 4_464;
 
     function _json(string memory name) internal view returns (string memory) {
         return vm.readFile(string.concat("out/", name, ".sol/", name, ".json"));
@@ -111,7 +111,7 @@ contract BuildIdentityTest is Fixture {
     // promise: the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent computations of the masked hash
     function test_pinnedBuildHashesEqualTheArtifacts() public {
         string[6] memory names =
-            ["Core", "CoreLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter", "CoinRenderer"];
+            ["Core", "CoreLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter", "LogoCoinRenderer"];
         bytes32[6] memory pins = [
             BUILD_HASH_CORE,
             BUILD_HASH_CORELIB,
@@ -133,7 +133,7 @@ contract BuildIdentityTest is Fixture {
         _identical(address(ctl), "ControllerV1", CONTROLLER_RUNTIME);
         _identical(seaportAdapter, "SeaportBasicAdapter", SEAPORT_ADAPTER_RUNTIME);
         _identical(strategyAdapter, "CreditStrategyAdapter", STRATEGY_ADAPTER_RUNTIME);
-        _identical(renderer, "CoinRenderer", RENDERER_RUNTIME);
+        _identical(renderer, "LogoCoinRenderer", RENDERER_RUNTIME);
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0), "the core is linked to a compiled CoreLib");
         _identical(lib, "CoreLib", LIB_RUNTIME);

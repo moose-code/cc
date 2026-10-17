@@ -1,10 +1,9 @@
 // Read model of the indexer tables (indexer/ponder.schema.ts, docs/INDEXER.md section 6), as drizzle tables for
 // @ponder/client. The indexer schema imports the `ponder` runtime, which does not bundle for the browser, so the
-// columns the web reads are declared here. The guard at the end fails tsc when a column's type differs from the
-// indexer schema or the column no longer exists there.
+// columns the web reads are declared here. scripts/indexer-schema-guard.ts fails tsc when a column's type differs
+// from the indexer schema or the column no longer exists there; `npm run check` runs it.
 
 import { boolean, customType, integer, jsonb, pgTable, text } from "drizzle-orm/pg-core";
-import type * as ix from "../../indexer/ponder.schema";
 
 // numeric(78) read as bigint, like ponder's t.bigint(); sent as a decimal string.
 const big = customType<{ data: bigint; driverData: string }>({
@@ -163,22 +162,3 @@ const counters = {
 
 export const stats = pgTable("stats", { id: hex("id").primaryKey(), ...counters });
 export const statsHourly = pgTable("stats_hourly", { hour: big("hour").primaryKey(), ...counters });
-
-// ---- guard: every column declared here has the same type in the indexer schema -----------------------------------
-
-type Same<W, I> = [keyof W] extends [keyof I] ? ([W] extends [Pick<I, keyof W & keyof I>] ? ([Pick<I, keyof W & keyof I>] extends [W] ? true : false) : false) : false;
-type Row<T extends { $inferSelect: unknown }> = T["$inferSelect"];
-const schemaMatchesIndexer: [
-  Same<Row<typeof engine>, Row<typeof ix.engine>>,
-  Same<Row<typeof credit>, Row<typeof ix.credit>>,
-  Same<Row<typeof statement>, Row<typeof ix.statement>>,
-  Same<Row<typeof statementCredit>, Row<typeof ix.statementCredit>>,
-  Same<Row<typeof statementFormat>, Row<typeof ix.statementFormat>>,
-  Same<Row<typeof anchorMove>, Row<typeof ix.anchorMove>>,
-  Same<Row<typeof activity>, Row<typeof ix.activity>>,
-  Same<Row<typeof log>, Row<typeof ix.log>>,
-  Same<Row<typeof stats>, Row<typeof ix.stats>>,
-  Same<Row<typeof statsHourly>, Row<typeof ix.statsHourly>>,
-  Same<Row<typeof strategyListing>, Row<typeof ix.strategyListing>>,
-] = [true, true, true, true, true, true, true, true, true, true, true];
-void schemaMatchesIndexer;

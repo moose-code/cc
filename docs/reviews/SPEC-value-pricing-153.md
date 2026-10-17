@@ -18,7 +18,7 @@ Date 2026-10-16. Base: main `f1101cb`. Source of each rule: the decision in docs
 
 ## 3. The shared bid [122, 150, 151, 152]
 
-Note of 2026-10-17 (decisions 160 and 161, docs/reviews/SPEC-royalty-balance-161.md): the balance route no longer reads or drops the shared instance. It pays a flat posted price, `score * unitPerPoint * (10,000 - balanceDiscountBps) / 10,000`, bounded by `available()` alone. Only eth fills drop the shared instance, which is value mode's eth instance. The artist royalty `buyToArtistBps` rides on top of every purchase in the route's currency, and the eth clamp divides the room by `1 + buyToArtistBps / 10,000`.
+Note of 2026-10-17 (decisions 163, 164, docs/reviews/SPEC-royalty-balance-161.md): the balance route no longer reads or drops the shared instance. It pays a flat posted price, `score * unitPerPoint * (10,000 - balanceDiscountBps) / 10,000`, bounded by `available()` alone. Only eth fills drop the shared instance, which is value mode's eth instance. The artist royalty `buyToArtistBps` rides on top of every purchase in the route's currency, and the eth clamp divides the room by `1 + buyToArtistBps / 10,000`.
 
 - One price state for both currencies: the existing balance `Rate` instance in bps of par. The ETH instance is retired when the switch is on.
 - Floor and opening 90 (`balanceBidMarginBps` 1,000). Normal ceiling 100. Above 100 only through the existing idle loosening (`idleLoosenBps`, `idleStepSeconds`, the pot multiplier on this instance). Hard cap `balanceBidCapBps` 11,000, bound 10,000 to uint32.max, the most the engine ever pays [152].

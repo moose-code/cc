@@ -5,9 +5,9 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 
-/// the flat balance bid (decision 161): the balance route pays `score * unitPerPoint * (10_000 - balanceDiscountBps) /
+/// the flat balance bid (decision 164): the balance route pays `score * unitPerPoint * (10_000 - balanceDiscountBps) /
 /// 10_000` per credit, posted, with no climb while idle and no drop on a fill. the only bound is the module's
-/// `available()`, which the payouts plus the artist royalties (decision 160) must not pass. the discount is an owner
+/// `available()`, which the payouts plus the artist royalties (decision 163) must not pass. the discount is an owner
 /// setting, editable after deployment, effective for the next fill
 contract BalanceFlatTest is Fixture {
     address internal user;

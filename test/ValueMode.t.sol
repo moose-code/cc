@@ -344,7 +344,7 @@ contract ValueReferenceTest is ValueBase {
     }
 
     // promise: SPEC 11 a seed manipulated between signing and landing reverts: setBalancePoolKey refuses a live spot
-    // more than tolBps from the owner's expected spot. the pool spot is moved on the fixture pool before the call
+    // more than 4.5 percent from the owner's expected spot, regardless of quote tolerance
     function test_poolKeySeedRevertsOnManipulation() public {
         uint256 expected = _spotOf(SP);
         _swapToSpot(expected * 2); // a real swap doubles the spot, far beyond the 4.5 percent band
@@ -359,6 +359,36 @@ contract ValueReferenceTest is ValueBase {
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("spot")));
         ctl.setBalancePoolKey(k, expected);
     }
+
+    // promise: the pool-key seed keeps its 4.5 percent transaction guard when the trading tolerance is zero
+    function test_poolKeySeedAllowsNormalDriftWithZeroTradingTolerance() public {
+        _setQuote(Quote({
+            referenceRateBpsPerHour: 1_200,
+            referenceStepBps: 200,
+            tolBps: 0,
+            referenceMaxStale: 3_600,
+            referenceMinSeconds: 600,
+            minLiquidity: 1e18
+        }));
+        uint256 expected = _spotOf(SP);
+        uint256 spot = _swapSpot(100);
+        assertGt(spot, expected);
+        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
+            currency0: IControllerV1.Currency.wrap(address(0)),
+            currency1: IControllerV1.Currency.wrap(address(xt)),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: address(0)
+        });
+        vm.prank(owner);
+        ctl.setBalancePoolKey(k, expected);
+        assertEq(ctl.referencePrice(), spot);
+        uint256 pushed = _swapToSpot(expected * 10_500 / 10_000);
+        assertGt(pushed, expected * 10_450 / 10_000, "the live spot crosses the independent seed guard");
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("spot")));
+        ctl.setBalancePoolKey(k, expected);
+    }
 }
 
 contract ValueModeTest is ValueBase {
@@ -366,7 +396,7 @@ contract ValueModeTest is ValueBase {
     function test_launchValues() public view {
         Settings memory s = core.settings();
         assertFalse(s.valueModeOn, "value mode off at launch");
-        assertEq(lc.quote.tolBps, 450, "the launch band");
+        assertEq(lc.quote.tolBps, 100, "the launch band");
         assertEq(lc.quote.referenceMaxStale, 0, "referenceMaxStale an owner input, unusable until set");
     }
 
@@ -383,7 +413,7 @@ contract ValueModeTest is ValueBase {
     }
 
     // promise: SPEC 4 an eth fill drops the shared instance and a balance fill leaves it: the balance route pays the
-    // posted price and never reads the instance (decision 161); the posted rate never moves
+    // posted price and never reads the instance (decision 164); the posted rate never moves
     function test_ethFillsDropTheInstanceAndBalanceFillsDoNot() public {
         _valueOn();
         _fundPot(20 ether);
@@ -403,7 +433,7 @@ contract ValueModeTest is ValueBase {
     }
 
     // promise: SPEC 4 in value mode the shared instance climbs with the balance bid off and with no usable module, and
-    // only the switch resets it: a settings edit, a module set and the bid turning on leave it (decision 161)
+    // only the switch resets it: a settings edit, a module set and the bid turning on leave it (decision 164)
     function test_onlyTheSwitchResets() public {
         Settings memory s = core.settings();
         s.balanceBidOn = false;
@@ -606,6 +636,33 @@ contract ValueModeTest is ValueBase {
         }
     }
 
+    // promise: SPEC 10 a balance round trip loses the spread even when the live pool spot leads the reference
+    // SKIPPED reproducer of a contract bug (decision 159 C01 class). CoreLib._balancePayout pays
+    // `score * unit * balanceRate / BPS` in balance tokens at par, with no clamp to the protected reference
+    // `valuePerPoint(false)` that the eth bid (bidOf) uses. when the live pool spot sits far above the rate-limited
+    // reference, a credit bought off the reference-protected ask and sold straight into the balance bid returns tokens
+    // realizable at the live spot, so the round trip gains the spot/reference gap, which the spread does not cover. the
+    // eth round trip loses the spread, the balance round trip gains. test_roundTripsLoseTheSpread settles the reference
+    // to the moved spot before each trip (_settleReference), so it never reaches this state. shrunk from the
+    // InvariantsValue invariant_v20 counterexample (CI run 39046569753): spot 1.9108e18, reference 0.5145e18 (3.55x),
+    // credit bought for 0.025119 eth, balance payout 0.030983 xt realizable at the spot for 0.059202 eth, net +0.034083.
+    // fix: in value mode clamp the balance payout to the protected reference, the same valuePerPoint read the eth bid
+    // uses, so neither currency realizes the live spot when it has run ahead of the rate-limited reference.
+    function test_balanceRoundTripLosesWhenSpotLeadsReference() public {
+        vm.skip(true);
+        uint256[] memory ids = _fillEthPile(4);
+        _valueOn();
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(50 ether);
+        // push the pool spot to 3.55x the reference and leave the reference unsettled: one refresh per block moves it at
+        // most one step, so the ask stays priced off the lagging reference while the balance bid realizes the live spot
+        _swapToSpot(ctl.referencePrice() * 355 / 100);
+        (uint256 paid, uint256 back) = _trip(ids[0], true);
+        _assertLoses(paid, back, "balance with the spot far above the reference");
+    }
+
     // promise: SPEC 8 a statement's reference in value mode is valueOf(rating) times floorMultBps, its curve rests there
     function test_statementPricesOffTheProtectedFloor() public {
         Composed memory c = _composeOnce();
@@ -690,9 +747,9 @@ contract ValueModeTest is ValueBase {
 
 /// the real pool under manipulation: a single block spot swing, just-in-time liquidity against `minLiquidity`, the
 /// reference walking at the max rate against a pushed spot, a 10x spike against the rate cap and the pot, and a loop
-/// closure round trip at the launch quote. every spot move is a real swap through the pool manager
+/// closure round trip at a nonzero quote tolerance. every spot move is a real swap through the pool manager
 contract ValueRealPoolTest is ValueBase {
-    /// the fixture quote with `minLiquidity` replaced, every other field at the launch values
+    /// the nonzero-band fixture quote with `minLiquidity` replaced
     function _quoteWithMinLiquidity(uint128 minLiq) internal pure returns (Quote memory) {
         return Quote({
             referenceRateBpsPerHour: 1_000,
@@ -702,6 +759,99 @@ contract ValueRealPoolTest is ValueBase {
             referenceMinSeconds: 0,
             minLiquidity: minLiq
         });
+    }
+
+    // promise: at zero tolerance a real pool move stays out of the same-block quote, while one scheduled refresh may move the reference by two percent
+    function test_zeroToleranceUsesSampledSpotAndTwoPercentRefreshStep() public {
+        _setQuote(Quote({
+            referenceRateBpsPerHour: 1_200,
+            referenceStepBps: 200,
+            tolBps: 0,
+            referenceMaxStale: 3_600,
+            referenceMinSeconds: 600,
+            minLiquidity: 1e18
+        }));
+        _fundPot(20 ether); // real coin trading creates the hook fees that fund this bid
+        _valueOn();
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 bid0 = core.bidOf(ids[0]);
+        uint256 ref0 = ctl.referencePrice();
+        (uint256 buy0, bool ok0) = ctl.valuePerPoint(false);
+        assertTrue(ok0);
+        _swapSpot(1_000);
+        (uint256 sameBlock, bool okSameBlock) = ctl.valuePerPoint(false);
+        assertTrue(okSameBlock);
+        assertEq(sameBlock, buy0, "the live spot cannot lift the same-block bid");
+        assertEq(core.bidOf(ids[0]), bid0, "the real sell door keeps the pre-swap bid");
+        uint256 sellerBefore = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(ids);
+        assertEq(seller.balance - sellerBefore, bid0, "the seller receives the recorded bid");
+        vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        assertEq(ctl.referencePrice(), ref0 * 10_200 / 10_000, "one refresh moves the two percent step");
+        (uint256 refreshBlockBuy,) = ctl.valuePerPoint(false);
+        assertEq(refreshBlockBuy, buy0, "the refresh block still uses the prior spot sample");
+        vm.warp(block.timestamp + 1);
+        vm.roll(block.number + 1);
+        (uint256 buy1, bool okBuy) = ctl.valuePerPoint(false);
+        (uint256 sell1, bool okSell) = ctl.valuePerPoint(true);
+        assertTrue(okBuy && okSell);
+        assertGt(buy1, buy0, "the scheduled step can still lift the bid");
+        assertLt(buy1, sell1, "the sale uses the sampled spot above the reference");
+    }
+
+    // promise: at 100 bps tolerance a real 10 percent up-move keeps the bid below spot and the ask at spot until
+    // the reference catches up within five eligible 600-second refreshes
+    function test_realPoolUpMoveStaleQuoteClosesWithinFiveRefreshes() public {
+        _testStaleQuoteMove(1_000);
+    }
+
+    // promise: at 100 bps tolerance a real 10 percent down-move keeps the bid at spot and the ask above spot until
+    // the reference catches up within five eligible 600-second refreshes
+    function test_realPoolDownMoveStaleQuoteClosesWithinFiveRefreshes() public {
+        _testStaleQuoteMove(-1_000);
+    }
+
+    function _testStaleQuoteMove(int256 moveBps) internal {
+        _setQuote(Quote({
+            referenceRateBpsPerHour: 1_200,
+            referenceStepBps: 200,
+            tolBps: 100,
+            referenceMaxStale: 3_600,
+            referenceMinSeconds: 600,
+            minLiquidity: 1e18
+        }));
+        uint256 opening = ctl.referencePrice();
+        uint256 spot = _swapSpot(moveBps);
+        uint256 target = moveBps > 0 ? opening * 11_000 / 10_000 : opening * 9_000 / 10_000;
+        assertApproxEqRel(spot, target, 1e15, "the real swap moves spot by about 10 percent");
+        uint256 unit = mod.unitPerPoint();
+        uint256 spotBid = FullMath.mulDiv(POINT_UNIT * unit, spot, 1e18);
+        uint256 spotAsk = FullMath.mulDivRoundingUp(POINT_UNIT * unit, spot, 1e18);
+
+        for (uint256 i = 1; i <= 5; ++i) {
+            vm.warp(block.timestamp + 600);
+            vm.roll(block.number + 1);
+            assertTrue(ctl.refreshReference(), "the scheduled refresh moves the reference");
+            // The refresh block still uses the old sample. The next block prices against the held market move.
+            vm.roll(block.number + 1);
+            (uint256 bid, bool buyOk) = ctl.valuePerPoint(false);
+            (uint256 ask, bool sellOk) = ctl.valuePerPoint(true);
+            assertTrue(buyOk && sellOk, "both real-pool quotes remain usable");
+            if (moveBps > 0) {
+                assertEq(ask, spotAsk, "the up-move ask uses the sampled spot");
+                if (i == 1) assertLt(bid, spotBid, "the up-move bid lags the sampled spot");
+            } else {
+                assertEq(bid, spotBid, "the down-move bid uses the sampled spot");
+                if (i == 1) assertGt(ask, spotAsk, "the down-move ask lags the sampled spot");
+            }
+            if (i == 5) {
+                assertEq(bid, spotBid, "the bid reaches spot within five refreshes");
+                assertEq(ask, spotAsk, "the ask reaches spot within five refreshes");
+            }
+        }
     }
 
     // promise: SPEC 8 a single block spot swing around a victim trade cannot move the priced value past the band: a
@@ -788,9 +938,9 @@ contract ValueRealPoolTest is ValueBase {
         assertLe(bid1, core.ethPot(), "the eth bid rides the pot");
     }
 
-    // promise: SPEC 10 a credit bought from the engine at its launch quote floor and sold straight back loses at least
+    // promise: SPEC 10 a credit bought from the engine at a nonzero-band quote floor and sold straight back loses at least
     // the credit spread. the eth worst case is printed
-    function test_loopClosureRoundTripAtLaunchValues() public {
+    function test_loopClosureRoundTripAtNonzeroBand() public {
         uint256 id = _fillEthPile(1)[0];
         _valueOn();
         _setReturnLock(0);

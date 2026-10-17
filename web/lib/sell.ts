@@ -67,7 +67,7 @@ export function replayEthFills(scores: bigint[], a: EthReplay): bigint[] {
 }
 
 export interface BalanceReplay {
-  rate: bigint; // balanceRate(): the posted balance bid rate, 10000 - balanceDiscountBps, bps of par (decision 161)
+  rate: bigint; // balanceRate(): the posted balance bid rate, 10000 - balanceDiscountBps, bps of par (decision 164)
   unit: bigint; // the module's unitPerPoint()
   scorePer100Points: bigint;
   dropPer100PointsBps: bigint; // kept for the callers' shape; the posted bid does not drop
@@ -76,10 +76,10 @@ export interface BalanceReplay {
 }
 
 // Total balance token sellForBalance pays for the credits `scores` in one call: score * unit * rate / 10000 each, flat.
-// The posted bid does not drop on a fill and does not climb (decision 161), so the order does not matter. The
+// The posted bid does not drop on a fill and does not climb (decision 164), so the order does not matter. The
 // available() bound is not replayed: a batch whose payouts plus their artist royalties pass available() reverts
 // PotTooSmall, which no minOut can clear. The artist royalty rides on top from the module and never changes the seller's
-// payout (decision 160).
+// payout (decision 163).
 export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
   return replayBalanceFills(scores, a).reduce((t, x) => t + x, 0n);
 }
@@ -90,7 +90,7 @@ export function replayBalanceFills(scores: bigint[], a: BalanceReplay): bigint[]
 }
 
 export interface ValueReplay {
-  rate: bigint; // sharedRate(): the shared instance now, bps of par (value mode's eth price state; the balance bid is posted, decision 161)
+  rate: bigint; // sharedRate(): the shared instance now, bps of par (value mode's eth price state; the balance bid is posted, decision 164)
   value: bigint; // controller.valuePerPoint(false): wei per point at the protected buy price
   pot: bigint; // ethPot plus the unbooked share the first book adds, less the reserve (Core.room)
   rateCap: bigint;

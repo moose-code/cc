@@ -74,8 +74,8 @@ export const engine = onchainTable("engine", (t) => ({
   saleToBuybackBps: t.integer(),
   feeToRedeemBurnBps: t.integer(),
   payeePpm: t.integer(),
-  buyToArtistBps: t.integer(), // the artist royalty on every purchase, bps of the amount paid (decision 160)
-  balanceDiscountBps: t.integer(), // the balance bid's discount to par, bps (decision 161)
+  buyToArtistBps: t.integer(), // the artist royalty on every purchase, bps of the amount paid (decision 163)
+  balanceDiscountBps: t.integer(), // the balance bid's discount to par, bps (decision 164)
   creditCostToPotBps: t.integer(),
   minCcToChoose: t.bigint(),
   lastBuybackBlock: t.bigint(),
@@ -188,7 +188,7 @@ export const credit = onchainTable(
     acquiredTx: t.hex(),
     acquiredHow: acquiredHow("acquired_how"),
     seller: t.hex(),
-    royalty: t.bigint(), // the artist royalty paid at acquisition: wei for an eth bid or listing, balancePaidToken units for a balance bid (decision 160)
+    royalty: t.bigint(), // the artist royalty paid at acquisition: wei for an eth bid or listing, balancePaidToken units for a balance bid (decision 163)
     balancePaid: t.bigint(), // BalanceFill.paid, the seller's payout in balancePaidToken's base units
     balancePaidToken: t.hex(), // the balance token active at the sale; changes at BalanceModuleSet
     pileOrder: t.bigint(), // insertion sequence; a swap-in takes the out credit's value
@@ -320,7 +320,7 @@ const counters = (t: PgColumnsBuilders) => ({
   feesBooked: t.bigint().notNull().default(0n),
   toPayee: t.bigint().notNull().default(0n),
   toArtist: t.bigint().notNull().default(0n), // the artist cut of sales, wei
-  toArtistBuys: t.bigint().notNull().default(0n), // the artist royalty on eth bid and listing purchases, wei (decision 160); balance bid royalties are inside balancePaidByToken
+  toArtistBuys: t.bigint().notNull().default(0n), // the artist royalty on eth bid and listing purchases, wei (decision 163); balance bid royalties are inside balancePaidByToken
   toOperator: t.bigint().notNull().default(0n),
   ccBurned: t.bigint().notNull().default(0n), // Core buyback burns plus CreditSwapped.fee
   ethToBuybackSpent: t.bigint().notNull().default(0n), // sum of Buyback.amountIn

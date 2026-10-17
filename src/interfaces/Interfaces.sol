@@ -289,7 +289,7 @@ struct CreditSale {
     /// take it. 1 to uint32.max seconds
     uint32 window;
     /// the sale spread, bps. the credit sale floor is the larger of the credit's cost and its `valueOf` score times
-    /// `max(10_000, (10_000 + spreadBps) * balanceBidCapBps / 10_000)`, the Core's cap read live. 0 to uint16.max
+    /// `max(10_000, (10_000 + spreadBps) * balanceBidCapBps / 10_000)`, the Core's cap read live. 200 to uint16.max
     uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
@@ -436,8 +436,9 @@ library Mainnet {
 
     /// the launch credit settings: the credit sale is on, its window is 4 hours, the spread is 10 percent over the bid's
     /// hard cap (decision 155; the floor is 110 percent of the reference at the launch cap of 10_000, today's 1.1x; the
-    /// owner lowers it to 200 at the value switch per decision 153), the start is 150 percent of the floor, 80 percent of
-    /// a sold credit's cost funds the pot, chosen composition is off, and the coin balance a caller needs to choose a
+    /// value switch keeps 1,000 unless the owner sets a pair compatible with the chosen tolerance), the start is 150
+    /// percent of the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and the coin
+    /// balance a caller needs to choose a
     /// compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
@@ -451,15 +452,15 @@ library Mainnet {
         });
     }
 
-    /// the launch reference price settings: the 4.5 percent band (loop closure bound, decision 153) and a 600 second refresh
+    /// the launch reference price settings: a 100 bps executable band and a 600 second refresh
     /// cadence. the rate, the step, the staleness and the liquidity minimum are owner inputs set once the balance token
     /// pool exists and its depth is known; a `referenceMaxStale` of 0 keeps the reference price unusable, so value mode
-    /// fails closed to `NoQuote` until they are set
+    /// makes the controller's value-mode sale prices unusable until they are set
     function defaultQuote() internal pure returns (Quote memory) {
         return Quote({
             referenceRateBpsPerHour: 0,
             referenceStepBps: 0,
-            tolBps: 450,
+            tolBps: 100,
             referenceMaxStale: 0,
             referenceMinSeconds: 600,
             minLiquidity: 0

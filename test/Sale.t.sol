@@ -691,7 +691,7 @@ contract SaleAnchorTest is SaleShapeBase {
         for (uint256 r; r < 4; ++r) {
             uint256[] memory ids = _credits(attacker, 80);
             for (uint256 i; i < 80; ++i) {
-                // two wei: the bid's room is the pot over 1 + the royalty (decision 160), so a 2 wei pot reads a 1 wei bid
+                // two wei: the bid's room is the pot over 1 + the royalty (decision 163), so a 2 wei pot reads a 1 wei bid
                 vm.deal(attacker, attacker.balance + 2);
                 vm.prank(attacker);
                 core.fund{value: 2}();
@@ -1108,7 +1108,7 @@ contract SaleCutsTest is SaleBase {
         Settings memory s = core.settings();
         s.saleToArtistBps = 0;
         _setSettings(s);
-        // the royalty on purchases keeps the artist required as well (decision 160)
+        // the royalty on purchases keeps the artist required as well (decision 163)
         vm.prank(owner);
         vm.expectRevert(ICore.ZeroAddress.selector);
         core.setArtist(address(0));

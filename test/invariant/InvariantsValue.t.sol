@@ -146,7 +146,7 @@ contract ValueHandler is Test {
             uint256 paid = a.balance - before;
             if (paid > bid) ++g2;
             if (paid > room) ++g7;
-            // the seller's payment and its artist royalty leave the core (decision 160)
+            // the seller's payment and its artist royalty leave the core (decision 163)
             if (coreBefore - address(core).balance != paid + paid * core.settings().buyToArtistBps / 10_000) ++g1;
             ++ethFills;
             _trip(id, paid);

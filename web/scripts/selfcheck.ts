@@ -40,7 +40,7 @@ assert.equal(replayEth([2000n, 1000n], a), 2000n + 990n);
 // the sell page lists each credit's fill: the fills are in sell order and add up to the total
 assert.deepEqual(replayEthFills([2000n, 1000n], a), [2000n, 990n]);
 assert.deepEqual(replayEthFills(ref(50), { ...a, pot: 2500n }).reduce((t, x) => t + x, 0n), replayEth(ref(50), { ...a, pot: 2500n }));
-// balance: score * unit * rate / 10000 per credit, flat: the posted bid does not drop on a fill (decision 161)
+// balance: score * unit * rate / 10000 per credit, flat: the posted bid does not drop on a fill (decision 164)
 const b = { rate: 10000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
 assert.equal(replayBalance([3n, 5n], b), 300n + 500n);
 assert.deepEqual(replayBalanceFills([3n, 5n], b), [300n, 500n]);

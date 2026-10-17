@@ -295,7 +295,7 @@ contract ReceiveTest is FeeBase {
             ceiling + ceiling * core.settings().buyToArtistBps / 10_000,
             "no gap, no payment: the cost basis is the price plus its royalty"
         );
-        // the price and its artist royalty left the core (decision 160); the push arrived on top
+        // the price and its artist royalty left the core (decision 163); the push arrived on top
         uint256 royalty = ceiling * core.settings().buyToArtistBps / 10_000;
         uint256 fees = address(core).balance + ceiling + royalty - balance;
         assertGt(fees, 0, "the Core received the push");

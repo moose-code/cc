@@ -339,7 +339,7 @@ contract ReviewFundedTest is Fixture {
 
     function _check(ICore c) internal view {
         // the bid's room is the pot less the reserve over 1 + buyToArtistBps / 10_000, so a credit at the read is payable
-        // with its artist royalty (decision 160)
+        // with its artist royalty (decision 163)
         uint256 room = _room(c) * 10_000 / (10_000 + c.settings().buyToArtistBps);
         uint256 stored = c.rateAtCheckpoint();
         uint256 r = c.ethRate();

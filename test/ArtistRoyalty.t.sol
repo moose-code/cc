@@ -28,7 +28,7 @@ contract BurningArtist {
     }
 }
 
-/// the artist royalty on every engine purchase (decision 160): whatever the engine pays for a credit, it pays
+/// the artist royalty on every engine purchase (decision 163): whatever the engine pays for a credit, it pays
 /// `buyToArtistBps` of that amount to the artist on top, in the same currency. the seller receives the displayed bid
 /// whole, the pot pays both, the cost basis records both, and the eth bid's pot clamp leaves room for the royalty so a
 /// bid the site shows is always payable

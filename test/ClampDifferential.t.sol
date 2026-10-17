@@ -42,7 +42,7 @@ contract ClampDifferentialTest is Fixture {
         uint256 pendingShare = PENDING - PENDING * feeBps / 10_000;
         uint256 pagesPot = pot + pendingShare; // _ethPagesPot with payeePpm 0
         uint256 reserve = core.reserve(); // reserveWei, the pile is empty
-        // the room over 1 + buyToArtistBps / 10_000, so a bid at the clamp is payable with its royalty (decision 160)
+        // the room over 1 + buyToArtistBps / 10_000, so a bid at the clamp is payable with its royalty (decision 163)
         uint256 clampNew = (pagesPot - reserve) * 10_000 / (10_000 + core.settings().buyToArtistBps);
 
         assertGt(reserve, 0, "the reserve is nonzero");
@@ -69,7 +69,7 @@ contract ClampDifferentialTest is Fixture {
 
         // main's booked-pot rule: the clamp was ethPot with no reserve held back, which after the book equals the pages
         // pot. so main would price both reads at pagesPot; the delta is the reserve plus the royalty's share of the room
-        // (decision 160)
+        // (decision 163)
         uint256 mainClamp = pagesPot;
         assertEq(
             mainClamp - clampNew,

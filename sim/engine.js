@@ -14,6 +14,10 @@ export const REF_PTS = 433;
 // copies a launch value and the two cannot drift
 import { readFileSync as _readFileSync } from 'node:fs'; // build-strip
 export const LAUNCH_RAW = JSON.parse(_readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8')); // build-inline
+// Jack's balance token constants live in one place, sim/upstream.js (build.mjs inlines it for the browser). the balance
+// model's unit, decimals and redemption math read them, so a change in his repo is a one-line sim change
+import { UNIT_PER_POINT, DECIMALS, redeemQuote } from './upstream.js'; // build-strip
+export { UNIT_PER_POINT, DECIMALS, redeemQuote }; // build-strip
 const _cs = LAUNCH_RAW.settings, _sale = LAUNCH_RAW.sale, _cr = LAUNCH_RAW.credit, _ln = LAUNCH_RAW.launch;
 
 // the Core's Settings struct (src/interfaces/Interfaces.sol), same field names, values read from the config.
@@ -47,8 +51,8 @@ export const SETTINGS = {
   balanceBidOn: _cs.balanceBidOn, // whether sellForBalance runs (decision 107)
   redeemSlippageBps: _cs.redeemSlippageBps, // a redemption must return at least rating * unit * (10000 - redeemSlippageBps) / 10000 (FLOW 84)
   balanceBidMarginBps: _cs.balanceBidMarginBps, // the balance bid floor is 10000 - balanceBidMarginBps bps of par, its opening rate (decision 122)
-  buyToArtistBps: _cs.buyToArtistBps, // the artist royalty on every purchase, bps of the amount paid, on top in the route's currency (decision 160)
-  balanceDiscountBps: _cs.balanceDiscountBps, // the balance bid's discount to par: the posted balance bid is 10000 - this bps of par, flat (decision 161)
+  buyToArtistBps: _cs.buyToArtistBps, // the artist royalty on every purchase, bps of the amount paid, on top in the route's currency (decision 163)
+  balanceDiscountBps: _cs.balanceDiscountBps, // the balance bid's discount to par: the posted balance bid is 10000 - this bps of par, flat (decision 164)
   redeemBurnBps: _cs.redeemBurnBps, // share of the redeem burn reserve moved to the coin buyback on each redemption (FLOW 86)
   pointsPerPage: _cs.pointsPerPage, // points in one page for the ceiling pot multiplier: one page costs rate * pointsPerPage / 100
   climbMultiplierCapBps: _cs.climbMultiplierCapBps,
@@ -128,7 +132,7 @@ function uint(value, bits, scale = 1) {
 export function creditViolation(c) {
   if (!uint(c.creditCostToPotBps, 16) || c.creditCostToPotBps > BPS) return 'creditCostToPotBps';
   if (!uint(c.creditWindow, 32) || c.creditWindow < 1) return 'creditWindow';
-  if (!uint(c.creditSpreadBps, 16)) return 'creditSpreadBps';
+  if (!uint(c.creditSpreadBps, 16) || c.creditSpreadBps < 200) return 'creditSpreadBps';
   if (!uint(c.creditStartBps, 32) || c.creditStartBps < BPS) return 'creditStartBps';
   if (!uint(c.minCcToChoose, 256)) return 'minCcToChoose';
   return null;
@@ -410,7 +414,7 @@ export class Core {
     this.peakRate = p.rateStart; this.peakTime = t0; // the remembered peak (Anchor.peakRate and peakTime)
     this.payeeOn = false; this.payeePaid = 0; // the payee share starts with the first book at or after sniperSeconds that has income; payeePaid is the fee share pushed to the payee so far (decision 123, a push)
     this.artistPaid = 0; this.operatorPaid = 0; // cumulative artist and operator cuts of sales pushed out (decision 123)
-    this.royaltyPaid = 0; this.royaltyPaidBalance = 0; // cumulative artist royalties on purchases, eth and balance token (decision 160)
+    this.royaltyPaid = 0; this.royaltyPaidBalance = 0; // cumulative artist royalties on purchases, eth and balance token (decision 163)
     this.fundedTotal = 0; // cumulative eth added with fund(), which bypasses the fee split
     this.swapBurned = 0; // cumulative coins burned by swapCredit callers
     // the balance bid instance (decision 122): a second price state in bps of par, floor 10000 - balanceBidMarginBps, cap 10000, clamp the module available as bps of par
@@ -434,7 +438,7 @@ export class Core {
   // the climb stops where the pot no longer affords one credit at the rate, or at rateCap, whichever is lower. the pot
   // counts the pot share of the unbooked drip (decision 147) net of the reserve (Core._ethClimb reads pagesPot less the reserve)
   clamp() {
-    // over 1 + buyToArtistBps / 10000, so a bid at the clamp is payable with its artist royalty (decision 160)
+    // over 1 + buyToArtistBps / 10000, so a bid at the clamp is payable with its artist royalty (decision 163)
     return Math.min((Math.max(0, this.ethPot + this.pendingPot() - this.reserve()) * W) / (1 + this.s.buyToArtistBps / BPS), this.s.rateCap);
   }
   // Core.receive: fee income the hook pushed, left unbooked. the climb clamp counts its pot share until a book folds it
@@ -570,7 +574,7 @@ export class Core {
     const anchorNow = this.anchorAt(now);
     // CoreLib.setSettings: climb the balance instance under the old settings before the new ones apply (decision 122).
     // in value mode the shared instance climbs whatever the module, so `usable` is true there
-    // the instance climbs in value mode only: the balance bid is posted and never reads it (decision 161)
+    // the instance climbs in value mode only: the balance bid is posted and never reads it (decision 164)
     const wasValue = this.s.valueModeOn;
     if (wasValue) { this.balRate = this.balPriceState(now); this.balCheckpointTime = now; }
     // CoreLib.setSettings: a change of peakHalfLife restates the remembered peak at the old half life before the new one applies
@@ -667,7 +671,7 @@ export class Core {
   sellForEth(now, pts = RATE_SCORE / 1e4) {
     const ratio = this.scoreRatio(pts);
     const price = (this.ethRate(now) / W) * ratio;
-    // the artist royalty rides on top: the seller receives the bid whole, the pot pays both (decision 160)
+    // the artist royalty rides on top: the seller receives the bid whole, the pot pays both (decision 163)
     const royalty = (price * this.s.buyToArtistBps) / BPS;
     if (!this.spend(price + royalty, now, ratio)) return 0;
     this.royaltyPaid += royalty;
@@ -696,7 +700,7 @@ export class Core {
     const ratio = this.scoreRatio(pts);
     const ceil = (this.ethRate(now) / W) * ratio;
     const room = this.room();
-    const royalty = (ask * this.s.buyToArtistBps) / BPS; // the artist royalty on the price (decision 160)
+    const royalty = (ask * this.s.buyToArtistBps) / BPS; // the artist royalty on the price (decision 163)
     if (ask + royalty > room || ask > ceil) return null;
     const paid = Math.min(this.listingPayMax(), ceil - ask, room - ask - royalty);
     if (!this.spend(ask + royalty + paid, now, ratio)) return null;
@@ -794,6 +798,12 @@ export class Core {
   curvePrice(st, now) { return Math.max(this.statementPrice(this.reference(st, now), st, now), this.floorPrice(st)); }
   // the unit the balance token bid, the redemption and the pool term use: the unitPerPoint the module reports now
   unit() { return this.xpLive; }
+  // base units Jack's contract withdraws for a statement of stored rating `scoreUnits`, from sim/upstream.js: the single
+  // source for UNIT_PER_POINT (base units per score unit) and DECIMALS (10 ** DECIMALS base units to one token). the eth
+  // value the sim tracks for a redemption is this amount at the balance token pool price; the model's `xpLive` is that
+  // eth value per whole point. a change in Jack's unit or decimals is a one-line change in sim/upstream.js
+  redeemBaseUnits(scoreUnits) { return redeemQuote(scoreUnits); }
+  tokenOne() { return 10 ** DECIMALS; }
   // ControllerV1.priceOf: the engine price of a statement now, the curve price
   askingPrice(st, now) { return this.curvePrice(st, now); }
   // the lowest asking price the statement will ever have under the current settings: saleFloorBps of the reference
@@ -898,7 +908,7 @@ export class Core {
   setBalanceModule(now, xpPerPoint) {
     this.moduleSet = true; this.xpLive = xpPerPoint;
     if (this.p.balancePoolSet && !(this.refMult > 0)) this.setPoolKey(now);
-    // a module set never touches the instance: the balance bid is posted (decision 161)
+    // a module set never touches the instance: the balance bid is posted (decision 164)
   }
   // the module reports a new unit; the next redemption, bid and price read it
   moduleReports(xpLive) { this.xpLive = xpLive; }
@@ -955,7 +965,7 @@ export class Core {
     const anchor = Math.max(this.balLastFillRate, this.balPeakAt(now));
     return Math.min(anchor * loosen * (s.ceilPct / 100), s.balanceBidCapBps);
   }
-  // CoreLib balanceRate(): the posted rate, 10000 - balanceDiscountBps bps of par, in every mode, bid on or off (decision 161)
+  // CoreLib balanceRate(): the posted rate, 10000 - balanceDiscountBps bps of par, in every mode, bid on or off (decision 164)
   balanceRate() { return BPS - this.s.balanceDiscountBps; }
   // CoreLib balanceBidOf(id): the posted payout pts * unit * rate / 10000, 0 without a unit or when the module cannot pay it with its royalty
   balanceBidOf(pts) {
@@ -982,7 +992,7 @@ export class Core {
     this.balPeakRate = f; this.balPeakTime = now; this.balBurstBucket = Math.floor(now / this.s.bucketSeconds); this.balBurstBase = f;
   }
   // sellForBalance for one credit (CoreLib._fillOne): the posted payout pts * unit * (10000 - balanceDiscountBps) / 10000, the
-  // artist royalty on top from the module holding, no climb and no drop (decisions 160, 161). returns the balance token paid
+  // artist royalty on top from the module holding, no climb and no drop (decisions 163, 164). returns the balance token paid
   // (eth value), or 0 when the Core would revert PotTooSmall (the payout plus its royalty exceeds the holding)
   xBuy(pts) {
     if (!this.balanceBidActive()) return 0;

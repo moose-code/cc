@@ -229,7 +229,7 @@ library CoreLib {
     /// credit's drop, and the module available left for the rest of the batch. mirrors `Core.EthRateFill`
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     /// one balance fill: the balance token paid to the seller for this credit, the artist royalty, and `available()`
-    /// left after both (decisions 160, 161)
+    /// left after both (decisions 163, 164)
     event BalanceFill(uint256 paid, uint256 toArtist, uint256 available);
     error BadSetting(bytes32 field);
     event SettingsSet(Settings settings);
@@ -291,7 +291,7 @@ library CoreLib {
         bool wasValue = c.settings.valueModeOn;
         // credit the elapsed climb of the shared instance under the old settings and clamp before the new ones apply,
         // so a settings change compares against the climbed value, not a stale checkpoint. the instance climbs in value
-        // mode only: outside it no bid reads it (decision 161)
+        // mode only: outside it no bid reads it (decision 164)
         if (wasValue) _balanceCheckpointNow(c);
         uint256 oldHalf = c.settings.peakHalfLife;
         if (oldHalf != 0 && ns.peakHalfLife != oldHalf) {
@@ -305,7 +305,7 @@ library CoreLib {
         // the value switch turning on opens the shared instance at the floor with a fresh clock. otherwise a floor at or
         // above the stored rate resets to the floor (the launch state, and the state value mode would open from) and a
         // lower floor leaves the climbed rate. the balance bid's switch and a module set never touch it: the balance
-        // route pays the posted price and never reads the instance (decision 161)
+        // route pays the posted price and never reads the instance (decision 164)
         if (ns.valueModeOn && !wasValue) _resetBalanceToFloor(c, floor);
         else _resetBalanceToFloorIfBelow(c, floor);
         // leaving value mode: the eth instance climbed idle during value mode and could reopen the eth bid at the cap on
@@ -424,7 +424,7 @@ library CoreLib {
 
     /// climbs the shared instance to now in value mode, with the cap as its clamp and the module's `available()` as the
     /// pages pot (0 without a usable module), and stores the price state. outside value mode no bid reads the instance
-    /// (decision 161) and nothing climbs. returns whether it climbed
+    /// (decision 164) and nothing climbs. returns whether it climbed
     function _balanceCheckpointNow(State storage c) private returns (bool) {
         if (!c.settings.valueModeOn) return false;
         _balanceCheckpoint(c.balance, c.settings.balanceBidCapBps, _sharedPagesPot(c));
@@ -599,7 +599,7 @@ library CoreLib {
     }
 
     /// the clamp of the eth bid: the pages pot less the reserve, over `1 + buyToArtistBps / 10_000`, so a bid the read
-    /// shows is payable with its artist royalty on top (decision 160). one rule for the climb, the read and the three
+    /// shows is payable with its artist royalty on top (decision 163). one rule for the climb, the read and the three
     /// price basis reads of decision 158
     function _bidRoom(State storage c) private view returns (uint256) {
         return _ethPagesPot(c).zeroFloorSub(_reserve(c)).mulDiv(BPS, BPS + c.settings.buyToArtistBps);
@@ -1127,9 +1127,9 @@ library CoreLib {
         _sellForBalance(ids, minOut);
     }
 
-    /// pays each credit `score * unit * (10_000 - balanceDiscountBps) / 10_000` in balance token, flat (decision 161):
+    /// pays each credit `score * unit * (10_000 - balanceDiscountBps) / 10_000` in balance token, flat (decision 164):
     /// no climb, no drop, no floor rate check. `unit` is the module's `unitPerPoint()` read in the call. runs only
-    /// while `balanceBidOn`. the artist is paid `buyToArtistBps` of each payout on top (decision 160), in balance token
+    /// while `balanceBidOn`. the artist is paid `buyToArtistBps` of each payout on top (decision 163), in balance token
     /// through a second module `pay`. the module holds the balance token: the running total of the payouts and the
     /// royalties must not exceed the module's live `available()` (`PotTooSmall`), so neither `pay` can fail on funds.
     /// the module pays the seller with one `pay(seller, total)`, and the seller's holding must rise by at least `total`
@@ -1231,14 +1231,14 @@ library CoreLib {
     }
 
     /// @notice the balance bid rate, bps of par: the posted `10_000 - balanceDiscountBps`, in every mode, bid on or off
-    /// (decision 161). the Core forwards its `balanceRate()`
+    /// (decision 164). the Core forwards its `balanceRate()`
     function balanceRate() external view returns (uint256) {
         return BPS - state().settings.balanceDiscountBps;
     }
 
     /// @notice the shared instance now, bps of par: value mode's eth price state climbed to now with the cap as its
     /// clamp, the figure `ethPrice` multiplies by the value per point. read for the eth quote replay in value mode; it
-    /// has no bearing on the balance bid (decision 161). the Core forwards its `sharedRate()`
+    /// has no bearing on the balance bid (decision 164). the Core forwards its `sharedRate()`
     function sharedRate() external view returns (uint256) {
         return _sharedRead(state());
     }

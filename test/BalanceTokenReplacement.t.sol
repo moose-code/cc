@@ -160,7 +160,7 @@ contract BalanceTokenReplacementTest is Fixture {
     }
 
     // rule: setBalanceModule while balanceBidOn leaves the balance price state alone and the posted rate unchanged: the
-    // balance bid is a posted price that never reads the instance, and a fill never moves it (decision 161)
+    // balance bid is a posted price that never reads the instance, and a fill never moves it (decision 164)
     function test_replacementWhileBidOnLeavesTheInstance() public {
         uint256 floor = 10_000 - core.settings().balanceBidMarginBps;
         uint256 posted = 10_000 - core.settings().balanceDiscountBps;

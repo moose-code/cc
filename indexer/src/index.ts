@@ -111,7 +111,7 @@ ponder.on("Core:ValueRateFill", async ({ event, context }) => {
 ponder.on("Core:CreditBought", async ({ event, context }) => {
   await coreEvent(context, event, "CreditBought");
   // cost is the pile cost basis (eth bid: the price plus the artist royalty; balance bid: the eth floor basis);
-  // toArtist is the royalty in the route's currency (decision 160)
+  // toArtist is the royalty in the route's currency (decision 163)
   const { id, from, cost, toArtist } = event.args;
   const how = ethFill === event.transaction.hash ? "eth_bid" : "balance_bid";
   ethFill = null;
@@ -126,7 +126,7 @@ ponder.on("Core:CreditBought", async ({ event, context }) => {
 
 ponder.on("Core:BalanceFill", async ({ event, context }) => {
   await coreEvent(context, event, "BalanceFill");
-  // paid is the seller's posted payout, toArtist the royalty, both in balance token (decisions 160, 161)
+  // paid is the seller's posted payout, toArtist the royalty, both in balance token (decisions 163, 164)
   const { paid, toArtist } = event.args;
   // This column follows earlier BalanceModuleSet logs, never a latest-state RPC read.
   const { balanceToken } = await ensureEngine(context);
@@ -149,7 +149,7 @@ ponder.on("Core:BalanceFill", async ({ event, context }) => {
 
 ponder.on("Core:ListingBought", async ({ event, context }) => {
   await coreEvent(context, event, "ListingBought");
-  // cost is the listing price, paid the keeper payment, toArtist the royalty on the price (decision 160); the pile
+  // cost is the listing price, paid the keeper payment, toArtist the royalty on the price (decision 163); the pile
   // cost basis is the three summed
   const { id, caller, cost, paid, toArtist } = event.args;
   ethFill = null;
