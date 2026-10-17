@@ -349,6 +349,16 @@ the `/keeper` web page has `book`, `buyback` and the pots for any wallet; `compo
 | one tick per door against the local stack | `STACK=master script/dev/local.sh`, then `npm run e2e --workspace keeper` |
 | the Seaport sweep on a chain id 1 fork | `CHAIN_ID=1 STACK=master PORT=8609 script/dev/anvil.sh`, `CHAIN_ID=1 STACK=master RPC_URL=http://127.0.0.1:8609 script/deploy.sh local`, then `npm run e2e:seaport --workspace keeper`. it signs its own order with a key made in memory; with `OPENSEA_API_KEY` in the shell it also checks the live fetch against the adapter |
 
+### a chain 1 rehearsal before the Core is on mainnet
+
+The keeper reads the Core immutables (`FACTORY`, `ESCROW`, `owner`) once at start through `readFixed`, so it runs against a record whose Core has code. A predicted mainnet record (the CREATE2 address computed, its code pending launch) serves the deploy rehearsal and the indexer backfill; the keeper itself runs against the mainnet fork that carries the launched Core.
+
+Produce the predicted record without sending a transaction. `DRY_RUN=1 RPC_URL=<archive rpc> script/deploy.sh mainnet` runs preflight and the deploy simulation and prints the CREATE2 `core`, `coin`, `controller`, `seaport adapter`, `strategy adapter` and `renderer`. Write them to a local `deployments/1.json` (gitignored) with the stack members of `script/config/mainnet.json` and the current head as `deployBlock`.
+
+Carry the launched Core on a fork. `FORK_URL=<rpc> FORK_BLOCK=<recent> CHAIN_ID=1 PORT=86xx script/dev/anvil.sh`, then `CHAIN_ID=1 RPC_URL=http://127.0.0.1:86xx LAUNCH_CONFIG=script/config/local.json script/deploy.sh local` writes `deployments/1.json` with the same CREATE2 addresses and the fork node as `rpcUrl`. The keeper runs against this record (`RPC_URLS=http://127.0.0.1:86xx`, a local chain takes no relays).
+
+The web reads this chain 1 record with `npm run dev` and a hand written `web/.env.local` (`dev:local` serves a chain id 31337 record): `NEXT_PUBLIC_RPC_URL` at the fork, `NEXT_PUBLIC_CORE`, `NEXT_PUBLIC_DEPLOY_BLOCK`, `NEXT_PUBLIC_STRATEGY_ADAPTER`, `NEXT_PUBLIC_SEAPORT_ADAPTER`, `NEXT_PUBLIC_POOL_HOOK`, `NEXT_PUBLIC_POOL_FEE`, `NEXT_PUBLIC_POOL_TICK_SPACING` and `NEXT_PUBLIC_INDEXER_URL`. A chain id 1 fork makes the web treat the node as mainnet and a connected wallet signs against mainnet, so a read only rehearsal leaves the wallet disconnected.
+
 ### Replacing the balance token
 
 For a replacement that keeps the current redemption value floor, pause sales and set balanceBidOn off during setup. Verify the replacement module and token and the current upstream launch gates, then call setBalanceModule and read back balanceModule, balanceToken and the module's unit and available(). Each module keeps its own token reserve, so a replaced module's holdings stay in that module; re-select it to spend them.
