@@ -92,6 +92,11 @@ contract LaunchDayPhase2Test is LaunchDayBase {
     /// quote beats it); the eth bid climbs over the following hours, so the later sells flip to the eth door
     function _phase2Day() internal {
         _fundPot(5 ether); // funded in the opening block, before the eth bid has climbed
+        // the launch fixture opens the eth bid at the high launch rate; the owner sets the lower opening rate the DEV
+        // balance params were calibrated against, so the balance door beats the eth bid at the opening and the climb
+        // flips later sells to the eth door (the intent of this test)
+        vm.prank(owner);
+        core.setRate(OPEN_RATE);
 
         uint256[3] memory waits = [uint256(0), 1 hours, 6 hours];
         for (uint256 i; i < waits.length; ++i) {
@@ -102,6 +107,9 @@ contract LaunchDayPhase2Test is LaunchDayBase {
             _sellBetterQuote(_credits(seller, 1)[0]);
         }
 
+        // the owner closes the credit sale so the fresh page composes without waiting out the sale window (the launch
+        // fixture runs with the credit sale on, which gates compose on the window, LaunchDay.t.sol)
+        _setCreditSaleOn(false);
         // a composed statement redeems into the balance module once its curve reaches the floor
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
@@ -234,6 +242,8 @@ contract LaunchDayPhase2Test is LaunchDayBase {
 
     /// @dev composes and redeems one statement at the opening block; returns the token the module then holds
     function _redeemAtOpening(IUpstreamToken up, IBalanceModule module) internal returns (uint256 owed) {
+        // close the credit sale so the fresh page composes without waiting out the sale window (see _phase2Day)
+        _setCreditSaleOn(false);
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
         vm.roll(up.transfersOpenBlock());
