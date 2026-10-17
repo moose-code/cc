@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -437,6 +438,10 @@ contract MigrateTest is Fixture {
         _migrate(1000);
         uint256 retained = core.ethToBuyback();
         assertEq(core.ethPot(), 0, "setup: the pot moved");
+        // The launch share is zero. Exercise the phase-two reserve route explicitly after retirement.
+        Settings memory cfg = core.settings();
+        cfg.feeToRedeemBurnBps = 1_000;
+        _setSettings(cfg);
         _buyCoin(funder, 3 ether);
         assertGt(core.ethPot(), 0, "fees were not booked to the pot");
         assertEq(core.ethToBuyback(), retained, "fees reached the buyback pot");
