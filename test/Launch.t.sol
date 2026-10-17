@@ -85,7 +85,9 @@ contract LaunchTest is Fixture {
         // the spend budget snapshots the post book pot of the first spend; at launch spendCapBps 10_000 is the whole pot
         (uint64 spendBucket, uint128 budget,) = core.spendState();
         Settings memory s = core.settings();
-        assertEq(uint256(budget), (core.ethPot() + paid) * s.spendCapBps / 10_000, "the budget is the post book pot");
+        // the fill spent the payout and its artist royalty (decision 163)
+        uint256 spent = paid + paid * s.buyToArtistBps / 10_000;
+        assertEq(uint256(budget), (core.ethPot() + spent) * s.spendCapBps / 10_000, "the budget is the post book pot");
         assertEq(spendBucket, block.timestamp / s.bucketSeconds, "the spend bucket of the fill");
     }
 

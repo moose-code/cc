@@ -914,6 +914,8 @@ abstract contract HandlerBase is Test {
             // before this credit) times the credit's score over 100 points, from the handler's own rate model
             uint256 room = pot.zeroFloorSub(_reserveAt(st, p.pile + i, p.held));
             uint256 expected = FullMath.mulDiv(BidModel.read(st, room, stored), scores[i], RATE_SCORE);
+            // the recorded cost is the payout plus its artist royalty (decision 163)
+            expected += expected * st.buyToArtistBps / 10_000;
             if (costs[i] != expected) {
                 _flag(V_MODEL, "sellForEth payout differs from read times score over 100 points");
             }
@@ -1433,6 +1435,8 @@ abstract contract HandlerBase is Test {
         Pull pull;
         uint256 pile;
         uint256 held;
+        uint256 royalties;
+        uint256 count;
     }
 
     /// @dev the ids `sellForEth` offers: walks the actor inventory from a picked offset, within the budget unless overshoot
@@ -1524,6 +1528,7 @@ abstract contract HandlerBase is Test {
             uint256 room = p.pot.zeroFloorSub(_reserveAt(st, p.pile + i, p.held));
             uint256 cost = FullMath.mulDiv(BidModel.read(st, room, p.price), score, RATE_SCORE);
             if (cost == 0) return true;
+            cost += cost * st.buyToArtistBps / 10_000; // the spend carries the royalty (decision 163)
             if (cost > room) return false;
             if (st.spendCapBps != 10_000 && spent != 0 && (spent > budget || cost > budget - spent)) return false;
             spent += cost;
@@ -1539,34 +1544,38 @@ abstract contract HandlerBase is Test {
         _pullChecks(p.pull, logs);
         uint256[] memory costs = new uint256[](ids.length);
         uint256 total;
-        uint256 count;
         uint256 ceilSum;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
             uint256 id = uint256(logs[i].topics[1]);
-            uint256 cost = abi.decode(logs[i].data, (uint256));
+            // the cost basis is the price plus the artist royalty (decision 163); the seller receives the price
+            (uint256 cost, uint256 toArtist) = abi.decode(logs[i].data, (uint256, uint256));
+            if (toArtist != (cost - toArtist) * st.buyToArtistBps / 10_000) {
+                _flag(V_MODEL, "sellForEth royalty is not buyToArtistBps of the price");
+            }
             for (uint256 j; j < ids.length; ++j) {
                 if (ids[j] == id) {
                     costs[j] = cost;
                     // invariant 2: no credit is bought above the read taken just before the action
-                    if (cost > p.ceil[j]) _flag(V_ABOVE_CAP, "sellForEth above the read taken before");
+                    if (cost - toArtist > p.ceil[j]) _flag(V_ABOVE_CAP, "sellForEth above the read taken before");
                     ceilSum += p.ceil[j];
                     break;
                 }
             }
             total += cost;
-            count++;
+            p.royalties += toArtist;
+            p.count++;
         }
-        if (count != ids.length) _flag(V_MODEL, "sellForEth bought a different number of credits");
+        if (p.count != ids.length) _flag(V_MODEL, "sellForEth bought a different number of credits");
         uint256 potLeft = p.pot;
         for (uint256 i; i < ids.length; ++i) {
             potLeft = _recordSpend(costs[i], potLeft);
         }
         uint256 paid = who.balance - p.sellerBal;
-        if (paid != total) _flag(V_MODEL, "sellForEth paid differs from the sum of its events");
+        if (paid + p.royalties != total) _flag(V_MODEL, "sellForEth paid plus royalties differs from its events");
         if (paid > ceilSum) _flag(V_ABOVE_CAP, "sellForEth paid above the sum of the reads");
-        _eth(p.bal, paid, 0, "sellForEth");
-        if (core.ethPot() != potLeft) _flag(V_POT, "sellForEth pot not reduced by the price");
+        _eth(p.bal, total, 0, "sellForEth");
+        if (core.ethPot() != potLeft) _flag(V_POT, "sellForEth pot not reduced by the price and the royalty");
 
         // the drop on each fill, independently: dropPer100PointsBps times score over 100 points, no lower than the minute floor
         uint256[] memory scores = new uint256[](ids.length);
@@ -1704,24 +1713,28 @@ abstract contract HandlerBase is Test {
         uint256 paid = keeper.balance - p.keeperBal;
         uint256 cost = value;
         uint256 score = _scoreOf(id);
+        // the artist royalty on the listing price rides on top (decision 163)
+        uint256 royalty = value * st.buyToArtistBps / 10_000;
         // the per-credit bid from the handler's own rate model, not from `bidOf`: the read before the action times the
         // credit's score over 100 points. the value and the payment are capped at it
         uint256 room = p.pot.zeroFloorSub(p.res);
         uint256 ceiling = FullMath.mulDiv(BidModel.read(st, room, p.price), score, RATE_SCORE);
         if (value > ceiling) _flag(V_ABOVE_CAP, "listing value above the ceiling");
         if (cost + paid > ceiling) _flag(V_ABOVE_CAP, "listing cost plus payment above the ceiling");
-        if (cost + paid > room) _flag(V_SPEND, "listing cost plus payment above the pot less the reserve");
-        _listingPayChecks(paid, (ceiling > cost ? ceiling - cost : 0).min(room > cost ? room - cost : 0), st);
-        uint256 potLeft = _recordSpend(cost + paid, p.pot);
-        _eth(p.bal, paid + cost, refund, "buyListing");
-        if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost and the payment");
+        if (cost + royalty + paid > room) _flag(V_SPEND, "listing cost, royalty and payment above the pot less the reserve");
+        _listingPayChecks(
+            paid, (ceiling > cost ? ceiling - cost : 0).min(room > cost + royalty ? room - cost - royalty : 0), st
+        );
+        uint256 potLeft = _recordSpend(cost + royalty + paid, p.pot);
+        _eth(p.bal, paid + cost + royalty, refund, "buyListing");
+        if (core.ethPot() != potLeft) _flag(V_POT, "listing pot not reduced by cost, the royalty and the payment");
         uint256 stored = _dropped(st, p.price, p.minuteStart, score);
         if (core.rateAtCheckpoint() != stored || core.ethRate() != _readAfterFill(st, stored, potLeft)) {
             _flag(V_RATE_BOUND, "drop on fill differs from dropPer100PointsBps with the minute floor");
         }
         if (CREDITS.ownerOf(id) != address(core)) _flag(V_MODEL, "listing did not deliver the credit");
         gone[id] = true;
-        _addCredit(id, cost + paid);
+        _addCredit(id, cost + royalty + paid);
     }
 
     /// the payment of one `buyListing`: at most the bid less the cost, at most the gas cap at the capped base fee plus
@@ -2455,7 +2468,9 @@ abstract contract HandlerBase is Test {
         uint256 price = _priceNow(p.rs.st);
         p.costs = new uint256[](ids.length);
         for (uint256 k; k < ids.length; ++k) {
-            p.costs[k] = FullMath.mulDiv(price, _scoreOf(ids[k]), RATE_SCORE).max(1);
+            // the adopted basis is the price state scaled by score plus the artist royalty, as a bought credit (decision 163)
+            uint256 pay = FullMath.mulDiv(price, _scoreOf(ids[k]), RATE_SCORE);
+            p.costs[k] = (pay + pay * p.rs.st.buyToArtistBps / 10_000).max(1);
         }
         (p.anchor0, p.floor0, p.bucket0) = _anchorState();
     }
@@ -2681,6 +2696,7 @@ abstract contract HandlerBase is Test {
         uint256 unit;
         uint256 rate;
         uint256 actorX;
+        uint256 artistX;
     }
 
     /// @dev slots of `State.balance` (the balance bid Rate instance): rateAtCheckpoint at 32, checkpointTime|lastFillTime
@@ -2721,29 +2737,17 @@ abstract contract HandlerBase is Test {
         });
     }
 
-    /// @dev the exact balance token total a batch of `ids` pays, the shared model on the balance instance: the price
-    /// state climbed to now (cap 10_000, clamp availBps), each credit paid score * unit * min(rate, availBps) / 10_000,
-    /// the rate dropped per credit floored at 10_000 - balanceBidMarginBps
+    /// @dev the exact balance token total a batch of `ids` pays: the posted payout `score * unit * (10_000 -
+    /// balanceDiscountBps) / 10_000` per credit, flat (decision 164)
     function _balanceExpected(uint256[] memory ids, uint256 n, uint256 unit) internal view returns (uint256 total) {
-        Settings memory st = core.settings();
-        uint256 availBps = _availBps(unit);
-        uint256 price = BidModel.priceNow(st, _balanceBidState(availBps, unit), st.balanceBidCapBps);
-        uint256 floorBps = 10_000 - st.balanceBidMarginBps;
-        uint256 bucket = uint64(uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 2))));
-        uint256 minuteStart = bucket == block.timestamp / core.settings().bucketSeconds
-            ? uint256(vm.load(address(core), bytes32(uint256(BAL_ANCHOR_SLOT) + 1)))
-            : price;
+        uint256 rate = 10_000 - core.settings().balanceDiscountBps;
         for (uint256 i; i < n; ++i) {
-            uint256 score = _scoreOf(ids[i]);
-            total += score * unit * BidModel.read(st, availBps, price, st.balanceBidCapBps) / 10_000;
-            minuteStart = BidModel.startAfter(st, price, minuteStart);
-            price = BidModel.dropOnce(st, price, minuteStart, score, floorBps);
+            total += _scoreOf(ids[i]) * unit * rate / 10_000;
         }
     }
 
-    /// @dev the ids `sellForBalance` offers: walks the actor inventory from a picked offset while the rising prices fit
-    /// the module's available holding. the per credit price uses the undropped rate, an upper bound since later credits
-    /// drop lower, so a picked batch never passes available
+    /// @dev the ids `sellForBalance` offers: walks the actor inventory from a picked offset while the posted payouts
+    /// plus their artist royalties fit the module's available holding, so a picked batch never passes available
     function _pickBalanceIds(address who, uint256 len, uint256 want, uint256 pick, uint256 unit)
         internal
         view
@@ -2753,22 +2757,13 @@ abstract contract HandlerBase is Test {
         uint256 avail = module.available();
         uint256 used;
         Settings memory st = core.settings();
-        uint256 availBps = _availBps(unit);
-        uint256 rate = BidModel.read(
-            st,
-            availBps,
-            BidModel.priceNow(st, _balanceBidState(availBps, unit), st.balanceBidCapBps),
-            st.balanceBidCapBps
-        );
-        // the floor rule of CoreLib._fillBalance (review ac8da10 M1): a clamped rate below the floor
-        // `10_000 - balanceBidMarginBps` closes the bid with PotTooSmall. an available too short to pay the floor
-        // makes no batch payable, so offer none
-        if (rate < 10_000 - st.balanceBidMarginBps) return (ids, 0);
+        uint256 rate = 10_000 - st.balanceDiscountBps;
         for (uint256 k; k < len && k < want * 3 + 4 && n < want; ++k) {
             uint256 id = inventory[who][(pick % len + k) % len];
             uint256 price = _scoreOf(id) * unit * rate / 10_000;
-            if (price != 0 && used + price <= avail) {
-                used += price;
+            uint256 royalty = price * st.buyToArtistBps / 10_000;
+            if (price != 0 && used + price + royalty <= avail) {
+                used += price + royalty;
                 ids[n++] = id;
             }
         }
@@ -2799,6 +2794,7 @@ abstract contract HandlerBase is Test {
         p.balancePotPre = _xBal(address(module));
         p.unit = unit;
         p.actorX = _xBal(who);
+        p.artistX = _xBal(core.artist());
         uint256 bound_ = _balanceExpected(ids, n, unit);
         uint256 b0 = address(core).balance;
         uint256 pot0 = core.ethPot();
@@ -2823,31 +2819,29 @@ abstract contract HandlerBase is Test {
     /// one pile with an eth cost basis (the `CreditBought` event), the module pays the seller balance tokens from its holding
     function _afterSellBalance(address who, XPre memory p, uint256 bound_, uint256 b0) internal {
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 floorBps = 10_000 - core.settings().balanceBidMarginBps;
-        uint256 floorSum;
-        uint256 capSum;
+        uint256 royalties;
+        uint256 royaltyBps = core.settings().buyToArtistBps;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(core) || logs[i].topics[0] != ICore.CreditBought.selector) continue;
-            uint256 cost = abi.decode(logs[i].data, (uint256));
+            (uint256 cost, uint256 toArtist) = abi.decode(logs[i].data, (uint256, uint256));
             uint256 id = uint256(logs[i].topics[1]);
             // the recorded eth cost is the score-scaled floor rate backstop, at least 1 wei
             if (cost == 0) _flag(V_MODEL, "sellForBalance recorded a zero eth cost basis");
-            uint256 par = _scoreOf(id) * p.unit;
-            capSum += FullMath.mulDiv(par, core.settings().balanceBidCapBps, 10_000);
-            floorSum += par * floorBps / 10_000;
+            // the royalty is buyToArtistBps of the posted payout, in balance token (decision 163)
+            uint256 posted = _scoreOf(id) * p.unit * (10_000 - core.settings().balanceDiscountBps) / 10_000;
+            if (toArtist != posted * royaltyBps / 10_000) _flag(V_MODEL, "sellForBalance royalty is not bps of the payout");
+            royalties += toArtist;
             _addCredit(id, cost);
             _removeFrom(inventory[who], id);
         }
         uint256 paid = _xBal(who) - p.actorX;
-        // the balance tokens paid are the rising per credit bid summed with its drops, the shared-model figure above
-        if (paid != bound_) _flag(V_ABOVE_CAP, "sellForBalance paid differs from the per point bid read before");
-        // Independently bound every payment by the configured floor and cap.
-        if (paid < floorSum) _flag(V_MODEL, "sellForBalance paid below the floor");
-        if (paid > capSum) _flag(V_ABOVE_CAP, "sellForBalance paid above configured cap");
-        // the module paid the seller: its holding fell by the price, the core holds no balance token
+        // the balance tokens paid are the posted payouts summed, flat (decision 164)
+        if (paid != bound_) _flag(V_ABOVE_CAP, "sellForBalance paid differs from the posted payouts");
+        if (_xBal(core.artist()) - p.artistX != royalties) _flag(V_MODEL, "the artist did not receive the royalties");
+        // the module paid the seller and the artist: its holding fell by both, the core holds no balance token
         if (_xBal(address(core)) != p.xbal) _flag(V_POT, "sellForBalance moved the core's balance token");
-        if (p.balancePotPre - _xBal(address(module)) != paid) {
-            _flag(V_POT, "the module holding did not fall by the price");
+        if (p.balancePotPre - _xBal(address(module)) != paid + royalties) {
+            _flag(V_POT, "the module holding did not fall by the payouts and the royalties");
         }
         _eth(b0, 0, 0, "sellForBalance");
     }

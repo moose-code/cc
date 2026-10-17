@@ -20,6 +20,7 @@ interface IUpstreamToken {
     function quote(uint256 id) external view returns (uint256);
     function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256);
     function retireLaunchSupply() external;
+    function transfersOpenBlock() external view returns (uint64);
 }
 
 interface IUpstreamStatements {
@@ -118,6 +119,7 @@ contract Seed is Script {
 
         console.log("BALANCE_TOKEN", token);
         console.log("BALANCE_MODULE", module);
+        console.log("TRANSFERS_OPEN_BLOCK", uint256(IUpstreamToken(token).transfersOpenBlock()));
     }
 
     /// @dev Jack's `AuctionLineageWithdrawals` from the pinned artifact, wired the way the production-module test does:
@@ -131,7 +133,11 @@ contract Seed is Script {
 
         bytes memory creation = vm.parseJsonBytes(vm.readFile("out/upstream-balance.json"), ".bytecode.object");
         uint8 format = uint8(IUpstreamStatements(Mainnet.STATEMENTS).formatCount());
-        uint64 opensAt = uint64(block.number + 5);
+        // opensAt is fixed from the frozen simulation block, but `--slow` mines a block per broadcast, so on the node the
+        // block is already past it when the token constructor runs: the seed sends about 350 credit moves to A1/A2/A3
+        // and 80 to the funder before this point. the margin must clear that, or the constructor reverts
+        // InvalidAuctionGate with opensAt already behind the node. e2e.sh mines to transfersOpenBlock before the sell.
+        uint64 opensAt = uint64(block.number + 700);
         bytes memory init = abi.encodePacked(
             creation,
             abi.encode(

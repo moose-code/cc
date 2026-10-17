@@ -8,6 +8,7 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {Scenario, IUniversalRouterR, IPermit2R, IERC20R} from "./Scenario.s.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
@@ -23,6 +24,7 @@ import {
 } from "../../src/interfaces/Interfaces.sol";
 import {StatementBalanceModule} from "../../src/adapters/StatementBalanceModule.sol";
 import {TestSwapRouter} from "../../test/utils/TestSwapRouter.sol";
+import {TestLiquidityHelper} from "../../test/utils/TestLiquidityHelper.sol";
 import {CreditIds} from "../../test/utils/CreditIds.sol";
 
 interface IPermit2AllowanceR {
@@ -56,8 +58,15 @@ interface IUpstreamStatements {
 /// forge run on a broken invariant, which the shell reports as a FAIL.
 ///
 /// env: CORE, OWNER, A1 A2 A3, TRADER, and for the balance and value steps LAUNCH_CONFIG (default script/config/anvil.json).
+interface IERC20Transfer {
+    function transfer(address to, uint256 value) external returns (bool);
+}
+
 contract E2EReal is Scenario {
+    using StateLibrary for IPoolManager;
+
     uint160 internal constant DEV_SQRT = uint160(11318308930609191084791992905142);
+    int24 internal constant TICK_FULL = 887_220;
 
     function _boot() internal {
         core = ICore(payable(vm.envAddress("CORE")));
@@ -476,7 +485,7 @@ contract E2EReal is Scenario {
             (bytes32)
         );
         vm.rpc("evm_mine", "[]");
-        string memory receipt = vm.rpcJson("eth_getTransactionReceipt", string.concat('["', vm.toString(txHash), '"]'));
+        string memory receipt = _receipt(txHash);
         require(vm.parseJsonUint(receipt, ".status") == 1, "Anvil create reverted");
         deployed = vm.parseJsonAddress(receipt, ".contractAddress");
         vm.createSelectFork(vm.envString("E2E_RPC_URL"), vm.parseJsonUint(receipt, ".blockNumber"));
@@ -521,13 +530,20 @@ contract E2EReal is Scenario {
         (uint256 start,) = ctl.spotPrice();
         uint256 target = start * 108 / 100;
         TestSwapRouter swapRouter = new TestSwapRouter();
-        // small eth-in buys of the balance token, each lifting the spot a little, until it has moved about 8 percent
-        for (uint256 i; i < 40; ++i) {
+        // size the per-buy eth from the pool's eth reserve so the move is gentle at any liquidity. a full-range position
+        // holds about L * Q96 / sqrtP in eth; buying 2 percent of that per step moves the spot a few percent, so the
+        // loop reaches 8 percent in a handful of buys without overshooting the upper guard.
+        IPoolManager pm = IPoolManager(Mainnet.POOL_MANAGER);
+        uint128 liq = pm.getLiquidity(pool.toId());
+        (uint160 sqrtP,,,) = pm.getSlot0(pool.toId());
+        uint256 ethReserve = FullMath.mulDiv(uint256(liq), FixedPoint96.Q96, sqrtP);
+        uint256 chunk = ethReserve / 50 + 1;
+        // eth-in buys of the balance token, each lifting the spot a little, until it has moved about 8 percent
+        for (uint256 i; i < 20; ++i) {
             (uint256 spot,) = ctl.spotPrice();
             if (spot >= target) break;
-            vm.deal(TRADER, TRADER.balance + 1 ether);
             vm.broadcast(TRADER);
-            swapRouter.swap{value: 0.02 ether}(pool, true, -int256(0.02 ether), TRADER);
+            swapRouter.swap{value: chunk}(pool, true, -int256(chunk), TRADER);
         }
         (uint256 after_,) = ctl.spotPrice();
         require(after_ >= start * 105 / 100 && after_ <= start * 140 / 100, "phase7: pool spot not moved about 8 percent");
@@ -559,4 +575,102 @@ contract E2EReal is Scenario {
         require(paid == bid, "phase7: value mode eth sell did not pay bidOf");
         console.log("phase7: value sell bid / paid", bid, paid);
     }
+
+    /// builds real trading depth on Jack's balance pool. after `transfersOpenBlock` the immutable funder moves part of
+    /// its launch balance to the liquidity wallet (TRADER), which adds a full-range position to the native eth / token
+    /// pool through the real pool manager. the move targets 2 percent of supply, capped at 95 percent of the funder
+    /// balance when the funder holds less. prints the moved amount and the pool liquidity the manager reports.
+    function phase7ProdLiquidity(address token) external {
+        _boot();
+        require(block.number >= IUpstreamToken(token).transfersOpenBlock(), "phase7: transfers not open");
+        uint256 funderBal = IERC20R(token).balanceOf(FUNDER);
+        require(funderBal > 0, "phase7: funder holds no balance");
+        uint256 supply = IERC20R(token).totalSupply();
+        uint256 twoPct = supply * 2 / 100;
+        uint256 moved = funderBal < twoPct ? funderBal * 95 / 100 : twoPct;
+        require(moved > 0, "phase7: nothing to move");
+
+        vm.broadcast(FUNDER);
+        IERC20Transfer(token).transfer(TRADER, moved);
+        require(IERC20R(token).balanceOf(TRADER) >= moved, "phase7: liquidity wallet did not receive tokens");
+
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(token),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(0))
+        });
+        // deposit 99 percent of the moved tokens so the exact full-range token leg stays under the wallet balance
+        uint256 liq = FullMath.mulDiv(moved * 99 / 100, FixedPoint96.Q96, DEV_SQRT);
+        uint256 ethLeg = FullMath.mulDiv(liq, FixedPoint96.Q96, DEV_SQRT);
+
+        vm.broadcast(TRADER);
+        TestLiquidityHelper lp = new TestLiquidityHelper();
+        vm.broadcast(TRADER);
+        IERC20R(token).approve(address(lp), type(uint256).max);
+        vm.broadcast(TRADER);
+        lp.modify{value: ethLeg * 2 + 1 ether}(pool, -TICK_FULL, TICK_FULL, int256(liq));
+
+        uint128 depth = IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(pool.toId());
+        require(depth > 0, "phase7: no pool liquidity after modify");
+        console.log("phase7: funder balance / supply", funderBal, supply);
+        console.log("POOL_DEPTH", uint256(depth));
+        console.log("MOVED_TOKENS", moved);
+        console.log("ETH_LEG", ethLeg);
+    }
+
+    /// same-block spot round trip around an eth sell on the real balance pool. swaps eth into the balance token to lift
+    /// the spot, reads the eth bid at the raised spot, then swaps back in the same block. `bidOf` is the amount a
+    /// sellForEth pays at that block; it clamps to the prior-block spot sample, so the bid does not move within the
+    /// block and the swap round trip loses the pool fee. net gain is at most zero. mirrors the ColdAudit real-pool
+    /// round-trip check (C01). runs in the local simulation only (no broadcast), reading the deployed pool and its
+    /// liquidity from the node; uses the bid view rather than an executed sell so the check does not depend on the pot.
+    function phase7RoundTrip(address token) external {
+        _boot();
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(token),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(0))
+        });
+        uint128 depth = IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(pool.toId());
+        require(depth > 0, "phase7rt: no pool liquidity");
+
+        uint256 id = _creditsOf(A1, 1)[0];
+        uint256 bidBefore = core.bidOf(id);
+
+        TestSwapRouter router = new TestSwapRouter();
+        // a dedicated EOA stands in for the round-tripper; a script contract cannot use its own ephemeral address
+        address atk = address(uint160(uint256(keccak256("e2e-real.roundtrip"))));
+        vm.deal(atk, 100 ether);
+        uint256 ethIn = 0.03 ether;
+        uint256 tokBefore = IERC20R(token).balanceOf(atk);
+        vm.prank(atk);
+        router.swap{value: ethIn}(pool, true, -int256(ethIn), atk);
+        uint256 bought = IERC20R(token).balanceOf(atk) - tokBefore;
+
+        uint256 bidAfter = core.bidOf(id);
+
+        vm.prank(atk);
+        IERC20R(token).approve(address(router), type(uint256).max);
+        uint256 ethBeforeRev = atk.balance;
+        vm.prank(atk);
+        router.swap(pool, false, -int256(bought), atk);
+        uint256 recovered = atk.balance - ethBeforeRev;
+        uint256 poolLoss = ethIn - recovered;
+
+        require(bidAfter == bidBefore, "phase7rt: same-block spot move changed the eth bid");
+        require(poolLoss > 0, "phase7rt: round trip did not lose the pool fee");
+        // net before gas: the bid an attacker could extract is unchanged (bidAfter - bidBefore == 0) and the swaps lose
+        // poolLoss, so a same-block swap, sell, swap-back nets at most zero
+        int256 net = int256(bidAfter) - int256(bidBefore) - int256(poolLoss);
+        require(net <= 0, "phase7rt: same-block round trip was profitable");
+        console.log("RT_BID", bidBefore);
+        console.log("RT_POOL_LOSS", poolLoss);
+        console.log("RT_DEPTH", uint256(depth));
+    }
+
+    receive() external payable {}
 }

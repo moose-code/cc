@@ -12,6 +12,9 @@ contract SpendCapTest is Fixture {
         s = Mainnet.defaultSettings();
         // the budget suites price wei sized pots; the reserve floor is test/Reserve.t.sol's
         s.reserveWei = 0;
+        // the ledger counts the artist royalty as outflow (test/ArtistRoyalty.t.sol); the budget promises here read
+        // the price alone, so the royalty is off
+        s.buyToArtistBps = 0;
     }
 
     function _fund(uint256 amount) private {

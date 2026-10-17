@@ -39,6 +39,9 @@ library SettingsBounds {
         if (s.bucketSeconds < 1) return "bucketSeconds";
         if (s.balanceBidCapBps < 10_000) return "balanceBidCapBps";
         if (s.idleStepSeconds < 1) return "idleStepSeconds";
+        if (s.buyToArtistBps > 1_000) return "buyToArtistBps";
+        // a 10,000 discount pays zero and every balance fill reverts ZeroAmount: the cap keeps the route live
+        if (s.balanceDiscountBps > 9_999) return "balanceDiscountBps";
         return bytes32(0);
     }
 

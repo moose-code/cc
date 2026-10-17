@@ -21,6 +21,7 @@ export interface EthReplay {
   ceilBps: bigint;
   rateCap: bigint;
   scorePer100Points: bigint; // score units in 100 points (SCORE_PER_100_POINTS; the selfchecks pass smaller values)
+  buyToArtistBps: bigint; // the artist royalty on every purchase, bps of the payout, paid on top (decision 163)
 }
 
 // Total eth sellForEth pays for the credits `scores` (their scores, in order)
@@ -44,10 +45,13 @@ export function replayEthFills(scores: bigint[], a: EthReplay): bigint[] {
   let bucket = a.bucket;
   const fills: bigint[] = [];
   for (const score of scores) {
-    const read = r < left ? r : left;
+    // the bid read clamps to the pot left over 1 + buyToArtistBps / 10000 (Core._bidRoom), and the pot pays the payout
+    // plus its royalty, so a pot-bound quote equals what the seller receives (decision 163)
+    const bidRoom = (left * 10000n) / (10000n + a.buyToArtistBps);
+    const read = r < bidRoom ? r : bidRoom;
     const x = (read * score) / a.scorePer100Points;
     fills.push(x);
-    left -= x;
+    left -= x + (x * a.buyToArtistBps) / 10000n;
     if (bucket !== a.nowBucket || r < (start * a.dropFloorBps) / 10000n) {
       bucket = a.nowBucket;
       start = r;
@@ -67,43 +71,47 @@ export function replayEthFills(scores: bigint[], a: EthReplay): bigint[] {
 }
 
 export interface BalanceReplay {
-  rate: bigint; // balanceRate(): the balance bid rate now, bps of par
+  rate: bigint; // balanceRate(): the posted balance bid rate, 10000 - balanceDiscountBps, bps of par (decision 164)
   unit: bigint; // the module's unitPerPoint()
   scorePer100Points: bigint;
-  dropPer100PointsBps: bigint;
+  dropPer100PointsBps: bigint; // kept for the callers' shape; the posted bid does not drop
   dropFloorBps: bigint;
-  floorBps: bigint; // 10000 - balanceBidMarginBps
+  floorBps: bigint;
+  // value mode clamp (decision 165): the posted payout is lowered to the eth bid for the score valued in tokens at the
+  // protected sale price. set these three only in value mode with a usable quote; left unset the payout is par
+  valueModeOn?: boolean;
+  ethRate?: bigint; // Core.ethRate() in value mode: the eth bid, wei per 100 points, already rateCap and pot clamped
+  valueSell?: bigint; // controller.valuePerPoint(true): wei per point at the protected sale price
 }
 
-// Total balance token sellForBalance pays for the credits `scores` (in order) in one call. Each credit pays
-// score * unit * rate / 10000 and the fill drops the rate per credit by dropPer100PointsBps * score / scorePer100Points (one
-// rounding), held at or above the minute floor and the bid floor, mirroring CoreLib._drop. The quote is the first
-// fills of the minute, so the minute start is the starting rate. The available() clamp is not replayed: with ample
-// available it does not bind, and a module too short to pay the floor reverts PotTooSmall, which no minOut can clear.
+// score units in one point: the balance payout cap divides the eth bid by the sale price per token, vSell / POINT_UNIT
+const POINT_UNIT = 10000n;
+
+// Total balance token sellForBalance pays for the credits `scores` in one call: score * unit * rate / 10000 each, flat.
+// The posted bid does not drop on a fill and does not climb (decision 164), so the order does not matter. The
+// available() bound is not replayed: a batch whose payouts plus their artist royalties pass available() reverts
+// PotTooSmall, which no minOut can clear. The artist royalty rides on top from the module and never changes the seller's
+// payout (decision 163).
 export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
   return replayBalanceFills(scores, a).reduce((t, x) => t + x, 0n);
 }
 
-// What each credit of the batch pays in the balance token, in sell order; replayBalance is their sum.
+// What each credit of the batch pays in the balance token, in sell order; replayBalance is their sum. In value mode the
+// posted payout is lowered to the eth bid for the score valued in tokens at the protected sale price per token, so a
+// filled payout is worth at most the eth bid when the engine sells the tokens (decision 165, Core.balanceClampFor):
+// cap = bidForScore * POINT_UNIT * unit / valueSell, bidForScore = ethRate * score / scorePer100Points.
 export function replayBalanceFills(scores: bigint[], a: BalanceReplay): bigint[] {
-  let r = a.rate;
-  const start = a.rate;
-  const fills: bigint[] = [];
-  for (const score of scores) {
-    fills.push((score * a.unit * r) / 10000n);
-    const denom = 10000n * a.scorePer100Points;
-    const fallNum = a.dropPer100PointsBps * score;
-    let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
-    const mfloor = (start * a.dropFloorBps) / 10000n;
-    if (dropped < mfloor) dropped = mfloor;
-    if (dropped < a.floorBps) dropped = a.floorBps;
-    r = dropped;
-  }
-  return fills;
+  return scores.map((score) => {
+    const posted = (score * a.unit * a.rate) / 10000n;
+    if (!a.valueModeOn || a.ethRate === undefined || a.valueSell === undefined || a.valueSell === 0n) return posted;
+    const bidForScore = (a.ethRate * score) / a.scorePer100Points;
+    const cap = (bidForScore * POINT_UNIT * a.unit) / a.valueSell;
+    return posted < cap ? posted : cap;
+  });
 }
 
 export interface ValueReplay {
-  rate: bigint; // balanceRate(): the shared instance now, bps of par
+  rate: bigint; // sharedRate(): the shared instance now, bps of par (value mode's eth price state; the balance bid is posted, decision 164)
   value: bigint; // controller.valuePerPoint(false): wei per point at the protected buy price
   pot: bigint; // ethPot plus the unbooked share the first book adds, less the reserve (Core.room)
   rateCap: bigint;
@@ -111,6 +119,7 @@ export interface ValueReplay {
   dropPer100PointsBps: bigint;
   dropFloorBps: bigint;
   floorBps: bigint; // 10000 - balanceBidMarginBps
+  buyToArtistBps: bigint; // the artist royalty on every purchase, bps of the payout, paid on top (decision 163)
 }
 
 // Total eth sellForEth pays in value mode (decision 148) for the credits `scores` (in order) in one call. Each credit
@@ -130,10 +139,13 @@ export function replayValueFills(scores: bigint[], a: ValueReplay): bigint[] {
   for (const score of scores) {
     let rate = (r * a.value * 100n) / 10000n;
     if (rate > a.rateCap) rate = a.rateCap;
-    const read = rate < left ? rate : left;
+    // the bid read clamps to the pot left over 1 + buyToArtistBps / 10000 (Core._bidRoom), and the pot pays the payout
+    // plus its royalty, so a pot-bound quote equals what the seller receives (decision 163)
+    const bidRoom = (left * 10000n) / (10000n + a.buyToArtistBps);
+    const read = rate < bidRoom ? rate : bidRoom;
     const x = (read * score) / a.scorePer100Points;
     fills.push(x);
-    left -= x;
+    left -= x + (x * a.buyToArtistBps) / 10000n;
     const denom = 10000n * a.scorePer100Points;
     const fallNum = a.dropPer100PointsBps * score;
     let dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;

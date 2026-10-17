@@ -159,25 +159,24 @@ contract BalanceTokenReplacementTest is Fixture {
         _buyRaw(0, data, ids[0], address(xt));
     }
 
-    // rule: setBalanceModule while balanceBidOn resets the balance instance rate, clock and anchor to the floor
-    function test_replacementWhileBidOnResetsToFloor() public {
+    // rule: setBalanceModule while balanceBidOn leaves the balance price state alone and the posted rate unchanged: the
+    // balance bid is a posted price that never reads the instance, and a fill never moves it (decision 164)
+    function test_replacementWhileBidOnLeavesTheInstance() public {
         uint256 floor = 10_000 - core.settings().balanceBidMarginBps;
+        uint256 posted = 10_000 - core.settings().balanceDiscountBps;
         nextToken.mint(address(nextModule), 1e24);
-        // a fill then a warp leave the stored clock behind the current time
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
         core.sellForBalance(ids);
         _warp(2 hours);
-        uint64 clockBefore = uint64(_slot(33));
-        assertTrue(clockBefore != uint64(block.timestamp), "the clock is behind before the replacement");
+        uint256 clockBefore = _slot(33);
+        assertTrue(uint64(clockBefore) != uint64(block.timestamp), "the clock is behind before the replacement");
+        assertEq(_slot(32), floor, "a fill left rateAtCheckpoint at the launch floor");
         _setBalanceModule(address(nextModule));
-        assertEq(_slot(32), floor, "rateAtCheckpoint is the floor");
-        assertEq(uint64(_slot(33)), uint64(block.timestamp), "checkpointTime is fresh");
-        assertEq(uint64(_slot(33) >> 64), uint64(block.timestamp), "lastFillTime is fresh");
-        assertEq(_slot(34), floor, "anchor.lastFillRate is the floor");
-        assertEq(_slot(35), floor, "anchor.minuteStartRate is the floor");
-        assertEq(_slot(37), floor, "anchor.peakRate is the floor");
-        assertEq(core.balanceRate(), floor, "the read rate is the floor");
+        assertEq(_slot(32), floor, "rateAtCheckpoint is untouched by the replacement");
+        assertEq(_slot(33), clockBefore, "the clocks are untouched");
+        assertEq(_slot(34), floor, "anchor.lastFillRate is untouched");
+        assertEq(core.balanceRate(), posted, "the read rate is the posted rate");
     }
 
     // rule: a replacement inside the fill bucket resets the instance and the next sell pays in the new token

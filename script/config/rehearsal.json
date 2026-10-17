@@ -54,7 +54,9 @@
     "sniperSeconds": 1800,
     "reserveWei": 100000000000000000,
     "returnLockSeconds": 21600,
-    "valueModeOn": false
+    "valueModeOn": false,
+    "buyToArtistBps": 250,
+    "balanceDiscountBps": 1000
   },
   "sale": {
     "markupBps": 15000,

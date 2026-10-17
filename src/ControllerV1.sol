@@ -277,8 +277,10 @@ contract ControllerV1 is IController {
         if (anyRef && !allRef) revert BadSetting("referenceTriple");
         // the sale spread covers the worst round trip through the reference band at the current credit spread
         _checkLoopClosure(v.tolBps, creditSpreadBps);
-        // the reference band widened by the sale spread stays inside the bid margin, so a buy from the bid and a sale
-        // back loses in either currency. the Core read is skipped while the Core has no code yet (constructor order)
+        // the reference band widened by the step stays inside value mode's shared instance margin, so a buy from the
+        // value mode eth bid and a sale back loses. the reference prices the value mode eth bid, whose floor is
+        // `10_000 - balanceBidMarginBps`; the flat balance route (balanceDiscountBps) never reads the reference, so the
+        // margin here is the shared instance's. the Core read is skipped while the Core has no code yet (constructor order)
         if (address(CORE).code.length != 0) {
             uint256 margin = ICoreSale(address(CORE)).settings().balanceBidMarginBps;
             if ((BPS + v.referenceStepBps) * (BPS + v.tolBps) * (BPS - margin) >= BPS * BPS * BPS) {

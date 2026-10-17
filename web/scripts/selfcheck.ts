@@ -15,6 +15,7 @@ const a: EthReplay = {
   ceilBps: 10000n,
   rateCap: 10n ** 18n,
   scorePer100Points: 1000n,
+  buyToArtistBps: 0n,
 };
 
 // credits of score scorePer100Points (score / scorePer100Points is 1): each pays the full rate and drops the rate by dropPer100PointsBps
@@ -40,14 +41,22 @@ assert.equal(replayEth([2000n, 1000n], a), 2000n + 990n);
 // the sell page lists each credit's fill: the fills are in sell order and add up to the total
 assert.deepEqual(replayEthFills([2000n, 1000n], a), [2000n, 990n]);
 assert.deepEqual(replayEthFills(ref(50), { ...a, pot: 2500n }).reduce((t, x) => t + x, 0n), replayEth(ref(50), { ...a, pot: 2500n }));
-// balance: score * unit * rate / 10000 per credit, the rate dropped per credit by dropPer100PointsBps * score / scorePer100Points
-// in one rounding, never below the floor
+// the artist royalty rides on top: the pot pays the payout plus its royalty, so the bid read clamps to the pot left
+// over 1 + buyToArtistBps / 10000 and a pot-bound quote equals what the seller receives (decision 163)
+const royal = { ...a, buyToArtistBps: 1000n };
+// not pot-bound: payout 1000 plus 100 royalty is 1100, under the 2200 pot
+assert.equal(replayEth(ref(1), { ...royal, pot: 2200n }), 1000n);
+// a pot of 1100 clamps the read to 1100 * 10000 / 11000 = 1000: payout 1000, royalty 100, the whole pot
+assert.equal(replayEth(ref(1), { ...royal, pot: 1100n }), 1000n);
+// a pot of 550 clamps the read to 500 below the state: payout 500, royalty 50, the whole pot, so minOut 500 clears
+assert.equal(replayEth(ref(1), { ...royal, pot: 550n }), 500n);
+// balance: score * unit * rate / 10000 per credit, flat: the posted bid does not drop on a fill (decision 164)
 const b = { rate: 10000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
-// at par: 300, then the rate is 10000 * (100000 - 150) / 100000 = 9985 and the second credit pays 5 * 100 * 9985 / 10000
-assert.equal(replayBalance([3n, 5n], b), 300n + 499n);
-assert.deepEqual(replayBalanceFills([3n, 5n], b), [300n, 499n]);
-// at the floor the drop cannot lower the rate: 270 then 450
+assert.equal(replayBalance([3n, 5n], b), 300n + 500n);
+assert.deepEqual(replayBalanceFills([3n, 5n], b), [300n, 500n]);
+// the posted rate at the launch discount: 270 then 450, in either order
 assert.equal(replayBalance([3n, 5n], { ...b, rate: 9000n }), 270n + 450n);
+assert.equal(replayBalance([5n, 3n], { ...b, rate: 9000n }), 450n + 270n);
 
 console.log("selfcheck ok");
 

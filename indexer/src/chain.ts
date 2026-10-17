@@ -18,6 +18,8 @@ type Settings = {
   saleToBuybackBps: number;
   feeToRedeemBurnBps: number;
   payeePpm: number;
+  buyToArtistBps: number;
+  balanceDiscountBps: number;
 };
 
 /** Typed copies of the Settings fields the handlers and the web read; the full struct is stored as json. */
@@ -28,6 +30,8 @@ export const settingsColumns = (s: Settings) => ({
   saleToBuybackBps: Number(s.saleToBuybackBps),
   feeToRedeemBurnBps: Number(s.feeToRedeemBurnBps),
   payeePpm: Number(s.payeePpm),
+  buyToArtistBps: Number(s.buyToArtistBps),
+  balanceDiscountBps: Number(s.balanceDiscountBps),
 });
 
 /**

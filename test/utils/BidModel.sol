@@ -77,9 +77,16 @@ library BidModel {
         return FixedPointMathLib.max(lo, absFloor);
     }
 
-    /// @dev the clamp: the price of one credit that a pot affords, at most `rateCap`
+    /// @dev the eth bid's room: the pot less the reserve over `1 + buyToArtistBps / 10_000`, so a bid the read shows is
+    /// payable with its artist royalty on top (decision 163). mirrors `CoreLib._bidRoom`
+    function room(Settings memory s, uint256 pot) internal pure returns (uint256) {
+        return pot * 10_000 / (10_000 + uint256(s.buyToArtistBps));
+    }
+
+    /// @dev the eth clamp: the price of one credit that the room affords, at most `rateCap`. `pot` is the pot less the
+    /// reserve; the royalty division is applied here
     function clamp(Settings memory s, uint256 pot) internal pure returns (uint256) {
-        return clamp(s, pot, s.rateCap);
+        return clamp(s, room(s, pot), s.rateCap);
     }
 
     /// @dev the clamp with an explicit cap (eth: `rateCap`; balance: 10_000)
@@ -107,7 +114,10 @@ library BidModel {
     /// `climbPerMinBps`, up to the clamp (a price state above the clamp holds). reproduces `CoreLib._climb` so the read
     /// matches exactly
     function priceNow(Settings memory s, Bid memory b) internal pure returns (uint256) {
-        return priceNow(s, b, s.rateCap);
+        // the eth instance climbs toward the room over `1 + buyToArtistBps / 10_000` (decision 163)
+        Bid memory e = b;
+        e.pot = room(s, b.pot);
+        return priceNow(s, e, s.rateCap);
     }
 
     /// @dev priceNow with an explicit cap (eth: `rateCap`; balance: 10_000). reproduces `CoreLib._climb`: the idle climb
@@ -153,7 +163,7 @@ library BidModel {
 
     /// @dev the read for the price state `p`: lowered to the clamp
     function read(Settings memory s, uint256 pot, uint256 p) internal pure returns (uint256) {
-        return read(s, pot, p, s.rateCap);
+        return read(s, room(s, pot), p, s.rateCap);
     }
 
     /// @dev the read with an explicit cap (eth: `rateCap`; balance: 10_000)

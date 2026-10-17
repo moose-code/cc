@@ -104,8 +104,8 @@ contract ConfigTest is Fixture {
         assertEq(f.settings.keeperMaxBaseFee, 5 gwei);
         assertTrue(f.settings.redeemOn);
         assertEq(f.settings.balanceBidMarginBps, 1_000);
-        assertEq(SettingsFields.N, 37);
-        assertEq(abi.encode(f.settings).length, 37 * 32);
+        assertEq(SettingsFields.N, 39);
+        assertEq(abi.encode(f.settings).length, 39 * 32);
         assertEq(f.settings.spendCapBps, 10_000);
         assertEq(f.settings.bucketSeconds, 60);
         assertEq(f.settings.balanceBidCapBps, 10_000);
@@ -760,9 +760,9 @@ contract ConfigTest is Fixture {
     /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     // promise: the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
     function test_settingsBoundsEveryFieldBothEdges() public view {
-        uint256[37] memory lo = SettingsFields.lo();
-        uint256[37] memory hi = SettingsFields.hi();
-        bytes32[37] memory names = SettingsFields.names();
+        uint256[39] memory lo = SettingsFields.lo();
+        uint256[39] memory hi = SettingsFields.hi();
+        bytes32[39] memory names = SettingsFields.names();
         for (uint256 i; i < SettingsFields.N; ++i) {
             for (uint256 edge; edge < 2; ++edge) {
                 Settings memory s = Mainnet.defaultSettings();

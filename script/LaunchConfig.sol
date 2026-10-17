@@ -230,6 +230,8 @@ abstract contract ConfigReader is CommonBase {
         s.spendCapBps = _u16(j, ".settings.spendCapBps");
         s.bucketSeconds = _u32(j, ".settings.bucketSeconds");
         s.balanceBidCapBps = _u32(j, ".settings.balanceBidCapBps");
+        s.buyToArtistBps = _u16(j, ".settings.buyToArtistBps");
+        s.balanceDiscountBps = _u16(j, ".settings.balanceDiscountBps");
         s.idleStepSeconds = _u32(j, ".settings.idleStepSeconds");
         s.sniperSeconds = _u32(j, ".settings.sniperSeconds");
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -337,7 +339,9 @@ abstract contract ConfigReader is CommonBase {
         uint256 n;
         if (c.owner == address(0)) tmp[n++] = "owner";
         if (c.creator == address(0)) tmp[n++] = "creator";
-        if (c.artist == address(0) && c.settings.saleToArtistBps != 0) tmp[n++] = "artist";
+        if (c.artist == address(0) && (c.settings.saleToArtistBps != 0 || c.settings.buyToArtistBps != 0)) {
+            tmp[n++] = "artist";
+        }
         if (bytes(c.name).length == 0) tmp[n++] = "name";
         if (bytes(c.symbol).length == 0) tmp[n++] = "symbol";
         if (c.salt == bytes32(0)) tmp[n++] = "salt";

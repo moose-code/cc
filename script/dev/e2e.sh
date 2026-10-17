@@ -77,8 +77,9 @@ if [ "$PHASE" = "post" ]; then
   pick() { printf '%s\n' "$SEED" | grep -oE "$1 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
   TOKEN="$(pick BALANCE_TOKEN)"; MODULE="$(pick BALANCE_MODULE)"
   [ -n "$TOKEN" ] && [ -n "$MODULE" ] || { echo "$SEED" | tail -40; echo "no balance addresses from seed" >&2; exit 1; }
+  TOPEN="$(printf '%s\n' "$SEED" | grep -oE 'TRANSFERS_OPEN_BLOCK [0-9]+' | tail -1 | grep -oE '[0-9]+')"
   jq --arg t "$TOKEN" --arg m "$MODULE" '.balanceToken = $t | .balanceModule = $m | .balancePool = {fee: 3000, tickSpacing: 60}' $REC > "$tmp" && mv "$tmp" $REC
-  echo "balanceToken $TOKEN balanceModule $MODULE"
+  echo "balanceToken $TOKEN balanceModule $MODULE transfersOpenBlock ${TOPEN:-?}"
 fi
 
 declare -A GAS
@@ -163,6 +164,14 @@ if [ "$PHASE" = "post" ]; then
   done
   [ "$(call "$CTL" 'atFloor(uint256)(bool)' "$SID")" = true ] || { echo "CHECK FAILED: statement $SID never reached its floor" >&2; exit 1; }
   stage redeem
+  # the module pays the balance seller by moving Jack's token, which the token locks until transfersOpenBlock. mine to it
+  if [ -n "${TOPEN:-}" ]; then
+    CUR="$(cast block-number --rpc-url "$E2E_RPC_URL")"
+    if [ "$CUR" -lt "$TOPEN" ]; then
+      cast rpc anvil_mine "$(printf '0x%x' $((TOPEN - CUR + 1)))" --rpc-url "$E2E_RPC_URL" >/dev/null
+      echo "mined to transfersOpenBlock $TOPEN (from $CUR)"
+    fi
+  fi
   stage balance-bid
 fi
 
