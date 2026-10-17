@@ -146,6 +146,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// `_book` booked `amount` of fee income (pot plus redeem-burn shares) and pushed `toPayee` to the payee
     event FeesAdded(uint256 amount, uint256 toPayee);
+    /// a door ran in value mode while the reference quote was unusable: the eth bid fell back to the last good rate
+    /// (raised by CoreLib, declared here for the abi)
+    event ValuePricingDegraded();
     /// `fund` added `amount` to the pot
     event Funded(address indexed from, uint256 amount);
     /// `collectEscrow` claimed `amount` from the fee escrow into the pot
@@ -244,6 +247,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant REDEEM_OVERHEAD_GAS = 50_000;
     /// the most gas of a redemption the caller payment counts, so a gas burning module cannot inflate it
     uint256 private constant REDEEM_GAS = 1_500_000;
+    /// gas of the work the `refreshReference` caller payment counts, with the transaction base cost
+    uint256 private constant REFRESH_OVERHEAD_GAS = 50_000;
+    /// the most gas of a refresh the caller payment counts, so a gas burning controller cannot inflate it
+    uint256 private constant REFRESH_GAS = 200_000;
     /// gas of the work after the end of `buyback` that its refund counts, with the transaction base cost
     uint256 private constant BUYBACK_OVERHEAD_GAS = 60_000;
     /// gas of the work after the count in `buyListing` (the spend, the pile record, the event and the payment, about
@@ -384,12 +391,18 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _book();
     }
 
-    /// forwards to the controller's reference refresh and, when it updated the reference (the cadence had elapsed), pays
-    /// the caller like compose, bounded by the pot and the caller base-fee ceiling. anyone may call; the keeper calls
-    /// this door. the body is `CoreLib.refreshReference`, kept there for the Core code size; the controller's own
-    /// `refreshReference` stays public and unpaid
+    /// books the pending fee income, forwards to the controller's reference refresh and, when it updated the reference
+    /// (the cadence had elapsed), pays the caller on the exact compose basis (`_payCaller`), bounded by the booked pot
+    /// and the caller base-fee ceiling. anyone may call; the keeper calls this door. booking first means the caller is
+    /// paid from the pot share of the pending income the keeper's gate already counted (decision 159, C02). the
+    /// controller's own `refreshReference` stays public and unpaid
     function refreshReference() external nonReentrant {
-        _toLib();
+        uint256 gasStart = gasleft();
+        _book();
+        address ctrl = s.controller;
+        if (ctrl == address(0)) return;
+        if (!IController(ctrl).refreshReference()) return;
+        _payCaller(gasStart, REFRESH_OVERHEAD_GAS, REFRESH_GAS);
     }
 
     /// adds `msg.value` to the pot. the eth above the tracked pots is booked first, so `msg.value` is never counted as

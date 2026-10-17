@@ -189,10 +189,6 @@ library CoreLib {
     /// gas of one queued compose and one queued redemption the reserve prices at `callerMaxBaseFee`
     uint256 internal constant COMPOSE_QUEUE_GAS = 9_000_000;
     uint256 internal constant REDEEM_QUEUE_GAS = 600_000;
-    /// the work before the count in `refreshReference` with the transaction base cost, and the most gas its caller
-    /// payment counts
-    uint256 internal constant REFRESH_OVERHEAD_GAS = 50_000;
-    uint256 internal constant REFRESH_GAS = 200_000;
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
 
@@ -216,6 +212,8 @@ library CoreLib {
     error ReturnLocked(uint256 id, uint256 until);
     /// an eth bid read in value mode while the controller's value read fails, answers short, zero or not ok
     error NoQuote();
+    /// a door ran in value mode while the reference quote was unusable: the eth bid fell back to the last good rate
+    event ValuePricingDegraded();
     /// one eth fill in value mode: the eth paid, the shared instance rate (bps of par) after this credit's drop, and the
     /// pot left. mirrors `EthRateFill`
     event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
@@ -488,6 +486,8 @@ library CoreLib {
             // and the switch off reset resumes from it. a down quote leaves the previous good rate in place
             (uint256 vr, bool okv) = _valueRate(c);
             if (okv) c.rateAtCheckpoint = vr;
+            // a door ran while the quote was unusable: the eth bid falls back to the kept rate (decision 159, C02)
+            else emit ValuePricingDegraded();
         } else {
             (c.rateAtCheckpoint,,) = _ethClimb(c);
         }
@@ -495,55 +495,37 @@ library CoreLib {
         c.checkpointTime = uint64(block.timestamp);
     }
 
-    /// @notice the keeper's reference refresh door, moved here to keep the Core under the code size limit: forwards to
-    /// the controller's refresh and, when it ran, pays the caller like compose, bounded by the pot and the caller base
-    /// fee ceiling. runs in the Core's storage context by delegatecall (the `_toLib` door forwards to it)
-    function refreshReference() external {
-        uint256 gasStart = gasleft();
-        State storage c = state();
-        address ctrl = c.controller;
-        if (ctrl == address(0)) return;
-        if (!IController(ctrl).refreshReference()) return;
-        Settings storage cfg = c.settings;
-        if (cfg.callerMaxBaseFee == 0 && cfg.callerFee == 0) return;
-        // the door does not grow the pot, so no checkpoint is needed before the payment; paying lowers the pot the next
-        // eth read clamps against, which is correct
-        uint256 pay = ((gasStart - gasleft() + REFRESH_OVERHEAD_GAS).min(REFRESH_GAS) * block.basefee.min(cfg.callerMaxBaseFee) + cfg.callerFee).min(c.ethPot);
-        if (pay == 0) return;
-        c.ethPot -= pay;
-        SafeTransferLib.safeTransferETH(msg.sender, pay);
-    }
-
     /// @notice the eth bid rate now, wei per 100 points: the price state lowered to the clamp, `ethPot` plus the pending
-    /// pot share less the reserve. in value mode the price state is `_valueRate`, which reverts `NoQuote` while the
-    /// controller's value read fails. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint` and `bidOf` and its doors
-    /// read it
+    /// pot share less the reserve. in value mode the price state is `_valueRate`, falling back to the last good value
+    /// rate while the quote is unusable. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint` and `bidOf` and its
+    /// doors read it
     function ethRate() external view returns (uint256 read) {
         State storage c = state();
         if (!c.settings.valueModeOn) {
             (, read,) = _ethClimb(c);
             return read;
         }
-        return _valuePrice(c).min(_ethPagesPot(c).zeroFloorSub(_reserve(c)));
+        return _valueRateOrLast(c).min(_ethPagesPot(c).zeroFloorSub(_reserve(c)));
     }
 
-    /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode `_valueRate`, reverting
-    /// `NoQuote` while the controller's value read fails. the Core forwards its `ethPrice()`
+    /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode the value rate, falling back
+    /// to the last good value rate while the quote is unusable. the Core forwards its `ethPrice()`
     function ethPrice() external view returns (uint256) {
         return _ethPrice(state());
     }
 
-    /// the eth price state now: the eth instance outside value mode, `_valueRate` in value mode (reverting `NoQuote`)
+    /// the eth price state now: the eth instance outside value mode, the value rate (or the last good one) in value mode
     function _ethPrice(State storage c) private view returns (uint256 price) {
-        if (c.settings.valueModeOn) return _valuePrice(c);
+        if (c.settings.valueModeOn) return _valueRateOrLast(c);
         (price,,) = _ethClimb(c);
     }
 
-    /// the value mode price state, reverting `NoQuote` while the controller's value read fails
-    function _valuePrice(State storage c) private view returns (uint256 rate) {
-        bool ok;
-        (rate, ok) = _valueRate(c);
-        if (!ok) revert NoQuote();
+    /// the value mode eth price state now: the controller's value read when usable, else the last good value mode eth
+    /// rate kept in the eth instance checkpoint. a lapsed or unusable quote degrades the eth bid instead of reverting
+    /// `NoQuote`, so the engine keeps buying while the reference recovers (decision 159, C02)
+    function _valueRateOrLast(State storage c) private view returns (uint256) {
+        (uint256 rate, bool ok) = _valueRate(c);
+        return ok ? rate : c.rateAtCheckpoint;
     }
 
     /// the value mode eth rate, wei per 100 points: the shared instance climbed to now (clamped to the cap, not to the
