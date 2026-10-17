@@ -23,11 +23,6 @@ contract LaunchDayPhase2Test is LaunchDayBase {
     /// @dev the balance pool sqrt the Seed post section and the e2e flows use (script/config/anvil.json .dev)
     uint160 internal constant DEV_SQRT = uint160(11318308930609191084791992905142);
 
-    function setUp() public override {
-        super.setUp();
-        autoBook = true; // book after each swap so the pot funds the bid and the composed page
-    }
-
     // promise: SPEC 4 the balance door against the pinned production module and Jack's token: the renderer is registered,
     // the funder retires the launch supply, a statement redeems once transfers open, and a seller then takes the balance bid.
     // the artifact comes from script/tools/upstream-balance.sh; the test fails with the build instruction when it is absent
@@ -39,7 +34,11 @@ contract LaunchDayPhase2Test is LaunchDayBase {
 
         // the module advertises nothing until a statement redeems into it and transfers open
         _skipSniperWindow();
-        _fundPot(5 ether);
+        // fee income arrives unbooked through the hook; the keeper books once after the buys
+        for (uint256 i; i < 4; ++i) _buyCoin(funder, 55 ether);
+        assertEq(core.ethPot(), 0, "the buys leave the fees unbooked");
+        _book();
+        assertGe(core.ethPot(), 5 ether, "one keeper book funds the pot");
         assertEq(IBalanceModule(module).available(), 0, "no reserve before the first redemption");
         uint256 owed = _redeemAtOpening(up, IBalanceModule(module));
         _sellThroughModule(token, IBalanceModule(module), owed);

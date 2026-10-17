@@ -582,8 +582,9 @@ library CoreLib {
     /// the posted balance payout `pay` for `score` stored units lowered to the controller's `balanceClampFor`: the eth
     /// bid for the score valued in tokens at the protected sale price, so a filled payout is worth at most the eth bid
     /// when the engine sells the tokens and a round trip cannot extract a spot that leads the reference (decision 165).
-    /// returns `pay` outside value mode. while the reference is unusable the payout stays as posted; an unusable
-    /// reference also closes the sale doors (`NoQuote`), so no round trip opens
+    /// returns `pay` outside value mode. in value mode the controller's answer is used as given; while the reference is
+    /// unusable the controller answers a zero payout, so the fill reverts `ZeroAmount`. a failed or malformed
+    /// controller call keeps `pay`
     function _clampPayout(uint256 score, uint256 pay) private view returns (uint256) {
         if (!state().settings.valueModeOn) return pay;
         (uint256 out, bool ok) = _quoteRead(abi.encodeCall(IController.balanceClampFor, (score, pay)));

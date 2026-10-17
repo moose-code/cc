@@ -368,8 +368,9 @@ contract ControllerV1 is IController {
     /// usable with a reference set, the sample at most `referenceMaxStale` old, both of the two most recent liquidity
     /// samples at least `minLiquidity`, a balance module set and a unit read.
     /// with `project` true the views and the sale doors run the read-only equivalent of `refreshReference` first, so a
-    /// view read in the same block as a sale door's refresh equals the price the door charges (decision 159, C03). the
-    /// Core's eth bid reads it with `project` false, so a lapsed refresh reads stale and the bid falls back
+    /// view read in the same block as a sale door's refresh equals the price the door charges. the Core's
+    /// eth bid and the balance cap read it with `project` false, so a lapsed refresh reads stale: the eth bid falls
+    /// back to the eth instance and the balance fill refuses
     function _protected(bool project) private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
         Quote memory q = quote;
         uint256 ref = referencePrice;
@@ -420,7 +421,7 @@ contract ControllerV1 is IController {
         uint256 pSell;
         uint256 unit;
         // the Core's eth bid reads the stored reference without a projected refresh, so a lapsed refresh reads stale and
-        // the Core falls back to the eth instance rather than halting (decision 159, C02)
+        // the Core falls back to the eth instance rather than halting
         (pBuy, pSell, unit, ok) = _protected(false);
         if (!ok) return (0, false);
         value = forSale
@@ -432,14 +433,17 @@ contract ControllerV1 is IController {
     /// units: the smaller of `posted` and the eth bid for the score valued in tokens at the protected sale price per
     /// token (`pSell / 1e18` wei), where `pSell` is `max(prior-block sampled spot, reference * (10_000 - tolBps) /
     /// 10_000)`. paying tokens is the engine selling tokens, so a filled payout is worth at most the eth bid when sold
-    /// and a round trip cannot extract a spot that leads the reference (decision 165). `ok` is false while the reference
-    /// is unusable; the Core then keeps `posted`, since the sale doors revert `NoQuote` and no round trip opens
+    /// and a round trip cannot extract a spot that leads the reference. while the reference is unusable
+    /// no cap can be computed, so the answer is `(0, true)`: a zero payout, which the balance fill and the payout view
+    /// treat as unavailable. a credit held outside the return lock, for example one bought before the outage and moved
+    /// to another wallet, therefore cannot sell for balance until the reference recovers
     function balanceClampFor(uint256 score, uint256 posted) external view returns (uint256 paid, bool ok) {
         uint256 pSell;
         (, pSell,, ok) = _protected(false);
-        if (!ok || pSell == 0) return (0, false);
+        if (!ok || pSell == 0) return (0, true);
         uint256 cap = FullMath.mulDiv(CORE.bidForScore(score), 1e18, pSell);
         paid = posted < cap ? posted : cap;
+        ok = true;
     }
 
     /// the Core's settings, read once per door and threaded through the pricing path so a single call reads them once,
