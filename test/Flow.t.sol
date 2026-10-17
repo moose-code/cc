@@ -97,7 +97,7 @@ contract FlowTest is Fixture {
         Settings memory s = core.settings();
         assertEq(s.dropPer100PointsBps, 115);
         assertEq(s.dropFloorBps, 1);
-        assertEq(s.climbPerMinBps, 100);
+        assertEq(s.climbPerMinBps, 200);
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 600);
         assertEq(s.saleFloorBps, 10_000);
@@ -115,7 +115,7 @@ contract FlowTest is Fixture {
         assertEq(s.feeToRedeemBurnBps, 1_000);
         assertEq(s.callerFee, 0.0003 ether);
         assertEq(s.callerMaxBaseFee, 3 gwei);
-        assertEq(s.returnLockSeconds, 86_400);
+        assertEq(s.returnLockSeconds, 21_600);
     }
 
     // promise: SPEC 2 every setting reads back as written

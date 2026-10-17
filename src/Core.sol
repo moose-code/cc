@@ -222,7 +222,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant READ_GAS = 200_000;
     /// gas stipend of the forced pushes of the payee fee share and the artist and operator cuts of nft sales
     uint256 private constant PUSH_GAS = 50_000;
-    /// gas the controller's `atFloor` may use: its reads of the start and the statement age
+    /// gas the controller's `atFloor` may use: the launch curve rule reads the reference, the age only rule the start
+    /// and the statement age
     uint256 private constant AT_FLOOR_GAS = 400_000;
     /// words of the `deploymentInfo` answer the Core reads: the offset word and the fields up to `launchedAt`, the 9th
     uint256 private constant INFO_WORDS = 10;

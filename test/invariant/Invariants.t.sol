@@ -565,9 +565,11 @@ abstract contract InvariantsBase is InvariantFixture {
             );
         } else {
             // a credit the engine sold inside its return lock is refused by the lock, a later purchase of a
-            // capped bucket by its exhausted budget; neither is a quote against fill divergence
+            // capped bucket by its exhausted budget, and a credit whose bid passes the pot less the reserve by
+            // `PotTooSmall`; none is a quote against fill divergence
             assertTrue(
-                bytes4(why) == ICore.ReturnLocked.selector || bytes4(why) == ICore.SpendCapReached.selector,
+                bytes4(why) == ICore.ReturnLocked.selector || bytes4(why) == ICore.SpendCapReached.selector
+                    || bytes4(why) == ICore.PotTooSmall.selector,
                 string.concat("sellForEth refused a sellable credit, selector ", vm.toString(bytes4(why)))
             );
         }

@@ -41,7 +41,7 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 |---|---|
 | the bid | `rateStart` (market price on launch day of 100 points, wei), `rateCap` (3 times it), `pointsPerPage` 35,200 (80 credits times the census 440), `climbMultiplierCapBps` 40,000, `spendCapBps` 10,000 (off), `bucketSeconds` 60, `idleStepSeconds` 600 and the other bid settings |
 | the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 4, anchor half life 604,800, anchor min cost 0.1 eth, `anchorMoveBps` 0) |
-| the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `spreadBps` 200 (the floor is 10,200 of the reference at the cap of 10,000, decision 153), `startBps` 15,000 (`pointsPerPage` is a bid setting above) |
+| the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `spreadBps` 1,000 (the floor is 11,000 of the reference at the cap of 10,000, today's 1.1x; decision 155 keeps 1,000 at launch, 200 at the value switch of decision 153), `startBps` 15,000 (`pointsPerPage` is a bid setting above) |
 | the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
 | the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 1,000, `balanceBidCapBps` 10,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
 | the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0.0003 eth, `callerMaxBaseFee` 3 gwei (decision 138) |
@@ -136,7 +136,7 @@ the owner keeper (`keeper/`, section 8) runs every duty from launch (decision 13
 
 ### a dump that walks the bid down, and statements above the floor
 
-at launch settings the bid climbs 1 percent a minute below and above the recovery level (`recoveryClimbPerMinBps` and `climbPerMinBps` are both 100, decision 151). the ETH purchase budget also limits how much a dump can sell per bucket; time until fills resume depends on that budget and the fixed bucket boundary. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
+at launch settings the bid climbs 2 percent a minute below and above the recovery level (`recoveryClimbPerMinBps` and `climbPerMinBps` are both 200, decisions 151 and 155). the ETH purchase budget also limits how much a dump can sell per bucket; time until fills resume depends on that budget and the fixed bucket boundary. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
 
 ### watching the buyback after a price fall
 

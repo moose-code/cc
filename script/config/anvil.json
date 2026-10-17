@@ -20,14 +20,14 @@
   "settings": {
     "dropPer100PointsBps": 115,
     "dropFloorBps": 1,
-    "climbPerMinBps": 100,
+    "climbPerMinBps": 200,
     "ceilBps": 11000,
     "idleLoosenBps": 600,
     "saleFloorBps": 10000,
     "saleToBuybackBps": 2500,
     "saleToArtistBps": 250,
     "saleToOperatorBps": 50,
-    "recoveryClimbPerMinBps": 100,
+    "recoveryClimbPerMinBps": 200,
     "recoveryGapBps": 1000,
     "peakHalfLife": 21600,
     "buybackDelay": 25,
@@ -53,7 +53,7 @@
     "idleStepSeconds": 600,
     "sniperSeconds": 1800,
     "reserveWei": 100000000000000000,
-    "returnLockSeconds": 86400
+    "returnLockSeconds": 21600
   },
   "sale": {
     "markupBps": 15000,
@@ -69,7 +69,7 @@
     "minCcToChoose": "1000000000000000000",
     "saleOn": true,
     "window": 14400,
-    "spreadBps": 200,
+    "spreadBps": 1000,
     "startBps": 15000
   },
   "launch": {

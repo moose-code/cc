@@ -32,6 +32,7 @@ interface IControllerV1 {
     error Reentrant();
     error Underpaid();
 
+    event AgeEligibilitySet(bool on);
     event AnchorBpsSet(uint32 anchorBps);
     event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps);
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
@@ -40,6 +41,7 @@ interface IControllerV1 {
     event SaleSet(Sale sale);
 
     function CORE() external view returns (address);
+    function ageEligibilityOn() external view returns (bool);
     function anchorBps() external view returns (uint32);
     function anchorHalfLife() external view returns (uint32);
     function anchorMinCost() external view returns (uint128);
@@ -67,6 +69,7 @@ interface IControllerV1 {
     function pointRate() external view returns (uint256);
     function priceOf(uint256 sid) external view returns (uint256 price);
     function referenceOf(uint256 sid) external view returns (uint256);
+    function setAgeEligibilityOn(bool v) external;
     function setAnchorBps(uint32 v) external;
     function setBalancePoolKey(PoolKey memory key) external;
     function setCredit(CreditSale memory v) external;

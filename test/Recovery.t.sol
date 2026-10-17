@@ -19,10 +19,10 @@ contract RecoveryTest is Fixture {
     function test_launchGapIs1000() public view {
         string memory json = vm.readFile("script/config/mainnet.json");
         assertEq(vm.parseJsonUint(json, ".settings.recoveryGapBps"), 1_000, "shipped config");
-        assertEq(vm.parseJsonUint(json, ".settings.recoveryClimbPerMinBps"), 100, "shipped config climb");
+        assertEq(vm.parseJsonUint(json, ".settings.recoveryClimbPerMinBps"), 200, "shipped config climb");
         assertEq(Mainnet.defaultSettings().recoveryGapBps, 1_000, "defaultSettings");
         assertEq(core.settings().recoveryGapBps, 1_000, "fixture core");
-        assertEq(core.settings().recoveryClimbPerMinBps, 100, "fixture core climb");
+        assertEq(core.settings().recoveryClimbPerMinBps, 200, "fixture core climb");
     }
 
     function setUp() public override {
@@ -61,8 +61,8 @@ contract RecoveryTest is Fixture {
 
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a one minute dump of 140 credits halves the bid; the recovery climb brings it back to the pre dump price in about
-    /// 70 minutes at the launch gap. at launch `climbPerMinBps` and `recoveryClimbPerMinBps` are both 100 (decision 151),
-    /// so the climb from the 50 percent floor to the peak is a uniform 1 percent a minute. the climb is unscaled by the pot (decision
+    /// 36 minutes at the launch gap. at launch `climbPerMinBps` and `recoveryClimbPerMinBps` are both 200 (decision 155),
+    /// so the climb from the 50 percent floor to the peak is a uniform 2 percent a minute. the climb is unscaled by the pot (decision
     /// 128 variant d scales only the ceiling loosening). the exact minute is asserted and logged
     function test_oneMinuteDumpRecovers() public {
         vm.prank(owner);
@@ -75,12 +75,12 @@ contract RecoveryTest is Fixture {
         assertGe(dropped, pre * 45 / 100, "the dump did not fall below the minute floor");
         uint256 m = _minutesToRecover(pre);
         emit log_named_uint("one minute dump: minutes to recover to the pre dump price", m);
-        assertEq(m, 70, "one minute dump: minutes to recover at the launch gap");
+        assertEq(m, 36, "one minute dump: minutes to recover at the launch gap");
     }
 
     // promise: SPEC 1 after a large sale the bid recovers fast (peak anchor)
     /// a three minute dump of about 420 credits walks the bid down by half each minute, to about an eighth of the pre
-    /// dump price; the recovery climb brings it back in 207 minutes at the launch gap (the climb is unscaled by the pot)
+    /// dump price; the recovery climb brings it back in 104 minutes at the launch gap (the climb is unscaled by the pot)
     function test_threeMinuteDumpRecovers() public {
         vm.prank(owner);
         core.setRate(OPEN_RATE);
@@ -93,7 +93,7 @@ contract RecoveryTest is Fixture {
         assertLt(dropped, pre * 20 / 100, "three minutes of dumping cut the bid to about an eighth");
         uint256 m = _minutesToRecover(pre);
         emit log_named_uint("three minute dump: minutes to recover to the pre dump price", m);
-        assertEq(m, 207, "three minute dump: minutes to recover at the launch gap");
+        assertEq(m, 104, "three minute dump: minutes to recover at the launch gap");
     }
 
     // promise: SPEC 1 setRate restates the remembered peak

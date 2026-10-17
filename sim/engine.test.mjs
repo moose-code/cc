@@ -35,7 +35,7 @@ const R0 = 6.668e15;
 {
   const cfg = JSON.parse(fs.readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8'));
   // the stepped bid fields of the Core, config name to model name (percent and hours in the model)
-  const STEPPED = { dropPer100PointsBps: 115, dropFloorBps: 1, climbPerMinBps: 100, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 100, recoveryGapBps: 1000 };
+  const STEPPED = { dropPer100PointsBps: 115, dropFloorBps: 1, climbPerMinBps: 200, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
   const STEPPED_SIM = { dropPerCreditPct: 'dropPer100PointsBps', dropToPct: 'dropFloorBps', climbPerMin: 'climbPerMinBps', ceilPct: 'ceilBps', idleLoosenPct: 'idleLoosenBps', recoveryClimbPerMin: 'recoveryClimbPerMinBps', recoveryGapPct: 'recoveryGapBps', peakHalfLifeHours: 'peakHalfLife' };
   for (const [k, v] of Object.entries(STEPPED)) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
   // the sim defaults are the launch bid rule, field for field with the config (bps to percent). the model has one bid rule
@@ -76,7 +76,7 @@ const R0 = 6.668e15;
   // the credit block (the Credit struct of the launch config) is the model's CREDIT, field for field, and the launch values are the ones of FLOW 88 to 90
   assert.deepEqual(Object.keys(cfg.credit).sort(), Object.values(CREDIT_CONFIG_KEY).sort()); n++; // the config credit block is the model's CREDIT, field for field (decision 123 dropped royaltyRecipient)
   for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +cfg.credit[ck], 1e-12, 'credit ' + k);
-  assert.deepEqual(CREDIT, { creditCostToPotBps: 8000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: true, creditWindow: 4 * H, creditSpreadBps: 200, creditStartBps: 15000 }); n++;
+  assert.deepEqual(CREDIT, { creditCostToPotBps: 8000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: true, creditWindow: 4 * H, creditSpreadBps: 1000, creditStartBps: 15000 }); n++;
   ok(CREDIT.royaltyBps === undefined && cfg.credit.royaltyBps === undefined, 'the royalty is gone from the model and the config (decision 123)'); n++;
   assert.equal(creditViolation(CREDIT), null); n++;
   assert.equal(firstViolation(SETTINGS), null); n++;
@@ -752,7 +752,7 @@ const R0 = 6.668e15;
 // saleFloorBps, the reserve keeps the queue's payments out of the bids, the return lock refuses a sold credit, eligibility is by age
 {
   const c = fresh({ creditSaleOn: true }, 10);
-  near(c.floorMultBps(), 10200, 1e-12, 'launch spread 200 at the cap 10000'); c.setSettings({ balanceBidCapBps: 11000 }, 1); near(c.floorMultBps(), 11220, 1e-12, 'at the hard cap 11000 of decision 152');
+  near(c.floorMultBps(), 11000, 1e-12, 'launch spread 1000 at the cap 10000'); c.setSettings({ balanceBidCapBps: 11000 }, 1); near(c.floorMultBps(), 12100, 1e-12, 'at the hard cap 11000 of decision 152');
   c.setSettings({ creditSpreadBps: 0, balanceBidCapBps: 10000 }, 2); near(c.floorMultBps(), 10000, 1e-12, 'no spread at the 10000 cap is the reference'); n += 3;
   // sellCreditTo floors on saleFloorBps of the cost
   const f = fresh({ creditSaleOn: true, saleFloorBps: 5000 }, 10);
@@ -764,13 +764,16 @@ const R0 = 6.668e15;
   near(r.reserve(), 1.5 * (3 * (9e6 * r.s.callerMaxBaseFee * 1e-9 + r.s.callerFee) + 2 * (6e5 * r.s.callerMaxBaseFee * 1e-9 + r.s.callerFee)), 1e-12, 'three pages and two statements');
   near(r.clamp(), (1 - r.reserve()) * W, 1e-9, 'the clamp is the pot less the reserve');
   r.setQueue(0, 0); r.ethPot = 0.1; assert.equal(r.ethRate(0), 0); assert.equal(r.sellForEth(0, 433), 0); n += 4; // a pot at the reserve bids nothing
-  // the return lock: refused before soldAt + returnLockSeconds, at least in the second of the sale
+  // the return lock: refused before soldAt + returnLockSeconds; a lock of 0 is no lock
   const l = fresh({ creditSaleOn: true }, 10), sold = { pts: 1, cost: 0.004, t0: 0 }; l.sellCreditTo(sold, 0.005, 100);
-  ok(l.returnLocked(sold, 100 + 86399) && !l.returnLocked(sold, 100 + 86400), 'the launch lock of a day'); ok(!l.returnLocked({ pts: 1, cost: 1, t0: 0 }, 5), 'a credit never sold passes');
-  l.setSettings({ returnLockSeconds: 0 }, 101); ok(l.returnLocked(sold, 100) && !l.returnLocked(sold, 101), 'a lock of 0 refuses the second of the sale only'); n += 3;
-  // eligibility by age only: decayHours of age, or a start at or below 10000, whatever the reference
+  ok(l.returnLocked(sold, 100 + 21599) && !l.returnLocked(sold, 100 + 21600), 'the launch lock of six hours'); ok(!l.returnLocked({ pts: 1, cost: 1, t0: 0 }, 5), 'a credit never sold passes');
+  l.setSettings({ returnLockSeconds: 0 }, 101); ok(!l.returnLocked(sold, 100) && !l.returnLocked(sold, 101), 'a lock of 0 is no lock'); n += 3;
+  // eligibility: the launch curve rule (ageEligibilityOn false) and the age only rule (true), both at the age boundary;
+  // at launch saleFloorBps is 10000 so the two agree. decision 155: the owner turns on the age only rule at the switch
   const a = fresh({}, 10), st = { cost: 1, t0: 0 }, span = a.c.decayHours * H;
-  ok(!a.atFloor(st, span - 1) && a.atFloor(st, span), 'eligible at decayHours of age'); a.setSettings({ markupBps: 10000 }, 0); ok(a.atFloor(st, 0), 'a start at par is eligible at once'); n += 2;
+  ok(!a.atFloor(st, span - 1) && a.atFloor(st, span), 'curve rule: eligible at decayHours of age'); a.setSettings({ markupBps: 10000 }, 0); ok(a.atFloor(st, 0), 'curve rule: a start at par is eligible at once'); n += 2;
+  const ae = fresh({}, 10); ae.setSettings({ ageEligibilityOn: true }, 0); const ast = { cost: 1, t0: 0 }, aspan = ae.c.decayHours * H;
+  ok(!ae.atFloor(ast, aspan - 1) && ae.atFloor(ast, aspan), 'age only: eligible at decayHours of age'); ae.setSettings({ markupBps: 10000 }, 0); ok(ae.atFloor(ast, 0), 'age only: a start at par is eligible at once'); n += 2;
 }
 
 // buyback slice and the caller payment (docs/DECISIONS.md 61): the caller is paid 270,000 gas at min(basefee, keeperMaxBaseFee) plus keeperFee out of the slice.

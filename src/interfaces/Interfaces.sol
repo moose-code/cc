@@ -7,9 +7,9 @@ interface IController {
     /// the next page to compose. the core uses `ready` and `ids`; the returned `format` is not used, the core picks the
     /// format of a system compose
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    /// true when the curve price of statement `sid` has reached its floor, `saleFloorBps` of the reference. the curve age
-    /// excludes paused seconds, so eligibility is frozen while sales are paused. the core reads it to gate the balance side
-    /// redemption
+    /// true when statement `sid` is eligible for redemption. with `ageEligibilityOn` false (launch) the curve price has
+    /// reached its floor, `saleFloorBps` of the reference; with it on the rule is age only. the age excludes paused
+    /// seconds, so eligibility is frozen while sales are paused. the core reads it to gate the balance side redemption
     function atFloor(uint256 sid) external view returns (bool);
     /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
     /// the credit window has passed. the core reads it to gate a chosen compose
@@ -341,12 +341,12 @@ library Mainnet {
         return Settings({
             dropPer100PointsBps: 115,
             dropFloorBps: 1,
-            climbPerMinBps: 100,
+            climbPerMinBps: 200,
             ceilBps: 11_000,
             idleLoosenBps: 600,
             saleFloorBps: 10_000,
             saleToBuybackBps: 2_500,
-            recoveryClimbPerMinBps: 100,
+            recoveryClimbPerMinBps: 200,
             recoveryGapBps: 1_000,
             peakHalfLife: 21_600,
             buybackDelay: 25,
@@ -374,7 +374,7 @@ library Mainnet {
             idleStepSeconds: 600,
             sniperSeconds: 1800,
             reserveWei: 0.1 ether,
-            returnLockSeconds: 86_400
+            returnLockSeconds: 21_600
         });
     }
 
@@ -392,10 +392,11 @@ library Mainnet {
         });
     }
 
-    /// the launch credit settings: the credit sale is on, its window is 4 hours, the spread is 2 percent over the bid's
-    /// hard cap (decision 153; the floor is 102 percent of the reference at a cap of 10_000), the start is 150 percent of
-    /// the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and
-    /// the coin balance a caller needs to choose a compose or a held format is 1 coin
+    /// the launch credit settings: the credit sale is on, its window is 4 hours, the spread is 10 percent over the bid's
+    /// hard cap (decision 155; the floor is 110 percent of the reference at the launch cap of 10_000, today's 1.1x; the
+    /// owner lowers it to 200 at the value switch per decision 153), the start is 150 percent of the floor, 80 percent of
+    /// a sold credit's cost funds the pot, chosen composition is off, and the coin balance a caller needs to choose a
+    /// compose or a held format is 1 coin
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
             costToPotBps: 8_000,
@@ -403,7 +404,7 @@ library Mainnet {
             minCcToChoose: 1e18,
             saleOn: true,
             window: 4 hours,
-            spreadBps: 200,
+            spreadBps: 1_000,
             startBps: 15_000
         });
     }

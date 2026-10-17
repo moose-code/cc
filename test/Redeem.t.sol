@@ -73,6 +73,12 @@ abstract contract RedeemBase is Fixture {
         _setSettings(s);
     }
 
+    /// turns the age only eligibility rule on or off (decision 155). launch is off, the reference curve rule
+    function _setAgeEligibility(bool on) internal {
+        vm.prank(owner);
+        ctl.setAgeEligibilityOn(on);
+    }
+
     /// the payment of `gasCounted` at `basefee` under the settings of `_payOn`
     function _want(uint256 gasCounted, uint256 basefee) internal pure returns (uint256) {
         return gasCounted * (basefee < PAY_CEILING ? basefee : PAY_CEILING) + PAY_FEE;
@@ -133,7 +139,8 @@ contract RedeemTimingTest is RedeemBase {
         core.redeemStatement(0);
     }
 
-    // promise: SPEC 9 eligibility is by age only: false one second before decayHours of age, true at it
+    // promise: SPEC 9 the launch curve rule reaches its floor at decayHours of age: false one second before it, true at
+    // it (at launch saleFloorBps is 10,000, so the curve boundary equals the age rule's)
     function test_eligibility_byAgeAtTheBoundary() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
@@ -153,6 +160,7 @@ contract RedeemTimingTest is RedeemBase {
     /// age rule reads only the start and the age, so a broken quote neither blocks nor restarts eligibility
     function test_eligibility_readsNoPrice() public {
         _enterPhase2();
+        _setAgeEligibility(true);
         _setBalancePool();
         uint256 sid = _composeOnce().sid;
         vm.warp(_composedAt(sid) + uint256(ctl.decayHours()) * 1 hours);
@@ -181,12 +189,33 @@ contract RedeemTimingTest is RedeemBase {
         assertTrue(ctl.atFloor(sid), "a start at par is eligible at age 0");
     }
 
+    // promise: SPEC 9 the switch selects the rule: off is the reference curve (the ask at its floor), on is age only.
+    /// they differ once `saleFloorBps` is below 10,000 (the value at the switch): a start at par waits under the curve
+    /// (the ask sits above a 5,000 floor) but is eligible at once under the age rule (the start is at or below 10,000)
+    function test_eligibility_switchOffIsCurveOnIsAge() public {
+        _enterPhase2();
+        uint256 sid = _composeOnce().sid;
+        Settings memory s = core.settings();
+        s.saleFloorBps = 5_000;
+        _setSettings(s);
+        Sale memory sale = _sale();
+        sale.markupBps = 10_000;
+        vm.prank(owner);
+        ctl.setSale(sale);
+        assertEq(ctl.startBps(), 10_000, "start at par");
+        assertFalse(ctl.ageEligibilityOn(), "the launch default is the curve rule");
+        assertFalse(ctl.atFloor(sid), "curve rule: a start above the 5,000 floor is not at floor at age 0");
+        _setAgeEligibility(true);
+        assertTrue(ctl.atFloor(sid), "age rule: a start at par is eligible at age 0");
+    }
+
     // promise: INTEGRATION the Core reads eligibility within its gas budget
     /// `atFloor` reads the start and the statement age in cold state. the Core allows it 400,000 gas (`AT_FLOOR_GAS`).
     /// with a pool key set and the module stand in, the cold read stays under half the cap and the redemption through
     /// the Core completes
     function test_timing_atFloorColdFitsTheCoreReadBudget() public {
         _enterPhase2();
+        _setAgeEligibility(true);
         _setBalancePool();
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);

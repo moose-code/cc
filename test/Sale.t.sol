@@ -1155,12 +1155,16 @@ contract SaleLaunchColdTest is SaleBase {
         assertEq(ctl.startBps(), 15_000, "the opening markup at launch");
         uint256 sid = _composeOnce().sid;
 
-        // the reference is read live at each age (no _pinReferenceToCost), the ask is the launch curve of it
+        // the reference is read live at each age (no _pinReferenceToCost), the ask is the launch 4 hour curve of it
         _age(sid, 0);
         assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 15_000 / 10_000, "age 0: 150 percent of the live reference");
-        _age(sid, 6 * H);
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 12_500 / 10_000, "age 6 h: 125 percent of the live reference");
+        _age(sid, 2 * H);
+        assertEq(
+            ctl.priceOf(sid), ctl.referenceOf(sid) * 12_500 / 10_000, "age 2 h: 125 percent, the midpoint of the 4 hour line"
+        );
+        _age(sid, 4 * H);
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "age 4 h: the sale floor, 100 percent of the live reference");
         _age(sid, 12 * H);
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "age 12 h: the sale floor, 100 percent of the live reference");
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "past the window: still at the floor");
     }
 }

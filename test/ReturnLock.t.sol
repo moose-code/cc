@@ -6,7 +6,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 
 /// a credit the engine sold through `sellCreditTo` is refused at every intake door for `returnLockSeconds` from the sale
 /// (`ReturnLocked(id, until)`): `sellForEth`, `sellForBalance`, `buyListing`, and `swapCredit` as the incoming credit.
-/// the Core stores the sale timestamp; a lock of 0 refuses the credit in the second of the sale only, the same block rule
+/// the Core stores the sale timestamp; a lock of 0 is no lock, so a credit may return in the second of its sale
 contract ReturnLockTest is Fixture {
     address internal buyer;
 
@@ -27,16 +27,16 @@ contract ReturnLockTest is Fixture {
         vm.prank(buyer);
         CREDITS.setApprovalForAll(address(core), true);
         uint256 lock = core.settings().returnLockSeconds;
-        until = block.timestamp + (lock == 0 ? 1 : lock);
+        until = block.timestamp + lock;
     }
 
     function _locked(uint256 id, uint256 until) internal pure returns (bytes memory) {
         return abi.encodeWithSelector(ICore.ReturnLocked.selector, id, until);
     }
 
-    // promise: SPEC 6 the launch return lock is one day
-    function test_launchLockIsOneDay() public view {
-        assertEq(core.settings().returnLockSeconds, 86_400);
+    // promise: SPEC 6 the launch return lock is six hours (decision 155)
+    function test_launchLockIsSixHours() public view {
+        assertEq(core.settings().returnLockSeconds, 21_600);
     }
 
     // promise: SPEC 6 a credit sold through the credit sale is refused by sellForEth until the lock ends
@@ -86,17 +86,13 @@ contract ReturnLockTest is Fixture {
         core.sellForBalance(_one(ids[0]));
     }
 
-    // promise: SPEC 6 a lock of 0 keeps the same block rule: refused in the second of the sale, allowed the next
-    function test_zeroLockIsTheSameBlockRule() public {
+    // promise: SPEC 6 a lock of 0 is no lock: a credit may return in the second of its sale
+    function test_zeroLockIsNoLock() public {
         _setReturnLock(0);
-        (uint256[] memory ids, uint256 until) = _buyFirst(1);
-        assertEq(until, block.timestamp + 1, "the lock ends one second after the sale");
-        vm.prank(buyer);
-        vm.expectRevert(_locked(ids[0], until));
-        core.sellForEth(_one(ids[0]));
-        _nextSecond();
+        (uint256[] memory ids,) = _buyFirst(1);
         vm.prank(buyer);
         core.sellForEth(_one(ids[0]));
+        assertEq(CREDITS.ownerOf(ids[0]), address(core), "a zero lock lets the credit return in the sale's own second");
     }
 
     // promise: SPEC 6 the lock reads the live setting against the stored sale time, so an owner change moves its end

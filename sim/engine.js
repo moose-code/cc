@@ -56,7 +56,7 @@ export const SETTINGS = {
   idleStepSeconds: _cs.idleStepSeconds,
   sniperSeconds: _cs.sniperSeconds,
   reserveWei: _cs.reserveWei / W, // eth: the least the pot keeps for processing; the reserve is the larger of it and 1.5 times the queued compose and redeem payments (CoreLib._reserve)
-  returnLockSeconds: _cs.returnLockSeconds, // seconds every intake door refuses a credit the engine sold, at least the second of the sale (CoreLib.checkReturn)
+  returnLockSeconds: _cs.returnLockSeconds, // seconds every intake door refuses a credit the engine sold; 0 is no lock (CoreLib.checkReturn)
   swapFeeCc: _cs.swapFeeCc / W, // whole coins burned by the caller of swapCredit per swap (decision 116)
 };
 export const SETTING_KEYS = Object.keys(SETTINGS);
@@ -359,6 +359,7 @@ export class Core {
     this.anchorStored = 10000; // the controller's storedAnchorBps: the anchor at anchorTime, bps of the reference
     this.anchorTime = t0;
     this.paused = false; this.pausedSince = 0; this.pausedTotal = 0; // the Core's pause clock: the flag, the start of the open pause, the seconds of closed pauses
+    this.ageEligibilityOn = false; // ControllerV1.ageEligibilityOn: false (launch) is the curve rule, true is age only (decision 155)
     this.feeToRedeemBurn = 0; // cumulative swap fee eth sent to the redeem burn reserve by feeToRedeemBurnBps
     this.redeemBurnMoved = 0; // cumulative eth moved from the reserve to the buyback pot by redemptions
     this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.balancePot = 0; // balancePot is the balance module's holding, the eth value of the token it can pay (available())
@@ -421,9 +422,9 @@ export class Core {
   }
   // CoreLib.room: ethPot less the reserve, the most the bids may spend. the caller payments pay from the whole pot
   room() { return Math.max(0, this.ethPot - this.reserve()); }
-  // CoreLib.checkReturn: an intake door refuses a credit the engine sold before soldAt + returnLockSeconds, at least the
-  // second of the sale (a lock of 0 keeps the same block rule)
-  returnLocked(cr, now) { return cr.soldAt !== undefined && now < cr.soldAt + Math.max(this.s.returnLockSeconds, 1); }
+  // CoreLib.checkReturn: an intake door refuses a credit the engine sold before soldAt + returnLockSeconds. a lock of 0
+  // is no lock, so a credit may return in the second of its sale
+  returnLocked(cr, now) { return cr.soldAt !== undefined && this.s.returnLockSeconds > 0 && now < cr.soldAt + this.s.returnLockSeconds; }
   // the ceiling in rate terms: ceilPct of the anchor, the anchor loosened while idle. the anchor is max(last rate paid, peak now)
   stepCeil(now) {
     const s = this.s, p = this.p;
@@ -542,6 +543,7 @@ export class Core {
     if (this.c.startCapBps < anchorNow) this.setAnchor(this.c.startCapBps, now);
     if (patch.anchorBps !== undefined) this.setAnchor(patch.anchorBps, now);
     if (patch.paused !== undefined) this.setPaused(patch.paused, now);
+    if (patch.ageEligibilityOn !== undefined) this.ageEligibilityOn = !!patch.ageEligibilityOn;
     this.rateAtCheckpoint = Math.min(this.rateAtCheckpoint, next.rateCap); // a lower cap pulls the rate down now
     if (rate !== undefined) {
       this.rateAtCheckpoint = rate; this.checkpointTime = now;
@@ -884,9 +886,12 @@ export class Core {
     if (!(paid > 0)) return null;
     return { paid, cost: Math.max(this.balanceCostBasis(pts, now), 1e-18) };
   }
-  // ControllerV1.atFloor: by age only, the start at or below 10000 or the statement aged decayHours. no price is read
+  // ControllerV1.atFloor: with ageEligibilityOn false (launch) the curve price has reached its floor (saleFloorBps of the
+  // reference), reading the reference; with it true the rule is age only, the start at or below 10000 or the statement
+  // aged decayHours, no reference read (decision 155)
   atFloor(st, now) {
-    return this.startBps(now) <= BPS || this.statementAge(st, now) >= this.c.decayHours * 3600;
+    if (this.ageEligibilityOn) return this.startBps(now) <= BPS || this.statementAge(st, now) >= this.c.decayHours * 3600;
+    return askBps(this.c, this.startBps(now), this.statementAge(st, now), this.s.saleFloorBps) <= this.s.saleFloorBps;
   }
   // Core.redeemStatement preconditions: a module is set, redeemOn is true, and the statement's curve price has reached its floor
   redeemReady(st, now) {
