@@ -575,7 +575,7 @@ export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
 // what each of `scores` (in sell order) pays in the balance token in one sellForBalance call; balanceQuote is their sum
 export function balanceFills(snap: Snapshot, scores: bigint[]): bigint[] {
   if (scores.length === 0 || snap.balanceUnit === undefined) return [];
-  // in value mode with a usable quote the payout is clamped to the eth bid at the protected sale price (decision 165);
+  // in value mode with a usable quote the payout is clamped to the value rate at the protected sale price;
   // with the quote unusable the fill keeps the posted payout, so the clamp fields stay unset
   const valued = snap.value.on && snap.value.perPointSell !== undefined;
   return replayBalanceFills(scores, {
@@ -586,7 +586,7 @@ export function balanceFills(snap: Snapshot, scores: bigint[]): bigint[] {
     dropFloorBps: BigInt(snap.settings.dropFloorBps),
     floorBps: 10000n - BigInt(snap.settings.balanceBidMarginBps),
     valueModeOn: valued,
-    ethRate: valued ? snap.ethRate : undefined,
+    ethPrice: valued ? snap.ethPrice : undefined,
     valueSell: valued ? snap.value.perPointSell : undefined,
   });
 }

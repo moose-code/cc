@@ -57,6 +57,11 @@ assert.deepEqual(replayBalanceFills([3n, 5n], b), [300n, 500n]);
 // the posted rate at the launch discount: 270 then 450, in either order
 assert.equal(replayBalance([3n, 5n], { ...b, rate: 9000n }), 270n + 450n);
 assert.equal(replayBalance([5n, 3n], { ...b, rate: 9000n }), 450n + 270n);
+// value mode: the cap comes from ethPrice, so a pot-clamped ethRate does not lower it. unit 100, valueSell 10000,
+// score 3: cap = (ethPrice 4000 * 3 / 10) * 10000 * 100 / 10000 = 120000 (posted 300 is below it); a small ethPrice binds
+const v = { ...b, valueModeOn: true, valueSell: 10000n };
+assert.deepEqual(replayBalanceFills([3n], { ...v, rate: 10000000n, ethPrice: 4000n }), [120000n]);
+assert.deepEqual(replayBalanceFills([3n], { ...v, rate: 10000000n, ethPrice: 400n }), [12000n]);
 
 console.log("selfcheck ok");
 
