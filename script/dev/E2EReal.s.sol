@@ -485,7 +485,7 @@ contract E2EReal is Scenario {
     // ------------------------------------------------------------------ phase 7: value mode
 
     /// sets the value quote and switches value mode on with the eth spend cap active, as the owner. reference values
-    /// 1,200 bps/h, step 200, min 600 s, stale 3,600, tol 450, minLiquidity from the balance pool depth.
+    /// 1,200 bps/h, step 200, min 600 s, stale 3,600, tol 0, minLiquidity from the balance pool depth.
     function phase7Quote(uint128 minLiquidity) external {
         _boot();
         vm.broadcast(OWNER);
@@ -493,7 +493,7 @@ contract E2EReal is Scenario {
             Quote({
                 referenceRateBpsPerHour: 1_200,
                 referenceStepBps: 200,
-                tolBps: 450,
+                tolBps: 0,
                 referenceMaxStale: 3_600,
                 referenceMinSeconds: 600,
                 minLiquidity: minLiquidity

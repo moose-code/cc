@@ -80,6 +80,8 @@ contract ControllerV1 is IController {
 
     uint256 private constant PAGE = 80;
     uint256 private constant BPS = 10_000;
+    /// bounds pool-key seeding independently of the executable quote tolerance
+    uint256 private constant POOL_SEED_MAX_DEVIATION_BPS = 450;
     /// gas of the controller's read of the balance module's `unitPerPoint()`. the Core allows `atFloor` 400,000 gas in all
     uint256 private constant UNIT_GAS = 50_000;
 
@@ -226,7 +228,7 @@ contract ControllerV1 is IController {
     /// `currency0` must be native eth (the zero address) and `currency1` the core's current balance token, the order a
     /// native eth pool sorts to. the pool must be initialized, so `valueOf` reads a live price at once. the reference is
     /// seeded from the live spot, and the owner passes `expectedSpot` (wei per 1e18 base units): a live spot more than
-    /// `tolBps` from it reverts, so the reference is not seeded from a pool moved or manipulated between signing and
+    /// 4.5 percent from it reverts, so the reference is not seeded from a pool moved or manipulated between signing and
     /// landing. effective at once
     function setBalancePoolKey(PoolKey calldata key, uint256 expectedSpot) external onlyOwner {
         address token = CORE.balanceToken();
@@ -241,7 +243,7 @@ contract ControllerV1 is IController {
         emit BalancePoolKeySet(c0, c1, key.fee, key.tickSpacing, address(key.hooks));
         // the reference starts at the spot of the key the owner sets, in the owner's transaction
         (uint256 spot,) = _spot();
-        uint256 band = expectedSpot * quote.tolBps / BPS;
+        uint256 band = expectedSpot * POOL_SEED_MAX_DEVIATION_BPS / BPS;
         if (spot < expectedSpot - band || spot > expectedSpot + band) revert BadSetting("spot");
         // seed both sample slots from the live spot and liquidity, so the first quote reads a sample from this block
         uint128 liq = _sampleLiq();

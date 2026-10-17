@@ -65,7 +65,7 @@ struct LaunchConfig {
     Settings settings;
     /// the sale settings of the controller at launch (its constructor argument). owner adjustable afterwards
     Sale sale;
-    /// the reference price settings of the controller at launch (its constructor argument): `tolBps` 450 and
+    /// the reference price settings of the controller at launch (its constructor argument): `tolBps` 0 and
     /// `referenceMinSeconds` 600, with the rate, the step, the staleness and the liquidity minimum owner inputs at 0
     /// until the balance token pool exists (decision 154). owner adjustable afterwards with `setQuote`
     Quote quote;

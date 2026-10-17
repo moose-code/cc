@@ -5,7 +5,7 @@ import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {CreditSale, Settings} from "../src/interfaces/Interfaces.sol";
+import {CreditSale, Settings, Quote, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -92,8 +92,15 @@ contract CreditSaleTest is Fixture {
         _creditBad(c, "creditWindow");
         c.window = type(uint32).max;
 
-        // the spread couples with the reference tolerance (loop closure, decision 157): at the launch tol 450 the
-        // spread must be at least 943, so a zero spread reverts and a spread above it stores
+        // zero executable tolerance permits a zero spread; a nonzero tolerance still needs the loop-closure spread
+        c.spreadBps = 0;
+        ctl.setCredit(c);
+        assertEq(ctl.floorMultBps(), 10_000, "zero tolerance permits zero spread");
+        c.spreadBps = 1_000;
+        ctl.setCredit(c);
+        Quote memory q = Mainnet.defaultQuote();
+        q.tolBps = 450;
+        ctl.setQuote(q);
         c.spreadBps = 0;
         _creditBad(c, "creditSpreadBps");
         c.spreadBps = 1_000;

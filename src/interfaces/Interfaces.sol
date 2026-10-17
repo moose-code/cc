@@ -443,15 +443,15 @@ library Mainnet {
         });
     }
 
-    /// the launch reference price settings: the 4.5 percent band (loop closure bound, decision 153) and a 600 second refresh
+    /// the launch reference price settings: no executable band and a 600 second refresh
     /// cadence. the rate, the step, the staleness and the liquidity minimum are owner inputs set once the balance token
     /// pool exists and its depth is known; a `referenceMaxStale` of 0 keeps the reference price unusable, so value mode
-    /// fails closed to `NoQuote` until they are set
+    /// makes the controller's value-mode sale prices unusable until they are set
     function defaultQuote() internal pure returns (Quote memory) {
         return Quote({
             referenceRateBpsPerHour: 0,
             referenceStepBps: 0,
-            tolBps: 450,
+            tolBps: 0,
             referenceMaxStale: 0,
             referenceMinSeconds: 600,
             minLiquidity: 0
