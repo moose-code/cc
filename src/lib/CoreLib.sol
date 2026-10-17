@@ -376,13 +376,16 @@ library CoreLib {
         emit EthRateFill(cost, rate, pot - cost);
     }
 
-    /// the bucket id, budget and spent wei of the current bucket. the Core forwards its `spendState()`
+    /// the bucket id, budget and spent wei of the current bucket. a bucket a purchase has opened returns its stored
+    /// budget and spent. a fresh bucket quotes `spendCapBps` of the pages pot (`ethPot` plus the pot share of the
+    /// unbooked fee income the next `_book` adds), the pot the first purchase of the bucket books and snapshots, so the
+    /// quote equals the budget the next purchase enforces (decision 147)
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent) {
         State storage c = state();
         bucket = SafeCastLib.toUint64(block.timestamp / c.settings.bucketSeconds);
         Spend storage b = c.spend;
         if (b.initialized && b.spendBucket == bucket) return (bucket, b.spendBudget, b.spentInBucket);
-        return (bucket, SafeCastLib.toUint128(c.ethPot.mulDiv(c.settings.spendCapBps, BPS)), 0);
+        return (bucket, SafeCastLib.toUint128(_ethPagesPot(c).mulDiv(c.settings.spendCapBps, BPS)), 0);
     }
 
     /// restates the remembered peak of `a` at `oldHalf`: decays it to now under the old half life and marks now, so a
@@ -553,12 +556,14 @@ library CoreLib {
     }
 
     /// reverts `ReturnLocked` while credit `id`, sold through `sellCreditTo` at `creditSoldAt[id]`, is inside the return
-    /// lock: before `soldAt + returnLockSeconds`, and at least in the second of the sale, so a lock of 0 keeps the same
-    /// block rule. a credit never sold reads a sale time of 0 and passes at any clock. every intake door calls it per credit
+    /// lock: before `soldAt + returnLockSeconds`. a `returnLockSeconds` of 0 is no lock, so a credit may return in the
+    /// second of its sale. a credit never sold reads a sale time of 0 and passes at any clock. every intake door calls it per credit
     function checkReturn(State storage c, uint256 id) internal view {
+        uint256 lock = c.settings.returnLockSeconds;
+        if (lock == 0) return;
         uint256 soldAt = c.creditSoldAt[id];
         if (soldAt == 0) return;
-        uint256 until = soldAt + uint256(c.settings.returnLockSeconds).max(1);
+        uint256 until = soldAt + lock;
         if (block.timestamp < until) revert ReturnLocked(id, until);
     }
 

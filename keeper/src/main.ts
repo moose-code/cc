@@ -62,6 +62,7 @@ export interface TickResult {
 
 export class Keeper {
   private seen = new Map<string, bigint>();
+  private lastBookAt = 0n;
   private skipLogged = new Map<string, number>();
   private client: PublicClient;
   private cfg: Config;
@@ -86,7 +87,9 @@ export class Keeper {
   }
 
   async tick(): Promise<TickResult> {
-    const { state, snap } = await readState(this.client, this.cfg.record.core, this.fixed);
+    const read = await readState(this.client, this.cfg.record.core, this.fixed);
+    const { snap } = read;
+    const state = { ...read.state, lastBookAt: this.lastBookAt };
     const listings: Listing[] = this.cfg.doorsOn.has("buyListing") && !state.retired ? await this.sources.candidates(snap, state.blockNumber) : [];
     const d = decide(state, listings, { baseFee: state.baseFee }, this.policy, this.seen);
     this.seen = d.seen;
@@ -115,7 +118,10 @@ export class Keeper {
       if (outcome.kind === "failed" || outcome.kind === "skipped") log("info", "not sent", { block: state.blockNumber, door: c.door, key: c.key, reason: outcome.reason });
       if (outcome.kind === "failed" && listing) this.sources.coolDown(`${listing.venue}:${listing.id}`, LISTING_COOLDOWN_SEC);
       // one transaction per tick: the next decision reads the state after it
-      if (outcome.kind === "sent") break;
+      if (outcome.kind === "sent") {
+        if (c.door === "book") this.lastBookAt = state.timestamp;
+        break;
+      }
     }
     log("info", "tick", {
       block: state.blockNumber,
@@ -139,7 +145,7 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
   await startChecks(client, cfg, fixed, signer);
   const ledger = new Ledger(cfg.stateDir, cfg.dailyBudget);
   const breaker = new Breaker(cfg.breakerThreshold, cfg.breakerPauseSec);
-  const policy: Policy = { doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec };
+  const policy: Policy = { doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec };
   const keeper = new Keeper(client, cfg, fixed, new Sources(client, cfg), new Executor(client, cfg, policy, signer, ledger, breaker), policy);
   return { cfg, client, keeper };
 }

@@ -14,7 +14,7 @@ import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, statements } from "./config";
 import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
-import { ETH_ANCHOR_SLOT, ethAnchorWords, replayEth, replayBalance, replayValue } from "./sell";
+import { ETH_ANCHOR_SLOT, ethAnchorWords, replayBalanceFills, replayEthFills, replayValueFills } from "./sell";
 import { useCreditRow, useCreditTraitsIx, useHeldCredits, useIxMode, useStatementDetailIx, useWalletCreditsIx } from "./indexer";
 import type { AcquiredHow } from "./indexer-schema";
 import type { BalanceTokenInfo } from "./format";
@@ -313,18 +313,22 @@ export function useStatements() {
 // (CoreLib.drop and CoreLib.climb replayed in sell.ts). Reads ethPrice,
 // floorRate, the pot with the unbooked fee share the first book adds (Core._book,
 // _split), the settings and the minute anchor. Every read is pinned to one block (atBlock); `pinned` is false when
-// the node refused the pinned reads and the quote came from unpinned ones.
+// the node refused the pinned reads and the quote came from unpinned ones. `fills` is what each credit pays, id to
+// wei, in the order of `ids`; `amount` is their sum.
 export interface SellQuote {
   amount: bigint;
+  fills: Record<string, bigint>;
   pinned: boolean;
 }
 
 export async function sellQuote(client: Client, ids: bigint[], now: number): Promise<SellQuote> {
   const { value, pinned } = await atBlock(client, (blockNumber) => sellQuoteAt(client, ids, now, blockNumber));
-  return { amount: value, pinned };
+  const fills: Record<string, bigint> = {};
+  ids.forEach((id, i) => (fills[id.toString()] = value[i]));
+  return { amount: value.reduce((t, x) => t + x, 0n), fills, pinned };
 }
 
-async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumber?: bigint): Promise<bigint> {
+async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumber?: bigint): Promise<bigint[]> {
   const c = { address: core!, abi: coreAbi } as const;
   const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }), blockNumber });
   // ethPrice reverts NoQuote in value mode while the quote is unusable, so the batch is tolerant and every other read
@@ -368,7 +372,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
     // reverts NoQuote)
     const [value, ok] = await client.readContract({ address: need<Address>(10), abi: controllerAbi, functionName: "valuePerPoint", args: [false], blockNumber });
     if (!ok || value === 0n) throw new Error("the balance token price quote is unavailable");
-    return replayValue(scores, {
+    return replayValueFills(scores, {
       rate: need<bigint>(9),
       value,
       pot: room,
@@ -379,7 +383,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
       floorBps: 10000n - BigInt(st.balanceBidMarginBps),
     });
   }
-  return replayEth(scores, {
+  return replayEthFills(scores, {
     price: need<bigint>(0),
     peak: need<bigint>(1),
     pot: room,
@@ -545,7 +549,8 @@ export function useBalanceToken(): BalanceTokenInfo | undefined {
   return token && decimals != null ? { address: token, decimals } : undefined;
 }
 
-// sellQuote for the selected credit ids, refreshed with the chain clock.
+// sellQuote for the selected credit ids in sell order, refreshed with the chain clock. The previous minute's quote
+// stays on screen while the next one loads, for the same ids only.
 export function useSellQuote(ids: bigint[], now: number) {
   const client = usePublicClient();
   const minute = Math.floor(now / 60);
@@ -554,6 +559,7 @@ export function useSellQuote(ids: bigint[], now: number) {
     queryKey: ["sell-quote", key, minute],
     enabled: engineDeployed && Boolean(client) && ids.length > 0,
     refetchInterval: 15000,
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === key ? prev : undefined),
     queryFn: () => sellQuote(client!, ids, now),
   });
 }
@@ -561,8 +567,13 @@ export function useSellQuote(ids: bigint[], now: number) {
 // the balance token total sellForBalance pays for `scores` (in order), replaying the per-credit drop from the snapshot
 // rate and settings the way sellQuote replays the eth bid. the sell sets minOut to a share of this
 export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
-  if (scores.length === 0 || snap.balanceUnit === undefined) return 0n;
-  return replayBalance(scores, {
+  return balanceFills(snap, scores).reduce((t, x) => t + x, 0n);
+}
+
+// what each of `scores` (in sell order) pays in the balance token in one sellForBalance call; balanceQuote is their sum
+export function balanceFills(snap: Snapshot, scores: bigint[]): bigint[] {
+  if (scores.length === 0 || snap.balanceUnit === undefined) return [];
+  return replayBalanceFills(scores, {
     rate: snap.balanceRate,
     unit: snap.balanceUnit,
     scorePer100Points: SCORE_PER_100_POINTS,

@@ -99,15 +99,15 @@ contract BalanceBidTest is Fixture {
 
     // promise: SPEC 4 decision 128 variant d: the balance climb does not scale with available (only the loosening does)
     /// the balance instance shares the eth rule: the per minute climb is unscaled, so one page of available and four
-    /// pages climb the same (climbPerMinBps 100, 1 percent a minute). the multiplier scales the ceiling loosening,
+    /// pages climb the same (climbPerMinBps 200, 2 percent a minute). the multiplier scales the ceiling loosening,
     /// which the par cap (10_000) bounds in the narrow [floor, par] band
     function test_balanceClimbUnscaledByAvailable() public {
         uint256 floor = _floorBps();
         // one page at par is 80 * refScore * UNIT; available sized so availBpsRaw / (80 * floor) is 1 and 4 pages
         uint256 onePage = 80 * RATE_SCORE * UNIT * floor / 10_000;
-        assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_100 / 10_000, 1, "one page climbs at 1x");
+        assertApproxEqAbs(_balanceClimbAfterMinute(onePage), floor * 10_200 / 10_000, 1, "one page climbs at 1x");
         assertApproxEqAbs(
-            _balanceClimbAfterMinute(onePage * 4), floor * 10_100 / 10_000, 1, "four pages climb at the same 1x"
+            _balanceClimbAfterMinute(onePage * 4), floor * 10_200 / 10_000, 1, "four pages climb at the same 1x"
         );
     }
 
@@ -131,6 +131,57 @@ contract BalanceBidTest is Fixture {
         s.climbPerMinBps = 99;
         _setSettings(s);
         assertEq(core.settings().climbPerMinBps, 99, "setSettings landed");
+    }
+
+    // promise: SPEC 4 the module's available() rises with no engine call and the clamped rate and the next fill follow it
+    /// a thin module holding clamps the balance rate below par while it climbs. the module's available() then rises with
+    /// no engine call (a token donation or a redemption's mint lands at it); the balance rate lifts to the new clamp and
+    /// the next sellForBalance pays the bid read after the rise. launch settings, refScore credit
+    function test_availableRisesWithNoEngineCallAndTheRateAndFillFollow() public {
+        uint256[] memory ids = _credits(user, 1);
+        _unitScore(ids[0]); // score is refScore, so one credit's par is refScore * UNIT
+        uint256 floorBps = _floorBps();
+        uint256 clampBps = floorBps + 200; // a thin holding clamps the rate just above the floor
+        mod.setAvailable(RATE_SCORE * UNIT * clampBps / 10_000);
+        _warp(2 days); // the price state climbs to par but the thin available clamps the rate
+        uint256 rateBefore = core.balanceRate();
+        assertEq(rateBefore, clampBps, "the thin holding clamps the rate below par");
+        uint256 bidBefore = core.balanceBidOf(ids[0]);
+
+        // available() rises with no engine call
+        mod.setAvailable(RATE_SCORE * UNIT); // now a full par of a refScore credit
+        uint256 rateAfter = core.balanceRate();
+        assertGt(rateAfter, rateBefore, "the rise lifted the available clamp, the rate climbed");
+        assertEq(rateAfter, 10_000, "to par");
+        uint256 bidAfter = core.balanceBidOf(ids[0]);
+        assertGt(bidAfter, bidBefore, "the bid rose with the new available()");
+        uint256 before = xt.balanceOf(user);
+        vm.prank(user);
+        core.sellForBalance(ids);
+        assertEq(xt.balanceOf(user) - before, bidAfter, "the fill paid the bid read after the rise");
+    }
+
+    // promise: SPEC 4 a first balance fill with a thin module holding runs at the available-clamped rate, under par
+    /// the module holds under one full par of the credit: available() as bps of par clamps the balance rate between the
+    /// floor and par, and the first fill pays score * unit at that clamped rate, not par. refScore credit, launch settings
+    function test_firstBalanceFillRunsAtTheAvailableClampedRate() public {
+        _warp(2 days);
+        assertEq(core.balanceRate(), 10_000, "the full launch holding climbs the rate to par");
+        uint256[] memory ids = _credits(user, 1);
+        _unitScore(ids[0]); // score is refScore
+        uint256 floorBps = _floorBps();
+        uint256 clampBps = (floorBps + 10_000) / 2; // halfway between the floor and par
+        // a thin holding: available is clampBps of the par of a refScore credit, so the rate clamps to clampBps
+        mod.setAvailable(RATE_SCORE * UNIT * clampBps / 10_000);
+        assertEq(core.balanceRate(), clampBps, "the thin holding clamps the balance rate to available as bps of par");
+        assertGt(clampBps, floorBps, "above the floor");
+        assertLt(clampBps, 10_000, "below par");
+        uint256 expectPay = RATE_SCORE * UNIT * clampBps / 10_000;
+        assertEq(core.balanceBidOf(ids[0]), expectPay, "balanceBidOf is the available-clamped rate");
+        uint256 before = xt.balanceOf(user);
+        vm.prank(user);
+        core.sellForBalance(ids);
+        assertEq(xt.balanceOf(user) - before, expectPay, "the first fill paid the available-clamped rate, under par");
     }
 
     // promise: SPEC 4 the payout never exceeds par: score * unit at the 10_000 cap

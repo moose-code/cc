@@ -41,7 +41,7 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 |---|---|
 | the bid | `rateStart` (market price on launch day of 100 points, wei), `rateCap` (3 times it), `pointsPerPage` 35,200 (80 credits times the census 440), `climbMultiplierCapBps` 40,000, `spendCapBps` 10,000 (off), `bucketSeconds` 60, `idleStepSeconds` 600 and the other bid settings |
 | the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 4, anchor half life 604,800, anchor min cost 0.1 eth, `anchorMoveBps` 0) |
-| the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `spreadBps` 200 (the floor is 10,200 of the reference at the cap of 10,000, decision 153), `startBps` 15,000 (`pointsPerPage` is a bid setting above) |
+| the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `spreadBps` 1,000 (the floor is 11,000 of the reference at the cap of 10,000, today's 1.1x; decision 155 keeps 1,000 at launch, 200 at the value switch of decision 153), `startBps` 15,000 (`pointsPerPage` is a bid setting above) |
 | the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
 | the balance side | `redeemOn` true, `balanceBidOn` false, `redeemSlippageBps` 200, `balanceBidMarginBps` 1,000, `balanceBidCapBps` 10,000, `redeemBurnBps` 2,000, `feeToRedeemBurnBps` 1,000 |
 | the keepers | `buybackSlice` 0.5 eth, `buybackDelay` 25, `keeperFee` 0.0003 eth, `keeperMaxBaseFee` 5 gwei, `callerFee` 0.0003 eth, `callerMaxBaseFee` 3 gwei (decision 138) |
@@ -148,7 +148,7 @@ the owner keeper (`keeper/`, section 8) runs every duty from launch (decision 13
 
 ### a dump that walks the bid down, and statements above the floor
 
-at launch settings the bid climbs 1 percent a minute below and above the recovery level (`recoveryClimbPerMinBps` and `climbPerMinBps` are both 100, decision 151). the ETH purchase budget also limits how much a dump can sell per bucket; time until fills resume depends on that budget and the fixed bucket boundary. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
+at launch settings the bid climbs 2 percent a minute below and above the recovery level (`recoveryClimbPerMinBps` and `climbPerMinBps` are both 200, decisions 151 and 155). the ETH purchase budget also limits how much a dump can sell per bucket; time until fills resume depends on that budget and the fixed bucket boundary. `setRate` restates the bid and the peak at once if the owner wants it faster. statements bought above market sit at their reference until the market reaches it or the balance side opens; lower `saleFloorBps` to sell them below cost, which reaches every held statement at once.
 
 ### watching the buyback after a price fall
 
@@ -277,6 +277,8 @@ every value is an environment variable; nothing secret is written to a file by t
 | `MARGIN_ETH` | 0.00005 | what a paid door must clear above its own cost |
 | `DAILY_BUDGET_ETH` | 0.2 | the net eth (gas spent minus Core payments) the wallet may lose per UTC day; a send whose gross cost does not fit waits |
 | `LISTING_DELAY_SEC` | 120 | decision 137 |
+| `BOOK_MIN_ETH` | 0.01 | once the payee share is latched, the keeper books when the pending income (Core balance above the booked pots) exceeds this |
+| `BOOK_MIN_SEC` | 600 | the keeper's last book must be older than this for the latched book above, so booked state follows income at a bounded gas cost |
 | `STRATEGY_IDS` | `Credits.tokensOf(strategy)` | the CreditStrategy ids to watch, or `off`; refreshed every `STRATEGY_REFRESH_SEC` (600). The default set is kept by delta from the Credits Transfer logs of the strategy (state file `STATE_DIR/strategy-inventory.json`), with a rolling re-read of 300 prices per refresh and a full read once a day |
 | `STRATEGY_FULL_READ` | | `1` reads the whole strategy inventory on every refresh (first start, or a node without log queries) |
 | `INDEXER_URL` | | indexer origin (https or local); seeds the strategy inventory on the first start from `strategy_listing` instead of `tokensOf` |

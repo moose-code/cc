@@ -63,6 +63,44 @@ contract V2PortFeeTest is FeeBase {
         _solvent();
     }
 
+    // promise: SPEC 4 a stranger's escrow claim of the Core credit lands in receive as fee income for the next book
+    /// `ESCROW.claim(core, 0)` pays a credit of the Core to the Core itself and anyone may call it. the eth lands in
+    /// `receive` unbooked, so `collectEscrow` finds nothing after it, and the next `book` splits it by the fee rules
+    /// (payee share, redeem burn share, the rest to the pot) rather than booking it whole the way `collectEscrow` does.
+    /// a cold fresh deploy inside the sniper window, so the book does not latch the payee and shares nothing
+    function test_strangerEscrowClaimLandsAsIncomeForTheNextBook() public {
+        _share(5_000);
+        _creditCore(0.3 ether);
+        assertEq(ESCROW.balances(address(core), address(0)), 0.3 ether);
+        assertEq(core.ethPot(), 0, "nothing booked at launch");
+        assertFalse(core.payeeOn(), "inside the sniper window the payee share is not latched");
+
+        address stranger = _user("escrow claimer");
+        uint256 bal0 = address(core).balance;
+        vm.prank(stranger);
+        ESCROW.claim(address(core), address(0));
+        assertEq(ESCROW.balances(address(core), address(0)), 0, "the stranger claimed the Core credit");
+        assertEq(address(core).balance - bal0, 0.3 ether, "the claim pushed the eth to the Core, unbooked");
+        assertEq(core.ethPot(), 0, "the push booked nothing on its own");
+        assertEq(address(core).balance - _tracked(), 0.3 ether, "the claim waits above the pots");
+
+        // collectEscrow now has nothing to claim
+        vm.expectRevert();
+        core.collectEscrow();
+
+        // the next book splits the pushed claim by the fee rules, not whole to the pot
+        uint256 pot0 = core.ethPot();
+        uint256 rb0 = core.ethRedeemBurn();
+        uint256 payee0 = core.payee().balance;
+        core.book();
+        uint256 toBurn = uint256(0.3 ether) * 5_000 / 10_000;
+        assertEq(core.ethRedeemBurn() - rb0, toBurn, "the redeem burn share of the claim");
+        assertEq(core.ethPot() - pot0, 0.3 ether - toBurn, "the rest of the claim to the pot");
+        assertEq(core.payee().balance - payee0, 0, "the payee share is zero at launch");
+        assertEq(address(core).balance, _tracked(), "every wei is booked");
+        _solvent();
+    }
+
     // promise: SPEC 4 collectEscrow reverts with the escrow error when nothing is owed
     /// `collectEscrow` with nothing to claim reverts with the escrow's error and books nothing
     function test_collectEscrowWithNothingOwedReverts() public {

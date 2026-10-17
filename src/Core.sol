@@ -228,7 +228,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant READ_GAS = 200_000;
     /// gas stipend of the forced pushes of the payee fee share and the artist and operator cuts of nft sales
     uint256 private constant PUSH_GAS = 50_000;
-    /// gas the controller's `atFloor` may use: its reads of the start and the statement age
+    /// gas the controller's `atFloor` may use: the launch curve rule reads the reference, the age only rule the start
+    /// and the statement age
     uint256 private constant AT_FLOOR_GAS = 400_000;
     /// words of the `deploymentInfo` answer the Core reads: the offset word and the fields up to `launchedAt`, the 9th
     uint256 private constant INFO_WORDS = 10;
@@ -534,7 +535,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// the ETH purchase budget of the current bucket: the bucket id, its budget and the wei spent in it. a bucket with no
-    /// purchase yet reads zero spent and the budget `ethPot * spendCapBps / 10_000` of the booked pot
+    /// purchase yet reads zero spent and the budget `spendCapBps` of `ethPot` plus the pot share of the unbooked fee
+    /// income the next `_book` adds, the pot the first purchase of the bucket books and snapshots
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent) {
         return CoreLib.spendState();
     }

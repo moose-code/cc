@@ -70,8 +70,8 @@ contract CreditSaleTest is Fixture {
     // promise: INTEGRATION BadSetting and OnlyOwner on the credit sale setters
     function test_setters_boundsAndEventsAndOwner() public {
         assertEq(ctl.creditWindow(), 4 hours, "launch window");
-        assertEq(ctl.creditSpreadBps(), 200, "launch spread");
-        assertEq(ctl.floorMultBps(), 10_200, "launch floor multiplier, 2 percent over the 10,000 cap");
+        assertEq(ctl.creditSpreadBps(), 1_000, "launch spread");
+        assertEq(ctl.floorMultBps(), 11_000, "launch floor multiplier, 10 percent over the 10,000 cap");
         assertEq(ctl.creditStartBps(), 15_000, "launch start");
 
         CreditSale memory c = _creditSale();
@@ -135,7 +135,7 @@ contract CreditSaleTest is Fixture {
         // age 0: the start
         assertEq(ctl.creditPrice(id), start, "start at acquisition");
         // the balance token baseline is off, so the floor is the cost times the floor bps
-        assertEq(floor, cost * 10_200 / BPS, "floor is 102 percent of cost at the launch spread and cap");
+        assertEq(floor, cost * 11_000 / BPS, "floor is 110 percent of cost at the launch spread and cap");
         assertEq(start, floor * 15_000 / BPS, "start is 150 percent of the floor");
 
         // mid window: on the straight line
@@ -306,15 +306,15 @@ contract CreditSaleTest is Fixture {
     }
 
     // promise: SPEC 8 the credit floor multiplier is (10,000 + spreadBps) of the Core's live balanceBidCapBps
-    /// a cap change moves the credit floor with no controller edit: 10,200 at the cap of 10,000, 11,220 at the hard cap of
-    /// 11,000 of decision 152, 12,240 at 12,000
+    /// a cap change moves the credit floor with no controller edit: 11,000 at the cap of 10,000, 12,100 at the hard cap of
+    /// 11,000 of decision 152, 13,200 at 12,000 (launch spread 1,000, decision 155)
     function test_floor_followsTheLiveCap() public {
         uint256[] memory ids = _armCostGoverns(1);
         uint256 id = ids[0];
         (, uint256 cost,) = core.creditInfo(id);
         _warp(ctl.creditWindow());
         uint32[3] memory caps = [uint32(10_000), 11_000, 12_000];
-        uint256[3] memory mult = [uint256(10_200), 11_220, 12_240];
+        uint256[3] memory mult = [uint256(11_000), 12_100, 13_200];
         for (uint256 i; i < 3; ++i) {
             Settings memory s = core.settings();
             s.balanceBidCapBps = caps[i];
@@ -331,7 +331,7 @@ contract CreditSaleTest is Fixture {
         uint256 id = ids[0];
         (, uint256 cost,) = core.creditInfo(id);
         Settings memory s = core.settings();
-        s.saleFloorBps = 12_000; // above the launch multiplier 10,200, at most the 15,000 markup
+        s.saleFloorBps = 12_000; // above the launch multiplier 11,000, at most the 15,000 markup
         _setSettings(s);
         _warp(ctl.creditWindow());
         uint256 price = ctl.creditPrice(id);

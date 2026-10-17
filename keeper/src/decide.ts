@@ -54,6 +54,8 @@ export interface State {
   // potWithPending less the reserve: the most a buyListing may spend (the clamp of Core.ethRate after the book)
   potRoom: bigint;
   pendingIncome: bigint;
+  // timestamp of the last book the keeper sent, 0 until it sends one
+  lastBookAt: bigint;
   ethToBuyback: bigint;
   payeeOn: boolean;
   paused: boolean;
@@ -123,6 +125,9 @@ export interface Policy {
   doorsOn: Set<Door>;
   margin: bigint;
   listingDelaySec: number;
+  // a latched Core is booked when the pending income exceeds bookMinWei and the keeper's last book is older than bookMinSec
+  bookMinWei: bigint;
+  bookMinSec: number;
 }
 
 const min = (...v: bigint[]) => v.reduce((a, b) => (b < a ? b : a));
@@ -193,6 +198,14 @@ export function bookLatches(s: State): { ok: boolean; reason: string } {
   if (s.timestamp < end) return { ok: false, reason: `anti sniper window ends at ${end}` };
   if (s.pendingIncome === 0n) return { ok: false, reason: "no unbooked income, a book would not latch" };
   return { ok: true, reason: "window over, income pending, payee share not latched" };
+}
+
+// whether a book now moves pending income into the booked pots once the payee share is latched: the income exceeds
+// `bookMinWei` and the keeper's last book is more than `bookMinSec` old
+export function bookFollowsIncome(s: State, p: Pick<Policy, "bookMinWei" | "bookMinSec">): { ok: boolean; reason: string } {
+  if (s.pendingIncome <= p.bookMinWei) return { ok: false, reason: `pending income ${s.pendingIncome} not above ${p.bookMinWei}` };
+  if (s.timestamp - s.lastBookAt <= BigInt(p.bookMinSec)) return { ok: false, reason: `last book under ${p.bookMinSec} seconds ago` };
+  return { ok: true, reason: "income pending above the book minimum" };
 }
 
 export const listingKey = (l: Pick<Listing, "venue" | "id" | "price">) => `${l.venue}:${l.id}:${l.price}`;
@@ -327,9 +340,9 @@ export function decide(
     else calls.push({ door: "collectEscrow", functionName: "collectEscrow", args: [], gas: GAS_GUESS.collectEscrow, payment: 0n, cost, key: "collectEscrow", note: { escrow: s.escrowBalance } });
   }
 
-  // 5. book: unpaid; only the book that latches the payee share is the keeper's, every other door books on its own
+  // 5. book: unpaid; the book that latches the payee share, then the book that follows pending income once latched
   if (on("book")) {
-    const r = bookLatches(s);
+    const r = s.payeeOn ? bookFollowsIncome(s, p) : bookLatches(s);
     if (!r.ok) skips.push({ door: "book", reason: r.reason });
     else if (ceiling("book")) {
       const cost = ownCost(GAS_GUESS.book, gas, p.doors.book);

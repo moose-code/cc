@@ -8,6 +8,7 @@ import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Sale, CreditSale, Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {Halving} from "../src/lib/Halving.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, ReentrantBuyer, RefundRefuser} from "./attackers/SaleAttackers.sol";
 import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
@@ -868,6 +869,35 @@ contract SaleAnchorTest is SaleShapeBase {
         assertEq(ctl.anchorBps(), 12_500, "recorded at the asking price");
     }
 
+    // promise: SPEC 1 the anchor decays with no buyer over 8 days at the launch anchorMinCost
+    /// SaleAnchorTest clears anchorMinCost to 0; this case restores the launch 0.1 eth. an owner raises the anchor,
+    /// then 8 days pass with no buyer (past one 7 day half life). a statement composed before and one after open at the
+    /// markup of the anchor at their compose time, so the later opening ask multiple is lower by the decay
+    function test_anchorDecaysOverEightDaysWithNoBuyerAtLaunchMinCost() public {
+        _setAnchorMinCost(0.1 ether);
+        _anchor(30_000);
+        uint256 a = _composeOnce().sid;
+        uint256 anchorA = ctl.anchorBps();
+        uint256 startA = ctl.startBps();
+        uint256 askA = ctl.priceOf(a);
+        assertEq(anchorA, 30_000, "the anchor starts elevated");
+        assertEq(startA, 15_000 * 30_000 / 10_000, "the opening markup at the elevated anchor");
+
+        vm.warp(block.timestamp + 8 days);
+        uint256 b = _another();
+        uint256 anchorB = ctl.anchorBps();
+        uint256 askB = ctl.priceOf(b);
+
+        uint256 expectAnchor = 10_000 + Halving.halve(20_000, 8 days, 7 days);
+        assertApproxEqAbs(anchorB, expectAnchor, 2, "the anchor halved past one half life with no buyer");
+        assertLt(anchorB, anchorA, "the anchor decayed");
+        assertEq(ctl.startBps(), 15_000 * anchorB / 10_000, "the opening markup fell with the decayed anchor");
+        assertLt(
+            askB * 10_000 / _cost(b), askA * 10_000 / _cost(a), "the later opening ask multiple is lower by the decay"
+        );
+        assertEq(ctl.storedAnchorBps(), 30_000, "no buyer checkpointed the anchor, the stored value is unchanged");
+    }
+
     // promise: SPEC 1 a refused buy leaves the anchor
     /// a refused or underpaid buy leaves the anchor where it was
     function test_anchor_aRevertedBuyDoesNotMoveIt() public {
@@ -1111,5 +1141,30 @@ contract SaleCutsTest is SaleBase {
         vm.prank(address(0x5757));
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setArtist(address(0xA11CE));
+    }
+}
+
+/// the first statement sale at the launch settings, with no reference pin: the reference is max(cost, valueOf(rating))
+/// read live from a moving rate, and the launch curve runs 150 percent of it to 100 percent over 12 hours
+contract SaleLaunchColdTest is SaleBase {
+    // promise: SPEC 1 the launch curve prices a cold composed statement at startBps of max(cost, valueOf), no pin
+    function test_firstStatementSaleAtLaunchWithoutTheReferencePin() public {
+        assertEq(ctl.anchorMinCost(), 0.1 ether, "launch anchorMinCost");
+        assertEq(core.settings().dropFloorBps, 1, "launch drop floor");
+        assertEq(core.settings().saleFloorBps, 10_000, "launch sale floor");
+        assertEq(ctl.startBps(), 15_000, "the opening markup at launch");
+        uint256 sid = _composeOnce().sid;
+
+        // the reference is read live at each age (no _pinReferenceToCost), the ask is the launch 4 hour curve of it
+        _age(sid, 0);
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 15_000 / 10_000, "age 0: 150 percent of the live reference");
+        _age(sid, 2 * H);
+        assertEq(
+            ctl.priceOf(sid), ctl.referenceOf(sid) * 12_500 / 10_000, "age 2 h: 125 percent, the midpoint of the 4 hour line"
+        );
+        _age(sid, 4 * H);
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "age 4 h: the sale floor, 100 percent of the live reference");
+        _age(sid, 12 * H);
+        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "past the window: still at the floor");
     }
 }

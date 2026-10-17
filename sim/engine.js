@@ -56,7 +56,7 @@ export const SETTINGS = {
   idleStepSeconds: _cs.idleStepSeconds,
   sniperSeconds: _cs.sniperSeconds,
   reserveWei: _cs.reserveWei / W, // eth: the least the pot keeps for processing; the reserve is the larger of it and 1.5 times the queued compose and redeem payments (CoreLib._reserve)
-  returnLockSeconds: _cs.returnLockSeconds, // seconds every intake door refuses a credit the engine sold, at least the second of the sale (CoreLib.checkReturn)
+  returnLockSeconds: _cs.returnLockSeconds, // seconds every intake door refuses a credit the engine sold; 0 is no lock (CoreLib.checkReturn)
   swapFeeCc: _cs.swapFeeCc / W, // whole coins burned by the caller of swapCredit per swap (decision 116)
   valueModeOn: _cs.valueModeOn, // the value switch (decision 148): the eth bid prices off the shared balance instance times the controller's protected value per point
 };
@@ -295,6 +295,7 @@ export const SIM_DEFAULTS = {
   multiplierCap: null,
   hourlyBound: 0, // model only, for the rejected-bound comparison; the contract has no read bound
   multiplierScalesClimb: false, // model only: when false, m scales the ceiling loosening but not the per minute climb
+  bookEveryHours: 0, // 0 books the swap fee every step (today's behaviour). above 0 the hook drip is left unbooked and a book folds it every this many hours, so the bid climbs between books on the pending pot share (decision 147)
 };
 
 export const DEFAULTS = Object.assign({}, CORE_PARAMS, SETTINGS, CONTROLLER, CREDIT, QUOTE, SIM_DEFAULTS);
@@ -389,9 +390,11 @@ export class Core {
     this.anchorStored = 10000; // the controller's storedAnchorBps: the anchor at anchorTime, bps of the reference
     this.anchorTime = t0;
     this.paused = false; this.pausedSince = 0; this.pausedTotal = 0; // the Core's pause clock: the flag, the start of the open pause, the seconds of closed pauses
+    this.ageEligibilityOn = false; // ControllerV1.ageEligibilityOn: false (launch) is the curve rule, true is age only (decision 155)
     this.feeToRedeemBurn = 0; // cumulative swap fee eth sent to the redeem burn reserve by feeToRedeemBurnBps
     this.redeemBurnMoved = 0; // cumulative eth moved from the reserve to the buyback pot by redemptions
     this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.balancePot = 0; // balancePot is the balance module's holding, the eth value of the token it can pay (available())
+    this.unbooked = 0; // fee income the hook pushed that no _book has folded into the pots yet (decision 147). the climb clamp counts its pot share; 0 while booking every step
     this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
     this.checkpointMult = 1; // decision 128: the climb multiplier m from the last checkpoint. 1 with multiplierCap 1
     this.fillBuckets = []; // the rejected hourly bound comparison (REVIEW-128-potscaled.md) reads these: [minute, max fill rate] for the past hour, ascending
@@ -412,9 +415,32 @@ export class Core {
   peakAt(now) {
     return this.peakRate * Math.pow(0.5, (now - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
   }
-  // the climb stops where the pot no longer affords one credit at the rate, or at rateCap, whichever is lower
+  // the pot share of the fee income the hook pushed that no _book has folded yet (decision 147): the payee share while
+  // latched, then the redeem burn reserve share of the rest, the remainder is the pot share the next book adds. 0 while
+  // booking every step (unbooked stays 0), so the clamp is unchanged in the default sim
+  pendingPot() {
+    const inc = this.unbooked;
+    if (!(inc > 0)) return 0;
+    const toPayee = this.payeeOn ? (inc * this.s.payeePpm) / 1e6 : 0;
+    return (inc - toPayee) * (1 - this.s.feeToRedeemBurnBps / BPS);
+  }
+  // the climb stops where the pot no longer affords one credit at the rate, or at rateCap, whichever is lower. the pot
+  // counts the pot share of the unbooked drip (decision 147) net of the reserve (Core._ethClimb reads pagesPot less the reserve)
   clamp() {
-    return Math.min(this.room() * W, this.s.rateCap);
+    return Math.min(Math.max(0, this.ethPot + this.pendingPot() - this.reserve()) * W, this.s.rateCap);
+  }
+  // Core.receive: fee income the hook pushed, left unbooked. the climb clamp counts its pot share until a book folds it
+  accrue(amount) {
+    if (amount > 0) this.unbooked += amount;
+  }
+  // a book of the accrued drip at `now`: checkpoint while the clamp still counts the pending pot share, so the climbed
+  // rate is kept across the book (decision 147), then addFees folds the income and the counter clears
+  book(now) {
+    const a = this.unbooked;
+    if (!(a > 0)) return { toPayee: 0, toRedeemBurn: 0, toPot: 0 };
+    this.checkpoint(now);
+    this.unbooked = 0;
+    return this.addFees(a, now);
   }
   // the queue the reserve prices: the pile size and the held statements, kept by the run (simulate) or a test
   setQueue(pile, held) { this.queue = { pile, held }; }
@@ -427,9 +453,9 @@ export class Core {
   }
   // CoreLib.room: ethPot less the reserve, the most the bids may spend. the caller payments pay from the whole pot
   room() { return Math.max(0, this.ethPot - this.reserve()); }
-  // CoreLib.checkReturn: an intake door refuses a credit the engine sold before soldAt + returnLockSeconds, at least the
-  // second of the sale (a lock of 0 keeps the same block rule)
-  returnLocked(cr, now) { return cr.soldAt !== undefined && now < cr.soldAt + Math.max(this.s.returnLockSeconds, 1); }
+  // CoreLib.checkReturn: an intake door refuses a credit the engine sold before soldAt + returnLockSeconds. a lock of 0
+  // is no lock, so a credit may return in the second of its sale
+  returnLocked(cr, now) { return cr.soldAt !== undefined && this.s.returnLockSeconds > 0 && now < cr.soldAt + this.s.returnLockSeconds; }
   // the ceiling in rate terms: ceilPct of the anchor, the anchor loosened while idle. the anchor is max(last rate paid, peak now)
   stepCeil(now) {
     const s = this.s, p = this.p;
@@ -557,6 +583,7 @@ export class Core {
     if (this.c.startCapBps < anchorNow) this.setAnchor(this.c.startCapBps, now);
     if (patch.anchorBps !== undefined) this.setAnchor(patch.anchorBps, now);
     if (patch.paused !== undefined) this.setPaused(patch.paused, now);
+    if (patch.ageEligibilityOn !== undefined) this.ageEligibilityOn = !!patch.ageEligibilityOn;
     this.rateAtCheckpoint = Math.min(this.rateAtCheckpoint, next.rateCap); // a lower cap pulls the rate down now
     if (rate !== undefined) {
       this.rateAtCheckpoint = rate; this.checkpointTime = now;
@@ -963,9 +990,12 @@ export class Core {
     if (!(paid > 0)) return null;
     return { paid, cost: Math.max(this.balanceCostBasis(pts, now), 1e-18) };
   }
-  // ControllerV1.atFloor: by age only, the start at or below 10000 or the statement aged decayHours. no price is read
+  // ControllerV1.atFloor: with ageEligibilityOn false (launch) the curve price has reached its floor (saleFloorBps of the
+  // reference), reading the reference; with it true the rule is age only, the start at or below 10000 or the statement
+  // aged decayHours, no reference read (decision 155)
   atFloor(st, now) {
-    return this.startBps(now) <= BPS || this.statementAge(st, now) >= this.c.decayHours * 3600;
+    if (this.ageEligibilityOn) return this.startBps(now) <= BPS || this.statementAge(st, now) >= this.c.decayHours * 3600;
+    return askBps(this.c, this.startBps(now), this.statementAge(st, now), this.s.saleFloorBps) <= this.s.saleFloorBps;
   }
   // Core.redeemStatement preconditions: a module is set, redeemOn is true, and the statement's curve price has reached its floor
   redeemReady(st, now) {
@@ -1482,6 +1512,8 @@ export function simulate(userParams = {}) {
   for (let t = 0; t < 3600; t += warmupStep) steps.push([t, t + warmupStep]);
   for (let t = 3600; t < H * 3600; t += p.stepSec) steps.push([t, t + p.stepSec]);
   record(0, 0);
+  // bookEveryHours 0 books the swap fee every step; above 0 the drip is left unbooked and folded at these boundaries
+  let nextBookAt = (p.bookEveryHours > 0 ? p.bookEveryHours : Infinity) * 3600;
   for (const [t0, t1] of steps) {
     const dt = t1 - t0, mid = (t0 + t1) / 2;
     stepW = dt / 3600;
@@ -1491,7 +1523,11 @@ export function simulate(userParams = {}) {
     const net = b * V - (1 - b) * V; // notional is the pool's own delta, the skim comes on top
     if (net > 0) pool.buy(net); else if (net < 0) pool.sell(-net);
     const fee = V * bountyFeeFraction(p, f);
-    core.addFees(fee, mid);
+    if (p.bookEveryHours > 0) {
+      core.accrue(fee);
+      // a book at the hour boundary folds the drip; between books the bid climbs on its pending pot share
+      if (t1 >= nextBookAt) { core.book(t1); nextBookAt += p.bookEveryHours * 3600; }
+    } else core.addFees(fee, mid);
     T.fees += fee; T.vol += V;
     if (!core.moduleSet && t1 >= balanceAt) { core.setBalanceModule(t1, p.xpPerPoint); if (p.balanceDayMode != null) core.setSettings({ redeemOn: p.balanceDayMode >= 1, balanceBidOn: p.balanceDayMode === 2 }, t1); }
     core.observe(t1); // the keeper's observe door moves the reference each step (no move before the pool key)
@@ -1568,6 +1604,8 @@ export function simulate(userParams = {}) {
 
   if (stallRun > 7200) { for (const k of Object.keys(runCause)) stallCause[k] = (stallCause[k] || 0) + runCause[k]; stallTotal += stallRun; stallMax = Math.max(stallMax, stallRun); stallRuns.push([H * 3600 - stallRun, stallRun]); }
   gapMax = Math.max(gapMax, gapRun);
+  // fold any drip still unbooked at the end so the ledger checks count it (bookEveryHours only; a no-op otherwise)
+  if (p.bookEveryHours > 0 && core.unbooked > 0) core.book(H * 3600);
   // ---- results
   const at = (d) => {
     const i = Math.min(H, Math.round(d * 24));
