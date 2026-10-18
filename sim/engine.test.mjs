@@ -73,8 +73,8 @@ const R0 = 6.668e15;
   near(SETTINGS.payeePpm, cfg.settings.payeePpm, 1e-12, 'payeePpm'); near(SETTINGS.payeePpm, 0, 1e-12, 'payeePpm 0 at launch (decision 120)');
   near(SETTINGS.saleToArtistBps, cfg.settings.saleToArtistBps, 1e-12, 'saleToArtistBps'); near(SETTINGS.saleToOperatorBps, cfg.settings.saleToOperatorBps, 1e-12, 'saleToOperatorBps');
   near(SETTINGS.swapFeeCc, cfg.settings.swapFeeCc / 1e18, 1e-12, 'swapFeeCc whole coins'); near(SETTINGS.swapFeeCc, 10000, 1e-12, 'swapFeeCc is ten thousand coins');
-  // the fee split (decision 120): 10 points of volume skim, bountyBps 9000 to the engine, 10000 - bountyBps the protocol leg
-  near(cfg.launch.baselineSkimBps, 1000, 1e-12, 'baseline skim 10 points'); near(cfg.launch.bountyBps, 9000, 1e-12, 'bounty 9000'); near(10000 - cfg.launch.bountyBps, 1000, 1e-12, 'the protocol leg is 1000'); n += 3;
+  // the fee split (decision 186): 690 bps of volume skim, bountyBps 9000 to the engine, the rest to protocol
+  near(cfg.launch.baselineSkimBps, 690, 1e-12, 'baseline skim 690 bps'); near(cfg.launch.bountyBps, 9000, 1e-12, 'bounty 9000'); near(10000 - cfg.launch.bountyBps, 1000, 1e-12, 'the protocol share of the skim is 1000 bps'); n += 3;
   // the credit block (the Credit struct of the launch config) is the model's CREDIT, field for field, and the launch values are the ones of FLOW 88 to 90
   assert.deepEqual(Object.keys(cfg.credit).sort(), Object.values(CREDIT_CONFIG_KEY).sort()); n++; // the config credit block is the model's CREDIT, field for field (decision 123 dropped royaltyRecipient)
   for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +cfg.credit[ck], 1e-12, 'credit ' + k);
@@ -895,12 +895,12 @@ const R0 = 6.668e15;
   near(p.price, 2.5131970949402153e-8, 1e-9, 'back at the start');
   ok(p.sell(1).eth < 1e-9); // nothing to sell below the start tick
 }
-// skim schedule: anti sniper 90 points falling to the 10 point baseline over 30 minutes. the Core gets bountyBps 9000 of the baseline
+// skim schedule: anti sniper 90 percent falling to the 6.9 percent baseline over 30 minutes. the Core gets bountyBps 9000 of the baseline
 // promise: plus the whole anti sniper extra (decision 120). once payeeOn the payee takes payeePpm of the income (0 at launch; this block sets 75,185 ppm to exercise the push)
 {
-  near(skimFraction(DEFAULTS, 0), 0.9, 1e-12, 'launch skim'); near(skimFraction(DEFAULTS, 900), (0.9 + 0.1) / 2, 1e-12, 'midway');
-  near(skimFraction(DEFAULTS, 1800), 0.1, 1e-12, 'end of window'); near(skimFraction(DEFAULTS, 99999), 0.1, 1e-12, 'baseline');
-  near(bountyFeeFraction(DEFAULTS, 0.1), 0.09, 1e-12, 'Core 9 points, bountyBps 9000 of the 10 point baseline'); near(bountyFeeFraction(DEFAULTS, 0.9), 0.09 + 0.8, 1e-12, 'extra to the Core');
+  near(skimFraction(DEFAULTS, 0), 0.9, 1e-12, 'launch skim'); near(skimFraction(DEFAULTS, 900), (0.9 + 0.069) / 2, 1e-12, 'midway');
+  near(skimFraction(DEFAULTS, 1800), 0.069, 1e-12, 'end of window'); near(skimFraction(DEFAULTS, 99999), 0.069, 1e-12, 'baseline');
+  near(bountyFeeFraction(DEFAULTS, 0.069), 0.0621, 1e-12, 'Core 6.21 percent of volume at baseline'); near(bountyFeeFraction(DEFAULTS, 0.9), 0.8931, 1e-12, 'extra to the Core');
   // Core._book: the payee takes payeePpm of each book once payeeOn. the first book at or after sniperSeconds with income sets payeeOn and takes 0
   // feeToRedeemBurnBps is 1,000 here (its phase-2 value) to exercise the reserve split with the payee; launch is 0
   const pc = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }, { buyToArtistBps: 0 }), 0);

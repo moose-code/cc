@@ -199,7 +199,7 @@ contract ReviewDeployTest is ReviewHarness {
         string[11] memory from = [
             '"bountyBps": 9000',
             '"payeePpm": 0',
-            '"baselineSkimBps": 1000',
+            '"baselineSkimBps": 690',
             '"sniperSeconds": 1800',
             '"startTick": -175000',
             '"positionUpper": 887200',

@@ -118,7 +118,7 @@ contract PayeeShareTest is FeeBase {
         uint256 a0 = a.balance;
         Flow memory f = _flow(Kind.BuyExactIn, 10 ether, "");
         assertEq(f.toPayee, f.bountyRise * 90_909 / 1_000_000);
-        assertApproxEqRel(f.toPayee, 0.082 ether, 0.01e18);
+        assertApproxEqRel(f.toPayee, 0.05645 ether, 0.01e18);
         assertEq(a.balance - a0, f.toPayee, "the payee received the pushed share");
         _solvent();
     }
@@ -313,15 +313,15 @@ contract FeeShareTest is FeeBase {
         for (uint256 i; i < 3; ++i) {
             _share(bps[i]);
             Books memory b = _swap(Kind.BuyExactIn, 1 ether);
-            assertEq(b.bounty, 0.09 ether, "9.0 points of one eth reach the core");
+            assertEq(b.bounty, 0.0621 ether, "6.21 percent of one eth reaches the core");
             uint256 want = b.inflow * bps[i] / BASIS;
             assertEq(b.dRb, want, "exact redeem burn share");
             assertEq(b.dPot, b.inflow - want, "exact pot share");
             assertApproxEqAbs(
                 b.inflow,
-                0.09 ether,
+                0.0621 ether,
                 0.00001 ether,
-                "9.0 points of the buy reach the engine (core 9.9 less the payee 0.9)"
+                "the Core receives 6.21 percent before the payee share"
             );
             _check(b, bps[i]);
             _solvent();
@@ -346,11 +346,11 @@ contract FeeShareTest is FeeBase {
         assertEq(core.ethRedeemBurn() - rb, 1.5 ether);
     }
 
-    // promise: SPEC 1 decision 147: forced eth as the only income climbs the bid, and the first door pays the quote
+    // promise: SPEC 1 decision 176: unbooked forced eth earns no bid climb, and the first door pays the quote
     /// a cold fresh deploy whose only eth is forced in (a selfdestruct or raw transfer the Core never booked), pot 0.
-    /// over an idle hour the bid climbs from the opening rate on the pot share of the forced eth, with no door booking.
+    /// over an idle hour the bid stays at the opening rate because the forced eth has not been booked.
     /// the first sell books the forced eth and pays the quote read in the same block. launch feeToRedeemBurnBps
-    function test_forcedEthAsTheOnlyIncomeClimbsTheBidAndASellPaysTheQuote() public {
+    function test_forcedEthAsTheOnlyIncomeDoesNotClimbBeforeBookAndASellPaysTheQuote() public {
         _share(1_000);
         assertEq(core.ethPot(), 0, "nothing booked at launch");
         assertEq(address(core).balance, 0, "the fresh engine holds no eth");
@@ -359,11 +359,11 @@ contract FeeShareTest is FeeBase {
         _unitScore(id);
         // forced eth: the only income, unbooked
         vm.deal(address(core), 1 ether);
-        // an idle hour past the sniper window: the bid climbs on the pot share of the forced eth before any book
+        // an idle hour past the sniper window earns no climb before a book
         vm.warp(launchTime + 1 hours);
         uint256 quotedRate = core.ethRate();
         uint256 quotedBid = core.bidOf(id);
-        assertGt(quotedRate, core.RATE_START(), "the bid climbed on the forced eth, before any book");
+        assertEq(quotedRate, core.RATE_START(), "unbooked forced eth earned no climb");
         assertEq(core.ethPot(), 0, "still nothing booked");
 
         uint256 before = seller.balance;

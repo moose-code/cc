@@ -141,7 +141,7 @@ export type HookFee = {
 
 // Share of trade volume, in bps of volume, that reaches the engine pot at fee `engineBps`: the engine income less the
 // payee share (settings.payeePpm, while payeeOn) and less the redeem burn share (settings.feeToRedeemBurnBps), per
-// Core._split. 900 bps of volume at the launch values (9% to the Core, 10% of that to the redeem burn pot).
+// Core._split. 621 bps of volume at the launch values (6.21% to the Core; all to the pot while feeToRedeemBurnBps is 0).
 export function potShareBps(engineBps: number, s: { payeeOn: boolean; settings: { payeePpm: number; feeToRedeemBurnBps: number } }): number {
   const afterPayee = engineBps * (1 - (s.payeeOn ? s.settings.payeePpm / 1_000_000 : 0));
   return afterPayee * (1 - s.settings.feeToRedeemBurnBps / 10000);

@@ -198,11 +198,11 @@ contract V2PortMigrationTest is FeeBase {
 
         autoBook = false;
         _buyCoin(trader, 1 ether);
-        assertEq(address(core2).balance, 0.09 ether, "the bounty leg reached the new Core");
+        assertEq(address(core2).balance, 0.0621 ether, "the bounty leg reached the new Core");
         core2.book();
         // the first book of the new Core latches its payee share and shares nothing
         Settings memory s = core2.settings();
-        uint256 toPot = 0.09 ether - uint256(0.09 ether) * s.feeToRedeemBurnBps / 10_000;
+        uint256 toPot = 0.0621 ether - uint256(0.0621 ether) * s.feeToRedeemBurnBps / 10_000;
         assertEq(core2.ethPot(), toPot, "the new Core booked the fees");
         assertTrue(core2.payeeOn());
         assertEq(core.ethPot(), pot1, "the old Core books nothing more");
@@ -212,7 +212,7 @@ contract V2PortMigrationTest is FeeBase {
         uint256 payeeBefore = core2.payee().balance;
         _buyCoin(trader, 1 ether);
         core2.book();
-        assertEq(core2.payee().balance - payeeBefore, uint256(0.09 ether) * s.payeePpm / 1_000_000);
+        assertEq(core2.payee().balance - payeeBefore, uint256(0.0621 ether) * s.payeePpm / 1_000_000);
 
         // the old Core still composes and sells with what it holds
         vm.fee(composeBasefee);
@@ -299,8 +299,8 @@ contract V2PortSkimTest is FeeBase {
         _buyCoin(trader, 1 ether);
         uint256 full = address(core).balance - b0;
         vm.prank(owner);
-        IArtCoinsHookV2(lc.stack.hook).lowerBaselineSkim(poolId, 500);
-        assertEq(IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId).baselineSkimBps, 500, "baseline lowered");
+        IArtCoinsHookV2(lc.stack.hook).lowerBaselineSkim(poolId, 345);
+        assertEq(IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId).baselineSkimBps, 345, "baseline halved");
         uint256 b1 = address(core).balance;
         _buyCoin(trader, 1 ether);
         uint256 half = address(core).balance - b1;
@@ -319,9 +319,9 @@ contract V2PortSkimTest is FeeBase {
         IArtCoinsHookV2(lc.stack.hook).lowerBaselineSkim(poolId, 500);
     }
 
-    // promise: D126 the protocol leg lands at the protocol fee controller at 1000 bps of the baseline skim
-    /// the protocol recipient of the pool is the ProtocolFeeControllerV2, and a 1 eth buy lands 0.01 eth there (the
-    /// 1000 bps the baseline skim keeps after the 9000 bounty share), pushed or credited to it in the escrow
+    // promise: D126 and D186 the protocol leg lands at the protocol fee controller
+    /// the protocol recipient of the pool is the ProtocolFeeControllerV2, and a 1 eth buy lands 0.0069 eth there
+    /// (10 percent of the 690 bps baseline skim), pushed or credited to it in the escrow
     function test_protocolLegLandsAtTheController() public {
         address controller = v2.controller;
         assertEq(IArtCoinsFactoryV2(lc.stack.factory).protocolRecipient(), payable(controller), "factory recipient");
@@ -331,7 +331,7 @@ contract V2PortSkimTest is FeeBase {
         uint256 esc0 = ESCROW.balances(controller, address(0));
         _buyCoin(trader, 1 ether);
         uint256 landed = (controller.balance - bal0) + (ESCROW.balances(controller, address(0)) - esc0);
-        assertApproxEqRel(landed, 0.01 ether, 0.02e18, "protocol leg 1.0 point of volume at the controller");
+        assertApproxEqRel(landed, 0.0069 ether, 0.02e18, "protocol leg 0.69 percent of volume at the controller");
     }
 }
 

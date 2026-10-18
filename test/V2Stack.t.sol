@@ -57,8 +57,8 @@ contract V2StackTest is Test {
         p = V2Stack.recordParams();
     }
 
-    /// a launch on the v2 factory: bounty 9000 of the baseline skim (the protocol keeps 1000), baseline skim 1000 bps
-    /// (10 points), sniper 9000 bps falling to 1000 over 30 minutes, restricted. the pool charges no lp fee
+    /// a launch on the v2 factory: bounty 9000 of the baseline skim (the protocol keeps 1000), baseline skim 690 bps
+    /// (6.9 percent), sniper 9000 bps falling to 690 over 30 minutes, restricted. the pool charges no lp fee
     function _config(address bountyRecipient, bytes32 salt) internal view returns (F.DeploymentConfigV2 memory c) {
         c.token = F.TokenConfigV2({
             tokenAdmin: owner,
@@ -78,7 +78,7 @@ contract V2StackTest is Test {
             extensionData: ""
         });
         c.fee = F.FeeConfigV2({
-            baselineSkimBps: 1000,
+            baselineSkimBps: 690,
             bountyBps: 9000,
             bountyRecipient: payable(bountyRecipient),
             referralBps: 0

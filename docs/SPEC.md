@@ -12,6 +12,8 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| parameter | The combined candidate keeps `rateStart` at 0.0049 ETH per 100 points and `rateCap` at 0.0147 ETH. Reassess and sign off on the opening market anchor on deployment day before mainnet broadcast | 187 |
+| parameter | At launch, the steady coin trading skim is 6.9 percent of volume, split 90/10 between the engine and protocol (6.21/0.69 percent). The first 1,800 seconds retain the 90 percent anti sniper starting fee. The steady skim and split are launch coin parameters, so preflight must pin them before deployment | 186 |
 | behavior | Add a GitBook-style `/docs` section to the web UI, with guides grouped into Credits and Statements, a shared Lifecycle guide, and searchable contract reference pages based on public source. Include the deployed mainnet CreditScoreLens helper with its pinned historical interface and live address. Use only independently published source; defer the balance-module reference and balance sale and redemption guides until the owner approves publishing those details. Give practical guides for the public Credit and Statement calls. Use plain, direct copy; put the Docs link in the site footer, use unlettered color squares on overview cards, and omit operator-key risk copy. This is documentation and navigation work, with no production contract change | 179, 180, 181, 182, 183, 184, 185 |
 | behavior | The owner pause stops Credit intake, listing purchases, composition, statement and Credit sales, Credit swaps and buybacks. Funding, fee booking, redemption, escrow collection and reads remain live. Both bid clocks exclude paused time, retain growth earned before pause, and resume from the same level. Keep the funded 100-point clock, gradual ceiling and editable 3x hard cap. The pool swap and low-frequency owner operations run through a second linked library using Core's storage and identity; deployment verifies both links | 178 |
 | verification directive | Exercise adversarial prices that rise and fall, the funding threshold at both arithmetic extremes, reserve transitions through every purchase and processing door, and service inputs or retries that could stop the keeper or leave stale indexer data. Preserve whole-system release gates for the frozen candidate; a passing test does not settle the intended economic rule | 177 |
@@ -55,9 +57,9 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | behavior | the first `migrate` retires the engine, which keeps selling and redeeming its statements and burning its buyback pot | 33, 48, 52 |
 | behavior | an owner keeper (`keeper/`) runs from launch on its own hot wallet: it sweeps a listing below the bid after 2 minutes, buys back, composes, collects the escrow, books and, once a module is set, redeems, each only when the Core's payment covers its gas plus a margin, through a private relay | 128, 129, 131 |
 | parameter | compose, `composeChosen` and `redeemStatement` pay their caller at launch: gas up to 3 gwei plus 0.0003 eth, owner settings editable after launch | 130 |
-| parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 |
+| parameter | Core economic Settings are owner editable and take effect at once, with no timelock. Coin fee and pool parameters have the separate deploy and lock limits described in section 3 | 3, 15, 186 |
 | parameter | `rateCap` 3 times the opening rate; the opening rate is the market price on launch day of 100 points; the point rate basis is the fixed 100 points | 46, 60, 69, 116 |
-| parameter | payee 0 at launch (`payeePpm` 0, the setting stays for the owner to raise later), protocol 1.0 point of volume, engine 9.0 points | 31, 112, 120 |
+| parameter | payee 0 at launch (`payeePpm` 0, the setting stays for the owner to raise later); the 6.9 percent steady trading fee sends 6.21 percent of volume to the engine and 0.69 percent to the protocol | 31, 112, 120, 186 |
 | parameter | buyback slice 0.5 eth, bounded by uint128 and the keeper-payment invariant | 51 |
 | risk | a market above `rateCap` stops buying until the owner raises it | 49 |
 | risk | holders trust the owner key fully: the owner can overpay a seller it controls, set a module that returns dust, and move everything to a successor at once | 8, 9.4 |
@@ -132,7 +134,7 @@ The Settings tuple has 37 fields and occupies five packed storage slots. The eig
 
 the controller's protected price settings, the `Quote` struct set at once by the Core's owner through `setQuote` (decision 148): `referenceRateBpsPerHour` (0 at launch, an owner input; uint32), `referenceStepBps` (0, an owner input; 0 to 10,000), `tolBps` (100 by default at launch and phase two; owner-tunable 0 to 9,999), `referenceMaxStale` (0, an owner input; uint32 seconds, 0 is never usable), `referenceMinSeconds` (600; uint32 seconds), `minLiquidity` (0, an owner input; uint128). the constructor takes it, and preflight warns while the inputs are pending.
 
-fixed inside the pool at launch and not adjustable: skim 10 points of volume, 90 percent of it to the engine as bounty recipient and 10 percent to the protocol, anti sniper skim 90 points falling to the baseline over 30 minutes, lp fee 0.
+the coin is launched with a 6.9 percent steady skim, 90 percent of it to the engine as bounty recipient and 10 percent to the protocol, anti sniper skim 90 percent falling to the baseline over 30 minutes, and lp fee 0. the admin may lower the baseline through `lowerBaselineSkim` while the coin is unlocked; `coin.lock()` freezes that hook setting. raising it after deployment is not supported by this setter.
 
 ## 4. the bid
 

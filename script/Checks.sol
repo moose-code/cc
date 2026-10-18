@@ -66,7 +66,7 @@ abstract contract LaunchChecks is PostflightChecks {
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/RUNBOOK.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
-    uint24 internal constant PIN_BASELINE_SKIM = 1000;
+    uint24 internal constant PIN_BASELINE_SKIM = 690;
     uint16 internal constant PIN_BOUNTY_BPS = 9000;
     /// @dev the most the launch pays the factory. a fee above it is a factory state change the signed config never saw
     uint256 internal constant PIN_DEPLOY_FEE_MAX = 0.1 ether;
@@ -91,10 +91,8 @@ abstract contract LaunchChecks is PostflightChecks {
         0x0b4009fdd38f08368b9427fbf12658364f8144a6408d149eab888f88f161d689;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
-    uint24 internal constant SNIPER_START_MIN = 5_000;
-    uint24 internal constant SNIPER_START_MAX = 9_000;
-    uint32 internal constant SNIPER_SECONDS_MIN = 600;
-    uint32 internal constant SNIPER_SECONDS_MAX = 3600;
+    uint24 internal constant PIN_SNIPER_START = 9_000;
+    uint32 internal constant PIN_SNIPER_SECONDS = 1_800;
     uint24 internal constant DYNAMIC_FEE_FLAG = 0x800000;
     /// @dev the v2 hook address carries its permission flags in the low 14 bits: beforeInitialize, beforeAddLiquidity,
     /// beforeSwap, afterSwap, beforeSwapReturnDelta, afterSwapReturnDelta (0x28CC, v2 `DeployV2Lib`)
@@ -274,7 +272,7 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _ruleEconomics(LaunchConfig memory c) private {
-        _eq("rule: baseline skim bps is 1000", uint256(c.baselineSkimBps), PIN_BASELINE_SKIM);
+        _eq("rule: baseline skim bps is 690", uint256(c.baselineSkimBps), PIN_BASELINE_SKIM);
         bool bountyOk = c.bountyBps == PIN_BOUNTY_BPS || (c.allowBounty && c.bountyBps <= 9999);
         _check(
             "rule: bounty bps is 9000",
@@ -284,17 +282,8 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _ruleSniper(LaunchConfig memory c) private {
-        _check(
-            "rule: sniper start bps in 5000 to 9000 and above the baseline",
-            c.sniperStartBps >= SNIPER_START_MIN && c.sniperStartBps <= SNIPER_START_MAX
-                && c.sniperStartBps > c.baselineSkimBps,
-            vm.toString(c.sniperStartBps)
-        );
-        _check(
-            "rule: sniper seconds in 600 to 3600",
-            c.sniperSeconds >= SNIPER_SECONDS_MIN && c.sniperSeconds <= SNIPER_SECONDS_MAX,
-            vm.toString(c.sniperSeconds)
-        );
+        _eq("rule: sniper start bps is 9000", uint256(c.sniperStartBps), PIN_SNIPER_START);
+        _eq("rule: sniper seconds is 1800", uint256(c.sniperSeconds), PIN_SNIPER_SECONDS);
         _check(
             "rule: settings.sniperSeconds equals launch.sniperSeconds",
             c.settings.sniperSeconds == c.sniperSeconds,
@@ -841,7 +830,7 @@ abstract contract LaunchChecks is PostflightChecks {
         );
         _info(
             "signoff: protocol leg",
-            "the protocol leg (10_000 minus bountyBps of the baseline skim, 1.0 points of volume at bounty 9000) lands at the launcher protocol fee controller, a separate business from this engine and its owner"
+            "the protocol leg (10_000 minus bountyBps of the baseline skim, 0.69 percent of volume at bounty 9000) lands at the launcher protocol fee controller, a separate business from this engine and its owner"
         );
         _preSettingsRows(c);
         _info(

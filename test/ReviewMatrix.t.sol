@@ -51,8 +51,8 @@ contract ReviewMatrixConfigTest is ReviewHarness {
             m = _m("payeePpm 1000001 (above the bound)", Class.Pre);
             m.c.settings.payeePpm = 1_000_001;
         } else if (i == 4) {
-            m = _m("baselineSkimBps 690 (the earlier value)", Class.Pre);
-            m.c.baselineSkimBps = 690;
+            m = _m("baselineSkimBps 1000 (the earlier value)", Class.Pre);
+            m.c.baselineSkimBps = 1000;
         } else if (i == 5) {
             m = _m("bountyBps 0", Class.Pre);
             m.c.bountyBps = 0;
@@ -170,7 +170,8 @@ contract ReviewMatrixStateTest is ReviewHarness {
             (l, w) = ("different code at the linked library (a STOP)", Class.Revert);
             (lateEtchAt, lateEtchCode) = (_linked(), hex"00");
         } else if (i == 5) {
-            (l, w) = ("the linked library plus one trailing byte", Class.Post);
+            // A changed linked body now reverts during Core creation, before postflight can inspect its hash.
+            (l, w) = ("the linked library plus one trailing byte", Class.Revert);
             (lateEtchAt, lateEtchCode, lateEtchAppend) = (_linked(), hex"00", true);
         } else if (i == 6) {
             (l, w) = ("factory deploy fee 0.2 ether (above the 0.1 ether rule)", Class.Pre);

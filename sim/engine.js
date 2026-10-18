@@ -238,7 +238,7 @@ export const SIM_DEFAULTS = {
   holdPot: 0, // test hook: eth. the pot is topped up to this level after every step (accounting checks do not hold)
   whipsawStartDay: 2, // pricePath 'whipsaw': day the fall starts
   schedule: [], // [{ day, patch }]: owner changes settings on that day. patch may hold any setting, the quote fields and `rate` (setRate, wei per credit), `moduleUnit` (the balance module reports a new eth value per point), `poolMult` (the balance token pool price moves), `releaseRedeemBurn: eth`
-  baselineSkimBps: _ln.baselineSkimBps, // bps of volume: 10 points (script/config/mainnet.json launch.baselineSkimBps)
+  baselineSkimBps: _ln.baselineSkimBps, // bps of volume: 6.9 percent (script/config/mainnet.json launch.baselineSkimBps)
   bountyBps: _ln.bountyBps, // of the baseline skim, to the Core (the bounty recipient). the rest, 10000 - bountyBps, is the protocol leg to artcoins (decision 120)
   sniperStartBps: _ln.sniperStartBps,
   sniperEndBps: _ln.baselineSkimBps, // falls to the baseline
