@@ -241,8 +241,9 @@ contract AdaptersTest is SeaportBase {
             vm.prank(keeper);
             vm.expectRevert(ICore.BadQuote.selector);
             core.buyListing(address(f), LISTED_A, "");
-            // the quote read cannot take more than its gas cap with it
-            assertLt(g - gasleft(), 2_000_000, "the read is capped");
+            // the read is capped at Core QUOTE_GAS (2,000,000); the allowance covers the buyListing entry, the staticcall
+            // setup and the revert path, measured at about 50,000 gas (mode 3 burns the whole cap)
+            assertLt(g - gasleft(), 2_000_000 + 100_000, "the read is capped at QUOTE_GAS plus call overhead");
         }
     }
 

@@ -133,7 +133,8 @@ contract PostflightSlotsTest is Fixture {
     // promise: one divergent controller site fails postflight
     function test_oneDivergentControllerSiteFailsPostflight() public {
         uint256[] memory sites = _immutableSites("ControllerV1", 0);
-        assertEq(sites.length, 25);
+        // the CORE immutable is read at 23 sites in the current ControllerV1 bytecode (decisions 168 and 170)
+        assertEq(sites.length, 23);
         for (uint256 s; s < sites.length; ++s) {
             bytes memory k = address(ctl).code;
             k[sites[s] + 31] = bytes1(uint8(k[sites[s] + 31]) ^ 1);

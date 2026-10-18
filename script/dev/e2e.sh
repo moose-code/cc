@@ -163,8 +163,7 @@ if [ "$PHASE" = "post" ]; then
     warp 86400
   done
   [ "$(call "$CTL" 'atFloor(uint256)(bool)' "$SID")" = true ] || { echo "CHECK FAILED: statement $SID never reached its floor" >&2; exit 1; }
-  stage redeem
-  # the module pays the balance seller by moving Jack's token, which the token locks until opensAt. advance node time to it
+  # the redeem stage withdraws through Jack's token, which locks withdrawals and transfers until opensAt. advance node time to it
   if [ -n "${TOPEN:-}" ]; then
     CUR="$(cast block --field timestamp --rpc-url "$E2E_RPC_URL")"
     if [ "$CUR" -lt "$TOPEN" ]; then
@@ -173,6 +172,7 @@ if [ "$PHASE" = "post" ]; then
       echo "advanced node time to opensAt $TOPEN (from $CUR)"
     fi
   fi
+  stage redeem
   stage balance-bid
 fi
 
