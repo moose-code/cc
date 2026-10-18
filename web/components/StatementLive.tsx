@@ -356,7 +356,7 @@ function RestyleSection({ s, snap, current }: { s: HeldStatement; snap: Snapshot
   );
 }
 
-// Redeem a held statement for the balance token (Core.redeemStatement), once it is at its floor and redeemOn is set.
+// Redeem a held statement into the balance module once eligible; the module keeps the token proceeds.
 function RedeemSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapshot; updatedAt: number }) {
   const T = (snap.statementDecayHours ?? 0) * 3600;
   const left = s.atFloor || T === 0 ? 0 : Math.max(0, T - liveAge(s, snap, updatedAt));
@@ -370,11 +370,11 @@ function RedeemSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapsho
           {!on ? "redemption is off" : s.atFloor ? "at floor" : `opens at floor · ${etaLabel({ seconds: left, estimated: true })}`}
         </span>
       </div>
-      <p className="side-copy">once the price reaches its floor, the statement can be redeemed for {BALANCE_SYMBOL} by its rating.</p>
+      <p className="side-copy">redeeming this engine-held statement adds {BALANCE_SYMBOL} to the engine's balance reserve. the caller may receive an ETH payment.</p>
       <div className="side-act">
         <Act
           secondary
-          label={`redeem for ${BALANCE_SYMBOL}`}
+          label={`redeem into ${BALANCE_SYMBOL} reserve`}
           disabled={!ready}
           title={!on ? "redemption is off" : !s.atFloor ? "the price has not reached its floor" : undefined}
           steps={async (write) => void (await write({ address: core, abi: coreAbi, functionName: "redeemStatement", args: [BigInt(s.sid)] }))}

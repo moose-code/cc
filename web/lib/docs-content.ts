@@ -45,6 +45,7 @@ export const docPages: DocPage[] = [
           "Read Credit scores and traits, or a Statement's total score, with CreditScoreLens.",
           "Sell Credits through Core.sellForEth or Core.sellForBalance after approving the Core.",
           "Buy a Statement with ControllerV1.buy. Buy Credits with buyCredit or buyCredits.",
+          "Compose a Statement from the pile, or redeem an eligible held Statement into the balance module.",
           "Track activity through contract events. A Statement sale emits ControllerV1.Bought and Core.StatementSoldTo.",
         ],
       },
@@ -82,7 +83,7 @@ export const docPages: DocPage[] = [
         entries: [
           { signature: "Core.statementInfo(uint256 sid) → (held, cost, composedAt)", description: "Check custody and cost before reading a sale quote." },
           { signature: "ControllerV1.priceOf(uint256 sid) → uint256", description: "Current ETH ask. The curve and reference can move with time and settings." },
-          { signature: "ControllerV1.atFloor(uint256 sid) → bool", description: "Whether the Statement is eligible for the floor-based redemption rule." },
+          { signature: "ControllerV1.atFloor(uint256 sid) → bool", description: "Redemption eligibility under the active curve or age rule. Check that the Core still holds the Statement." },
         ],
       },
       {
@@ -125,19 +126,73 @@ export const docPages: DocPage[] = [
         ],
       },
       {
-        id: "buy",
-        title: "Buy from the engine",
+        id: "buy-statement",
+        title: "Buy a Statement",
+        points: [
+          "Choose an ID from Core.heldStatements. Read ControllerV1.priceOf(sid), then simulate buy(sid) with at least that much ETH.",
+          "The Controller sends the current price to the Core, transfers the Statement to the buyer, and refunds excess ETH. The quote can change before inclusion.",
+          "Read ControllerV1.Bought and Core.StatementSoldTo for the final price and sale split.",
+        ],
         entries: [
           { signature: "ControllerV1.buy(uint256 sid) payable", description: "Buy a held Statement at its current ask. Send at least priceOf(sid)." },
+        ],
+      },
+      {
+        id: "buy-credit",
+        title: "Buy Credits",
+        points: [
+          "Check creditSaleOn and choose IDs from Core.pilePage. Read ControllerV1.creditPrice for each ID, then simulate the purchase with enough ETH for the total.",
+          "The Controller refunds excess ETH. A Credit sale emits Core.CreditSold; a recently sold Credit may be subject to the return lock before it can be sold back to the engine.",
+        ],
+        entries: [
           { signature: "ControllerV1.buyCredit(uint256 id) payable", description: "Buy one held Credit while the Credit sale is enabled. Its price declines over the sale window." },
-          { signature: "ControllerV1.buyCredits(uint256[] ids) payable", description: "Buy multiple held Credits in one call; simulate the aggregate payment first." },
+          { signature: "ControllerV1.buyCredits(uint256[] ids) payable", description: "Buy multiple pile Credits in one call. Each is priced and sold in order." },
+        ],
+      },
+      {
+        id: "redeem-statement",
+        title: "Redeem a held Statement",
+        points: [
+          "Check Core.statementInfo(sid).held, ControllerV1.atFloor(sid), Core.balanceModule, and Core.settings().redeemOn. The module must be configured and redemption enabled.",
+          "Simulate Core.redeemStatement(sid). Any caller can submit it. The Core transfers the Statement to the module; the balance tokens remain in the module for its reserve and bids. They are not paid to the caller or a Statement holder.",
+          "The caller may receive an ETH caller payment from the Core. Core.StatementRedeemed records the balance amount received by the module.",
+        ],
+        entries: [
+          { signature: "Core.redeemStatement(uint256 sid)", description: "Redeem a Core-held, eligible Statement into the configured balance module." },
+        ],
+      },
+      {
+        id: "compose",
+        title: "Compose a Statement",
+        points: [
+          "Read ControllerV1.nextPage(). Once ready, call Core.compose() for its chosen format or Core.compose(format) for a specific format.",
+          "Core.composeChosen requires chosenComposeOn, the minimum CC holding, and 80 eligible pile Credit IDs. Check the sale window before submitting.",
+          "Composition emits Core.Composed. The resulting Statement stays held by the Core for sale or redemption.",
+          "A caller holding at least minCcToChoose CC can change the format of a held Statement with Core.setHeldFormat(sid, format).",
+        ],
+        entries: [
+          { signature: "Core.compose() / Core.compose(uint8 format)", description: "Compose the next eligible page of 80 pile Credits." },
+          { signature: "Core.composeChosen(uint256[80] ids, uint8 format)", description: "Compose 80 chosen eligible pile Credits when the feature is enabled." },
+          { signature: "Core.setHeldFormat(uint256 sid, uint8 format)", description: "Change a held Statement's format when the caller meets the CC holding requirement." },
+        ],
+      },
+      {
+        id: "swap-credit",
+        title: "Swap a Credit",
+        points: [
+          "Choose an outId from Core.pilePage and an inId you own with an equal or higher score. Approve the Core for the incoming Credit and, if swapFeeCc is nonzero, the CC fee.",
+          "Simulate Core.swapCredit(inId, outId). The incoming Credit takes the outgoing Credit's pile position, cost, and sale-window timestamp; the outgoing Credit goes to the caller.",
+        ],
+        entries: [
+          { signature: "Core.swapCredit(uint256 inId, uint256 outId)", description: "Exchange an eligible owned Credit for a pile Credit and burn the configured CC fee." },
         ],
       },
       {
         id: "automation",
         title: "Permissionless maintenance",
         points: [
-          "Core.book, buyback, compose, collectEscrow, and refreshReference are callable maintenance doors, each with its own readiness checks.",
+          "Core.book, buyback, collectEscrow, and refreshReference are callable maintenance doors, each with its own readiness checks.",
+          "Core.buyListing can purchase a Credit through an allowlisted adapter when the listing price and caller payment fit the bid and spend budget. Use the adapter's quote and params format for that venue.",
           "Do not assume a keeper reward exceeds transaction gas. Simulate the exact call and inspect the current settings.",
         ],
       },
@@ -216,7 +271,8 @@ export const docPages: DocPage[] = [
         entries: [
           { signature: "compose() / compose(uint8 format)", description: "Compose 80 eligible pile Credits into a Statement when the next page is ready." },
           { signature: "composeChosen(uint256[80] ids, uint8 format)", description: "Choose the 80 Credits when the choice switch and CC holding requirement permit it." },
-          { signature: "redeemStatement(uint256 sid)", description: "Redeem an eligible held Statement through the configured balance module.", errors: "NoBalanceModule, RedeemOff, NotEligible" },
+          { signature: "setHeldFormat(uint256 sid, uint8 format)", description: "Change the format of a held Statement when the caller holds enough CC." },
+          { signature: "redeemStatement(uint256 sid)", description: "Transfer an eligible Core-held Statement to the module. Balance proceeds remain in the module; the caller may receive an ETH caller payment.", errors: "NoBalanceModule, RedeemOff, NotHeld, NotEligible, BadModule" },
           { signature: "sellTo(uint256 sid, address buyer) payable", description: "Controller-only settlement of a Statement sale.", access: "Controller only" },
         ],
       },
@@ -257,7 +313,7 @@ export const docPages: DocPage[] = [
         entries: [
           { signature: "priceOf(uint256 sid) → uint256", description: "Current Statement ask in wei.", access: "view" },
           { signature: "referenceOf(uint256 sid) → uint256", description: "Reference used by the Statement sale curve.", access: "view" },
-          { signature: "atFloor(uint256 sid) → bool", description: "Whether a held Statement has reached the redemption floor rule.", access: "view" },
+          { signature: "atFloor(uint256 sid) → bool", description: "Redemption eligibility under the active curve or age rule.", access: "view" },
           { signature: "creditPrice(uint256 id) → uint256", description: "Current sale price for a held Credit.", access: "view" },
           { signature: "nextPage() → (bool ready, uint256[80] ids, uint8 format)", description: "Whether the Core can compose the next page.", access: "view" },
           { signature: "valuePerPoint(bool forSale) → (uint256 value, bool ok)", description: "Protected balance value per point and quote usability.", access: "view" },
