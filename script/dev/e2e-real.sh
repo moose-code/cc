@@ -195,13 +195,20 @@ check "no door booked (pot still 0)" "$(calc "$POT1 == 0")" "pot $POT1"
 say "step 10 minutes in 60 s blocks, no engine call"
 for _ in $(seq 1 10); do warp 60; done
 RATE2="$(num "$CORE" 'ethRate()(uint256)')"
-check "ethRate climbs above 4.9e15 from unbooked income (decision 147)" "$(calc "$RATE2 > $RATE_START")" "rate $RATE2"
+check "unbooked fees do not start the bid clock (decision 176)" "$(calc "$RATE2 == $RATE_START")" "rate $RATE2"
 
 ############################################################################## phase 3
 say "PHASE 3: the keeper books, sweeps a strategy listing, the rate drops"
 STRATEGY=0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6
-# warp so the bid climbs toward the cap, so a strategy listing (35377) sits under the bid within the keeper window
-warp 28800   # 8 hours idle
+# Cross the anti-sniper window and let the keeper book the waiting fees without purchasing a Credit.
+# Only booked ETH starts the funded bid clock; the later warp then gives the listing bid time to rise.
+warp 28800
+KEEPER_ENV="DOORS=book" keeper_run 1
+POT_BOOK="$(num "$CORE" 'ethPot()(uint256)')"
+RATE_BOOK="$(num "$CORE" 'ethRate()(uint256)')"
+check "the keeper booked enough ETH to start the funded clock" "$(calc "$POT_BOOK > 105022500000000000")" "pot $POT_BOOK"
+check "booking starts near the opening bid" "$(calc "$RATE_BOOK >= $RATE_START and $RATE_BOOK < $RATE_START * 101 // 100")" "rate $RATE_BOOK"
+warp 28800
 BIDA="$(num "$CORE" "bidOf(uint256)(uint256)" "$LISTED_A")"
 PRICEA="$(num "$STRATEGY" 'nftForSale(uint256)(uint256)' "$LISTED_A" 2>/dev/null || echo 0)"
 echo "  listing $LISTED_A bid $BIDA price $PRICEA"

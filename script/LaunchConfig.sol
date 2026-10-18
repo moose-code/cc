@@ -77,7 +77,7 @@ struct LaunchConfig {
     int24 startTick;
     int24 positionLower;
     int24 positionUpper;
-    /// the baseline skim in bps of volume (1000 is 10 percent)
+    /// the baseline skim in bps of volume (690 is 6.9 percent)
     uint24 baselineSkimBps;
     /// the engine's share of the baseline skim, bps. the protocol keeps the rest, `10_000 - bountyBps` at the baseline
     uint16 bountyBps;
@@ -92,7 +92,7 @@ struct LaunchConfig {
     address[] seaportRecipients;
     /// the address the payee fee share (`settings.payeePpm`, 0 at launch) and the operator cut of nft sales
     /// (`settings.saleToOperatorBps`) are pushed to. the Core receives bountyBps / 10_000 of the baseline skim, 9_000 /
-    /// 10_000 of 1000 bps is 900 bps of volume (9.0 points). the owner can raise the fee share with `Core.setPayee`
+    /// 10_000 of 690 bps is 621 bps of volume (6.21 percent). the owner can raise the fee share with `Core.setPayee`
     address payee;
     /// the address the artist cut of nft sales (`settings.saleToArtistBps`) is pushed to, set by `Core.setArtist`
     address artist;
@@ -129,7 +129,7 @@ abstract contract ConfigReader is CommonBase {
         c.startTick = -175_000;
         c.positionLower = -175_000;
         c.positionUpper = 887_200;
-        c.baselineSkimBps = 1000;
+        c.baselineSkimBps = 690;
         c.bountyBps = 9000;
         c.sniperStartBps = 9_000;
         c.sniperSeconds = 1800;

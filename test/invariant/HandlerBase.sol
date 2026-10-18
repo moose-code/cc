@@ -721,6 +721,7 @@ abstract contract HandlerBase is Test {
         uint256 lastFill;
         uint256 stored;
         uint256 cp;
+        uint256 restart;
         uint256 peakRate;
         uint256 peakTime;
         uint256 pend;
@@ -735,6 +736,7 @@ abstract contract HandlerBase is Test {
         s.pend = _pendingPot(s.st);
         s.stored = core.rateAtCheckpoint();
         s.cp = core.checkpointTime();
+        s.restart = uint64(uint256(vm.load(address(core), bytes32(uint256(10)))) >> 128);
         (s.anchor,,) = _anchorState();
         (s.peakRate, s.peakTime) = _peakState();
         s.lastFill = core.lastFillTime();
@@ -769,21 +771,28 @@ abstract contract HandlerBase is Test {
         peakRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
     }
 
-    /// the price state right now, from the core's checkpoint and peak state
-    function _priceBid(Settings memory st) internal view returns (BidModel.Bid memory) {
-        (uint256 peakRate, uint256 peakTime) = _peakState();
-        (uint256 anchor,,) = _anchorState();
-        return BidModel.Bid({
-            r: core.rateAtCheckpoint(),
-            pot: (core.ethPot() + _pendingPot(st)).zeroFloorSub(core.reserve()),
-            pagesPot: core.ethPot() + _pendingPot(st),
-            lastFillRate: anchor,
-            peakRate: peakRate,
-            peakTime: peakTime,
-            lastFillTime: core.lastFillTime(),
-            checkpointTime: core.checkpointTime(),
-            nowTs: block.timestamp
-        });
+    /// The climb uses booked ETH and the funded clock. Pending fees only widen the final read clamp.
+    function _modelPrice(RS memory s, Settings memory st, uint256 bookedPot, uint256 reserve)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 room = bookedPot.zeroFloorSub(reserve);
+        bool unfunded = BidModel.room(st, room) < s.anchor;
+        return BidModel.priceNow(
+            st,
+            BidModel.Bid({
+                r: s.stored,
+                pot: room,
+                pagesPot: bookedPot,
+                lastFillRate: s.anchor,
+                peakRate: s.peakRate,
+                peakTime: s.peakTime,
+                lastFillTime: unfunded ? block.timestamp : s.lastFill.max(s.restart),
+                checkpointTime: unfunded ? block.timestamp : s.cp,
+                nowTs: block.timestamp
+            })
+        );
     }
 
     /// the rate a fill in the next transaction starts its minute from: the stored start inside the current minute
@@ -796,7 +805,8 @@ abstract contract HandlerBase is Test {
     /// the price state of the eth rate right now, from the stored rate, the anchor and the peak: bounded by the ceiling
     /// and `rateCap`, climbing up to the clamp
     function _priceNow(Settings memory st) internal view returns (uint256) {
-        return BidModel.priceNow(st, _priceBid(st));
+        RS memory s = _rs();
+        return _modelPrice(s, st, s.pot, s.res);
     }
 
     /// invariant 6 and its companions, against the settings in force over the interval (they cannot change inside
@@ -807,20 +817,7 @@ abstract contract HandlerBase is Test {
     /// settings at the end.
     function _rsCheck(RS memory s, uint256 dt) internal {
         uint256 rate1 = core.ethRate();
-        uint256 p = BidModel.priceNow(
-            s.st,
-            BidModel.Bid({
-                r: s.stored,
-                pot: (s.pot + s.pend).zeroFloorSub(s.res),
-                pagesPot: s.pot + s.pend,
-                lastFillRate: s.anchor,
-                peakRate: s.peakRate,
-                peakTime: s.peakTime,
-                lastFillTime: s.lastFill,
-                checkpointTime: s.cp,
-                nowTs: block.timestamp
-            })
-        );
+        uint256 p = _modelPrice(s, s.st, s.pot, s.res);
         if (dt != 0) {
             if (rate1 != BidModel.read(s.st, (s.pot + s.pend).zeroFloorSub(s.res), p)) {
                 _flag(V_RATE_BOUND, "the rate after a warp differs from the model");
@@ -831,20 +828,7 @@ abstract contract HandlerBase is Test {
             // checkpoint pot lies between the start and end pots and priceNow rises with the pot, so the stored rate is
             // bounded by the larger of the two model prices
             Settings memory end = core.settings();
-            uint256 pEnd = BidModel.priceNow(
-                end,
-                BidModel.Bid({
-                    r: s.stored,
-                    pot: (core.ethPot() + _pendingPot(end)).zeroFloorSub(core.reserve()),
-                    pagesPot: core.ethPot() + _pendingPot(end),
-                    lastFillRate: s.anchor,
-                    peakRate: s.peakRate,
-                    peakTime: s.peakTime,
-                    lastFillTime: s.lastFill,
-                    checkpointTime: s.cp,
-                    nowTs: block.timestamp
-                })
-            );
+            uint256 pEnd = _modelPrice(s, end, core.ethPot(), core.reserve());
             if (core.rateAtCheckpoint() > s.stored.max(p).max(pEnd)) {
                 _flag(V_RATE_BOUND, "the stored rate rose with no time passing");
             }
@@ -960,18 +944,18 @@ abstract contract HandlerBase is Test {
     }
 
     /// the skim rate the live anti sniper module reports for the next swap, in bps of volume. 9_000 (90 percent) at
-    /// launch, falling linearly to the 1000 bps (10 percent) baseline over the window
+    /// launch, falling linearly to the 690 bps (6.9 percent) baseline over the window
     function _skimBps() internal view returns (uint256 bps) {
         (uint24 b,) = IArtCoinsMevSkimV2(mev).currentSkimBps(poolId);
         bps = b;
-        if (bps < 1000) bps = 1000;
+        if (bps < 690) bps = 690;
     }
 
     /// the legs of a skim of `skim` eth at the rate `bps`, from the rules of the hook written out independently: the
-    /// baseline part of the skim (10 points over the live rate) splits 90 percent to the bounty recipient (the Core)
+    /// baseline part of the skim (690 bps over the live rate) splits 90 percent to the bounty recipient (the Core)
     /// and the rest to the protocol, and the whole extra above the baseline goes to the bounty recipient
     function _expectSkim(uint256 skim, uint256 bps) internal pure returns (uint256 bounty, uint256 protocol) {
-        uint256 base = skim * 1000 / bps;
+        uint256 base = skim * 690 / bps;
         if (base > skim) base = skim;
         uint256 share = base * 9_000 / 10_000;
         protocol = base - share;
@@ -1222,9 +1206,9 @@ abstract contract HandlerBase is Test {
     }
 
     /// buys coin through the launch pool and leaves the hook bounty unbooked, then lets time pass before any book: the
-    /// fee income waits above the pots while the clock advances (decision 147). over the warp the read must stay at or
-    /// below the pot plus the pending pot share, the clamp the climb counts for unbooked income, which the invariant
-    /// harness otherwise never runs because every action settles first. the drip is booked at the end, so the action
+    /// fee income waits above the pots without earning funded climb (decision 176). over the warp the read must stay
+    /// at or below the pot plus the pending pot share; the pending income can widen the clamp but cannot start the
+    /// climb clock. the drip is booked at the end, so the action
     /// leaves booked books for the next one
     function buyCoinNoBook(uint256 aSeed, uint256 amtSeed, uint256 dtSeed) external checked {
         uint8 a = A_BUY_COIN_NOBOOK;
@@ -1503,13 +1487,12 @@ abstract contract HandlerBase is Test {
             _failed(p.pull.bal0, p.pull.pot0, p.pull.rate0, "sellForEth");
             _refusedAbovePot(why);
             rs = p.pull.rs0;
-            // a zero-spend batch is refused: ZeroAmount when a later credit's pay rounds to zero, PotTooSmall when the
-            // reserve holds the whole pot so the bid itself reads zero
+            // A batch can hit a zero bid, a payout rounded to zero, or a later royalty-inclusive cost above room.
             if (
                 !overshoot && !dup
                     && !(
                         (bytes4(why) == ICore.ZeroAmount.selector || bytes4(why) == ICore.PotTooSmall.selector)
-                            && _hasZeroSpend(ids, rs.st, p)
+                            && _hasZeroSpend(ids, rs.st, p, bytes4(why))
                     )
             ) {
                 _unexpected(a, why);
@@ -1518,18 +1501,24 @@ abstract contract HandlerBase is Test {
         _rsCheck(rs, 0);
     }
 
-    /// A tiny rate can round a later credit to zero after an earlier credit's drop.
-    function _hasZeroSpend(uint256[] memory ids, Settings memory st, SellPre memory p) internal view returns (bool) {
+    /// Reproduce the first named pot or zero-spend refusal after each prior credit changes the room and rate.
+    function _hasZeroSpend(uint256[] memory ids, Settings memory st, SellPre memory p, bytes4 selector)
+        internal
+        view
+        returns (bool)
+    {
         bool active = gSpendActive && gSpendBucket == block.timestamp / gSpendSeconds;
         uint256 budget = FullMath.mulDiv(active ? gSpendSnapshot : p.pot, st.spendCapBps, 10_000);
         uint256 spent = active ? gSpent : 0;
         for (uint256 i; i < ids.length; ++i) {
             uint256 score = _scoreOf(ids[i]);
             uint256 room = p.pot.zeroFloorSub(_reserveAt(st, p.pile + i, p.held));
-            uint256 cost = FullMath.mulDiv(BidModel.read(st, room, p.price), score, RATE_SCORE);
-            if (cost == 0) return true;
+            uint256 bidRate = BidModel.read(st, room, p.price);
+            if (bidRate == 0) return selector == ICore.PotTooSmall.selector;
+            uint256 cost = FullMath.mulDiv(bidRate, score, RATE_SCORE);
+            if (cost == 0) return selector == ICore.ZeroAmount.selector;
             cost += cost * st.buyToArtistBps / 10_000; // the spend carries the royalty (decision 163)
-            if (cost > room) return false;
+            if (cost > room) return selector == ICore.PotTooSmall.selector;
             if (st.spendCapBps != 10_000 && spent != 0 && (spent > budget || cost > budget - spent)) return false;
             spent += cost;
             p.pot -= cost;
@@ -2477,7 +2466,7 @@ abstract contract HandlerBase is Test {
 
     /// after the call: the pile grew by the ids when the call was meant to pass and not at all otherwise, each adopted
     /// credit has the modelled record (and enters the ghost), and the rate state, the pots and the balance
-    /// are as before
+    /// preserve the pots and balance; the entry door checkpoints the bid before the pile changes
     function _adoptPost(AdoptPre memory p, uint256[] memory ids, bool passes) internal {
         // a refused call reverted whole, pull included: the state is the one before the pull, which `_failed` checks
         if (!passes && p.size0 != core.pileSize()) {
@@ -2500,8 +2489,9 @@ abstract contract HandlerBase is Test {
         }
         (uint256 anchor1, uint256 floor1, uint256 bucket1) = _anchorState();
         if (
-            core.rateAtCheckpoint() != p.rs.stored || core.checkpointTime() != p.rs.cp
-                || core.lastFillTime() != p.rs.lastFill || anchor1 != p.anchor0 || floor1 != p.floor0
+            core.rateAtCheckpoint() != _modelPrice(p.rs, p.rs.st, p.rs.pot, p.rs.res)
+                || core.checkpointTime() != block.timestamp || core.lastFillTime() != p.rs.lastFill
+                || anchor1 != p.anchor0 || floor1 != p.floor0
                 || bucket1 != p.bucket0
         ) _flag(V_RATE_BOUND, "adopt moved the rate state");
         if (core.ethPot() != p.rs.pot || core.ethToBuyback() != p.tb0 || address(core).balance != p.b0) {

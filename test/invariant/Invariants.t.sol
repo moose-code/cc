@@ -1060,7 +1060,7 @@ abstract contract InvariantsBase is InvariantFixture {
 
 /// phase 1 after the sniper window: the balance module slot is empty, the controller is ControllerV1 and may be swapped
 /// for the fuzz controller in benign mode at once. the owner setup came a week, so the skim is
-/// the 10 point baseline.
+/// the 6.9 percent baseline.
 /// forge-config: default.invariant.runs = 24
 /// forge-config: default.invariant.depth = 80
 /// forge-config: default.invariant.fail-on-revert = false
@@ -1102,7 +1102,7 @@ contract InvariantsPhase1Window is InvariantsBase {
     /// the run starts inside the window with the skim well above the baseline
     function test_startsInsideTheSniperWindow() public view {
         assertLt(block.timestamp, launchTime + SNIPER_WINDOW / 2);
-        assertGt(_skimBpsNow(), 1000);
+        assertGt(_skimBpsNow(), 690);
     }
 
     function _skimBpsNow() internal view returns (uint256) {
@@ -1112,7 +1112,7 @@ contract InvariantsPhase1Window is InvariantsBase {
 
     /// everything the money side does inside the window first, then the standard smoke after a week
     function _smoke() internal override {
-        assertGt(_skimBpsNow(), 1000);
+        assertGt(_skimBpsNow(), 690);
         _try(0, 20);
         _try(1, 20);
         _try(2, 40);

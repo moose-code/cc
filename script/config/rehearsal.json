@@ -88,7 +88,7 @@
     "startTick": -175000,
     "positionLower": -175000,
     "positionUpper": 887200,
-    "baselineSkimBps": 1000,
+    "baselineSkimBps": 690,
     "bountyBps": 9000,
     "sniperStartBps": 9000,
     "sniperSeconds": 1800,

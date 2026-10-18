@@ -62,7 +62,7 @@ function dayVolume(path, d, scenario) {
   if (scenario === 'deadWeek' && d >= 7 && d < 14) return 0; // days 8 to 14 (0-indexed 7..13)
   return VOL_DAY0[path] * Math.pow(0.95, d);
 }
-const FEE_TO_CORE = 0.09; // skim 10 percent, 9 points to the engine (bountyBps 9000 of the 1000 bps skim). _book then splits it
+const FEE_TO_CORE = 0.0621; // 90 percent of the 6.9 percent baseline skim reaches the Core; _book then splits it
 
 const sr = (pts) => (pts * 1e4) / RATE_SCORE; // score over 100 points: the rate is wei per 100 points
 
@@ -86,7 +86,7 @@ export function runMarket(o) {
   const T = { bought: 0, spent: 0, pts: 0, composed: 0, sold: 0, saleGross: 0, creditSold: 0, burned: 0, worstPP: 0, firstComposeT: -1 };
   let unbid = [], nextSid = 1;
   // the pump attacker (market model, pump scenario): 50 eth swapped on day 2, then 200 credits sold into the risen bid
-  const atk = { armed: o.scenario === 'pump', left: 200, revenue: 0, acq: 200 * PE, fee: 50 * 0.10, sold: 0 };
+  const atk = { armed: o.scenario === 'pump', left: 200, revenue: 0, acq: 200 * PE, fee: 50 * 0.069, sold: 0 };
   // the whale dump (day 5): 2000 listings release over one hour with their ask cut to the bid
   let dumpQueue = null;
   const DAY = 86400, MIN = 60, STEPS = p.days * DAY / MIN;

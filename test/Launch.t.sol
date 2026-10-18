@@ -35,25 +35,25 @@ contract LaunchTest is Fixture {
         assertEq(address(core.controller()), address(ctl));
 
         IArtCoinsHookV2.SkimConfig memory k = HOOK.skimConfig(poolId);
-        assertEq(k.baselineSkimBps, 1000);
+        assertEq(k.baselineSkimBps, 690);
         assertEq(k.bountyBps, 9_000);
         assertEq(k.bountyRecipient, address(core), "the bounty goes to the Core");
         IArtCoinsMevSkimV2 mev = IArtCoinsMevSkimV2(lc.mevModule);
         IArtCoinsMevSkimV2.SkimSchedule memory sched = mev.schedule(poolId);
         assertEq(sched.startingSkimBps, 9_000);
-        assertEq(sched.endSkimBps, 1000, "the baseline is the end value");
+        assertEq(sched.endSkimBps, 690, "the baseline is the end value");
         assertEq(sched.windowSeconds, 1800);
         _skipSniperWindow();
         (uint24 now_, bool active) = mev.currentSkimBps(poolId);
-        assertEq(now_, 1000);
+        assertEq(now_, 690);
         assertFalse(active);
     }
 
-    // promise: SPEC 1 decision 147: the first ever fill reads the opening rate climbed on a hook fed thin pot
+    // promise: SPEC 1 decision 176: the first fill earns no climb from an unbooked hook fed pot
     /// a cold launch: one buy feeds a thin pot, left unbooked, no setRate and no pre funding. ten minutes later the bid
-    /// has climbed from the opening rate on the pot share of the hook income, and the first ever sellForEth pays the
+    /// remains at the opening rate despite the pending hook income, and the first ever sellForEth pays the
     /// bid quoted in the same block, stamping lastFillTime, the anchor, the peak and the spend budget
-    function test_firstFillFromTheOpeningRateOnAHookFedThinPot() public {
+    function test_firstFillDoesNotClimbOnUnbookedHookIncome() public {
         assertEq(core.ethPot(), 0, "nothing booked at launch");
         assertEq(core.RATE_START(), OPEN_RATE, "the opening rate the first fill starts from");
         _skipSniperWindow();
@@ -67,7 +67,7 @@ contract LaunchTest is Fixture {
         _warp(10 minutes);
         uint256 rate = core.ethRate();
         uint256 quote = core.bidOf(id);
-        assertGt(rate, OPEN_RATE, "the bid climbed from the opening rate on the unbooked income");
+        assertEq(rate, OPEN_RATE, "unbooked hook income earned no climb");
 
         uint256 before = seller.balance;
         vm.prank(seller);

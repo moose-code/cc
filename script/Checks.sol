@@ -66,7 +66,7 @@ abstract contract LaunchChecks is PostflightChecks {
     string internal constant PLACEHOLDER_MARKER = "PLACEHOLDER";
     // the pinned launch rules (docs/RUNBOOK.md section 2). a value outside them fails preflight. the three overrides in
     // the config file open exactly the rules that say so, and are part of the config hash
-    uint24 internal constant PIN_BASELINE_SKIM = 1000;
+    uint24 internal constant PIN_BASELINE_SKIM = 690;
     uint16 internal constant PIN_BOUNTY_BPS = 9000;
     /// @dev the most the launch pays the factory. a fee above it is a factory state change the signed config never saw
     uint256 internal constant PIN_DEPLOY_FEE_MAX = 0.1 ether;
@@ -274,7 +274,7 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _ruleEconomics(LaunchConfig memory c) private {
-        _eq("rule: baseline skim bps is 1000", uint256(c.baselineSkimBps), PIN_BASELINE_SKIM);
+        _eq("rule: baseline skim bps is 690", uint256(c.baselineSkimBps), PIN_BASELINE_SKIM);
         bool bountyOk = c.bountyBps == PIN_BOUNTY_BPS || (c.allowBounty && c.bountyBps <= 9999);
         _check(
             "rule: bounty bps is 9000",
@@ -841,7 +841,7 @@ abstract contract LaunchChecks is PostflightChecks {
         );
         _info(
             "signoff: protocol leg",
-            "the protocol leg (10_000 minus bountyBps of the baseline skim, 1.0 points of volume at bounty 9000) lands at the launcher protocol fee controller, a separate business from this engine and its owner"
+            "the protocol leg (10_000 minus bountyBps of the baseline skim, 0.69 percent of volume at bounty 9000) lands at the launcher protocol fee controller, a separate business from this engine and its owner"
         );
         _preSettingsRows(c);
         _info(

@@ -88,8 +88,8 @@ contract ConfigTest is Fixture {
         assertEq(f.rateStart, 4_900_000_000_000_000);
         assertEq(f.supply, 1_000_000_000e18);
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
-        // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 120
-        assertEq(f.baselineSkimBps, 1000);
+        // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 186
+        assertEq(f.baselineSkimBps, 690);
         assertEq(f.bountyBps, 9_000);
         assertEq(f.sniperStartBps, 9_000);
         assertEq(f.sniperSeconds, 1800);
@@ -131,28 +131,28 @@ contract ConfigTest is Fixture {
     }
 
     /// the launch fee split derived from the v2 hook math (`ArtCoinsHookV2._split`), per 1 ether of volume. all rates in bps
-    /// of volume (decision 120). baseline skim 1000 bps (10 points), skim = V * 1000 / 10_000 = 0.1 ether.
+    /// of volume (decision 186). baseline skim 690 bps, skim = V * 690 / 10_000 = 0.069 ether.
     /// bounty leg = skim * bountyBps / 10_000, protocol leg = skim - bounty leg (steady state, no referral).
-    /// the protocol keeps 10 percent of the skim: bountyBps 9_000 gives 1000 * 1000 / 10_000 = 100 bps (1.0 point), the
+    /// the protocol keeps 10 percent of the skim: bountyBps 9_000 gives 690 * 1000 / 10_000 = 69 bps (0.69 percent), the
     /// protocol share is 10_000 - bountyBps of the baseline skim, no factory floor sets it on master. Core inflow =
-    /// bounty leg = 0.1 * 9_000 / 10_000 = 0.09 ether (900 bps, 9.0 points). payeePpm is 0
+    /// bounty leg = 0.069 * 9_000 / 10_000 = 0.0621 ether (621 bps, 6.21 percent). payeePpm is 0
     /// at launch, so the engine keeps the whole Core inflow
     // promise: the launch fee split derived from the v2 hook math (`ArtCoinsHookV2._split`), per 1 ether of volume
     function test_feeSplitDerivation() public pure {
         LaunchConfig memory d = defaultConfig();
         uint256 v = 1 ether;
         uint256 skim = v * d.baselineSkimBps / 10_000;
-        assertEq(skim, 0.1 ether);
+        assertEq(skim, 0.069 ether);
         uint256 inflow = skim * d.bountyBps / 10_000;
         uint256 protocol = skim - inflow;
-        assertEq(inflow, 90_000_000_000_000_000, "Core inflow 9.0 points");
-        assertEq(protocol, 10_000_000_000_000_000, "protocol leg 1.0 point");
+        assertEq(inflow, 62_100_000_000_000_000, "Core inflow 6.21 percent");
+        assertEq(protocol, 6_900_000_000_000_000, "protocol leg 0.69 percent");
         assertEq(10_000 - uint256(d.bountyBps), 1000, "the protocol share of the baseline skim");
         // the payee share is 0 at launch, so the engine keeps the whole Core inflow
         assertEq(d.settings.payeePpm, 0, "payeePpm 0 at launch");
         uint256 payee = inflow * d.settings.payeePpm / 1e6;
         assertEq(payee, 0, "no payee share at launch");
-        assertEq(inflow - payee, 90_000_000_000_000_000, "engine 9.0 points");
+        assertEq(inflow - payee, 62_100_000_000_000_000, "engine 6.21 percent");
     }
 
     /// the deploy refuses to run while any placeholder is unset or the rate is out of bounds
@@ -819,9 +819,18 @@ contract ConfigTest is Fixture {
         this.requireExt(c);
     }
 
-    // promise: postflight reads back every setting
-    function test_postflightReadsBackEverySetting() public {
-        for (uint256 i; i < SettingsFields.N; ++i) {
+    // promise: postflight reads back every setting without exhausting one test's memory on accumulated check logs
+    function test_postflightReadsBackEverySettingFirstHalf() public {
+        _checkSettingsReadback(0, SettingsFields.N / 2);
+    }
+
+    // promise: postflight reads back every setting without exhausting one test's memory on accumulated check logs
+    function test_postflightReadsBackEverySettingSecondHalf() public {
+        _checkSettingsReadback(SettingsFields.N / 2, SettingsFields.N);
+    }
+
+    function _checkSettingsReadback(uint256 begin, uint256 end) private {
+        for (uint256 i = begin; i < end; ++i) {
             LaunchConfig memory c = lc;
             uint256 v = SettingsFields.get(c.settings, i);
             SettingsFields.set(c.settings, i, v == 0 ? 1 : v - 1);
