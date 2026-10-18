@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { StatementTile } from "./Tiles";
+import { CreditTile, StatementTile } from "./Tiles";
 import { ArtFrame } from "./Shell";
 import { commas, eth, rating } from "@/lib/format";
 import { useTokenMeta } from "@/lib/art";
@@ -27,6 +27,42 @@ export function StateMark({ state }: { state: StatementState }) {
       <span className={`mark ${ink}`} />
       {state === "for sale" ? "for sale ↓" : state}
     </span>
+  );
+}
+
+// A statement forming in the pile, before it is composed (no id or art of its own yet). `upcoming` is a full page of
+// credits waiting for its newest credit to clear the sale window; otherwise the page is still filling. The grid shows
+// the actual Credits gathered toward the page of `size`, empty slots for the rest.
+export function FormingCard({ kind, ids, size, foot }: { kind: "upcoming" | "building"; ids: number[]; size: number; foot: string }) {
+  return (
+    <div className="ccard forming-card">
+      <div className="ccard-art">
+        <div className="forming-art">
+          <div className="forming-grid">
+            {Array.from({ length: size }, (_, i) =>
+              i < ids.length ? (
+                <span key={ids[i]} className="forming-slot">
+                  <CreditTile id={ids[i]} />
+                </span>
+              ) : (
+                <span key={`e${i}`} className="forming-slot empty" />
+              ),
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="ccard-body">
+        <div className="scard-head">
+          <span>{kind === "upcoming" ? "upcoming statement" : "in progress"}</span>
+          <small>
+            {ids.length} / {size}
+          </small>
+        </div>
+        <div className="scard-foot">
+          <span className="forming-foot">{foot}</span>
+        </div>
+      </div>
+    </div>
   );
 }
 

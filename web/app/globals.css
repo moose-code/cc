@@ -2864,6 +2864,36 @@ button.slot:disabled {
   padding-top: 8px;
   border-top: 1px dashed var(--divider);
 }
+/* a forming statement: the actual Credits of the page in the 8 x 10 grid a composed statement uses. The frame is
+   square and the portrait grid is centred on white, exactly like a composed statement's art (.art-frame .tile-statement). */
+.forming-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  background: var(--art);
+  outline: 1px solid var(--hairline);
+}
+/* the credit grid fills the central ~83% of the square, like a composed statement's content within its canvas */
+.forming-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-auto-rows: 1fr;
+  height: 83%;
+  aspect-ratio: 8 / 10;
+}
+.forming-slot {
+  overflow: hidden;
+}
+.forming-slot .tile-credit {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+.forming-foot {
+  color: var(--muted);
+}
 
 /* credits table */
 .ctable-row {
