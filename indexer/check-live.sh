@@ -13,14 +13,14 @@ RECORD=deployments/1.json
 CORE="$(jq -r .core "$RECORD")"
 COIN="$(jq -r .coin "$RECORD")"
 DEPLOY_BLOCK="$(jq -r .deployBlock "$RECORD")"
+[[ "$(jq -r '.coinLive' "$RECORD")" == false ]] ||
+  { echo "prelaunch acceptance requires coinLive=false" >&2; exit 1; }
 [[ "$(cast chain-id --rpc-url "$RPC_URL")" == 1 ]] || { echo "RPC_URL is not Ethereum chain 1" >&2; exit 1; }
 CORE_COIN="$(cast call "$CORE" 'COIN()(address)' --rpc-url "$RPC_URL" | awk '{print $1}')"
 [[ "$(echo "$CORE_COIN" | tr 'A-F' 'a-f')" == "$(echo "$COIN" | tr 'A-F' 'a-f')" ]] ||
   { echo "record coin does not match Core.COIN" >&2; exit 1; }
-if [[ "$(jq -r '.coinLive // false' "$RECORD")" == false ]]; then
-  [[ "$(cast code "$COIN" --rpc-url "$RPC_URL")" == 0x ]] ||
-    { echo "deferred record says coinless but coin has code" >&2; exit 1; }
-fi
+[[ "$(cast code "$COIN" --rpc-url "$RPC_URL")" == 0x ]] ||
+  { echo "deferred record says coinless but coin has code" >&2; exit 1; }
 HEAD="$(cast block-number --rpc-url "$RPC_URL")"
 PILE="$(cast call "$CORE" 'pileSize()(uint256)' --rpc-url "$RPC_URL" | awk '{print $1}')"
 POT="$(cast call "$CORE" 'ethPot()(uint256)' --rpc-url "$RPC_URL" | awk '{print $1}')"
@@ -34,5 +34,5 @@ URL="$(printf '%s' "$URL" | sed 's:/*$::')"
 curl -fsS --max-time 10 "$URL/ready" >/dev/null
 curl -fsS --max-time 10 "$URL/health/parity" >/dev/null
 (cd indexer && node scripts/check-service.mjs "$URL" 1 "$CORE" "$COIN" "$DEPLOY_BLOCK" \
-  "$PILE" "$POT" "$HEAD" 5 0)
+  "$PILE" "$POT" "$HEAD" 5 1)
 echo "indexer production read-only acceptance passed at chain block $HEAD"

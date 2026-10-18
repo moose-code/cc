@@ -31,7 +31,7 @@ cat > "$TMP/bin/cast" <<'EOF'
 case "$1" in
   chain-id) echo 1 ;;
   block-number) echo 301 ;;
-  code) echo 0x ;;
+  code) echo "${MOCK_COIN_CODE:-0x}" ;;
   call)
     case "$3" in
       COIN*) echo 0x3333333333333333333333333333333333333333 ;;
@@ -42,6 +42,7 @@ esac
 EOF
 cat > "$TMP/bin/node" <<'EOF'
 #!/usr/bin/env bash
+[[ "${*: -1}" == 1 ]] || exit 2
 exit "$MOCK_NODE_EXIT"
 EOF
 chmod +x "$TMP/bin/fly" "$TMP/bin/curl" "$TMP/bin/cast" "$TMP/bin/node"
@@ -52,7 +53,7 @@ record() {
   jq -n --arg core "$1" \
     '{core:$core,coin:"0x3333333333333333333333333333333333333333",
       credits:"0x4444444444444444444444444444444444444444",
-      statements:"0x5555555555555555555555555555555555555555",deployBlock:1}' \
+      statements:"0x5555555555555555555555555555555555555555",deployBlock:1,coinLive:false}' \
     > "$TMP/deployments/1.json"
 }
 record "$A"
@@ -74,4 +75,18 @@ if MOCK_NODE_EXIT=1 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP
 fi
 MOCK_NODE_EXIT=0 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1
 grep -q 'production read-only acceptance passed' "$TMP/out"
+jq '.coinLive = true' "$TMP/deployments/1.json" > "$TMP/record.tmp"
+mv "$TMP/record.tmp" "$TMP/deployments/1.json"
+if MOCK_NODE_EXIT=0 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1; then
+  echo "coin-live record passed the prelaunch check" >&2
+  exit 1
+fi
+grep -q 'requires coinLive=false' "$TMP/out"
+jq '.coinLive = false' "$TMP/deployments/1.json" > "$TMP/record.tmp"
+mv "$TMP/record.tmp" "$TMP/deployments/1.json"
+if MOCK_NODE_EXIT=0 MOCK_COIN_CODE=0x1234 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1; then
+  echo "deployed coin passed the prelaunch check" >&2
+  exit 1
+fi
+grep -q 'coin has code' "$TMP/out"
 echo "indexer deploy guards passed"
