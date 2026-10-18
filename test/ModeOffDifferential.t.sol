@@ -205,22 +205,6 @@ contract ModeOffDifferentialTest is Fixture {
         assertEq(b.statementAtFloor, a.statementAtFloor, "atFloor");
         assertEq(b.composePaid, a.composePaid, "compose door payment");
     }
-
-    // the reference warms up while value mode is off: the refresh door updates the stored reference
-    function test_referenceWarmsUpWhileModeIsOff() public {
-        _enterPhase2();
-        _fundPot(10 ether);
-        _setPoolKeyOffMode();
-        uint256 r0 = ctl.referencePrice();
-        assertGt(r0, 0, "seeded at the spot");
-        uint256 t0 = ctl.referenceTime();
-        // move the pool spot away from the reference, then refresh past the block and the min interval
-        _warp(1 hours);
-        vm.roll(block.number + 1);
-        core.refreshReference();
-        assertGt(ctl.referenceTime(), t0, "the sample time moved");
-        assertFalse(core.settings().valueModeOn, "value mode off");
-    }
 }
 
 /// the balance route and the activation order (docs/RUNBOOK.md, phase 2): `balanceBidOn` stays false until value mode is
@@ -275,7 +259,8 @@ contract ModeOffBalanceRouteTest is ValueBase {
     }
 
     // see the activation order in docs/RUNBOOK.md: the balance bid opens after value mode, because with value mode off
-    // a pool spot 30 percent above the curve makes buy credit, sell for balance, sell the balance into the pool profitable
+    // a pool spot 30 percent above the break even makes buy credit, sell for balance, sell the balance into the pool
+    // profitable. the gain is the balance token received marked at the pool spot; the dump through the pool is not executed
     function test_documentedHazard_modeOffBalanceBidOpensRoundTripWhenSpotLeads() public {
         uint256[] memory ids = _arm();
         assertFalse(core.settings().valueModeOn, "value mode off");
@@ -288,9 +273,20 @@ contract ModeOffBalanceRouteTest is ValueBase {
 
     // the same setup in value mode: both legs price off the reference, so the round trip loses the spread
     function test_valueModeClosesTheRoundTripWhenSpotLeads() public {
+        _closureAtCap(11_000);
+    }
+
+    function test_valueModeClosesTheRoundTripWhenSpotLeads_cap30000() public {
+        _closureAtCap(30_000);
+    }
+
+    function _closureAtCap(uint32 cap) internal {
         uint256[] memory ids = _arm();
         uint256 target = _breakEvenSpot(ids[0]) * 130 / 100;
         _valueOn();
+        Settings memory s = core.settings();
+        s.balanceBidCapBps = cap;
+        _setSettings(s);
         _swapToSpot(target);
         // the prior-block sample catches the pushed spot while the reference walks one step a block behind it
         for (uint256 i; i < 3; ++i) {
@@ -300,6 +296,23 @@ contract ModeOffBalanceRouteTest is ValueBase {
         }
         (uint256 paid, uint256 back) = _balanceTrip(ids[0]);
         uint256 m = 10_000 + ctl.creditSpreadBps();
-        assertLe(back * m, (paid + 1) * 10_000, "value mode: the round trip loses at least the spread");
+        assertLe(back * m, (paid + 1) * 10_000, "value mode: the round trip loses at least the spread at the cap");
+    }
+
+    // promise: with value mode off the reference still warms up: a real swap moves the spot and a refresh moves the
+    // reference toward it by at most the step
+    function test_referenceWarmsUpWhileModeIsOff() public {
+        assertFalse(core.settings().valueModeOn, "value mode off");
+        uint256 ref0 = ctl.referencePrice();
+        uint256 t0 = ctl.referenceTime();
+        uint256 moved = _swapToSpot(ref0 * 13 / 10);
+        _warp(30 minutes);
+        vm.roll(block.number + 1);
+        assertTrue(ctl.refreshReference(), "the refresh runs");
+        uint256 ref1 = ctl.referencePrice();
+        assertGt(ref1, ref0, "the reference moved toward the spot");
+        assertLe(ref1, ref0 * 10_500 / 10_000, "by at most the step");
+        assertLt(ref1, moved, "and trails the spot");
+        assertGt(ctl.referenceTime(), t0, "the sample time moved");
     }
 }

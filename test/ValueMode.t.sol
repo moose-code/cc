@@ -185,8 +185,20 @@ contract ValueReferenceTest is ValueBase {
         (uint256 v, bool ok) = ctl.valuePerPoint(false);
         assertTrue(ok, "the quote reads the reseeded ring");
         assertEq(v, FullMath.mulDiv(POINT_UNIT * _moduleUnit(), live, 1e18), "the buy price is the live spot");
+        // the ring and the refresh block hold the live values (slots 9 to 12 of the controller storage layout)
+        assertEq(uint256(vm.load(address(ctl), bytes32(uint256(9)))), live, "spotSampleA");
+        assertEq(uint256(vm.load(address(ctl), bytes32(uint256(10)))), live, "spotSampleB");
+        uint256 liqs = uint256(vm.load(address(ctl), bytes32(uint256(11))));
+        assertEq(uint128(liqs), _liquidityNow(), "liqSampleA");
+        assertEq(uint128(liqs >> 128), _liquidityNow(), "liqSampleB");
+        assertEq(uint48(uint256(vm.load(address(ctl), bytes32(uint256(12))))), uint48(block.number), "lastRefreshBlock");
         // a refresh in the same block is refused, so the seed block is the last sample
         assertFalse(ctl.refreshReference(), "no refresh in the seed block");
+        // one block later the quote still reads the reseeded ring
+        vm.roll(block.number + 1);
+        (uint256 v2, bool ok2) = ctl.valuePerPoint(false);
+        assertTrue(ok2, "the quote reads the ring one block later");
+        assertEq(v2, v, "the same buy price one block later");
         // a stale expected spot is refused by the 4.5 percent guard
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("spot")));

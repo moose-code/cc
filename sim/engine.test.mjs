@@ -740,7 +740,7 @@ const R0 = 6.668e15;
   const b = mk({ redeemOn: true, balanceBidOn: true, balancePoolSet: true }); const b0 = mk({ redeemOn: true, balanceBidOn: true }); b.setBalanceModule(0, 1e-5); b0.setBalanceModule(0, 1e-5);
   near(b.creditFloor(cr, 0), b0.creditFloor(cr, 0), 1e-15, 'the pool key leaves the credit floor'); b.moduleReports(5e-6);
   near(b.creditFloor(cr, 0), b0.creditFloor(cr, 0), 1e-15, 'and the module unit does not move it'); n += 2;
-  // valueOf is the rate term; the credit price has no royalty on top (decision 123)
+  // valueOf is the rate term; the credit price has no royalty on top
   near(b.valueOf(440, 0), (b.floorRate(0) / W) * (440 / 100), 1e-12, 'valueOf is the rate term'); near(b.valueOf(0, 0), 0, 1e-15, 'no points, no value');
   ok(c.grossCreditPrice === undefined, 'the gross credit price is gone with the royalty'); n += 3;
   // sellCreditTo and buyCredit (cuts 0 here): creditCostToPotBps of the cost to the pot, the rest to the buyback pot, never under the cost
