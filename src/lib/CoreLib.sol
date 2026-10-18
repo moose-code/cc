@@ -186,7 +186,7 @@ library CoreLib {
     uint256 internal constant PAGE = 80;
     /// gas the controller's `valuePerPoint` may use in value mode: its reads of the settings, the module unit and the
     /// pool's slot 0 and liquidity
-    uint256 internal constant QUOTE_GAS = 200_000;
+    uint256 internal constant QUOTE_GAS = 2_000_000;
     /// gas of one queued compose and one queued redemption the reserve prices at `callerMaxBaseFee`
     uint256 internal constant COMPOSE_QUEUE_GAS = 9_000_000;
     uint256 internal constant REDEEM_QUEUE_GAS = 600_000;
@@ -194,9 +194,10 @@ library CoreLib {
     /// payment counts
     uint256 internal constant REFRESH_OVERHEAD_GAS = 50_000;
     uint256 internal constant REFRESH_GAS = 200_000;
-    /// gas bound for the non-blocking artist royalty `pay` on the balance route, enough for the module bookkeeping and an
-    /// ERC20 transfer with a blacklist check, so a hostile artist or token cannot grief the seller's sale
-    uint256 internal constant ARTIST_PAY_GAS = 200_000;
+    /// gas bound for the non-blocking artist royalty `pay` on the balance route: the module bookkeeping and an ERC20
+    /// transfer to a cold wallet with a blacklist check (299,581 gas measured on the pinned token, 117,757 warm). a
+    /// call that exceeds the bound or reverts is recorded by the module as a liability
+    uint256 internal constant ARTIST_PAY_GAS = 600_000;
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
 
@@ -1366,7 +1367,7 @@ library CoreLib {
     }
 
     /// gas of the bounded `unitPerPoint` and `available` reads of the balance module
-    uint256 internal constant READ_GAS = 200_000;
+    uint256 internal constant READ_GAS = 2_000_000;
 
     /// bounded read of `unitPerPoint()` of `module`: at most `READ_GAS`, exactly 32 bytes returned or more (a long
     /// answer is cut off). a revert, a short answer, a zero unit or a unit above `type(uint128).max` reverts `BadModule`

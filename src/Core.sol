@@ -240,7 +240,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant PPM = 1_000_000;
     uint256 private constant PAGE = 80;
     uint256 private constant MAX_FORMAT = 7;
-    uint256 private constant READ_GAS = 200_000;
+    uint256 private constant READ_GAS = 2_000_000;
     /// gas stipend of the forced pushes of the payee fee share and the artist and operator cuts of nft sales
     uint256 private constant PUSH_GAS = 50_000;
     /// gas the controller's `atFloor` may use: the launch curve rule reads the reference, the age only rule the start
@@ -264,7 +264,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// 200,000), the transaction base cost and typical calldata
     uint256 private constant BUYLISTING_OVERHEAD_GAS = 350_000;
     /// gas the quote of a listing adapter may use
-    uint256 private constant QUOTE_GAS = 300_000;
+    uint256 private constant QUOTE_GAS = 2_000_000;
     /// bytes of the answer of a listing adapter the Core accepts
     uint256 private constant QUOTE_MAX = 8_192;
     /// gas the controller's `priceOf` may use: its reads of the Core, the settings, `floorRate`, the module's
