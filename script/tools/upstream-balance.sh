@@ -12,11 +12,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REPO="jckbtchr-vv/credits"
-PIN=78f3a3132725af5c1fbfb1c1d5cf09b7ccb12e16
-# sha256 of the AuctionLineageWithdrawals creation code
-CREATION_SHA256=980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08
+PIN=9318c713974ee18658ac5aeddab45f0e1e45b585
+# sha256 of the ConversionLineageWithdrawals creation code
+CREATION_SHA256=ecc7afbffdcebc9004e25f2e767e932fe697f266d28c33330862065ff00e98ae
 # keccak256 of each artifact's deployedBytecode (immutables zeroed)
-RUNTIME_ALW=0x9e1aadee37961a7775bed6663e4e9d1d4d745b798724cd878cb4848ff62e1efb
+RUNTIME_CLW=0x29b369bc9814eaaf98e696df1a521200ad8584726f2fe036b3408a9d0bf3c3bd
 RUNTIME_RENDERER=0xc8b64ac9f76c8e4afbb3cad2f840e077cec107ac16952f8d4bdd592a01b2df0b
 RUNTIME_ARTWORK=0xc5b019615fa141d8092130f38868036d154105b0b57a3301ce70f85087d128ea
 
@@ -42,11 +42,11 @@ git -C "$DIR" submodule update -q --init --depth 1 contracts/lib/openzeppelin-co
 git -C "$DIR" diff --quiet HEAD -- contracts/src contracts/foundry.toml || die "checkout differs from $PIN"
 
 cd "$DIR/contracts"
-forge build src/experimental/AuctionLineageWithdrawals.sol --skip test --skip script >"$DIR/forge-build.log" 2>&1 || { tail -30 "$DIR/forge-build.log" >&2; die "forge build failed"; }
+forge build src/experimental/ConversionLineageWithdrawals.sol --skip test --skip script >"$DIR/forge-build.log" 2>&1 || { tail -30 "$DIR/forge-build.log" >&2; die "forge build failed"; }
 OUT=out
 art() { echo "$OUT/$1.sol/$1.json"; }
 
-creation=$(jq -r '.bytecode.object' "$(art AuctionLineageWithdrawals)")
+creation=$(jq -r '.bytecode.object' "$(art ConversionLineageWithdrawals)")
 got=$(printf '%s' "${creation#0x}" | xxd -r -p | shasum -a 256 | cut -d' ' -f1)
 [ "$got" = "$CREATION_SHA256" ] || die "creation code sha256 $got, expected $CREATION_SHA256"
 check_runtime() {
@@ -54,12 +54,12 @@ check_runtime() {
   got=$(jq -r '.deployedBytecode.object' "$(art "$1")" | cast keccak)
   [ "$got" = "$2" ] || die "$1 runtime hash $got, expected $2"
 }
-check_runtime AuctionLineageWithdrawals "$RUNTIME_ALW"
+check_runtime ConversionLineageWithdrawals "$RUNTIME_CLW"
 check_runtime SurrenderedBalanceRenderer "$RUNTIME_RENDERER"
 check_runtime LineageArtwork "$RUNTIME_ARTWORK"
 
 mkdir -p "$ROOT/out"
-jq --arg commit "$PIN" --arg rh "$RUNTIME_ALW" \
-  '{upstreamCommit: $commit, contract: "AuctionLineageWithdrawals", abi, bytecode: {object: .bytecode.object}, deployedBytecode: {object: .deployedBytecode.object, immutableReferences: .deployedBytecode.immutableReferences}, runtimeHash: $rh}' \
-  "$(art AuctionLineageWithdrawals)" > "$ROOT/out/upstream-balance.json"
+jq --arg commit "$PIN" --arg rh "$RUNTIME_CLW" \
+  '{upstreamCommit: $commit, contract: "ConversionLineageWithdrawals", abi, bytecode: {object: .bytecode.object}, deployedBytecode: {object: .deployedBytecode.object, immutableReferences: .deployedBytecode.immutableReferences}, runtimeHash: $rh}' \
+  "$(art ConversionLineageWithdrawals)" > "$ROOT/out/upstream-balance.json"
 echo "wrote $ROOT/out/upstream-balance.json from $REPO@$PIN"

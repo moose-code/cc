@@ -34,14 +34,14 @@ interface IPermit2AllowanceR {
         returns (uint160 amount, uint48 expiration, uint48 nonce);
 }
 
-/// the AuctionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
+/// the ConversionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
 interface IUpstreamToken {
     function renderer() external view returns (address);
     function decimals() external view returns (uint8);
     function quote(uint256 id) external view returns (uint256);
     function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256);
     function retireLaunchSupply() external;
-    function transfersOpenBlock() external view returns (uint64);
+    function opensAt() external view returns (uint64);
 }
 
 interface IUpstreamStatements {
@@ -306,13 +306,13 @@ contract E2EReal is Scenario {
     /// the funder address that surrenders a page and retires Jack's launch supply on the fork
     address internal constant FUNDER = 0x6666666666666666666666666666666666666666;
 
-    /// deploys Jack's `AuctionLineageWithdrawals` from `out/upstream-balance.json` exactly as the production-module test
+    /// deploys Jack's `ConversionLineageWithdrawals` from `out/upstream-balance.json` exactly as the production-module test
     /// does: the funder receives 80 real Credits, the Statements owner registers the Balance renderer, the funder
     /// composes a page, withdraws and retires the launch supply, then the owner deploys `StatementBalanceModule`, sets
     /// it, switches `redeemOn` and `balanceBidOn` on, initializes a native eth / token pool at the dev sqrt and points
     /// the controller at it. every write goes through the node directly (`_send` / `_sendCreate`) so the deployed token
-    /// address is the one the node assigns, not a simulated one. `opensAt` is set past the current block so the shell
-    /// mines to it before the redemption, mirroring Jack's opening gate.
+    /// address is the one the node assigns, not a simulated one. `opensAt` is a constant timestamp; the shell advances
+    /// node time to it before the redemption.
     function phase6ProdDeploy() external {
         _boot();
         sellBucketSeconds = 0;
@@ -320,10 +320,9 @@ contract E2EReal is Scenario {
 
         bytes memory creation = vm.parseJsonBytes(vm.readFile("out/upstream-balance.json"), ".bytecode.object");
         uint8 format = uint8(IUpstreamStatements(Mainnet.STATEMENTS).formatCount());
-        uint64 opensAt = uint64(block.number + 50);
         bytes memory init = abi.encodePacked(
             creation,
-            abi.encode(Mainnet.STATEMENTS, format, opensAt, FUNDER, _prodAddr("auction"), _prodAddr("liquidity"))
+            abi.encode(Mainnet.STATEMENTS, format, FUNDER)
         );
         address token = _sendCreate(OWNER, init);
         require(token != address(0), "phase6prod: token deploy failed");
@@ -386,10 +385,10 @@ contract E2EReal is Scenario {
         );
 
         require(core.balanceModule() == module, "phase6prod: module not set");
-        console.log("== PRODUCTION MODULE: Jack's pinned AuctionLineageWithdrawals ==");
+        console.log("== PRODUCTION MODULE: Jack's pinned ConversionLineageWithdrawals ==");
         console.log("BALANCE_TOKEN", token);
         console.log("BALANCE_MODULE", module);
-        console.log("TRANSFERS_OPEN_BLOCK", uint256(IUpstreamToken(token).transfersOpenBlock()));
+        console.log("OPENS_AT", uint256(IUpstreamToken(token).opensAt()));
     }
 
     /// A1 sells 80 credits into the eth bid so the Core holds a composable page for the redemption
@@ -465,11 +464,6 @@ contract E2EReal is Scenario {
         for (uint256 i; i < 80; ++i) {
             page[i] = ids[i];
         }
-    }
-
-    /// a distinct deterministic address for a constructor role the e2e flow does not exercise
-    function _prodAddr(string memory label) internal pure returns (address) {
-        return address(uint160(uint256(keccak256(abi.encodePacked("e2e-real.prod.", label)))));
     }
 
     /// deploys `initcode` as a node transaction from `who` and returns the address the node assigned, then reselects the
@@ -577,13 +571,13 @@ contract E2EReal is Scenario {
         console.log("phase7: value sell bid / paid", bid, paid);
     }
 
-    /// builds real trading depth on Jack's balance pool. after `transfersOpenBlock` the immutable funder moves part of
+    /// builds real trading depth on Jack's balance pool. after `opensAt` the immutable funder moves part of
     /// its launch balance to the liquidity wallet (TRADER), which adds a full-range position to the native eth / token
     /// pool through the real pool manager. the move targets 2 percent of supply, capped at 95 percent of the funder
     /// balance when the funder holds less. prints the moved amount and the pool liquidity the manager reports.
     function phase7ProdLiquidity(address token) external {
         _boot();
-        require(block.number >= IUpstreamToken(token).transfersOpenBlock(), "phase7: transfers not open");
+        require(block.timestamp >= IUpstreamToken(token).opensAt(), "phase7: transfers not open");
         uint256 funderBal = IERC20R(token).balanceOf(FUNDER);
         require(funderBal > 0, "phase7: funder holds no balance");
         uint256 supply = IERC20R(token).totalSupply();

@@ -1,5 +1,5 @@
 // Jack's balance token constants, the single source the sim's balance model reads.
-// AuctionLineageWithdrawals in jckbtchr-vv/credits at commit 78f3a3132725af5c1fbfb1c1d5cf09b7ccb12e16
+// ConversionLineageWithdrawals in jckbtchr-vv/credits at commit 9318c713974ee18658ac5aeddab45f0e1e45b585
 // (SCORE_TO_TOKEN, decimals, the quote and withdraw math). script/tools/upstream-balance.sh pins and verifies the same
 // build; test/UpstreamBalance.t.sol and test/LaunchDayPhase2.t.sol assert these against the real bytecode on a fork.
 // A change in Jack's repo is a one-line change here.

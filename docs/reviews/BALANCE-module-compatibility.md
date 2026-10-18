@@ -38,3 +38,14 @@ Fork block 26205390, factory `0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c`. Upstr
 ## Limits
 
 This is implementation compatibility evidence. It does not cover Jack's auction lifecycle, the real auction pool, market throughput or production gas. Before activation, authenticate the live contract, constructor parameters, renderer registration, creator retirement, opening block and canonical pool (docs/RUNBOOK.md, wiring the production balance module).
+
+## Update 2026-10-17: ConversionLineageWithdrawals
+
+Upstream: `jckbtchr-vv/credits` at `9318c713974ee18658ac5aeddab45f0e1e45b585`, `contracts/src/experimental/ConversionLineageWithdrawals.sol` (base `LineageWithdrawals.sol`). It replaces `AuctionLineageWithdrawals`. Constructor `(source, format, funder)`.
+
+- `transfersOpenBlock()` is removed. `uint64 public constant opensAt = 1792506000` (2026-10-20 10:20 America/New_York) gates public withdrawals and transfers on `block.timestamp`.
+- `retirementFunder` is immutable. `retireLaunchSupply()` is callable once by the funder and burns `launchRetirement = maxSupply - launchSupply` (`launchSupply` 53,750,000 BALANCE). Before `opensAt` the funder alone may withdraw, and only while `totalRetired == 0`. `_checkWithdrawal` reverts `LaunchSupplyNotFinalized` for any other caller until retirement completes. `_update` reverts `LaunchSupplyNotFinalized` on any movement before retirement and `ConversionNotOpen` on a transfer before `opensAt`.
+- Unchanged and read by the module: `statements()`, `SCORE_TO_TOKEN` 1e14, `decimals()` 18, `quote(id)`, `withdraw(id, expectedAmount)`, `totalRetired()`, `launchRetirement()`.
+- Module change: `IStatementBalanceToken.opensAt()` replaces `transfersOpenBlock()`. `available()` returns 0 while `totalRetired != launchRetirement` or `block.timestamp < opensAt`. The constructor checks `statements()`, `SCORE_TO_TOKEN` and `decimals()`, all present on the new token.
+- Renderer and artwork runtime hashes are unchanged. `ConversionLineageWithdrawals` creation code sha256 `ecc7afbffdcebc9004e25f2e767e932fe697f266d28c33330862065ff00e98ae`, runtime keccak256 `0x29b369bc9814eaaf98e696df1a521200ad8584726f2fe036b3408a9d0bf3c3bd`.
+- `PermanentLiquidityLock.sol` in the same directory is a separate contract that holds full-range ETH/Balance liquidity positions permanently and forwards accrued fees to a fixed recipient. The token does not reference it.

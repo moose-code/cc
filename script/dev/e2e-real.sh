@@ -278,7 +278,7 @@ rpc anvil_setBalance "$(callc "$STATEMENTS" 'owner()(address)')" "$FUND"
 OUT6="$(step "phase6ProdDeploy()")" && {
   BTOK="$(echo "$OUT6" | grep -m1 'BALANCE_TOKEN' | awk '{print $2}')"
   BMOD="$(echo "$OUT6" | grep -m1 'BALANCE_MODULE' | awk '{print $2}')"
-  TOPEN="$(echo "$OUT6" | grep -m1 'TRANSFERS_OPEN_BLOCK' | awk '{print $2}')"
+  TOPEN="$(echo "$OUT6" | grep -m1 'OPENS_AT' | awk '{print $2}')"
 }
 check "the owner set the production balance module (Jack's pinned build)" "$([ -n "$BMOD" ] && echo 1 || echo 0)" "module $BMOD"
 if [ -n "$BTOK" ]; then
@@ -292,10 +292,11 @@ if [ -n "$BTOK" ]; then
   RSID="$(step "phase6ProdCompose()" | grep -m1 'REDEEM_SID' | awk '{print $2}')"
   check "phase 6 composed a held statement" "$([ -n "$RSID" ] && echo 1 || echo 0)" "statement $RSID"
   if [ -n "$RSID" ]; then
-    # mine to Jack's opening block, then warp the statement to its redemption floor
-    CUR="$(cast block-number --rpc-url "$RPC")"
+    # advance node time to Jack's opensAt, then warp the statement to its redemption floor
+    CUR="$(cast block --field timestamp --rpc-url "$RPC")"
     if [ -n "$TOPEN" ] && [ "$CUR" -lt "$TOPEN" ]; then
-      cast rpc anvil_mine "$(printf '0x%x' $((TOPEN - CUR + 1)))" --rpc-url "$RPC" >/dev/null
+      cast rpc evm_setNextBlockTimestamp "$TOPEN" --rpc-url "$RPC" >/dev/null
+      cast rpc evm_mine --rpc-url "$RPC" >/dev/null
     fi
     for _ in $(seq 1 40); do
       [ "$(callc "$CTL" 'atFloor(uint256)(bool)' "$RSID")" = true ] && break
@@ -325,10 +326,10 @@ fi
 say "PHASE 7: value mode"
 if [ -n "$BTOK" ]; then
   # Jack's token reaches holders through the module (A1's phase 6 balance sell) and the funder's launch balance. the
-  # funder moves about 2 percent of supply to the liquidity wallet after transfersOpenBlock and adds a full-range
+  # funder moves about 2 percent of supply to the liquidity wallet after opensAt and adds a full-range
   # position, so the balance pool carries real trading depth. value mode then runs the full pool-move stress: a quote
   # gated on that depth, an 8 percent spot move, a sell inside the bands, the keeper refresh cadence, and a same-block
-  # round trip that nets at most zero after pool fees. phase 6 already mined past transfersOpenBlock for the redemption.
+  # round trip that nets at most zero after pool fees. phase 6 already mined past opensAt for the redemption.
   OUT7L="$(step "phase7ProdLiquidity(address)" "$BTOK")"; echo "$OUT7L" | sed 's/^/    /'
   DEPTH="$(echo "$OUT7L" | grep -m1 'POOL_DEPTH' | awk '{print $2}')"
   MOVED="$(echo "$OUT7L" | grep -m1 'MOVED_TOKENS' | awk '{print $2}')"
