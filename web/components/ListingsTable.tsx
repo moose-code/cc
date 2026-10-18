@@ -13,6 +13,7 @@ export const gapLabel = (r: ListingRow) =>
 
 // "~3h 20m", "~4d"; a pot below the price has no time
 export function etaText(r: ListingRow): string {
+  if (r.paused) return "engine paused";
   const e = r.eta;
   if (r.wait != null) return `next bucket · ${r.wait}s`;
   if (e.kind === "now") return "now";

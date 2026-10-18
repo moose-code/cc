@@ -90,7 +90,7 @@ export class Keeper {
     const read = await readState(this.client, this.cfg.record.core, this.fixed);
     const { snap } = read;
     const state = { ...read.state, lastBookAt: this.lastBookAt };
-    const listings: Listing[] = this.cfg.doorsOn.has("buyListing") && !state.retired ? await this.sources.candidates(snap, state.blockNumber) : [];
+    const listings: Listing[] = this.cfg.doorsOn.has("buyListing") && !state.retired && !state.paused ? await this.sources.candidates(snap, state.blockNumber) : [];
     const d = decide(state, listings, { baseFee: state.baseFee }, this.policy, this.seen);
     this.seen = d.seen;
     const now = Date.now();

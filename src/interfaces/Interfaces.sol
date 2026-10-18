@@ -177,7 +177,8 @@ struct Settings {
     uint16 climbPerMinBps;
     /// the rate stays at or below this share of the ceiling anchor, bps. the anchor is `max(last fill rate, peak now)`
     uint16 ceilBps;
-    /// growth of the ceiling anchor per full idleStepSeconds since the last fill, bps of the anchor
+    /// growth of the ceiling anchor per full idleStepSeconds since the later of the last fill and a funded clock restart,
+    /// bps of the anchor in mode-off ETH pricing
     uint16 idleLoosenBps;
     /// the floor of a statement sale, bps of the statement cost in `sellTo` and bps of the controller reference in
     /// the mode-off curve. the Core's cost floor applies in both modes

@@ -20,27 +20,32 @@ import {SystemDeployer, Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig, ConfigReader} from "../script/LaunchConfig.sol";
 import {Report} from "../script/Report.sol";
 
-/// @notice the deploy package on the pinned fork: the library row, the Core before `setController`, the readbacks of the
+/// @notice the deploy package on the pinned fork: both library rows, the Core before `setController`, the readbacks of the
 /// position and the sniper schedule, the Core constructor rules, the config parser and the sign off hash. the mutation
 /// matrix is in test/ReviewMatrix.t.sol. forks mainnet at FORK_BLOCK
 contract ReviewDeployTest is ReviewHarness {
-    // the library row: absent and compiled copies pass, other code at the library address fails
-    // promise: the library row: absent and compiled copies pass, other code at the library address fails
+    // promise: each library row accepts absence and its compiled copy, then rejects altered code
     function test_preflightLibraryRow() public {
-        // the test runner predeploys the linked CoreLib at libraryAddress(); mainnet has no code there
-        address lib = libraryAddress();
-        vm.etch(lib, "");
-        vm.resetNonce(lib);
-        string memory row = "library: CoreLib at its create2 address is the compiled code or absent";
-        assertEq(this.runPre(base, deployer), "", "absent passes");
-        (,, string memory detail) = _row(row);
-        assertTrue(vm.contains(detail, "not deployed"));
-        vm.prank(deployer);
-        (bool sent,) = CREATE2_DEPLOYER.call(abi.encodePacked(bytes32(0), vm.getCode("CoreLib.sol:CoreLib")));
-        assertTrue(sent);
-        assertEq(this.runPre(base, deployer), "", "the compiled copy passes");
-        vm.etch(lib, hex"00");
-        assertEq(this.runPre(base, deployer), row);
+        string[2] memory names = ["CoreLib", "CoreOpsLib"];
+        address[2] memory libs = [libraryAddress(), opsLibraryAddress()];
+        for (uint256 i; i < names.length; ++i) {
+            uint256 snap = vm.snapshotState();
+            vm.etch(libs[i], "");
+            vm.resetNonce(libs[i]);
+            string memory row = string.concat("library: ", names[i], " at its create2 address is the compiled code or absent");
+            assertEq(this.runPre(base, deployer), "", "absent passes");
+            (,, string memory detail) = _row(row);
+            assertTrue(vm.contains(detail, "not deployed"));
+            vm.prank(deployer);
+            (bool sent,) = CREATE2_DEPLOYER.call(
+                abi.encodePacked(bytes32(0), vm.getCode(string.concat(names[i], ".sol:", names[i])))
+            );
+            assertTrue(sent);
+            assertEq(this.runPre(base, deployer), "", "the compiled copy passes");
+            vm.etch(libs[i], hex"00");
+            assertEq(this.runPre(base, deployer), row);
+            vm.revertToState(snap);
+        }
     }
 
     // a Core without a controller refuses every door that reads or answers to the controller
@@ -58,11 +63,17 @@ contract ReviewDeployTest is ReviewHarness {
     }
 
     function _etchLibrary() internal {
-        vm.etch(libraryAddress(), "");
-        vm.resetNonce(libraryAddress());
-        vm.prank(deployer);
-        (bool sent,) = CREATE2_DEPLOYER.call(abi.encodePacked(bytes32(0), vm.getCode("CoreLib.sol:CoreLib")));
-        assertTrue(sent);
+        address[2] memory libs = [libraryAddress(), opsLibraryAddress()];
+        string[2] memory names = ["CoreLib", "CoreOpsLib"];
+        for (uint256 i; i < libs.length; ++i) {
+            vm.etch(libs[i], "");
+            vm.resetNonce(libs[i]);
+            vm.prank(deployer);
+            (bool sent,) = CREATE2_DEPLOYER.call(
+                abi.encodePacked(bytes32(0), vm.getCode(string.concat(names[i], ".sol:", names[i])))
+            );
+            assertTrue(sent);
+        }
     }
 
     // ------------------------------------------------------------------ readbacks of the first review, still true

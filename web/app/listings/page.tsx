@@ -26,6 +26,7 @@ const BUCKETS = [
 // re-renders on the tick; the figures come from the listings query, which refetches on every new head block.
 function RiseLine({ data }: { data: ListingsData }) {
   const now = useNow(1000);
+  if (data.paused) return <div className="rise-line">engine paused</div>;
   const w = (x: number) => BigInt(Math.floor(x));
   const e = nextRise(data.climb, now);
   const first = data.rows[0];

@@ -93,7 +93,8 @@ export default function ComposePage() {
                 </select>
               </label>
               <Act
-                label="compose statement"
+                label={snap?.paused ? "engine paused" : "compose statement"}
+                disabled={snap?.paused}
                 steps={async (write) =>
                   void (await write(
                     format === "random"
@@ -169,9 +170,9 @@ export default function ComposePage() {
                 </select>
               </label>
               <Act
-                label="compose chosen"
-                disabled={sel.size !== size || !ccOk}
-                title={!ccOk ? "coin balance below the minimum" : undefined}
+                label={snap?.paused ? "engine paused" : "compose chosen"}
+                disabled={snap?.paused || sel.size !== size || !ccOk}
+                title={snap?.paused ? "engine paused" : !ccOk ? "coin balance below the minimum" : undefined}
                 steps={async (write) => {
                   await write({ address: core, abi: coreAbi, functionName: "composeChosen", args: [[...sel].map(BigInt) as any, chosenFormat] });
                   setSel(new Set());

@@ -12,7 +12,7 @@ import {Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
 
 /// @notice `script/SystemResumer.sol` on the pinned fork with the live v2 stack. the deployer is the factory owner and
-/// the config owner. the library goes through the deterministic deployer, so the tests send it there by hand
+/// the config owner. both libraries go through the deterministic deployer, so the tests send them there by hand
 contract ResumeTest is Test, SystemResumer, ProdDeployer {
     V2Stack.Stack internal v2;
     IArtCoinsFactoryV2 internal FACTORY;
@@ -24,10 +24,11 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
         if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
         else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
-        // the test runner predeploys the linked CoreLib at libraryAddress() and keeps it across fork selection. mainnet has
-        // no code there, so the account is reset to the state the script sees
+        // the test runner predeploys linked libraries across fork selection; reset their accounts to the mainnet state
         vm.etch(libraryAddress(), "");
         vm.resetNonce(libraryAddress());
+        vm.etch(opsLibraryAddress(), "");
+        vm.resetNonce(opsLibraryAddress());
         v2 = V2Stack.attach();
         deployer = v2.owner;
         creator = makeAddr("resume.creator");
@@ -54,6 +55,9 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         vm.prank(deployer);
         (bool ok,) = CREATE2_DEPLOYER.call(abi.encodePacked(bytes32(0), vm.getCode("CoreLib.sol:CoreLib")));
         assertTrue(ok, "the library create2 failed");
+        vm.prank(deployer);
+        (ok,) = CREATE2_DEPLOYER.call(abi.encodePacked(bytes32(0), vm.getCode("CoreOpsLib.sol:CoreOpsLib")));
+        assertTrue(ok, "the ops library create2 failed");
     }
 
     function resume(address who, LaunchConfig memory c, address core) external {
@@ -181,7 +185,10 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     /// @dev addresses, runtime code hashes and the first storage words of the system contracts and the coin
     function _fingerprint(Deployed memory d) internal view returns (bytes32 h) {
         h = keccak256(abi.encode(d.core, d.coin, d.controller, d.seaportAdapter, d.strategyAdapter, d.renderer, d.poolId));
-        address[6] memory all = [d.core, d.coin, d.controller, d.seaportAdapter, d.strategyAdapter, d.renderer];
+        address[8] memory all = [
+            d.core, d.coin, d.controller, d.seaportAdapter, d.strategyAdapter, d.renderer,
+            libraryAddress(), opsLibraryAddress()
+        ];
         for (uint256 a; a < all.length; ++a) {
             h = keccak256(abi.encode(h, all[a].codehash));
             for (uint256 i; i < 48; ++i) {

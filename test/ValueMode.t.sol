@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Quote, CreditSale, RATE_SCORE, POINT_UNIT} from "../src/interfaces/Interfaces.sol";
@@ -153,6 +154,32 @@ abstract contract ValueBase is Fixture {
 }
 
 contract ValueReferenceTest is ValueBase {
+    using stdStorage for StdStorage;
+
+    // promise: decision 176 a paid refresh preserves earned funded climb before its payment empties the buying room
+    function test_paidRefreshPreservesEarnedClimbBeforePotFalls() public {
+        Settings memory s = core.settings();
+        s.reserveWei = 0.1 ether;
+        s.callerFee = 0.01 ether;
+        s.callerMaxBaseFee = 0;
+        _setSettings(s);
+        vm.prank(owner);
+        core.setRate(0.0049 ether);
+        uint256 oldPot = core.ethPot();
+        stdstore.target(address(core)).sig("ethPot()").checked_write(0.11 ether);
+        vm.deal(address(core), address(core).balance - oldPot + 0.11 ether);
+        _warp(4 minutes);
+        uint256 earned = core.ethPrice();
+        assertGt(earned, 0.0049 ether, "four funded minutes earned a climb");
+
+        vm.roll(block.number + 1);
+        core.refreshReference();
+        assertEq(core.ethPot(), 0.1 ether, "the refresh payment left only the reserve");
+        assertEq(core.rateAtCheckpoint(), earned, "the checkpoint kept the earned climb");
+        _warp(6 hours);
+        assertEq(core.ethPrice(), earned, "the empty pot did not fund later climb");
+    }
+
     // promise: SPEC 8 setBalancePoolKey starts the reference at the spot, in the owner's transaction
     function test_referenceStartsAtTheSpot() public view {
         assertEq(ctl.referencePrice(), _spotOf(SP));
@@ -440,6 +467,28 @@ contract ValueReferenceTest is ValueBase {
 }
 
 contract ValueModeTest is ValueBase {
+    // promise: an owner pause freezes the shared value-mode climb through booking, funding and half-life edits
+    function test_pauseFreezesSharedBidAndResumesEarnedClimb() public {
+        _valueOn();
+        vm.warp(block.timestamp + 2 minutes);
+        uint256 earned = core.sharedRate();
+        vm.prank(owner);
+        core.setPaused(true);
+        vm.warp(block.timestamp + 6 hours);
+        vm.deal(address(this), 1 ether);
+        core.fund{value: 1 ether}();
+        core.book();
+        Settings memory s = core.settings();
+        s.peakHalfLife += 1 hours;
+        _setSettings(s);
+        assertEq(core.sharedRate(), earned, "paused booking cannot lift the shared bid");
+        vm.prank(owner);
+        core.setPaused(false);
+        assertEq(core.sharedRate(), earned, "earned climb survives the pause");
+        vm.warp(block.timestamp + 2 minutes);
+        assertGt(core.sharedRate(), earned, "shared climb resumes");
+    }
+
     // promise: SPEC 4 the launch keeps value mode off and the quote placeholders unusable
     function test_launchValues() public view {
         Settings memory s = core.settings();
@@ -991,21 +1040,23 @@ contract ValueModeTest is ValueBase {
         assertLt(ethBid, s.rateCap, "well under the cap, so a rollback cannot reopen the eth bid at the cap");
     }
 
-    // promise: SPEC 11 a pause in value mode: the controller sales revert Paused while the bid keeps filling, so the
-    // owner can halt buys without freezing the engine's purchases
+    // promise: the owner pause stops value-mode direct fills and the same credit can sell after resume
     function test_pauseInValueMode() public {
         _fundPot(20 ether);
         _valueOn();
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(owner);
         core.setPaused(true);
-        // the bid still fills while paused: the pause gates the controller sales, not sellForEth
         uint256 before = seller.balance;
         vm.prank(seller);
+        vm.expectRevert(ICore.Paused.selector);
         core.sellForEth(ids);
-        assertGt(seller.balance, before, "the eth bid fills while paused in value mode");
+        assertEq(seller.balance, before, "the paused bid does not pay");
         vm.prank(owner);
         core.setPaused(false);
+        vm.prank(seller);
+        core.sellForEth(ids);
+        assertGt(seller.balance, before, "the direct bid resumes");
     }
 }
 

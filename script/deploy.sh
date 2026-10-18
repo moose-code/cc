@@ -9,7 +9,7 @@
 #   DRY_RUN=1 script/deploy.sh mainnet           every guard evaluated, Preflight and the Deploy simulation, nothing sent
 #   script/deploy.sh mainnet                     broadcast through the keystore, writes deployments/1.json
 #
-# DEFER_LAUNCH=1 script/deploy.sh <env> sends every transaction but the launch (the library, Core, controller, both
+# DEFER_LAUNCH=1 script/deploy.sh <env> sends every transaction but the launch (both libraries, Core, controller, both
 # adapters, the renderer, setCore, setController, both addAdapter) and runs the deferred postflight. the record carries
 # the predicted coin and coinLive false. LAUNCH_ONLY=1 script/deploy.sh <env> then sends the launch alone, reading the
 # Core from that record; it runs the full postflight and rewrites the record with coinLive true and launchBlock
@@ -224,6 +224,24 @@ trap 'rm -rf "$T"; if [ -n "$TMPREC" ]; then rm -f "$TMPREC"; fi' EXIT
 BUILD="$(forge build 2>&1)" || { echo "$BUILD" | tail -40; die "build failed"; }
 echo "deploy.sh: env $ENV, build ok, rpc $RPC_HOST config $LAUNCH_CONFIG stack $STACK$([ "$DRY_RUN" = 1 ] && echo ', DRY RUN')"
 
+# The deferred record names the exact CREATE2 libraries of this build. Compare it with the compiled creation code
+# before sending LAUNCH_ONLY, so a stale or tampered record cannot silently change the verification inputs.
+if [ "$LAUNCH_ONLY" = 1 ]; then
+  library_address() {
+    local code hash
+    code="$(jq -er .bytecode.object "out/$1.sol/$1.json")" || die "no creation code for $1"
+    hash="$(cast keccak "$code")"
+    cast compute-address 0x4e59b44847b379578588920cA78FbF26c0B4956C \
+      --salt 0x0000000000000000000000000000000000000000000000000000000000000000 --init-code-hash "$hash"
+  }
+  for pair in 'library CoreLib' 'opsLibrary CoreOpsLib'; do
+    read -r field artifact <<<"$pair"
+    expected="$(library_address "$artifact")"
+    [ "$(lc "$(jq -r ".$field // \"\"" "$RECORD")")" = "$(lc "$expected")" ] \
+      || guard "the record $field differs from the compiled $artifact address $expected"
+  done
+fi
+
 if [ "$GIT_GUARD" = 1 ]; then
   # forge build rewrites foundry.lock and lib/solady (docs/RUNBOOK.md section 0)
   git checkout -- foundry.lock 2>/dev/null || true
@@ -281,7 +299,7 @@ if [ "$DRY_RUN" = 1 ]; then
       echo "$DEP" | tail -40; guard "the deploy simulation failed"
     fi
   fi
-  if [ "$VERIFY" = 1 ]; then echo "deploy.sh: a real run verifies core, controller, both adapters, renderer and library on etherscan after the record"; fi
+  if [ "$VERIFY" = 1 ]; then echo "deploy.sh: a real run verifies core, controller, both adapters, renderer and both libraries on etherscan after the record"; fi
   if [ "$NFAIL" -gt 0 ]; then
     echo "deploy.sh: DRY RUN: $NFAIL guard(s) would stop a real run:$FAILMSG" >&2
     exit 1
@@ -396,7 +414,7 @@ TMPREC="$(mktemp "$(dirname "$RECORD")/.record.XXXXXX")"
 printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC" --argjson deployBlock "$lo" --arg launchBlock "$LAUNCH_BLOCK" --arg tokenDeployer "$TOKEN_DEPLOYER" '. as $r | {
   chainId: $chainId, rpcUrl: (if $rpcUrl == "" then null else $rpcUrl end), deployBlock: $deployBlock,
   core: $r.core, controller: $r.controller, coin: $r.coin, seaportAdapter: $r.seaportAdapter,
-  strategyAdapter: $r.strategyAdapter, renderer: $r.renderer, library: $r.library,
+  strategyAdapter: $r.strategyAdapter, renderer: $r.renderer, library: $r.library, opsLibrary: $r.opsLibrary,
   credits: $r.credits, statements: $r.statements, poolManager: $r.poolManager, hook: $r.hook,
   poolFee: $r.poolFee, tickSpacing: $r.tickSpacing,
   balanceToken: null, balanceModule: null, balancePool: null, owner: $r.owner,
@@ -406,13 +424,13 @@ printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC"
 jq -e '
   def addr: type == "string" and test("^0x[0-9a-fA-F]{40}$") and (ascii_downcase != "0x0000000000000000000000000000000000000000");
   (keys | sort) == (["balanceModule","balancePool","balanceToken","chainId","coinLive","tokenDeployer","controller","coin","core","credits","deployBlock",
-    "hook","library","owner","poolFee","poolManager","renderer","rpcUrl","seaportAdapter","statements","strategyAdapter","tickSpacing"]
+    "hook","library","opsLibrary","owner","poolFee","poolManager","renderer","rpcUrl","seaportAdapter","statements","strategyAdapter","tickSpacing"]
     + (if .coinLive == true then ["launchBlock"] else [] end) | sort)
   and (.coinLive | type == "boolean")
   and (if .coinLive then (.deployBlock as $d | .launchBlock | type == "number" and . >= $d) else true end)
   and (.chainId | type == "number" and . > 0)
   and (.deployBlock | type == "number" and . > 0 and . == floor)
-  and ([.core, .controller, .coin, .seaportAdapter, .strategyAdapter, .renderer, .library, .credits, .statements,
+  and ([.core, .controller, .coin, .seaportAdapter, .strategyAdapter, .renderer, .library, .opsLibrary, .credits, .statements,
         .poolManager, .hook, .owner, .tokenDeployer] | all(addr))
   and (.poolFee | type == "number") and (.tickSpacing | type == "number")
   and (.rpcUrl == null or (.rpcUrl | type == "string"))
@@ -427,21 +445,25 @@ echo "deploy.sh: wrote $RECORD (core $CORE, deploy block $lo)"
 if [ "$VERIFY" = 1 ]; then
   carg() { printf '%s\n' "$POST" | awk -v m="$1" 'index($0, m) { getline; gsub(/^[ \t]+|[ \t]+$/, ""); print; exit }'; }
   LIB="$(jq -r .library "$RECORD")"
+  OPS="$(jq -r .opsLibrary "$RECORD")"
   LIBFLAG="src/lib/CoreLib.sol:CoreLib:$LIB"
+  OPSFLAG="src/lib/CoreOpsLib.sol:CoreOpsLib:$OPS"
   NVERIFY=0
-  verify() { # verify <address> <path:name> [constructor args] [libraries]
+  verify() { # verify <address> <path:name> [constructor args] [CoreLib] [CoreOpsLib]
     local args=(--chain 1 --watch)
     if [ -n "${3:-}" ]; then args+=(--constructor-args "$3"); fi
     if [ -n "${4:-}" ]; then args+=(--libraries "$4"); fi
+    if [ -n "${5:-}" ]; then args+=(--libraries "$5"); fi
     echo "deploy.sh: verify $2 at $1"
     forge verify-contract "$1" "$2" "${args[@]}" || { echo "deploy.sh: verification of $2 failed" >&2; NVERIFY=$((NVERIFY + 1)); }
   }
-  verify "$(jq -r .core "$RECORD")" src/Core.sol:Core "$(carg 'verify: core constructor args')" "$LIBFLAG"
-  verify "$(jq -r .controller "$RECORD")" src/ControllerV1.sol:ControllerV1 "$(carg 'verify: controller constructor args')" "$LIBFLAG"
-  verify "$(jq -r .seaportAdapter "$RECORD")" src/adapters/SeaportBasicAdapter.sol:SeaportBasicAdapter "$(carg 'verify: seaport adapter constructor args')" "$LIBFLAG"
-  verify "$(jq -r .strategyAdapter "$RECORD")" src/adapters/CreditStrategyAdapter.sol:CreditStrategyAdapter "" "$LIBFLAG"
-  verify "$(jq -r .renderer "$RECORD")" src/LogoCoinRenderer.sol:LogoCoinRenderer "$(cast abi-encode 'constructor(address)' "$CFG_OWNER")" "$LIBFLAG"
+  verify "$(jq -r .core "$RECORD")" src/Core.sol:Core "$(carg 'verify: core constructor args')" "$LIBFLAG" "$OPSFLAG"
+  verify "$(jq -r .controller "$RECORD")" src/ControllerV1.sol:ControllerV1 "$(carg 'verify: controller constructor args')" "$LIBFLAG" "$OPSFLAG"
+  verify "$(jq -r .seaportAdapter "$RECORD")" src/adapters/SeaportBasicAdapter.sol:SeaportBasicAdapter "$(carg 'verify: seaport adapter constructor args')" "$LIBFLAG" "$OPSFLAG"
+  verify "$(jq -r .strategyAdapter "$RECORD")" src/adapters/CreditStrategyAdapter.sol:CreditStrategyAdapter "" "$LIBFLAG" "$OPSFLAG"
+  verify "$(jq -r .renderer "$RECORD")" src/LogoCoinRenderer.sol:LogoCoinRenderer "$(cast abi-encode 'constructor(address)' "$CFG_OWNER")" "$LIBFLAG" "$OPSFLAG"
   verify "$LIB" src/lib/CoreLib.sol:CoreLib
+  verify "$OPS" src/lib/CoreOpsLib.sol:CoreOpsLib
   [ "$NVERIFY" = 0 ] || die "$NVERIFY verification(s) failed. the record is written; rerun the failed forge verify-contract commands (docs/RUNBOOK.md section 3)"
 fi
 echo "deploy.sh: done"

@@ -284,7 +284,7 @@ function PriceSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapshot
         </div>
         <div className="side-act">
           <Act
-            label={snap.paused ? "sales paused" : "buy statement"}
+            label={snap.paused ? "engine paused" : "buy statement"}
             disabled={snap.paused}
             steps={async (write) =>
               void (await write({

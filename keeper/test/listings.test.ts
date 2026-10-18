@@ -1,4 +1,4 @@
-// promise: a Seaport order without a hash is skipped with one warning and the tick carries on with the hashed orders
+// promise: hashless and zero-price Seaport orders cannot block the keeper from ranking a valid order
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -29,7 +29,7 @@ const params = {
   signature: "0xabcd",
 };
 
-test("seaport: a hashless order is skipped with a warning, the hashed order in the same batch is evaluated", async () => {
+test("seaport: hashless and zero-price orders are skipped while a valid order is evaluated", async () => {
   const file = join(mkdtempSync(join(tmpdir(), "keeper-orders-")), "orders.json");
   const hash = "0x" + "11".repeat(32);
   writeFileSync(
@@ -38,6 +38,7 @@ test("seaport: a hashless order is skipped with a warning, the hashed order in t
       orders: [
         { id: "41", price: "1000", params },
         { id: "42", price: "1000", params, hash },
+        { id: "43", price: "0", params, hash: "0x" + "22".repeat(32) },
       ],
     }),
   );
@@ -60,14 +61,16 @@ test("seaport: a hashless order is skipped with a warning, the hashed order in t
   setSink((l) => lines.push(JSON.parse(l)));
   try {
     const s = new Sources(client, cfg, () => 1_000_000_000);
-    (s as any).scores = new Map([[41n, 2000n], [42n, 2000n]]);
+    (s as any).scores = new Map([[41n, 2000n], [42n, 2000n], [43n, 2000n]]);
     const out = await s.candidates({ ethRate: 1_000_000n } as any, 1n);
     assert.deepEqual(out.map((l) => [l.id, l.valid]), [[42n, true]]);
     assert.deepEqual(read, ["bidOf", "price", "ownerOf", "getOrderStatus"]);
     const warns = lines.filter((l) => l.level === "warn");
-    assert.equal(warns.length, 1);
+    assert.equal(warns.length, 2);
     assert.match(warns[0].msg, /no hash/);
     assert.equal(warns[0].id, "41");
+    assert.match(warns[1].msg, /no positive price/);
+    assert.equal(warns[1].id, "43");
   } finally {
     setSink((l) => process.stdout.write(l + "\n"));
   }
