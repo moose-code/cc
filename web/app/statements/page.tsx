@@ -74,6 +74,7 @@ export default function StatementsPage() {
   // statements forming in the pile, before they compose: full pages of credits are "upcoming" (waiting for the newest
   // credit to clear the sale window), the partial page is still "building". FIFO, so page k is credits k*size..(k+1)*size.
   const pileIds = (pile ?? []).map((c) => c.id);
+  const pileIncomplete = snap != null && pileIds.length < Number(snap.pileSize);
   const fullPages = Math.floor(pileIds.length / STATEMENT_SIZE);
   const forming: { kind: "upcoming" | "building"; ids: number[]; foot: string }[] = [];
   for (let k = 0; k < fullPages; k++) {
@@ -81,12 +82,12 @@ export default function StatementsPage() {
     forming.push({
       kind: "upcoming",
       ids: pileIds.slice(k * STATEMENT_SIZE, (k + 1) * STATEMENT_SIZE),
-      foot: e == null ? "composes next" : e.seconds <= 0 ? "ready to compose" : `composes in ${etaLabel(e)}`,
+      foot: snap?.paused ? "engine paused" : e == null ? "composes next" : e.seconds <= 0 ? "ready to compose" : `composes in ${etaLabel(e)}`,
     });
   }
   const remainder = pileIds.length % STATEMENT_SIZE;
-  if (remainder > 0)
-    forming.push({ kind: "building", ids: pileIds.slice(fullPages * STATEMENT_SIZE), foot: `${STATEMENT_SIZE - remainder} more to compose` });
+  if (remainder > 0 && !pileIncomplete)
+    forming.push({ kind: "building", ids: pileIds.slice(fullPages * STATEMENT_SIZE), foot: `${STATEMENT_SIZE - remainder} more Credits` });
 
   const meta = [
     `${forSale.length} for sale`,
@@ -95,7 +96,7 @@ export default function StatementsPage() {
     count("not held") > 0 && `${count("not held")} not held`,
     stats && `${stats.composed} composed`,
     historyDown && "history unavailable",
-    next && `next composes in ${etaLabel(next)}`,
+    snap?.paused ? "composition paused" : next && `next composes in ${etaLabel(next)}`,
   ].filter(Boolean);
 
   const more = (total: number) => (
@@ -131,12 +132,14 @@ export default function StatementsPage() {
       </PageHead>
 
       <div className="split-pad">
-        {forming.length > 0 && (
+        {(forming.length > 0 || pileIncomplete) && (
           <section className="sect">
             <div className="sect-head">
               <b>forming</b>
               <span className="caption">
-                credits compose into statements {STATEMENT_SIZE} at a time, oldest first, once a page&apos;s newest credit clears the sale window
+                {pileIncomplete
+                  ? "Additional forming pages are unavailable until the full pile loads."
+                  : `Credits compose into Statements ${STATEMENT_SIZE} at a time, oldest first, once a page's newest Credit clears the sale window.`}
               </span>
             </div>
             <div className="cgrid">
