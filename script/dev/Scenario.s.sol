@@ -492,6 +492,15 @@ contract Scenario is Script {
 
     /// A3 sells credits into the balance bid, a single and a batch, and is paid in the balance token
     function _balanceBid() internal {
+        // the dev seed leaves the balance bid closed while value mode is off (docs/RUNBOOK.md phase 2 order). this stage
+        // exercises the mode-off balance route on the dev chain, so it opens the bid itself as the owner.
+        Settings memory s = core.settings();
+        if (!s.balanceBidOn) {
+            s.balanceBidOn = true;
+            vm.broadcast(OWNER);
+            core.setSettings(s);
+            console.log("balance-bid: dev opt-in, the balance bid opened with value mode off");
+        }
         IERC20R token = IERC20R(core.balanceToken());
         vm.broadcast(A3);
         ICredits(Mainnet.CREDITS).setApprovalForAll(address(core), true);
