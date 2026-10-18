@@ -5,13 +5,15 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { fetchIxHealth, ix, IX_MAX_BEHIND, setIxMode } from "@/lib/indexer";
 import { engine } from "@/lib/indexer-schema";
 import { useHead, useSnapshot } from "@/lib/live";
+import { core, deployBlock } from "@/lib/config";
+import { matchesIndexerIdentity } from "@/lib/indexer-health";
 
 const QUARANTINE_BLOCKS = 5; // blocks the app stays in chain mode after an indexer query fails
 
 // Decides the app-wide data source (lib/indexer.ts useIxMode) and keeps indexer queries fresh.
 //
 // Mode: "ix" when the indexer answers a health query, is at most IX_MAX_BEHIND blocks behind the chain head and holds
-// as many pile credits as Core.pileSize; "chain" when it is unconfigured, unreachable, behind, inconsistent, or one of
+// as many pile credits as Core.pileSize and identifies this Core and coin; "chain" when it is unconfigured, unreachable, behind, inconsistent, or one of
 // its queries failed in the last QUARANTINE_BLOCKS blocks. The health query runs once per new chain head.
 //
 // Freshness: one live query (server-sent events) on the engine's snapshot block, written at every block that holds an
@@ -26,7 +28,7 @@ export function IndexerSync() {
 
   const health = useQuery({
     queryKey: ["ix-health", head?.n?.toString()],
-    enabled: Boolean(ix),
+    enabled: Boolean(ix && core && deployBlock !== undefined),
     retry: 0,
     staleTime: 0,
     placeholderData: keepPreviousData,
@@ -34,11 +36,12 @@ export function IndexerSync() {
   });
 
   useEffect(() => {
-    if (!ix) return setIxMode("chain");
+    if (!ix || !core || deployBlock === undefined) return setIxMode("chain");
     if (health.isError) return setIxMode("chain");
     if (!health.data || snapPending) return; // first health result and first Core snapshot pending (the parity check needs both)
     const behind = head ? Number(head.n) - health.data.block : 0;
-    const consistent = !snap || health.data.held === Number(snap.pileSize);
+    const consistent = Boolean(snap && health.data.held === Number(snap.pileSize) &&
+      matchesIndexerIdentity(core, snap.coin, deployBlock, health.data.identity));
     const quarantined = head != null && head.n < badUntil.current;
     setIxMode(behind > IX_MAX_BEHIND || !consistent || quarantined ? "chain" : "ix");
   }, [health.data, health.isError, head, snap, snapPending]);

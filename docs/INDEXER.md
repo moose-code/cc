@@ -263,11 +263,12 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 |---|---|
 | block number in footer | L `getBlockNumber` (existing head poll) |
 | contract addresses | L snapshot (Core reads, one multicall) |
+| browser indexer identity gate | I `getStatus` chain id and `engine.core`, `engine.coin`, `engine.deployBlock` for the configured Core; L snapshot `Core.COIN()`; D compare with the website chain, `NEXT_PUBLIC_CORE` and `NEXT_PUBLIC_DEPLOY_BLOCK` before using any indexed history |
 | settings, controller params | L snapshot; also I `engine.settings`, `controller` (not read by the web yet) |
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
 | reserve and the room the bids read (packet B, decision 154) | L `Core.reserve()` in the snapshot; D `potRoom` = `potWithPending` less the reserve, the clamp of the eth bid and the cap of a listing sweep |
 | buying room, processing reserve and header "pot covers" | L snapshot `potWithPending`, `reserve`, `potRoom`, `ethRate` and `settings.buyToArtistBps`; D points covered = `potPoints(potRoom * 10_000 / (10_000 + buyToArtistBps), ethRate)`. The gross pot, spendable room and reserve are labeled separately on the home and keeper pages |
-| value mode and the quote (packet C, decision 148) | L snapshot: `settings.valueModeOn`; `noQuote` when value mode is on and `ethRate` reverts `NoQuote` (the snapshot then reads the eth bid as 0); controller `valuePerPoint(false)` and `valuePerPoint(true)` for `value.usable` and the per point values; also I `controller.quote*` (QuoteSet) |
+| value mode and the quote (packet C, decision 148) | L snapshot: `settings.valueModeOn`; `noQuote` when value mode is on and the protected buy quote is unusable, while `ethRate` can use its last good value; controller `valuePerPoint(false)` and `valuePerPoint(true)` for `value.usable` and the per point values; also I `controller.quote*` (QuoteSet) |
 | balance token reference against spot (packet C, decisions 148 and 157) | L controller `referencePrice()`, `referenceTime()`, `spotPrice()` and `quote()` in the snapshot (`value.referencePrice`, `value.spot`); shown on the balance page; also I `controller.referencePrice`, `referenceSpot`, `referenceTime` at the last `ReferenceRefreshed` |
 | ETH/USD | L Chainlink |
 | rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
@@ -407,7 +408,7 @@ The browser keeps the on-chain read paths as an automatic fallback for every ind
 
 1. `NEXT_PUBLIC_INDEXER_URL` (`web/scripts/local-env.mjs` writes `http://localhost:42169` locally) and a typed client from `@ponder/client`. The indexer schema imports the `ponder` runtime, which does not bundle for the browser, so `web/lib/indexer-schema.ts` declares the columns the web reads as drizzle tables, and a compile-time guard fails `tsc` when a column type differs from `indexer/ponder.schema.ts`.
 2. One app-wide mode (`useIxMode`, set by `web/components/IndexerSync.tsx`):
-   - `ix` when the indexer answers `getStatus`, is at most 5 blocks behind the chain head (`useHead`) and its count of held credits equals `Core.pileSize`; `chain` when it is unconfigured, unreachable, behind, inconsistent, or one of its queries failed in the last 5 blocks; `checking` until the first health result (no source runs).
+   - `ix` when the indexer answers `getStatus`, is at most 5 blocks behind the chain head (`useHead`), identifies the configured Core, its on-chain coin and deploy block, and its count of held credits equals `Core.pileSize`; `chain` when it is unconfigured, unreachable, behind, inconsistent, or one of its queries failed in the last 5 blocks; `checking` until the first health result (no source runs).
    - Each data hook reads the indexer in `ix` mode and its on-chain path in `chain` mode, with the other path's react-query `enabled` off. A healthy indexer therefore causes no `eth_getLogs`, no per-row `getBlock` and no `tokensOf`, `ownerOf` or `tokenURI` reads. Components call one hook and never branch.
    - Hooks: `useStats`, `useFeed`, `useBuyRate`, `useCreditDetail`, `useStatementIndex`, `useStatementView` (`web/lib/data.ts`); `usePile`, `useCredit`, `useWalletCredits`, `useScores`, `useCreditTraits`, owners, `useCreditCostToPotAt` (`web/lib/live.ts`); `useTokenMeta` (`web/lib/art.ts`).
 3. Live reads stay in both modes: the snapshot multicall, `creditPrice`, `priceOf`, `referenceOf`, `atFloor`, `bidOf`, `valueOf`, market hooks, balances, allowances, approvals, receipts.

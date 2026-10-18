@@ -346,8 +346,7 @@ export async function sellQuote(client: Client, ids: bigint[], now: number): Pro
 async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumber?: bigint): Promise<bigint[]> {
   const c = { address: core!, abi: coreAbi } as const;
   const word = (i: bigint) => client.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }), blockNumber });
-  // ethPrice reverts NoQuote in value mode while the quote is unusable, so the batch is tolerant and every other read
-  // must answer
+  // A failed ethPrice read leaves the batch available; the other reads must answer.
   const [res, startWord, bucketWord, scores] = await Promise.all([
     client.multicall({
       ...mc,
@@ -383,8 +382,7 @@ async function sellQuoteAt(client: Client, ids: bigint[], now: number, blockNumb
   const pot = ethPot + toPot;
   const room = pot > reserve ? pot - reserve : 0n;
   if (st.valueModeOn) {
-    // value mode: the shared instance times the protected buy value; an unusable quote quotes nothing (the door
-    // reverts NoQuote)
+    // Value mode: the shared instance times the protected buy value; replay stops when that value is unusable.
     const [value, ok] = await client.readContract({ address: need<Address>(10), abi: controllerAbi, functionName: "valuePerPoint", args: [false], blockNumber });
     if (!ok || value === 0n) throw new Error("the balance token price quote is unavailable");
     return replayValueFills(scores, {
