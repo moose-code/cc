@@ -17,6 +17,10 @@ const MAX_LISTINGS = 200; // the cheapest listings kept per cache window (two pa
 const CACHE_MS = 20_000;
 const FULFILL_CACHE_MS = 10_000;
 const MAX_FULFILL_INFLIGHT = 4; // concurrent OpenSea fulfillment POSTs across all clients
+// Global upstream POST budget shared by all clients: a token bucket. These two numbers depend on the OpenSea plan's
+// rate limit and are the knobs to set once the plan is confirmed.
+const UPSTREAM_BURST = 8; // fulfillment POSTs that can go out back to back
+const UPSTREAM_REFILL_PER_SEC = 4; // POSTs regained per second
 const BUCKET_BURST = 10; // fulfill requests a client can send back to back
 const BUCKET_REFILL_MS = 2_000; // one request regained per interval
 const MAX_BUCKETS = 1_000; // tracked clients; the oldest is dropped past this
@@ -43,6 +47,18 @@ let inflight: Promise<Out> | undefined;
 const fulfilled = new Map<string, { at: number; out: Promise<Fulfill> }>();
 let fulfillActive = 0;
 const buckets = new Map<string, { tokens: number; at: number }>();
+
+const upstream = { tokens: UPSTREAM_BURST, at: Date.now() };
+
+// Takes one token from the global upstream budget. Returns false when the budget is spent.
+function allowUpstream(): boolean {
+  const now = Date.now();
+  upstream.tokens = Math.min(UPSTREAM_BURST, upstream.tokens + ((now - upstream.at) / 1000) * UPSTREAM_REFILL_PER_SEC);
+  upstream.at = now;
+  if (upstream.tokens < 1) return false;
+  upstream.tokens -= 1;
+  return true;
+}
 
 // Token bucket per client key. Returns false when the client is over its rate.
 function allow(key: string): boolean {
@@ -168,6 +184,7 @@ export async function GET(req: Request) {
       return Response.json(await hit.out);
     }
     if (fulfillActive >= MAX_FULFILL_INFLIGHT) return Response.json({ skipped: "busy" } satisfies Fulfill, { status: 503 });
+    if (!allowUpstream()) return Response.json({ skipped: "busy" } satisfies Fulfill, { status: 503, headers: { "Retry-After": "1" } });
     fulfillActive++;
     const out = fulfill(key).finally(() => fulfillActive--);
     fulfilled.delete(key);

@@ -324,7 +324,7 @@ function PriceBox({
         </>
       )}
       <div className="side-act">
-        <Act label="buy credit" steps={(write) => buyCredits(write, snap, [id], c.price)} />
+        <Act label={snap.paused ? "engine paused" : "buy credit"} disabled={snap.paused} steps={(write) => buyCredits(write, snap, [id], c.price)} />
       </div>
     </section>
   );
@@ -462,7 +462,7 @@ function SwapPanel({ outId, outScore, snap }: { outId: number; outScore?: bigint
   const eligible = wallet.filter((w) => outScore != null && w.score >= outScore).map((w) => w.id);
 
   async function swap(write: Write) {
-    if (!address || !client || inId == null) return;
+    if (snap.paused || !address || !client || inId == null) return;
     if (fee > 0n) {
       const allowance = await client.readContract({ address: snap.coin, abi: erc20Abi, functionName: "allowance", args: [address, core!] });
       if (allowance < fee) await write({ address: snap.coin, abi: erc20Abi, functionName: "approve", args: [core, fee] });
@@ -481,8 +481,8 @@ function SwapPanel({ outId, outScore, snap }: { outId: number; outScore?: bigint
       </div>
       <p className="side-copy">trade one of your credits with an equal or higher rating for this one.</p>
       {!isConnected ? (
-        <button className="action secondary" onClick={openConnectModal}>
-          connect to swap
+        <button className="action secondary" onClick={openConnectModal} disabled={snap.paused}>
+          {snap.paused ? "engine paused" : "connect to swap"}
         </button>
       ) : eligible.length === 0 ? (
         <p className="side-copy">{!ready || outScore == null ? "reading ratings…" : "none of your credits rates at or above this one."}</p>
@@ -501,8 +501,8 @@ function SwapPanel({ outId, outScore, snap }: { outId: number; outScore?: bigint
           <div className="side-act">
             <Act
               secondary
-              label={inId == null ? "pick a credit" : `swap in credit #${inId}`}
-              disabled={inId == null}
+              label={snap.paused ? "engine paused" : inId == null ? "pick a credit" : `swap in credit #${inId}`}
+              disabled={snap.paused || inId == null}
               steps={swap}
             />
           </div>

@@ -62,6 +62,10 @@ assert.equal(replayBalance([5n, 3n], { ...b, rate: 9000n }), 450n + 270n);
 const v = { ...b, valueModeOn: true, valueSell: 10000n };
 assert.deepEqual(replayBalanceFills([3n], { ...v, rate: 10000000n, ethPrice: 4000n }), [120000n]);
 assert.deepEqual(replayBalanceFills([3n], { ...v, rate: 10000000n, ethPrice: 400n }), [12000n]);
+// value mode with the protected sale price missing or zero: the contract returns no quote, the replay pays 0
+assert.deepEqual(replayBalanceFills([3n, 4330000n], { ...b, valueModeOn: true, ethPrice: 4000n }), [0n, 0n]);
+assert.deepEqual(replayBalanceFills([3n, 4330000n], { ...v, valueSell: 0n, ethPrice: 4000n }), [0n, 0n]);
+assert.equal(replayBalance([3n], { ...v, valueSell: undefined }), 0n);
 
 console.log("selfcheck ok");
 
@@ -103,13 +107,15 @@ const cheapLow = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => L(i, BigInt(10 * i)));
 assert.deepEqual(shortlist([...cheapLow, L(9, 500n, "opensea")], 100n, 1000n, many, 1).map((l) => Number(l.id)), [9]);
 
 // ---- eth bid forecast (lib/climb.ts, mirror of CoreLib._climb / _recover) ----
-import { bidAt, clearsIn, nextRise, priceAt, rateAt, type ClimbState } from "../lib/climb.ts";
+import { bidAt, ceilingAt, clearsIn, nextRise, priceAt, rateAt, type ClimbState } from "../lib/climb.ts";
+import { pendingIncome } from "../../packages/engine/src/snapshot.ts";
 
 const E = 10n ** 18n;
 const cs: ClimbState = {
   r: 1n * E,
   t: 1000,
   anchorTime: 1000,
+  climbRestartTime: 1000,
   lastFillRate: 1n * E,
   peakRate: 1n * E,
   peakTime: 1000,
@@ -122,6 +128,7 @@ const cs: ClimbState = {
   climbPerMinBps: 100,
   recoveryClimbPerMinBps: 300,
   recoveryGapBps: 1000,
+  buyToArtistBps: 0,
   ethPot: 50n * E,
   pending: 0n,
 };
@@ -169,4 +176,22 @@ if (ev.kind === "ceiling") close(ev.rate, Math.min(100e18, 50e18, 1e18 * 1.1 * (
 // at rateCap and at the pot
 assert.equal(nextRise({ ...top, rateCap: 11n * E / 10n }, 1000 + 86_400).kind, "cap");
 assert.equal(nextRise({ ...cs, ethPot: E / 2n }, 1000).kind, "pot");
+const empty = { ...cs, ethPot: 0n, pending: 50n * E };
+assert.equal(priceAt(empty, 1000 + 6 * 3600), 1e18);
+assert.equal(nextRise(empty, 1000 + 6 * 3600).kind, "pot");
+assert.deepEqual(clearsIn(empty, 2n * E, 1000n, 1000n, 1000 + 6 * 3600), { kind: "pot" });
+// promise: booking fee income changes its accounting bucket once, not the snapshot buying room
+const beforeBook = pendingIncome(110n, 100n, 0n, 0n, false, 0, 0).toPot;
+const afterBook = pendingIncome(110n, 110n, 0n, 0n, false, 0, 0).toPot;
+assert.equal(beforeBook, 10n);
+assert.equal(afterBook, 0n);
+assert.equal(100n + beforeBook - 100n, 110n + afterBook - 100n);
+// One wei below the funding threshold still pauses, even when Number would round the amounts together.
+const oneWeiShort = { ...cs, r: 14_700_000_000_000_000n, lastFillRate: 14_700_000_000_000_000n, peakRate: 14_700_000_000_000_000n, ethPot: 14_699_999_999_999_999n };
+close(ceilingAt(oneWeiShort, 1000 + 6 * 3600), Number(oneWeiShort.lastFillRate) * 1.1);
+const refilled = { ...cs, t: 1000 + 6 * 3600, climbRestartTime: 1000 + 6 * 3600 };
+assert.equal(priceAt(refilled, refilled.t), 1e18);
+assert.ok(priceAt(refilled, refilled.t + 60) > 1e18);
+const restartStep = nextRise({ ...refilled, r: 100n * E }, refilled.t + 5);
+assert.ok(restartStep.kind === "ceiling" && restartStep.seconds === 595);
 console.log("climb selfcheck ok");

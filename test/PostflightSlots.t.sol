@@ -5,7 +5,7 @@ import {Fixture} from "./utils/Fixture.sol";
 
 /// @notice the content of the masked slots of the runtime code, and the guards of `Deploy` and `Resume`.
 ///  1. the identity hash of the Core and the controller masks the library address slots and the immutable slots. the
-///     slot row requires every one of them to hold the library or the getter value. one foreign call site of `CoreLib`,
+///     slot row requires every one of them to hold the library or the getter value. one foreign call site of either library,
 ///     or one divergent site of an immutable, fails it while the identity row still passes (finding 2 of
 ///     docs/reviews/REVIEW-security.md),
 ///  2. `_requireNoChangeFlags` reverts for each owner change flag and both scripts call it.
@@ -72,8 +72,7 @@ contract PostflightSlotsTest is Fixture {
         }
     }
 
-    function _foreignLibrary() internal returns (address evil) {
-        address lib = findLibrary(address(core).code);
+    function _foreignLibrary(address lib) internal returns (address evil) {
         evil = makeAddr("foreign library");
         bytes memory lc2 = lib.code;
         lc2[lc2.length - 1] = bytes1(uint8(lc2[lc2.length - 1]) ^ 1);
@@ -87,25 +86,28 @@ contract PostflightSlotsTest is Fixture {
         }
     }
 
-    /// @dev the reviewer's probe: one of the sixteen `CoreLib` call sites of the Core points at a copy with one flipped
-    /// byte. the identity hash masks the slot and `findLibrary` finds the compiled library through the other sites, so
-    /// only the slot row sees it. a library runs by DELEGATECALL in the Core storage
-    // promise: the reviewer's probe: one of the sixteen `CoreLib` call sites of the Core points at a copy with one flipped byte
+    /// @dev one call site of either library points at a copy with one flipped byte. the identity hash masks the slot
+    /// and the compiled library remains discoverable through the other sites, so only the slot row sees it
+    // promise: one foreign call site of either linked library fails postflight even while its identity hash still matches
     function test_oneForeignLibrarySiteFailsPostflight() public {
-        address lib = findLibrary(address(core).code);
-        assertTrue(lib != address(0));
-        uint256[] memory sites = _librarySites(address(core).code, lib);
-        assertEq(sites.length, 16, "the Core calls CoreLib at sixteen sites");
-        address evil = _foreignLibrary();
-        for (uint256 s; s < sites.length; ++s) {
-            bytes memory c = address(core).code;
-            _point(c, sites[s], evil);
-            vm.etch(address(core), c);
-            assertEq(_failedList(), SLOTS_ROW, "one foreign site");
-            assertTrue(_row(IDENTITY_ROW), "the identity hash still passes: it masks the slot");
-            _point(c, sites[s], lib);
-            vm.etch(address(core), c);
-            assertEq(_failedList(), "", "restored");
+        address[2] memory libs = [findLibrary(address(core).code), findOpsLibrary(address(core).code)];
+        for (uint256 i; i < libs.length; ++i) {
+            address lib = libs[i];
+            assertTrue(lib != address(0));
+            uint256[] memory sites = _librarySites(address(core).code, lib);
+            assertGt(sites.length, 1, "other call sites preserve library discovery");
+            address evil = _foreignLibrary(lib);
+            uint256[2] memory probes = [uint256(0), sites.length - 1];
+            for (uint256 s; s < probes.length; ++s) {
+                bytes memory c = address(core).code;
+                _point(c, sites[probes[s]], evil);
+                vm.etch(address(core), c);
+                assertEq(_failedList(), SLOTS_ROW, "one foreign site");
+                assertTrue(_row(IDENTITY_ROW), "the identity hash still passes: it masks the slot");
+                _point(c, sites[probes[s]], lib);
+                vm.etch(address(core), c);
+                assertEq(_failedList(), "", "restored");
+            }
         }
     }
 

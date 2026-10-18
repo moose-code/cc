@@ -492,6 +492,17 @@ contract Scenario is Script {
 
     /// A3 sells credits into the balance bid, a single and a batch, and is paid in the balance token
     function _balanceBid() internal {
+        // the dev seed leaves the balance bid closed while value mode is off (docs/RUNBOOK.md phase 2 order). this stage
+        // exercises the mode-off balance route inside a bounded temporary setting: it opens the bid as the owner, runs
+        // the two fills, and closes the bid again so the chain ends in the safe final state.
+        Settings memory s = core.settings();
+        bool openedHere = !s.balanceBidOn;
+        if (openedHere) {
+            s.balanceBidOn = true;
+            vm.broadcast(OWNER);
+            core.setSettings(s);
+            console.log("balance-bid: dev opt-in, the balance bid opened with value mode off");
+        }
         IERC20R token = IERC20R(core.balanceToken());
         vm.broadcast(A3);
         ICredits(Mainnet.CREDITS).setApprovalForAll(address(core), true);
@@ -510,6 +521,13 @@ contract Scenario is Script {
         require(token.balanceOf(A3) > paidBefore, "balance-bid: the seller was not paid in the balance token");
         console.log("balance-bid: seller paid", token.balanceOf(A3) - paidBefore);
         console.log("balance-bid: module holding", IBalanceModule(core.balanceModule()).available());
+
+        if (openedHere) {
+            s.balanceBidOn = false;
+            vm.broadcast(OWNER);
+            core.setSettings(s);
+            console.log("balance-bid: bid closed again");
+        }
     }
 
     /// the cost basis of a credit bought with the balance token is `score * pointRate`, at least 1 wei

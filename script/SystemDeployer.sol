@@ -24,7 +24,7 @@ struct Deployed {
 /// `owner`, who must be the v2 factory owner and the config owner (a deprecated v2 factory takes only its owner, through
 /// `deployToken`). every contract of ours is created through the deterministic deployer (CREATE2) at an address
 /// that is a function of the salts, the creation code and the config, so the addresses are known before the first
-/// transaction. order: the library `CoreLib` (linked and sent by `forge script` before `run`), the Core, the controller
+/// transaction. order: both linked libraries (sent by `forge script` before `run`), the Core, the controller
 /// (constructed with the Core address), the two listing adapters, the coin renderer (constructed with the config
 /// owner, salted with the config salt), `setCore` on the renderer, `setController`, `addAdapter` for each adapter, then the launch, which names the
 /// renderer in the token config. a contract that has code at its address is skipped and a state step whose effect is on chain is
@@ -54,7 +54,7 @@ abstract contract SystemDeployer is LaunchChecks {
 
     /// @notice execution gas of the transactions of the last `deploySystem`: Core, controller, Seaport adapter,
     /// CreditStrategy adapter, coin renderer, `setCore`, `setController`, `addAdapter` of each adapter, launch. the
-    /// library goes first and is measured by the rehearsal
+    /// both linked libraries go first and are measured by the rehearsal
     uint256[10] internal stepGas;
 
     /// @notice creates the Core at `coreAddress(c, launcher)`. the script (`NewProd`) uses `new` with `CORE_SALT`, a test
@@ -81,6 +81,16 @@ abstract contract SystemDeployer is LaunchChecks {
     /// @param owner the address that sends every transaction: the broadcaster or the active prank, the factory owner
     /// and the first owner of the Core
     function deploySystem(address owner, LaunchConfig memory c) internal returns (Deployed memory d) {
+        return _deploy(owner, c, true);
+    }
+
+    /// @notice every transaction of `deploySystem` except the launch. `d.coin` is the address the Core holds as its coin
+    /// immutable, which has no code until the launch (`resumeSend` or `deploySystem` sends it later)
+    function deploySystemUntilLaunch(address owner, LaunchConfig memory c) internal returns (Deployed memory d) {
+        return _deploy(owner, c, false);
+    }
+
+    function _deploy(address owner, LaunchConfig memory c, bool launch) private returns (Deployed memory d) {
         _requireConfig(c);
         _requireOwner(c, owner);
         d.core = _ensureCore(c, owner);
@@ -89,7 +99,7 @@ abstract contract SystemDeployer is LaunchChecks {
         d.renderer = _ensureRenderer(d.core, c);
         _wire(c, d);
         d.coin = ICore(payable(d.core)).COIN();
-        if (d.coin.code.length == 0) _launch(c, d.coin, d.core);
+        if (launch && d.coin.code.length == 0) _launch(c, d.coin, d.core);
         d.launchKey = poolKeyOf(d.coin, c.stack);
         d.poolId = keccak256(abi.encode(d.launchKey));
     }

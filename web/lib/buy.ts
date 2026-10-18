@@ -6,6 +6,7 @@ const BUFFER_BPS = 200n; // value above the summed prices; the controller refund
 
 // buyCredit for one id, buyCredits for several, paying `price` (sum of the credit prices) plus the buffer.
 export async function buyCredits(write: Write, snap: Snapshot, ids: number[], price: bigint) {
+  if (snap.paused) throw new Error("engine paused");
   const value = price + (price * BUFFER_BPS) / 10000n;
   const args = ids.map(BigInt);
   await write(

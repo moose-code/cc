@@ -75,6 +75,21 @@ export function useSnapshot() {
   });
 }
 
+// Whether the coin has code: false while the Core is deployed and the coin is not launched, undefined until read.
+// While false it is read again every COIN_LIVE_POLL_MS (one getCode per poll); once true it is cached and not polled.
+const COIN_LIVE_POLL_MS = 15000;
+export function useCoinLive(): boolean | undefined {
+  const client = usePublicClient();
+  const coin = useSnapshot().data?.coin;
+  return useQuery<boolean>({
+    queryKey: ["coin-live", coin],
+    enabled: Boolean(client && coin),
+    staleTime: Infinity,
+    refetchInterval: (q) => (q.state.data === true ? false : COIN_LIVE_POLL_MS),
+    queryFn: async () => ((await client!.getCode({ address: coin! })) ?? "0x") !== "0x",
+  }).data;
+}
+
 // ---- credits --------------------------------------------------------------------
 
 export interface PileCredit {
@@ -575,9 +590,9 @@ export function balanceQuote(snap: Snapshot, scores: bigint[]): bigint {
 // what each of `scores` (in sell order) pays in the balance token in one sellForBalance call; balanceQuote is their sum
 export function balanceFills(snap: Snapshot, scores: bigint[]): bigint[] {
   if (scores.length === 0 || snap.balanceUnit === undefined) return [];
-  // in value mode with a usable quote the payout is clamped to the value rate at the protected sale price;
-  // with the quote unusable the fill keeps the posted payout, so the clamp fields stay unset
-  const valued = snap.value.on && snap.value.perPointSell !== undefined;
+  // in value mode the payout is clamped to the value rate at the protected sale price. When that price is missing or
+  // zero the contract returns no quote and sellForBalance reverts, so the replay pays 0 (see replayBalanceFills)
+  const valued = snap.value.on;
   return replayBalanceFills(scores, {
     rate: snap.balanceRate,
     unit: snap.balanceUnit,
@@ -587,7 +602,7 @@ export function balanceFills(snap: Snapshot, scores: bigint[]): bigint[] {
     floorBps: 10000n - BigInt(snap.settings.balanceBidMarginBps),
     valueModeOn: valued,
     ethPrice: valued ? snap.ethPrice : undefined,
-    valueSell: valued ? snap.value.perPointSell : undefined,
+    valueSell: snap.value.perPointSell,
   });
 }
 

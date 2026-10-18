@@ -48,8 +48,8 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the per transaction gas cap of the target chain (EIP 7825, 2^24). the launch is simulated with what is left of
     /// it, so a launch that does not fit fails the simulation row, and a collision cannot burn more than that
     uint256 internal constant TX_GAS_CAP = 16_777_216;
-    /// @dev the gas of the eleven deploy transactions as the launch rehearsal measures it (19,069,638 on the master stack fixture),
-    /// plus 15 percent, rounded up. `test/Rehearsal.t.sol` asserts that the measured total stays under it
+    /// @dev the gas budget for the twelve deploy transactions, including both linked libraries. the frozen candidate
+    /// rehearsal must measure the total again; `test/Rehearsal.t.sol` asserts that it stays under this budget
     uint256 internal constant DEPLOY_GAS_ESTIMATE = 22_000_000;
     /// @dev the coin supply of the launch. test/Config.t.sol checks the config against it
     uint256 internal constant COIN_SUPPLY = 1_000_000_000e18;
@@ -71,20 +71,24 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the most the launch pays the factory. a fee above it is a factory state change the signed config never saw
     uint256 internal constant PIN_DEPLOY_FEE_MAX = 0.1 ether;
     /// @dev the pinned build: the keccak256 of the runtime code of each production artifact in `out/`, the immutable slots
-    /// and the library address slots zeroed (the mask of `artifactHash`), and the keccak256 of the `CoreLib` creation
-    /// code. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
+    /// and both library address slots zeroed (the mask of `artifactHash`), and the keccak256 of both library creation
+    /// codes. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x60e43703a58a9c3645a551176b1f567df5fba796c66caf9cf227f9d13adb80fb;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xb1f5cb084a131e282e6fe63ee613e01d7423c4cfe8c75d1e1a50c958fdc1c0a3;
+    bytes32 internal constant BUILD_HASH_CORE = 0x3229a50eaca6067227f487adc0aa6479e77658539a823b3ee8b320691e4f6d21;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xbe30bdc90c010d7e9524026be8968d134e1b236e985f8f2aa20c6737a0873947;
+    bytes32 internal constant BUILD_HASH_COREOPSLIB =
+        0x3237260e6856f332de483e9f73b60f697c6ff886976ce39f1cf84e4d87d7fa35;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
-        0x19a21164636a3f57a4ef4fbbf60df07b30c54eb06fbe191658711db2cfbff5eb;
+        0x03359cd845473b5053e5d0c46b7ad1b388b4d9a06b6318e0e46f5be449a8b98b;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
         0xf5c8fd4b675f717f11908ff47d000431035956c15a5f38d74b63a3d40310d30c;
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
         0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x789770d6ad6b21255e6aa816a264650ed079691ad3ee36359a2972b75b7d9be9;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x2bdcb3ba645e0ada23a3e20ff69bd7832dac2a3cd3024d268e07aa268c159074;
+        0x2976071ea572f728ce1d84dd6e892a1015ce582297ca7c6689c0d67ddca6cada;
+    bytes32 internal constant BUILD_CREATION_HASH_COREOPSLIB =
+        0x0b4009fdd38f08368b9427fbf12658364f8144a6408d149eab888f88f161d689;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
     uint24 internal constant SNIPER_START_MIN = 5_000;
@@ -429,6 +433,7 @@ abstract contract LaunchChecks is PostflightChecks {
     function _preBuild() private {
         _pinBuild("Core", BUILD_HASH_CORE);
         _pinBuild("CoreLib", BUILD_HASH_CORELIB);
+        _pinBuild("CoreOpsLib", BUILD_HASH_COREOPSLIB);
         _pinBuild("ControllerV1", BUILD_HASH_CONTROLLER);
         _pinBuild("SeaportBasicAdapter", BUILD_HASH_SEAPORT_ADAPTER);
         _pinBuild("CreditStrategyAdapter", BUILD_HASH_STRATEGY_ADAPTER);
@@ -437,6 +442,12 @@ abstract contract LaunchChecks is PostflightChecks {
         _check(
             "build: CoreLib creation code hash equals the pinned build",
             got == BUILD_CREATION_HASH_CORELIB,
+            vm.toString(got)
+        );
+        got = keccak256(vm.getCode("CoreOpsLib.sol:CoreOpsLib"));
+        _check(
+            "build: CoreOpsLib creation code hash equals the pinned build",
+            got == BUILD_CREATION_HASH_COREOPSLIB,
             vm.toString(got)
         );
     }
@@ -450,7 +461,7 @@ abstract contract LaunchChecks is PostflightChecks {
         );
     }
 
-    /// @dev the linked library. a deployed copy at the create2 address is the compiled code by construction (the address
+    /// @dev the linked libraries. a deployed copy at its create2 address is the compiled code by construction (the address
     /// is the hash of the creation code), the row says so and reads the code anyway
     function _preLibrary() private {
         _code("code: deterministic deployer", CREATE2_DEPLOYER);
@@ -462,6 +473,16 @@ abstract contract LaunchChecks is PostflightChecks {
             string.concat(
                 vm.toString(lib),
                 deployed ? " on chain, the broadcast skips it" : " not deployed, the first transaction deploys it"
+            )
+        );
+        address ops = opsLibraryAddress();
+        bool opsDeployed = ops.code.length != 0;
+        _check(
+            "library: CoreOpsLib at its create2 address is the compiled code or absent",
+            !opsDeployed || isCompiledOpsLibrary(ops.code),
+            string.concat(
+                vm.toString(ops),
+                opsDeployed ? " on chain, the broadcast skips it" : " not deployed, the next transaction deploys it"
             )
         );
     }
@@ -830,6 +851,8 @@ abstract contract LaunchChecks is PostflightChecks {
                 vm.toString(BUILD_HASH_CORE),
                 " CoreLib ",
                 vm.toString(BUILD_HASH_CORELIB),
+                " CoreOpsLib ",
+                vm.toString(BUILD_HASH_COREOPSLIB),
                 " ControllerV1 ",
                 vm.toString(BUILD_HASH_CONTROLLER),
                 " SeaportBasicAdapter ",
@@ -839,7 +862,9 @@ abstract contract LaunchChecks is PostflightChecks {
                 " LogoCoinRenderer ",
                 vm.toString(BUILD_HASH_RENDERER),
                 " CoreLib creation ",
-                vm.toString(BUILD_CREATION_HASH_CORELIB)
+                vm.toString(BUILD_CREATION_HASH_CORELIB),
+                " CoreOpsLib creation ",
+                vm.toString(BUILD_CREATION_HASH_COREOPSLIB)
             )
         );
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));

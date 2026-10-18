@@ -8,7 +8,7 @@ import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { formatUnits, parseAbi, zeroAddress, type Address } from "viem";
 import { core, ethUsdFeed } from "./config";
 import { chainlinkAbi, controllerAbi, erc20Abi, hookAbi, mevAbi, quoterAbi, stateViewAbi } from "./abis";
-import { useHead, useSnapshot } from "./live";
+import { useCoinLive, useHead, useSnapshot } from "./live";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { V4, ccPerEthFromSqrt, poolIdOf, poolKey, type PoolKey } from "./v4";
 
@@ -18,10 +18,11 @@ const BUCKET = 300n; // the 24h reference block moves once per hour, so the cach
 // An eth/token v4 pool the swap panel trades: the token (currency1) and its pool key.
 export type Market = { token: Address; symbol: string; decimals: number; key: PoolKey };
 
-// The coin market. undefined until the Core snapshot has the coin.
+// The coin market. undefined until the Core snapshot has the coin and while the coin is not launched (live.useCoinLive: the coin has no code).
 export function useCcMarket(): Market | undefined {
   const coin = useSnapshot().data?.coin;
-  return useMemo(() => (coin ? { token: coin, symbol: "cc", decimals: 18, key: poolKey(coin) } : undefined), [coin]);
+  const live = useCoinLive();
+  return useMemo(() => (coin && live ? { token: coin, symbol: "cc", decimals: 18, key: poolKey(coin) } : undefined), [coin, live]);
 }
 
 // The balance token market from the controller's balancePoolKey. `loading`

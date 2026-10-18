@@ -50,6 +50,30 @@ abstract contract PostflightChecks is PostflightPool {
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
     }
 
+    /// @notice the postflight of a deploy that stopped before the launch (`DEFER_LAUNCH=1`): the Core, payee and adapter
+    /// rows, the Core address row, and four coin rows. the coin is the address the Core holds as its immutable: it has
+    /// no code, the factory has no launch record for it, and it equals the factory prediction for `deployer`. the pool
+    /// and coin rows run after the launch (`postflightAs`)
+    function postflightDeferred(LaunchConfig memory c, address core_, address deployer) internal {
+        _reset();
+        _code("code: core", core_);
+        if (core_.code.length == 0) return;
+        ICore core = ICore(payable(core_));
+        _postCore(c, core);
+        address coin = core.COIN();
+        _noCode("deferred: coin has no code", coin);
+        (bool okr, bool recorded) = _bool(c.stack.factory, abi.encodeCall(IArtCoinsFactoryV2.isCoin, (coin)));
+        _check("deferred: coin salt is unused on the factory", okr && !recorded, vm.toString(coin));
+        _postPayee(c, core);
+        _postAdapters(c, core);
+        if (deployer != address(0)) {
+            _eq("core: address is the CREATE2 address of the config and the deployer", core_, coreAddress(c, deployer));
+            (bool okp, address want) = _predict(c, deployer, core_);
+            _check("deferred: coin equals the factory prediction for the deployer", okp && want == coin, vm.toString(want));
+        }
+        _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
+    }
+
     /// @dev with the deployer known, the Core address is `coreAddress(c, deployer)`, which commits to the creation code
     /// and every constructor argument. the coin equals the factory's prediction for the deployer. the prediction reads
     /// mutable factory state (the default allowlist, the hook escrow), so a later change of it is a warning
@@ -75,6 +99,11 @@ abstract contract PostflightChecks is PostflightPool {
         return vm.computeCreate2Address(bytes32(0), keccak256(vm.getCode("CoreLib.sol:CoreLib")), CREATE2_DEPLOYER);
     }
 
+    /// @notice the CREATE2 address of the second linked library, from its compiled creation code
+    function opsLibraryAddress() internal view returns (address) {
+        return vm.computeCreate2Address(bytes32(0), keccak256(vm.getCode("CoreOpsLib.sol:CoreOpsLib")), CREATE2_DEPLOYER);
+    }
+
     /// @dev the creation code of the Core with the library address linked in, without constructor arguments. the artifact
     /// is read from `out/`, where the library is a placeholder. the result is kept in the process environment, which a
     /// snapshot revert does not touch: the artifact json is large and a run calls `coreAddress` many times
@@ -84,6 +113,8 @@ abstract contract PostflightChecks is PostflightPool {
             string memory o = vm.parseJsonString(vm.readFile("out/Core.sol/Core.json"), ".bytecode.object");
             string memory lib = vm.toString(libraryAddress());
             o = vm.replace(o, linkPlaceholder("src/lib/CoreLib.sol", "CoreLib"), vm.replace(lib, "0x", ""));
+            string memory ops = vm.toString(opsLibraryAddress());
+            o = vm.replace(o, linkPlaceholder("src/lib/CoreOpsLib.sol", "CoreOpsLib"), vm.replace(ops, "0x", ""));
             vm.setEnv(key, o);
         }
         return vm.envBytes(key);
@@ -96,7 +127,7 @@ abstract contract PostflightChecks is PostflightPool {
     }
 
     /// @notice the address of the Core of `c` launched by `launcher`: CREATE2 through the deterministic deployer with
-    /// `CORE_SALT`. a function of the compiled Core and library, the config and the deployer
+    /// `CORE_SALT`. a function of the compiled Core and both libraries, the config and the deployer
     function coreAddress(LaunchConfig memory c, address launcher) internal returns (address) {
         return vm.computeCreate2Address(CORE_SALT, keccak256(coreInitCode(c, launcher)), CREATE2_DEPLOYER);
     }
@@ -188,8 +219,11 @@ abstract contract PostflightChecks is PostflightPool {
     /// and `deployer`, the address that sent the deploy. docs/RUNBOOK.md section 3
     function printVerifyInputs(ICore core, LaunchConfig memory c, address deployer) internal view {
         address lib = findLibrary(address(core).code);
+        address ops = findOpsLibrary(address(core).code);
         console.log("verify: library CoreLib at", lib);
         console.log(string.concat("verify: flag  --libraries src/lib/CoreLib.sol:CoreLib:", vm.toString(lib)));
+        console.log("verify: library CoreOpsLib at", ops);
+        console.log(string.concat("verify: flag  --libraries src/lib/CoreOpsLib.sol:CoreOpsLib:", vm.toString(ops)));
         if (deployer == address(0)) {
             console.log("verify: constructor args NOT printed: set DEPLOYER (the deploy signer)");
             return;
@@ -232,7 +266,7 @@ abstract contract PostflightChecks is PostflightPool {
         ctlWant[0] = uint256(uint160(address(core)));
         _check(
             "controller: every CORE slot of the runtime code is the Core",
-            runtimeSlotsMatch(ctl, "ControllerV1", address(0), ctlWant),
+            runtimeSlotsMatch(ctl, "ControllerV1", new address[](0), ctlWant),
             "the immutable CORE sites of the controller runtime code"
         );
         _check(
@@ -371,16 +405,21 @@ abstract contract PostflightChecks is PostflightPool {
         _check("core: ethRate at most rateCap", core.ethRate() <= live.rateCap, vm.toString(core.ethRate()));
     }
 
-    /// @dev the Core is linked against `CoreLib`: its address is the operand of eight push20 sites in the Core runtime
-    /// code. the first row finds a push20 operand whose code is the compiled library (its own address masked out). the
-    /// second reads every library address slot and every immutable slot of the Core runtime code and requires each to
-    /// hold that library or the value the matching getter returns, because the identity hash masks all of them
+    /// @dev the Core links both libraries. the runtime hash masks their call sites; these rows check the code at each
+    /// linked address and the value of every masked library and immutable slot
     function _postLibrary(ICore core) private {
-        address found = findLibrary(address(core).code);
+        bytes memory code = address(core).code;
+        address found = findLibrary(code);
+        address ops = findOpsLibrary(code);
         _check(
             "core: linked library is the compiled CoreLib",
-            found != address(0),
+            found == libraryAddress(),
             string.concat("library at ", vm.toString(found))
+        );
+        _check(
+            "core: linked ops library is the compiled CoreOpsLib",
+            ops == opsLibraryAddress(),
+            string.concat("ops library at ", vm.toString(ops))
         );
         uint256[] memory want = new uint256[](9);
         want[0] = uint256(uint160(core.COIN()));
@@ -392,17 +431,28 @@ abstract contract PostflightChecks is PostflightPool {
         want[6] = uint256(uint160(core.FACTORY()));
         want[7] = uint256(uint160(core.LOCKER()));
         want[8] = uint256(uint160(core.ESCROW()));
+        address[] memory libs = new address[](2);
+        libs[0] = found;
+        libs[1] = ops;
         _check(
             "core: every library call site and every immutable slot holds the library or the getter value",
-            found != address(0) && runtimeSlotsMatch(address(core), "Core", found, want),
-            "all compiled CoreLib and immutable reference sites"
+            found != address(0) && ops != address(0) && runtimeSlotsMatch(address(core), "Core", libs, want),
+            "all compiled library and immutable reference sites"
         );
     }
 
     /// @notice the address of the compiled `CoreLib` inside a Core runtime code (a push20 whose target has the library
     /// runtime code, own address masked out), zero when there is none
     function findLibrary(bytes memory code) internal view returns (address found) {
-        bytes memory expected = vm.getDeployedCode("CoreLib.sol:CoreLib");
+        return _findLibrary(code, "CoreLib.sol:CoreLib");
+    }
+
+    function findOpsLibrary(bytes memory code) internal view returns (address found) {
+        return _findLibrary(code, "CoreOpsLib.sol:CoreOpsLib");
+    }
+
+    function _findLibrary(bytes memory code, string memory artifact) private view returns (address found) {
+        bytes memory expected = vm.getDeployedCode(artifact);
         bytes32 want = _tailHash(expected);
         for (uint256 i; i + 21 <= code.length; ++i) {
             address cand;
@@ -421,7 +471,15 @@ abstract contract PostflightChecks is PostflightPool {
 
     /// @notice whether `lc` is the runtime code of the compiled `CoreLib`, its own address masked out
     function isCompiledLibrary(bytes memory lc) internal view returns (bool) {
-        bytes memory expected = vm.getDeployedCode("CoreLib.sol:CoreLib");
+        return _isCompiledLibrary(lc, "CoreLib.sol:CoreLib");
+    }
+
+    function isCompiledOpsLibrary(bytes memory lc) internal view returns (bool) {
+        return _isCompiledLibrary(lc, "CoreOpsLib.sol:CoreOpsLib");
+    }
+
+    function _isCompiledLibrary(bytes memory lc, string memory artifact) private view returns (bool) {
+        bytes memory expected = vm.getDeployedCode(artifact);
         return lc.length == expected.length && lc.length >= 39 && _tailHash(lc) == _tailHash(expected);
     }
 

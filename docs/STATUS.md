@@ -4,6 +4,10 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
+Current baton (2026-10-18, decisions 176 to 185): PR #103 merged into main as `a01c9fe`. PR #106 adds the broader pause and second linked library on top; its required CI is rerunning after a stale value-mode pause test was corrected at `6917a00`. PR #98 adds public contract guides, with its docs decisions renumbered 179 to 185 and pause guidance updated; PR #105 adds web polish and forming Statements, with integration corrections in progress. No combined candidate is frozen. Next: merge #106 after CI passes, then finish and merge #98 and #105, resolve their shared footer, and run the full candidate gates on the resulting main commit. No mainnet deployment or broadcast occurred. Older status rows below are historical.
+
+Delta audit of main `e6a7654` (2026-10-18, decision 173; record in docs/reviews/REVIEW-codex-delta-e6a7654.md): verification held (suite 751 passed, 0 failed, 7 skipped; e2e-real 35 passed, 0 failed; deep campaigns 21 and 21b, 7 suites at 64 runs of depth 200). Four fixes land outside `src/` on branch `fix/delta-audit-e6a7654`: the dev scenario closes the balance bid again (L-01), the sell page pays 0 and disables the action when value mode has no protected sale price (B-01), `useCoinLive` polls every 15 seconds until the coin has code (B-02), and `/api/listings` has a global upstream POST budget (SEC-02, burst 8, refill 4 per second, for the owner to confirm against the OpenSea plan). The freeze row stays pending.
+
 Decisions 163 and 164 are merged on main (PR 78): the artist royalty on every engine purchase (`buyToArtistBps` 250, on top, both currencies, pushed to the artist) and the flat discounted balance bid (`balanceDiscountBps` 1,000, posted, no climb, no drop, independent of the eth bid; `sharedRate()` reads value mode's shared instance). Decision 165 (PR 80, the value mode balance payout clamp) and the adopt basis royalty (PR 81) are merged after them. The implementation spec and its outcomes are docs/reviews/SPEC-royalty-balance-161.md. The audited candidate `7919099` is superseded. The release candidate is not frozen: the owner has changes incoming, and the freeze (full suite, deep invariants, rehearsal, `CANDIDATE_RUN=1`) runs once on the frozen commit.
 
 PR 70 proposes a 100 bps executable tolerance default for phase-two value pricing (decision 162), with a 200 bps minimum credit spread and the existing independent 4.5 percent pool-key seed guard. The 100 bps tolerance needs 203 bps spread under the rounded loop-closure rule; the launch spread remains 1,000. The owner can tune tolerance with `setQuote`. ControllerV1 is 17,211 bytes, with its build hash re-pinned. The branch is rebased on main `6c7f39c` and reopens the release freeze. A held pool move can still exploit the band and move the reference by up to 2 percent every 600 seconds.
@@ -83,13 +87,21 @@ runtime sizes at the tip (limit 24,576) after decisions 163, 164 and the review 
 
 ## 4. the freeze table
 
-`script/tools/check-freeze.sh` reads the one table below, the lines between this heading and the next heading of any level. the candidate row must equal `git rev-parse HEAD` (or an ancestor with only docs/ changed since), and when the candidate is frozen each gate row needs a commit and a result file that exists. while the candidate is not frozen the table holds the single row `candidate | pending`, and the script exits 1 with one pending line.
+`script/tools/check-freeze.sh` reads the one table below, the lines between this heading and the next heading of any level. the candidate row must equal `git rev-parse HEAD` (or an ancestor with only docs/ changed since), and when the candidate is frozen each gate row needs a commit and a result file that exists. the acceptance row holds `pending` until the owner signs off, and the script exits 1 with one pending line until then.
 
 | gate | commit | result |
 |---|---|---|
-| candidate | pending | not frozen: the owner has changes incoming. the freeze commit replaces `pending` with its SHA and adds one row each for the full suite, deep runs, rehearsal, security review and acceptance, each with the commit it covers and its result file |
+| candidate | pending | freeze reopened by decision 174 contract cleanup |
+| suite | pending | prior 85dbc51 evidence is historical |
+| deep | pending | prior 85dbc51 evidence is historical |
+| e2e | pending | prior 85dbc51 evidence is historical |
+| rehearsal | pending | prior 85dbc51 evidence is historical |
+| review | pending | focused cleanup review does not replace release review |
+| acceptance | pending | (owner signs off) |
 
 ### history (outside the gate)
+
+Previous candidate `85dbc51`: suite, deep and e2e results in `docs/reviews/CANDIDATE-85dbc51.md`, rehearsal in `docs/reviews/REHEARSAL-85dbc51.md`, delta review of `e6a7654` in `docs/reviews/REVIEW-codex-delta-e6a7654.md`. Superseded by decision 174 executable changes; owner acceptance was pending.
 
 records of earlier candidates. the check script does not read them and none of them covers the current source.
 
@@ -138,4 +150,4 @@ the first run's two failures were fixed at the root at eab58c7 (`9fb6c65`): the 
 | balance module gas | `redeemStatement` forwards gas to a contract that does not exist yet; measure it against `REDEEM_GAS` when it does |
 | v2 audit | the engine targets the master v2 stack `6d099486` (decision 126). preflight pins its code hashes and constantsHash (`script/LaunchConfig.sol`, `script/config/v2-master.json`); the stack is not yet on mainnet, so the fixture is a fork deployment and a mainnet stack means new addresses and pins |
 | owner key | a stolen owner key moves everything at once (docs/SPEC.md section 11). a multisig owner and watching `SuccessorSet` and `Migrated` are the mitigations |
-| rehearsal gas estimate | `DEPLOY_GAS_ESTIMATE` 22,000,000 covers 19,069,638 gas measured on the master stack fixture with eleven transactions (the coin renderer and `setCore` added, decision 127); the freeze re-measures it |
+| rehearsal gas estimate | `DEPLOY_GAS_ESTIMATE` remains 22,000,000 pending measurement of the new twelve-transaction path with both linked libraries on the frozen candidate; the former 19,069,638 gas result covered eleven transactions and is historical |

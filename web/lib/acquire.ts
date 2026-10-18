@@ -42,9 +42,9 @@ export function cheapestPerId(list: Listing[]): Listing[] {
 }
 
 /**
- * Candidates worth a live read, from all listings and a bid estimate per id. The estimate is Core.bidOf
- * (src/Core.sol:465-470): ethRate() * score / scorePer100Points with floor division, where ethRate() is
- * `price.min(ethPot + pending)` (Core.sol:458-461), held by the snapshot as `ethRate`. Ranked by estimated margin
+ * Candidates worth a live read, from all listings and a bid estimate per id. The estimate is Core.bidOf:
+ * ethRate() * score / scorePer100Points with floor division. The snapshot ethRate is the price state clamped to
+ * `(booked pot + pending pot share - reserve) / (1 + artist royalty)`. Ranked by estimated margin
  * (estimated bid minus price), the first `n` kept.
  */
 export function shortlist(list: Listing[], ethRate: bigint, scorePer100Points: bigint, scores: Map<bigint, bigint>, n: number): Listing[] {

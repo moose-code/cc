@@ -16,7 +16,10 @@ contract Postflight is Script, LaunchChecks {
     function run() external {
         LaunchConfig memory c = loadConfig(vm.envOr("LAUNCH_CONFIG", DEFAULT_CONFIG_FILE));
         address core = vm.envAddress("CORE");
-        postflight(c, core);
+        // DEFER_LAUNCH=1: the system is deployed and the coin is not launched yet (docs/RUNBOOK.md, deferred launch)
+        bool deferred = vm.envOr("DEFER_LAUNCH", uint256(0)) == 1;
+        if (deferred) postflightDeferred(c, core, _deployerEnv());
+        else postflight(c, core);
         // the same hash preflight printed and Deploy required. when CONFIG_HASH is set it must match
         bytes32 given = vm.envOr("CONFIG_HASH", bytes32(0));
         if (given != bytes32(0)) _eq("config hash equals CONFIG_HASH", configHash(c), given);
@@ -28,7 +31,7 @@ contract Postflight is Script, LaunchChecks {
     }
 
     /// @dev the record fields that come from the chain: the Core, its controller and coin, the CREATE2 adapters and
-    /// renderer (each code checked by the rows above), the linked CoreLib, the stack the Core holds and the Core owner
+    /// renderer (each code checked by the rows above), both linked libraries, the stack the Core holds and the Core owner
     function _printRecord(ICore k, LaunchConfig memory c) private view {
         string memory contracts = string.concat(
             '"core":"',
@@ -47,6 +50,8 @@ contract Postflight is Script, LaunchChecks {
             vm.toString(rendererAddress(c)),
             '","library":"',
             vm.toString(findLibrary(address(k).code)),
+            '","opsLibrary":"',
+            vm.toString(findOpsLibrary(address(k).code)),
             '","credits":"',
             vm.toString(Mainnet.CREDITS),
             '","statements":"',

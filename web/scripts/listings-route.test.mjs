@@ -77,18 +77,32 @@ assert.equal(posts, 2); // KNOWN[1] fetched once, cached for the rest
 // the other client is unaffected
 assert.equal((await call(KNOWN[2], "4.4.4.4")).status, 200);
 
-// cache bound: fill the cap from distinct clients, every entry stays cached (no re-POST), listings beyond the cap are 404
-Date.now = ((n) => () => n)(Date.now() + 60_000); // new snapshot window
+// cache bound and global upstream budget (burst 8, refill 4 per second). The clock is frozen so the arithmetic is exact.
+let clock = Date.now() + 60_000; // new snapshot window; the bucket has refilled to the burst
+Date.now = () => clock;
 globalThis.MANY_MODE = true;
 posts = 0;
-let ok = 0;
-for (let i = 0; i < MANY; i++) {
-  const st = (await call(ALL[i], `20.0.${i >> 8}.${i & 255}`)).status;
-  if (st === 200) ok++;
+let ok = 0, busy = 0;
+for (let i = 0; i < 200; i++) {
+  const res = await call(ALL[i], `20.0.${i >> 8}.${i & 255}`);
+  if (res.status === 200) ok++;
+  else {
+    assert.equal(res.status, 503);
+    assert.ok(res.headers.get("retry-after"));
+    busy++;
+  }
 }
-assert.equal(ok, 200);
-assert.equal(posts, 200);
-for (let i = 0; i < 200; i++) assert.equal((await call(ALL[i], `30.0.${i >> 8}.${i & 255}`)).status, 200);
-assert.equal(posts, 200);
+assert.equal(ok, 8);
+assert.equal(busy, 192);
+assert.equal(posts, 8);
+
+// one second later 4 more POSTs are allowed; a refused hash is not cached, so it succeeds once the budget allows
+clock += 1000;
+for (let i = 8; i < 28; i++) await call(ALL[i], `21.0.${i >> 8}.${i & 255}`);
+assert.equal(posts, 12);
+
+// the cache serves repeats without a POST or a token
+for (let i = 0; i < 12; i++) assert.equal((await call(ALL[i], `30.0.${i >> 8}.${i & 255}`)).status, 200);
+assert.equal(posts, 12);
 
 console.log("listings-route test ok");

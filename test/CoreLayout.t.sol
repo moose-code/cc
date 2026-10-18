@@ -72,6 +72,7 @@ contract CoreLayoutTest is Fixture {
         assertEq(_field(9, 0, 32), core.rateAtCheckpoint(), "rateAtCheckpoint");
         assertEq(_field(10, 0, 8), core.checkpointTime(), "checkpointTime");
         assertEq(_field(10, 8, 8), core.lastFillTime(), "lastFillTime");
+        assertEq(_field(10, 16, 8), block.timestamp, "climbRestartTime shares slot 10 for the web forecast");
         assertEq(_field(11, 0, 32), core.lastBuybackBlock(), "lastBuybackBlock");
         assertEq(_field(18, 0, 20), uint256(uint160(core.successor())), "successor");
         assertEq(_field(18, 20, 1), core.successorLocked() ? 1 : 0, "successorLocked");

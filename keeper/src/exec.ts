@@ -80,8 +80,8 @@ export class Executor {
     const r = recheck(c, s, listing, gasUsed, gasNow, this.policy);
     if (!r.ok) return { kind: "skipped", reason: `after simulation: payment ${r.payment} under cost ${r.cost} plus margin at ${gasUsed} gas` };
 
-    if (c.dryOnly || this.cfg.dryRun) {
-      log("info", c.dryOnly ? "intended (logged only)" : "dry run: would send", {
+    if (this.cfg.dryRun) {
+      log("info", "dry run: would send", {
         door: c.door,
         fn: c.functionName,
         args: c.args,

@@ -225,8 +225,8 @@ export default function CreditsPage() {
             </div>
             <div className="side-act">
               <Act
-                label={selected.length ? `buy ${selected.length} credit${selected.length === 1 ? "" : "s"}` : "select credits"}
-                disabled={selected.length === 0}
+                label={snap.paused ? "engine paused" : selected.length ? `buy ${selected.length} credit${selected.length === 1 ? "" : "s"}` : "select credits"}
+                disabled={snap.paused || selected.length === 0}
                 steps={async (write) => {
                   await buyCredits(write, snap, selected.map((c) => c.id), total);
                   setSel(new Set());

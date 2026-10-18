@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-/// shared interfaces. fixed by the project director. do not change signatures without sign off.
+/// shared runtime and integration types. generated contract interfaces live beside this file.
 
 interface IController {
     /// the next page to compose. the core uses `ready` and `ids`; the returned `format` is not used, the core picks the
     /// format of a system compose
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
-    /// true when statement `sid` is eligible for redemption. with `ageEligibilityOn` false (launch) the curve price has
-    /// reached its floor, `saleFloorBps` of the reference; with it on the rule is age only. the age excludes paused
-    /// seconds, so eligibility is frozen while sales are paused. the core reads it to gate the balance side redemption
+    /// true when statement `sid` is eligible for redemption. with `ageEligibilityOn` false (launch) the curve price
+    /// has reached its floor, `saleFloorBps` of the reference; with it on the rule is age only. the age excludes
+    /// paused seconds; owner settings and reference changes can still affect eligibility during a pause. the core
+    /// reads it to gate the balance side redemption
     function atFloor(uint256 sid) external view returns (bool);
     /// true when a credit acquired at `acquiredAt` may be composed: always while the credit sale is off, otherwise once
     /// the credit window has passed. the core reads it to gate a chosen compose
@@ -17,17 +18,18 @@ interface IController {
     /// the asking price of statement `sid` now. the core reads it once per compose for the `Composed` event, and a
     /// failed read is logged as 0
     function priceOf(uint256 sid) external view returns (uint256);
-    /// the wei value of one point (`POINT_UNIT` score units, `POINT_UNIT * unitPerPoint` balance token base units) at the
-    /// protected price of the balance token: the buy price `min(spot, reference * (10_000 + tolBps) / 10_000)` for
-    /// `forSale` false, rounded down, the sale price `max(spot, reference * (10_000 - tolBps) / 10_000)` for true, rounded
-    /// up. `ok` is false, and `value` 0, while the quote is unusable (no pool key or module, a stale reference, pool
-    /// liquidity under the minimum, a failed unit read). the core reads it in value mode, with a bounded call that fails
-    /// closed to `NoQuote`
+    /// the wei value of one point (`POINT_UNIT` score units, `POINT_UNIT * unitPerPoint` balance token base units)
+    /// at the protected price of the balance token: the buy price `min(spot, reference * (10_000 + tolBps) /
+    /// 10_000)` for `forSale` false, rounded down, the sale price `max(spot, reference * (10_000 - tolBps) /
+    /// 10_000)` for true, rounded up. `ok` is false, and `value` 0, while the quote is unusable (no pool key or
+    /// module, a stale reference, pool liquidity samples under the minimum, a failed unit read). `spot` is the
+    /// prior-block refresh sample. the Core reads it with a gas bound and falls back to its last good value rate on
+    /// an unusable answer
     function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
     /// the `posted` balance payout for a credit of `score` stored units lowered to its value mode cap, balance base
-    /// units: the smaller of `posted` and the eth bid for the score valued in tokens at the protected sale price per
-    /// token, so a filled payout is worth at most the eth bid when the engine sells the tokens. `ok` is false while the
-    /// quote is unusable, where the core keeps `posted`. the core reads it in value mode with a bounded call
+    /// units: the smaller of `posted` and `ethPrice() * score / RATE_SCORE` converted at the protected sale price,
+    /// before the ETH pot clamp. an unusable reference returns `(0, true)`, refusing the payout. a failed bounded
+    /// controller call or `ok` false leaves `posted` unchanged
     function balanceClampFor(uint256 score, uint256 posted) external view returns (uint256 paid, bool ok);
     /// moves the reference toward the pool spot under its cadence, rate and step gates; true when it updated the
     /// reference. the Core's `refreshReference` door forwards to it and pays the caller only when it returns true
@@ -46,7 +48,8 @@ interface IBalanceModule {
     /// the balance token the module will pay out for the balance bid. the module may hold more and keep the rest for
     /// other uses. the core checks a sell batch against it and the core's `setBalanceModule` requires it to answer
     function available() external view returns (uint256);
-    /// moves `amount` of the balance token to `to`, the core only. reverts when `amount` exceeds `available()`
+    /// Core-only payment, at most `available()`. the production module reserves transfer shortfalls as claimable
+    /// liabilities; the Core independently requires the seller's full immediate receipt
     function pay(address to, uint256 amount) external;
 }
 
@@ -71,11 +74,12 @@ interface ICoreViews {
     /// the eth bid for credit `id` now, wei: `bidForScore(scoreOf(id))`
     function bidOf(uint256 id) external view returns (uint256);
     /// the eth price state now, wei per 100 points, before the pot clamp `ethRate` applies. the cost basis of an
-    /// adopted credit is this price times its score over 100 points. in later blocks the climb heads toward the larger pot
+    /// adopted credit is this price times its score over 100 points plus the artist purchase royalty, at least 1
+    /// wei. in later blocks the climb heads toward the larger pot
     function ethPrice() external view returns (uint256);
-    /// the floor rate now, wei per 100 points: the larger of the price state climbed before the pot clamp and the
-    /// remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays between
-    /// fills, so the maximum holds against a sale within the block. the eth doors and `bidForScore` divide it by 100 points
+    /// max(climbed mode-off ETH instance, its decayed peak), wei per 100 points. mode-off sale references and
+    /// balance-acquisition bases scale it by score. value-mode acquisition bases use `ethPrice()`, while value-mode
+    /// sale references use protected sale-token value. ETH purchase bids use `ethRate()`
     function floorRate() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the seconds a held statement has aged outside every pause. reverts `NotForSale` when the core does not hold it
@@ -93,7 +97,7 @@ interface ICoreSale {
     function owner() external view returns (address);
     function settings() external view returns (Settings memory);
     function sellTo(uint256 sid, address buyer) external payable;
-    /// sends pile credit `id` to `buyer` for `msg.value`, at least the credit's cost. only the controller
+    /// controller-only credit sale; `msg.value` must cover `cost * saleFloorBps / 10_000`
     function sellCreditTo(uint256 id, address buyer) external payable;
 }
 
@@ -154,27 +158,30 @@ uint256 constant BUYBACK_GAS = 600_000;
 // measured buyListing (CreditStrategy path) is 450,000 to 490,000 gas as a transaction. read by the Core
 uint256 constant BUYLISTING_GAS = 1_500_000;
 
-/// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`, bounds
-/// in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into five storage slots
-/// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and sale
-/// fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller fields, fee
-/// split and `pointsPerPage`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`, `spendCapBps`, `bucketSeconds`,
-/// `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei`, `returnLockSeconds` and `valueModeOn`.
-/// docs/SPEC.md section 3 has the meaning of every field
+/// every economic setting of the Core. one struct in Core storage, owner settable at once through `setSettings`,
+/// bounds in `src/lib/SettingsBounds.sol`. the types are narrow so the whole struct packs into five storage slots
+/// (a hot path reads it with a handful of loads). the field order is the slot layout: slot 0 holds the rate and
+/// sale fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller
+/// fields, fee split and `pointsPerPage`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`,
+/// `spendCapBps`, `bucketSeconds`, `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei`,
+/// `returnLockSeconds`, `valueModeOn`, `buyToArtistBps` and `balanceDiscountBps`. docs/SPEC.md section 3 has the
+/// meaning of every field
 struct Settings {
     // slot 0
-    /// fall of a bid rate on a fill, bps of the rate before the credit, as `dropPer100PointsBps * score / (100 points in score units)`, bounded at 10_000; shared by the eth and balance bids
+    /// fall of a bid rate on a fill, bps of the rate before the credit, as `dropPer100PointsBps * score / (100
+    /// points in score units)`, bounded at 10_000; applies to the active ETH instance, never the posted balance bid
     uint16 dropPer100PointsBps;
     /// within one bucket the rate falls no lower than this share of the rate at the first fill of that bucket, bps
     uint16 dropFloorBps;
-    /// climb of a bid rate per minute, bps, compounded; shared by both bids
+    /// climb of the active ETH instance per minute, bps, compounded
     uint16 climbPerMinBps;
     /// the rate stays at or below this share of the ceiling anchor, bps. the anchor is `max(last fill rate, peak now)`
     uint16 ceilBps;
-    /// growth of the ceiling anchor per full idleStepSeconds since the last fill, bps of the anchor
+    /// growth of the ceiling anchor per full idleStepSeconds since the later of the last fill and a funded clock restart,
+    /// bps of the anchor in mode-off ETH pricing
     uint16 idleLoosenBps;
-    /// the floor of a statement sale, bps of the statement cost in `sellTo` and bps of the controller reference in the
-    /// controller's curve. the reference is at least the cost, so the controller's floor is at least the Core's
+    /// the floor of a statement sale, bps of the statement cost in `sellTo` and bps of the controller reference in
+    /// the mode-off curve. the Core's cost floor applies in both modes
     uint16 saleFloorBps;
     /// share of a statement sale payment after the artist and operator cuts that goes to the coin buyback, bps
     uint16 saleToBuybackBps;
@@ -210,8 +217,8 @@ struct Settings {
     /// base fee ceiling of the gas refund of `buyback` and `buyListing`, wei
     uint48 keeperMaxBaseFee;
     // slot 2
-    /// the most the eth rate can be, wei per credit. the price state and the read stay at or below it, `setRate`
-    /// refuses above it, and the rate bounds apply to it
+    /// the most the eth rate can be, wei per 100 points. the price state and the read stay at or below it,
+    /// `setRate` refuses above it, and the rate bounds apply to it
     uint64 rateCap;
     /// fixed fee paid to the caller of `compose` and `redeemStatement`, wei, from `ethPot`. zero turns the whole payment
     /// of those doors off when `callerMaxBaseFee` is zero too
@@ -243,8 +250,8 @@ struct Settings {
     uint16 spendCapBps;
     /// seconds per shared purchase-budget and bid-drop bucket
     uint32 bucketSeconds;
-    /// value mode only: the cap of the shared eth instance, bps of par, at least 10,000. the posted balance bid does not
-    /// read it
+    /// shared value-mode ETH instance cap, bps of par, at least 10,000. also feeds the sale-floor multiplier in
+    /// both modes; the posted balance bid does not read it
     uint32 balanceBidCapBps;
     /// seconds per full ceiling-loosening step; per-minute climb units remain 60 seconds
     uint32 idleStepSeconds;
@@ -254,18 +261,19 @@ struct Settings {
     /// and redeem caller payments; the bids and `ethRate` read `ethPot` less the reserve, the caller payments, the buyback
     /// and the pushes pay from the whole pot
     uint64 reserveWei;
-    /// seconds every intake door refuses a credit the engine sold through `sellCreditTo`, from the sale. 0 refuses it in
-    /// the second of the sale only
+    /// seconds intake doors refuse a credit returned by the same buyer after `sellCreditTo`. a secondary holder is
+    /// not locked; 0 disables the lock
     uint32 returnLockSeconds;
-    /// the value switch: the eth bid is the shared balance instance times the controller's protected value per point,
-    /// every eth fill drops that instance, and the controller prices sales on the value with the floor rate and cost
-    /// terms dropped. turning it on resets the shared instance to its floor
+    /// value mode prices the ETH bid from the shared instance and protected buy value; ETH fills drop that
+    /// instance. sale references use protected sale value without cost or floor-rate terms; final quotes retain the
+    /// Core cost minimum. turning the switch on resets the shared instance to its floor
     bool valueModeOn;
     /// the artist royalty on every engine purchase, bps of the amount the engine pays for a credit, paid on top in the
     /// same currency: the seller receives the bid whole, the artist `pay * this / 10,000`. 0 to 1,000
     uint16 buyToArtistBps;
-    /// the balance bid's discount to par, bps: the balance route pays `score * unitPerPoint * (10,000 - this) / 10,000`
-    /// per credit, flat. 0 to 9,999, so the payout is never zero
+    /// the balance bid's discount to par, bps: the balance route pays `score * unitPerPoint * (10,000 - this) /
+    /// 10,000` per credit before the value-mode cap. 0 to 9,999 keeps the discount below 100 percent; rounding or
+    /// the cap may pay 0
     uint16 balanceDiscountBps;
 }
 
@@ -275,9 +283,11 @@ struct Settings {
 struct Sale {
     /// the start price over the anchor, bps
     uint16 markupBps;
-    /// the most the start price can be, bps of the price reference, `max(cost, valueOf(rating))`
+    /// cap of the reference curve's start, bps, before the Core cost-floor clamp. statement reference is `max(cost,
+    /// valueOf(rating))` in mode off, or `valueOf(rating) * floorMultBps() / 10_000` in value mode
     uint32 startCapBps;
-    /// hours for the asking price to fall in a straight line from the start to the floor, then rest. 1 to uint16.max
+    /// hours for the reference curve to reach its floor. 1 to uint16.max. a dominating Core cost floor can flatten
+    /// the final quote earlier and can exceed the curve's start cap
     uint16 decayHours;
     /// seconds for the part of the anchor above 10_000 to halve
     uint32 anchorHalfLife;
@@ -295,8 +305,9 @@ struct CreditSale {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 to uint32.max seconds
     uint32 window;
-    /// the sale spread, bps. the credit sale floor is the larger of the credit's cost and its `valueOf` score times
-    /// `max(10_000, (10_000 + spreadBps) * balanceBidCapBps / 10_000)`, the Core's cap read live. 200 to uint16.max
+    /// sale spread, bps. the floor is `max(cost, valueOf(score)) * floorMultBps() / 10_000`, with cost dropped from
+    /// the reference in value mode. both modes enforce the Core's `cost * saleFloorBps / 10_000` minimum. at least
+    /// 200, and enough to close the tolerance band (at least 203 with `tolBps` 100)
     uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;
@@ -310,12 +321,13 @@ struct Quote {
     uint32 referenceRateBpsPerHour;
     /// the most one update moves the reference, bps of the reference. 0 to 10_000
     uint16 referenceStepBps;
-    /// the band around the reference: buys price off `min(spot, reference * (10_000 + tolBps) / 10_000)`, sales off
-    /// `max(spot, reference * (10_000 - tolBps) / 10_000)`. 0 to 9_999
+    /// the band around the reference, using the prior-block refresh sample as `spot`: buys use `min(spot, reference
+    /// * (10_000 + tolBps) / 10_000)`, sales use `max(spot, reference * (10_000 - tolBps) / 10_000)`. 0 to 9_999
     uint16 tolBps;
     /// seconds after the last update the reference stays usable. 0 keeps the reference price unusable
     uint32 referenceMaxStale;
-    /// least seconds between two reference refreshes. a refresh runs only when the last sample is older than this
+    /// least seconds between refreshes; elapsed time must be at least this value, and only one refresh may run per
+    /// block
     uint32 referenceMinSeconds;
     /// the least pool liquidity of a usable reference price
     uint128 minLiquidity;
@@ -340,7 +352,7 @@ struct Credit {
     /// seconds a credit's price falls over before it rests at the floor, and the time a credit sits before compose may
     /// take it. 1 to uint32.max seconds
     uint32 window;
-    /// the sale spread over the bid's hard cap, bps (the controller's `CreditSale.spreadBps`). 0 to uint16.max
+    /// the controller's `CreditSale.spreadBps`: at least 200 bps and enough to close the tolerance band
     uint16 spreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 startBps;

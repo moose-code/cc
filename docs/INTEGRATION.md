@@ -17,10 +17,10 @@ one multicall over these views answers everything a seller, a buyer or a keeper 
 
 | view | answers |
 |---|---|
-| `core.ethRate()` | the eth bid in wei per 100 points now (`RATE_SCORE` 1,000,000 score units), with the unbooked fees counted into the pot |
+| `core.ethRate()` | the eth bid in wei per 100 points now (`RATE_SCORE` 1,000,000 score units); unbooked fees can widen the read clamp but do not earn elapsed climb before booking |
 | `core.bidOf(id)`, `core.bidForScore(score)` | the bid for credit `id` or for a score now: `ethRate() * score / RATE_SCORE`, the number a seller or keeper uses |
 | `core.ethPrice()`, `core.floorRate()` | the price state before the pot clamp; the rate under every price floor |
-| `core.climbMultiplier()` | the pot scaled multiplier now, bps (10,000 is 1x, up to `climbMultiplierCapBps`, launch 40,000 is 4x): the pages of 80 credits the pot covers at the current rate, clamped to [1x, the cap]. the ceiling's idle loosening runs this many times as fast (the per minute climb is unscaled). show it when above 1x ("pot covers 3 pages, ceiling loosening 3x") |
+| `core.climbMultiplier()` | the pot scaled multiplier now, bps (10,000 is 1x, up to `climbMultiplierCapBps`, launch 40,000 is 4x): the pages of `pointsPerPage` points the booked pot covers at the last fill rate, clamped to [1x, the cap]. the ceiling's idle loosening runs this many times as fast while the pot is funded (the per minute climb is unscaled) |
 | `core.ethPot()`, `core.ethToBuyback()`, `core.ethRedeemBurn()` | the eth pots |
 | `IBalanceModule(core.balanceModule()).available()` | the balance token the module commits to the bid (the Core holds none) |
 | `core.balanceRate()` | the posted balance token bid, bps of par (par is a credit's `score * unitPerPoint`): `10,000 - settings.balanceDiscountBps`, 9,000 at launch, the same value on or off |
