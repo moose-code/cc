@@ -38,7 +38,7 @@ export function DocsNav() {
     ? docPages.flatMap((page) => {
         const href = docHref(page);
         const matches: Result[] = [];
-        if (`${page.title} ${page.summary} ${page.eyebrow}`.toLowerCase().includes(q)) {
+        if (`${page.title} ${page.summary} ${page.eyebrow} ${page.mainnetAddress ?? ""}`.toLowerCase().includes(q)) {
           matches.push({ href, title: page.title, context: page.group });
         }
         for (const section of page.sections) {

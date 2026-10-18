@@ -2,7 +2,8 @@ import Link from "next/link";
 import { docHref, docPages, entryId, type DocPage } from "@/lib/docs-content";
 import { contractCatalog } from "@/lib/docs-catalog";
 
-const sourceBase = "https://github.com/ripe0x/cc/blob/a6099d2b54a0b41dadf477d92b9e6c99e3a2f1b0/";
+const sourceBase = "https://github.com/ripe0x/cc/blob/";
+const sourceRevision = "08e2102a05f721196f264fe01ebe03f5bf45a188";
 
 export function DocsPage({ page }: { page: DocPage }) {
   const index = docPages.indexOf(page);
@@ -18,10 +19,16 @@ export function DocsPage({ page }: { page: DocPage }) {
           <span className="docs-eyebrow">{page.eyebrow}</span>
           <h1>{page.title}</h1>
           <p>{page.summary}</p>
+          {page.mainnetAddress && (
+            <div className="docs-source">
+              <span>Ethereum mainnet</span>
+              <a href={`https://etherscan.io/address/${page.mainnetAddress}`} target="_blank" rel="noreferrer">{page.mainnetAddress} ↗</a>
+            </div>
+          )}
           {page.source && (
             <div className="docs-source">
               <span>Source interface</span>
-              <a href={`${sourceBase}${page.source}`} target="_blank" rel="noreferrer">{page.source} ↗</a>
+              <a href={`${sourceBase}${page.sourceRevision ?? sourceRevision}/${page.source}`} target="_blank" rel="noreferrer">{page.source} ↗</a>
             </div>
           )}
         </header>
@@ -30,7 +37,7 @@ export function DocsPage({ page }: { page: DocPage }) {
           <div className="docs-quick-grid">
             {docPages.filter((item) => item.group === "Contracts").map((item, i) => (
               <Link href={docHref(item)} key={item.slug} className="docs-quick-card">
-                <span className={`docs-quick-icon docs-quick-icon-${i}`} aria-hidden="true" />
+                <span className={`docs-quick-icon docs-quick-icon-${i % 4}`} aria-hidden="true" />
                 <strong>{item.title}</strong>
                 <span>{item.summary}</span>
                 <b>View reference →</b>

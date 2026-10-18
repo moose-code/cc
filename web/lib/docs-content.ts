@@ -1,5 +1,5 @@
-// Contract docs are curated against the generated interfaces in src/interfaces.
-// Keep signatures and behavior in sync when the production surface changes.
+// Contract docs use current engine interfaces and a pinned snapshot for the deployed helper.
+// Keep signatures and behavior in sync with each referenced source revision.
 export type DocEntry = {
   signature: string;
   description: string;
@@ -23,6 +23,9 @@ export type DocPage = {
   eyebrow: string;
   summary: string;
   source?: string;
+  sourceSnapshot?: string;
+  sourceRevision?: string;
+  mainnetAddress?: string;
   sections: DocSection[];
 };
 
@@ -39,6 +42,7 @@ export const docPages: DocPage[] = [
         title: "Common tasks",
         points: [
           "Read a Credit bid with Core.bidOf or Core.balanceBidOf. Read a Statement ask with ControllerV1.priceOf.",
+          "Read Credit scores and traits, or a Statement's total score, with CreditScoreLens.",
           "Sell Credits through Core.sellForEth or Core.sellForBalance after approving the Core.",
           "Buy a Statement with ControllerV1.buy. Buy Credits with buyCredit or buyCredits.",
           "Track activity through contract events. A Statement sale emits ControllerV1.Bought and Core.StatementSoldTo.",
@@ -79,6 +83,14 @@ export const docPages: DocPage[] = [
           { signature: "Core.statementInfo(uint256 sid) → (held, cost, composedAt)", description: "Check custody and cost before reading a sale quote." },
           { signature: "ControllerV1.priceOf(uint256 sid) → uint256", description: "Current ETH ask. The curve and reference can move with time and settings." },
           { signature: "ControllerV1.atFloor(uint256 sid) → bool", description: "Whether the Statement is eligible for the floor-based redemption rule." },
+        ],
+      },
+      {
+        id: "scores",
+        title: "Scores and traits",
+        entries: [
+          { signature: "CreditScoreLens.creditScore(uint256 creditId) → uint256", description: "Credit score in ten-thousandths of a point, including for burned Credits." },
+          { signature: "CreditScoreLens.statementScore(uint256 statementId) → uint256", description: "Stored total score across a Statement's pages, including overprints." },
         ],
       },
       {
@@ -318,6 +330,46 @@ export const docPages: DocPage[] = [
           { signature: "PaymentAccrued(to, amount)", description: "A payment was owed after transfer shortfall." },
           { signature: "OwedClaimed(to, amount)", description: "An owed balance was claimed." },
           { signature: "ReserveMigrated(successor, module, amount)", description: "Unowed reserve moved to the successor module." },
+        ],
+      },
+    ],
+  },
+  {
+    slug: "contracts/credit-score-lens",
+    group: "Contracts",
+    title: "CreditScoreLens",
+    eyebrow: "Contract / scores + traits",
+    summary: "Read Credit scores, rarity, traits, and Statement totals from the deployed mainnet helper.",
+    source: "src/interfaces/ICreditScoreLens.sol",
+    sourceSnapshot: "web/docs-sources/ICreditScoreLens.sol",
+    sourceRevision: "5875fbdbd830e85f4fb884a74c98f92c6a26a822",
+    mainnetAddress: "0x7a3f3967cBB63E8d56e3f093069C62A25eebBda6",
+    sections: [
+      {
+        id: "credit-reads",
+        title: "Credit reads",
+        entries: [
+          { signature: "creditScore(uint256 creditId) → uint256 score", description: "Score in ten-thousandths of a point. For example, 1,324,012 means 132.4012 points.", access: "view", errors: "UnknownCredit for a never-minted ID" },
+          { signature: "creditScores(uint256[] creditIds) → uint256[] scores", description: "Scores in input order, preserving duplicates. An empty input returns an empty array; an unknown ID reverts the whole call. Chunk large batches to fit the RPC call gas limit.", access: "view", errors: "UnknownCredit for any never-minted ID" },
+          { signature: "creditRarity(uint256 creditId) → uint256 rarity", description: "Raw sum of rarity trait points, including the doubled eights contribution. It is not a percentile or the Credit score.", access: "view", errors: "UnknownCredit for a never-minted ID" },
+          { signature: "creditTraits(uint256 creditId) → (mask, active, occupied, eights, band)", description: "Numeric CreditScore traits: active plate mask, inked bits, occupied cells, count of ASCII 8s, and registration band (0 to 5).", access: "view", errors: "UnknownCredit for a never-minted ID" },
+        ],
+      },
+      {
+        id: "statement-read",
+        title: "Statement read",
+        entries: [
+          { signature: "statementScore(uint256 statementId) → uint256 score", description: "Stored total across all pages, including overprints. A never-composed ID returns zero. This read does not indicate ownership or redemption eligibility.", access: "view" },
+        ],
+      },
+      {
+        id: "sources",
+        title: "Data sources",
+        points: [
+          "The helper reads the fixed Ethereum mainnet Credits, CreditScore, and Statements contracts. It has no write methods or events.",
+          "Burned Credits retain their scores and traits. A Statement's total can change after an overprint.",
+          "Registration bands: 0 Registered, 1 Nudge, 2 Slip, 3 Skew, 4 Drift, 5 Loose.",
+          "All scores use 10,000 units per point. Preserve the raw integer for calculations.",
         ],
       },
     ],

@@ -1,5 +1,6 @@
 // promise: every published contract page has unique anchors and names callable methods or events that exist in the generated interfaces.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { docPages, entryId } from "../lib/docs-content.ts";
 
@@ -10,8 +11,11 @@ for (const page of docPages) {
 
   const anchors = new Set();
   const contractPage = page.group === "Contracts";
-  const source = page.source && readFileSync(new URL(`../../${page.source}`, import.meta.url), "utf8");
+  const source = page.source && readFileSync(new URL(`../../${page.sourceSnapshot ?? page.source}`, import.meta.url), "utf8");
   if (contractPage) assert(source, `${page.title} needs a source interface`);
+  if (page.slug === "contracts/credit-score-lens") {
+    assert.equal(createHash("sha256").update(source).digest("hex"), "a967eda07be960d3fde5f4e03dea543f28d31bf89d487e19a465fb4f89c480e2", "deployed helper interface snapshot changed");
+  }
 
   for (const section of page.sections) {
     assert(!anchors.has(section.id), `duplicate section: ${page.slug}#${section.id}`);

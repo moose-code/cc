@@ -364,7 +364,7 @@ Server side (`web/lib/meta.ts`), cached 60 s, each source under a 2.5 s timeout.
 
 ### 9.9 documentation
 
-The `/docs` section is static, curated content in `web/lib/docs-content.ts` plus a complete interface catalog generated into `web/lib/docs-catalog.ts` from `src/interfaces/` by `web/scripts/gen-docs-catalog.mjs`. Its behavior follows the product rules in `docs/SPEC.md`, as of main `a6099d2`. Search runs locally over both sources. It does not read the indexer, the chain, or deployment configuration. Live addresses and settings must be checked separately before a transaction.
+The `/docs` section is static, curated content in `web/lib/docs-content.ts` plus an interface catalog generated into `web/lib/docs-catalog.ts` by `web/scripts/gen-docs-catalog.mjs`. Engine interfaces come from `src/interfaces/` on main `08e2102`; the CreditScoreLens interface snapshot in `web/docs-sources/ICreditScoreLens.sol` matches the deployed helper's historical interface at `5875fbd`. Its Ethereum mainnet address comes from the recorded deployment in `docs/DEPLOY-credit-score-lens.md` at `5875fbd`, confirmed against Sourcify's matching creation and runtime record on 2026-10-18. Search runs locally over the content and catalog. The docs UI does not read the indexer, chain, or deployment configuration. Check live engine addresses and settings separately before a transaction.
 
 ## 10. deploy
 
