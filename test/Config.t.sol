@@ -906,6 +906,23 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), row);
     }
 
+    // promise: decision 186 pins the 90 percent anti sniper start and 1800 second window at launch
+    function test_preflightPinsAntiSniperSchedule() public {
+        address d2 = _funded();
+        LaunchConfig memory c = lc;
+        c.salt = keccak256("preflight-sniper");
+        c.rateStart = c.settings.rateCap / 3;
+        c.sniperStartBps = 8_000;
+        preflight(c, d2);
+        assertEq(_failedNames(), "rule: sniper start bps is 9000");
+
+        c.sniperStartBps = 9_000;
+        c.sniperSeconds = 3_000;
+        c.settings.sniperSeconds = 3_000;
+        preflight(c, d2);
+        assertEq(_failedNames(), "rule: sniper seconds is 1800");
+    }
+
     /// FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`. the Core and the deploy guard
     /// accept other ratios, so only this row stops a `rateStart` edit that leaves the old cap
     // promise: FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`
