@@ -362,9 +362,10 @@ contract RehearsalTest is Test, ProdDeployer {
                 continue;
             }
             if (who.code.length != 0 || core.ethRate() > cap) continue;
-            // the per-point payout: the rate scaled by the credit's score over refScore (Core.bidOf, by hand)
+            // the per-point payout: the rate scaled by the credit's score over RATE_SCORE plus the artist royalty (Core.bidOf, by hand; decision 163)
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(credits.seedOf(id), credits.timestampOf(id));
             uint256 pay = (core.ethRate() * score) / RATE_SCORE;
+            pay += pay * core.settings().buyToArtistBps / 10_000;
             uint256 pot = core.ethPot();
             uint256 before = who.balance;
             vm.startPrank(who);
@@ -374,7 +375,7 @@ contract RehearsalTest is Test, ProdDeployer {
             core.sellForEth(ids);
             vm.stopPrank();
             assertEq(credits.ownerOf(id), address(core), "the core holds the credit");
-            assertEq(who.balance - before, pay, "the seller was paid the rate scaled by score over refScore");
+            assertEq(who.balance - before, pay, "the seller was paid the rate scaled by score over RATE_SCORE plus the royalty");
             assertEq(pot - core.ethPot(), pay, "the pot paid it");
             assertEq(core.pileSize(), 1);
             console.log("sold credit", id, "for wei", pay);

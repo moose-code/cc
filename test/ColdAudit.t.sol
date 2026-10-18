@@ -505,23 +505,21 @@ contract ColdAuditTest is Fixture {
         assertEq(ctl.valueOf(3), 2, "three stored point units round to two wei");
     }
 
-    // promise: when the real-pool reference expires, a balance fill remains live and records the last good ETH basis
-    // rather than a one-wei fallback
-    function test_realPoolQuoteOutageKeepsBalanceFillCostBasis() public {
+    // promise: when the real-pool reference expires in value mode, the balance fill reverts ZeroAmount and the pile and cost basis are unchanged
+    function test_realPoolQuoteOutageRefusesBalanceFillAndLeavesPileUnchanged() public {
         _valuePool();
         _addToPot(10 ether);
         uint256 id = _credits(seller, 1)[0];
-        uint256 lastGood = core.ethPrice();
+        uint256 pileBefore = core.pileSize();
         vm.warp(block.timestamp + 3_601);
-        // a stale reference degrades the eth bid to the last good rate instead of reverting NoQuote (decision 159, C02)
-        assertGt(core.ethRate(), 1, "the eth bid falls back to the last good rate, not a dust placeholder");
+        // value mode with an unusable protected quote refuses the balance fill (decision 167)
         vm.prank(seller);
+        vm.expectRevert(ICore.ZeroAmount.selector);
         core.sellForBalance(_one(id));
         (bool inPile, uint256 cost,) = core.creditInfo(id);
-        assertTrue(inPile);
-        assertGt(cost, 1, "the cost basis is not a dust placeholder");
-        assertGe(cost, lastGood * _scoreOf(id) / 1_000_000, "the last good price protects the basis");
-        emit log_named_uint("quote-outage balance-fill cost basis wei", cost);
+        assertFalse(inPile, "the refused sale leaves the credit out of the pile");
+        assertEq(cost, 0, "the refused sale records no cost basis");
+        assertEq(core.pileSize(), pileBefore, "the pile is unchanged");
     }
 
     // promise: value mode cannot leave the ETH spend cap disabled at 10,000 bps
