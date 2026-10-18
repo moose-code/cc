@@ -77,8 +77,8 @@ export interface BalanceReplay {
   dropPer100PointsBps: bigint; // kept for the callers' shape; the posted bid does not drop
   dropFloorBps: bigint;
   floorBps: bigint;
-  // value mode clamp: the posted payout is lowered to the value rate for the score valued in tokens at the
-  // protected sale price. set these three only in value mode with a usable quote; left unset the payout is par
+  // value mode: the payout is the posted payout lowered to the value rate for the score valued in tokens at the
+  // protected sale price. In value mode a missing or zero valueSell means no quote and the payout is 0
   valueModeOn?: boolean;
   ethPrice?: bigint; // Core.ethPrice() in value mode: the value rate, wei per 100 points, before the eth pot clamp
   valueSell?: bigint; // controller.valuePerPoint(true): wei per point at the protected sale price
@@ -103,7 +103,8 @@ export function replayBalance(scores: bigint[], a: BalanceReplay): bigint {
 export function replayBalanceFills(scores: bigint[], a: BalanceReplay): bigint[] {
   return scores.map((score) => {
     const posted = (score * a.unit * a.rate) / 10000n;
-    if (!a.valueModeOn || a.ethPrice === undefined || a.valueSell === undefined || a.valueSell === 0n) return posted;
+    if (!a.valueModeOn) return posted;
+    if (a.ethPrice === undefined || a.valueSell === undefined || a.valueSell === 0n) return 0n;
     const valueForScore = (a.ethPrice * score) / a.scorePer100Points;
     const cap = (valueForScore * POINT_UNIT * a.unit) / a.valueSell;
     return posted < cap ? posted : cap;
