@@ -112,6 +112,7 @@ export async function fetchListings(o) {
       if (!same(c.recipient, p.offerer) && !(await allowed(c.recipient))) return "recipient not allowed";
     }
     const price = p.consideration.reduce((s, c) => s + BigInt(c.startAmount), 0n);
+    if (price <= 0n) return "nonpositive price";
     return { id: off.identifierOrCriteria, price: price.toString(), offerer: p.offerer, startTime: String(p.startTime), hash: l.order_hash };
   }
 

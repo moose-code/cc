@@ -230,7 +230,7 @@ Backfill: the engine's history starts at its deploy block, so its sources cost a
 
 ### 8.1 reorgs
 
-Ponder rolls back writes inside `reorgWindow`. Snapshot rows written by block handlers roll back the same way.
+Ponder rolls back writes inside `reorgWindow`. Snapshot rows written by block handlers roll back the same way. The snapshot gate checks the persisted row for the block; an RPC or write failure, or a same-height rollback, leaves the block eligible for retry. It does not cache the last attempted height in process memory.
 
 ### 8.2 ordering facts the handlers rely on
 
@@ -266,11 +266,12 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | settings, controller params | L snapshot; also I `engine.settings`, `controller` (not read by the web yet) |
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
 | reserve and the room the bids read (packet B, decision 154) | L `Core.reserve()` in the snapshot; D `potRoom` = `potWithPending` less the reserve, the clamp of the eth bid and the cap of a listing sweep |
+| buying room, processing reserve and header "pot covers" | L snapshot `potWithPending`, `reserve`, `potRoom`, `ethRate` and `settings.buyToArtistBps`; D points covered = `potPoints(potRoom * 10_000 / (10_000 + buyToArtistBps), ethRate)`. The gross pot, spendable room and reserve are labeled separately on the home and keeper pages |
 | value mode and the quote (packet C, decision 148) | L snapshot: `settings.valueModeOn`; `noQuote` when value mode is on and `ethRate` reverts `NoQuote` (the snapshot then reads the eth bid as 0); controller `valuePerPoint(false)` and `valuePerPoint(true)` for `value.usable` and the per point values; also I `controller.quote*` (QuoteSet) |
 | balance token reference against spot (packet C, decisions 148 and 157) | L controller `referencePrice()`, `referenceTime()`, `spotPrice()` and `quote()` in the snapshot (`value.referencePrice`, `value.spot`); shown on the balance page; also I `controller.referencePrice`, `referenceSpot`, `referenceTime` at the last `ReferenceRefreshed` |
 | ETH/USD | L Chainlink |
 | rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
-| header bid at refScore | L snapshot `ethRate` |
+| header bid per 100 points | L snapshot `ethRate`; D per-point display is `ethRate / 100` |
 | header acquire button: strategy listings | I `strategy_listing` where `active`, with `credit.score`; chain mode: browser `getLogs` of the two strategy events from `NEXT_PUBLIC_STRATEGY_START_BLOCK`, replayed in log order; both re-read live at each head: `nftForSale`, Credits `ownerOf`, Core `bidOf`, `ethPot`, `retired`, `allowedAdapter` |
 | header acquire button: spend cap | L `Core.spendState()` in the shortlist multicall; a listing over the bucket's remaining budget waits for the next bucket; the first candidate whose `buyListing` call simulates enables the button |
 | header acquire button: OpenSea listings | server route `web/app/api/listings` (OpenSea API v2 best listings and fulfillment data of the `credits` collection, `OPENSEA_API_KEY` server only, 20 s cache), filtered by the adapter's `allowedRecipient` |
@@ -339,11 +340,11 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 |---|---|
 | listed credits, both venues | as the header acquire button (9.1): I `strategy_listing` where `active` (chain mode: the strategy event scan) and the `web/app/api/listings` route (200 cheapest OpenSea listings, bound `MAX_LISTINGS`, sent as `max` for the caption); one row per credit at its cheapest price |
 | rating | I `credit.score`; chain mode `creditScores` |
-| bid | D `ethRate * score / refScore` from the L snapshot for every row; L `bidOf`, `ownerOf` and `nftForSale` for the 100 rows nearest the bid |
+| bid | D `ethRate * score / RATE_SCORE` (`RATE_SCORE` is 1,000,000 stored score units, or 100 points) from the L snapshot for every row; L `bidOf`, `ownerOf` and `nftForSale` for the 100 rows nearest the bid |
 | balance bid column and header line | L `Core.balanceBidOf(id)` for the 100 rows nearest the bid, in the same multicall (allowFailure, read only with a module set and `balanceBidOn`); D `score * balanceUnit * balanceRate / 10,000` for the other rows (marked ~); header "balance bid R% of par" from L snapshot `balanceRate` |
 | fills today | I `stats_hourly.creditsEth` and `creditsBalance` summed over the hours since 00:00 UTC; hidden while the indexer is not serving |
 | gap, counts, histogram | D price over bid |
-| clears in | D `web/lib/climb.ts` (mirror of `CoreLib._climb`) from L `rateAtCheckpoint`, `checkpointTime`, `lastFillTime`, anchor storage slots 27, 29, 30, the settings and the pot less the snapshot reserve; assumes no fills and a constant pot |
+| clears in | D `web/lib/climb.ts` (mirror of `CoreLib._climb`) from L `rateAtCheckpoint`, `checkpointTime`, `lastFillTime`, `climbMultiplier`, storage slot 10's `climbRestartTime`, anchor slots 28, 30, 31, settings, booked `ethPot` and snapshot reserve and pending pot income; assumes no fills, fee booking or pot change |
 | credit floor multiplier | L controller `floorMultBps()` in the snapshot (`creditFloorBps` of the snapshot): `(10,000 + creditSpreadBps)` of the Core's `balanceBidCapBps` |
 | spend headroom ("pot covers N, this minute M", "next bucket" rows) | L `Core.spendState()` (bucket, budget, spent), the settings `spendCapBps`, `bucketSeconds`, `keeperFee`; D `fitsBucket` and `bucketCount` in `web/lib/acquire.ts`; the same read decides the header button |
 | acquire action | L `Core.buyListing`, simulated before the header button enables and again before sending, shared with the header button (`useAcquireTx`) |

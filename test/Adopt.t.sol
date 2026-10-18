@@ -165,8 +165,8 @@ contract AdoptTest is Fixture {
         (s.lastFill, s.minuteStart, s.bucket) = _anchor();
     }
 
-    // promise: inv 18 adopt moves no eth between pots
-    function test_OK_theRateStateAndThePotsAreUnchanged() public {
+    // promise: inv 18 and decision 176 adopt moves no eth and checkpoints earned climb before changing the pile
+    function test_OK_adoptCheckpointsRateWithoutMovingPots() public {
         _fundPot(2 ether);
         // one sale moves the rate state
         uint256[] memory sold = _credits(seller, 4);
@@ -181,8 +181,8 @@ contract AdoptTest is Fixture {
 
         assertEq(b.rate, a.rate, "ethRate");
         assertEq(b.price, a.price, "ethPrice");
-        assertEq(b.stored, a.stored, "stored rate, no checkpoint written");
-        assertEq(b.checkpointTime, a.checkpointTime, "checkpoint time");
+        assertEq(b.stored, a.price, "stored rate captures the earned climb");
+        assertEq(b.checkpointTime, block.timestamp, "checkpoint is written before the pile changes");
         assertEq(b.fillTime, a.fillTime, "fill time");
         assertEq(b.pot, a.pot, "pot");
         assertEq(b.buyback, a.buyback, "buyback pot");

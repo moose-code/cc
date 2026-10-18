@@ -54,6 +54,9 @@ export default function KeeperPage() {
             <div className="quote">
               {row("bid / 100 pts", `${eth(s.ethRate, 5)} eth`)}
               {row("pot", `${eth(s.ethPot)} eth`)}
+              {row("unbooked pot fees", `${eth(s.potWithPending - s.ethPot)} eth`)}
+              {row("reserved for processing", `${eth(s.reserve)} eth`)}
+              {row("buying room", `${eth(s.potRoom)} eth`)}
               {row("to buyback", `${eth(s.ethToBuyback)} eth`)}
               {row("redeem burn pot", `${eth(s.ethRedeemBurn)} eth`)}
               {s.balanceOn && row(`${BALANCE_SYMBOL} in the module`, s.balanceAvailable === undefined ? "unavailable" : formatBalance(s.balanceAvailable, bal))}

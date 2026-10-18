@@ -8,6 +8,7 @@ import { COLLECTIONS, CORE_ADDRESS, CORE_DEPLOY_BLOCK } from "../ponder.config";
 import { credit, engine, engineSnapshot, statement } from "../ponder.schema";
 import { lc, toJson, type At, type Ctx } from "./shared";
 import { parseTokenUri } from "./lib/tokenuri";
+import { snapshotOnce } from "./lib/snapshot-gate";
 
 const core = { address: CORE_ADDRESS, abi: coreAbi } as const;
 const mc = { multicallAddress: MULTICALL3 } as const;
@@ -70,16 +71,17 @@ export async function ensureEngine(ctx: Ctx) {
   });
 }
 
-let lastSnapshotBlock = -1n;
-
 /**
  * One Multicall3 at the event block: pots, rates, Core ETH balance, pile size, flags and the module's available
- * balance. Writes engine_snapshot and the latest-snapshot columns of the engine row. At most one per block.
+ * balance. Writes engine_snapshot and the latest-snapshot columns of the engine row. The DB gate follows Ponder
+ * rollbacks and retries, so a failed or orphaned write never marks a block complete in process memory.
  */
 export async function snapshot(ctx: Ctx, block: { number: bigint; timestamp: bigint }) {
-  if (block.number === lastSnapshotBlock) return;
+  await snapshotOnce(block.number, (n) => ctx.db.find(engineSnapshot, { blockNumber: n }), () => snapshotBlock(ctx, block));
+}
+
+async function snapshotBlock(ctx: Ctx, block: { number: bigint; timestamp: bigint }) {
   const e = await ensureEngine(ctx);
-  lastSnapshotBlock = block.number;
   const module = e.balanceModule && e.balanceModule !== zeroAddress ? (e.balanceModule as Hex) : null;
   const r = await ctx.client.multicall({
     ...mc,

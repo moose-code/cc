@@ -9,7 +9,7 @@ import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { ArtFrame, PageHead } from "@/components/Shell";
-import { core, credits, engineDeployed, SCORE_PER_100_POINTS, STATEMENT_SIZE } from "@/lib/config";
+import { core, credits, engineDeployed, SCORE_PER_100_POINTS } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
 import { balanceFills, balanceQuote, potPoints, sellQuote, useBalanceToken, useBidsOf, useNow, useSellQuote, useSnapshot, useWalletCredits } from "@/lib/live";
 import { BALANCE_SYMBOL, balanceAmount, commas, eth, rating, usd } from "@/lib/format";
@@ -132,12 +132,9 @@ export default function SellPage() {
   const pick = (cs: Credit[]) => () => setSelected(new Set(cs.map((c) => c.id)));
   const allOn = n > 0 && n === list.length;
 
-  // the census average rating behind one page (settings.pointsPerPage points over a statement's credits)
-  const avg = snap ? Math.max(1, Math.round(snap.settings.pointsPerPage / STATEMENT_SIZE / 10) * 10) : undefined;
   const quick: { label: string; on: () => void }[] = many
     ? [
         { label: "all", on: pick(list) },
-        ...(avg ? [{ label: `rating ≥ ${commas(avg)}`, on: pick(list.filter((c) => c.score >= BigInt(avg) * 10000n)) }] : []),
         { label: "top 10 offers", on: pick([...list].sort((a, b) => (a.score === b.score ? a.id - b.id : a.score < b.score ? 1 : -1)).slice(0, 10)) },
         { label: "clear", on: pick([]) },
       ]
@@ -262,7 +259,7 @@ export default function SellPage() {
     </div>
   );
 
-  const examples = avg ? [Math.round(avg / 20) * 10, avg, avg * 2] : [];
+  const examples = [100, 400, 800];
 
   return (
     <>
@@ -308,11 +305,11 @@ export default function SellPage() {
               <span className="muted">how offers work</span>
               <p>each credit&apos;s offer is the bid scaled by its rating. rating 100 = {snap ? eth(bid, 5) : "—"} ETH.</p>
             </div>
-            {(examples.length ? examples : [0, 0, 0]).map((r, i) => (
+            {examples.map((r, i) => (
               <div key={i}>
-                <span className="muted">{r ? `rating ${commas(r)}${r === avg ? " · average" : ""}` : "rating"}</span>
+                <span className="muted">rating {commas(r)}</span>
                 <b>
-                  {r ? eth((bid * BigInt(r)) / 100n) : "—"} <small>ETH</small>
+                  {snap ? eth((bid * BigInt(r)) / 100n) : "—"} <small>ETH</small>
                 </b>
               </div>
             ))}

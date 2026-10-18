@@ -198,9 +198,15 @@ export class Sources {
     }
     // the order status read needs the hash; an order without one cannot be checked and is not watched
     orders = orders.filter((x) => {
-      if (x.hash) return true;
-      log("warn", "seaport order has no hash, skipped", { id: String(x.id), offerer: x.params.offerer });
-      return false;
+      if (!x.hash) {
+        log("warn", "seaport order has no hash, skipped", { id: String(x.id), offerer: x.params.offerer });
+        return false;
+      }
+      if (BigInt(x.price) <= 0n) {
+        log("warn", "seaport order has no positive price, skipped", { id: String(x.id) });
+        return false;
+      }
+      return true;
     });
     this.seaport = orders.map((x) => ({
       venue: "seaport" as const,
@@ -221,7 +227,7 @@ export class Sources {
     const t = this.now();
     const pick = (ws: Watched[]) =>
       ws
-        .filter((w) => (this.cooldown.get(`${w.venue}:${w.id}`) ?? 0) <= t)
+        .filter((w) => w.price > 0n && (this.cooldown.get(`${w.venue}:${w.id}`) ?? 0) <= t)
         .map((w) => ({ w, bid: ((this.scores.get(w.id) ?? 0n) * snap.ethRate) / ref }))
         .filter((x) => x.bid >= x.w.price)
         .sort((a, b) => Number((b.bid * 10_000n) / b.w.price - (a.bid * 10_000n) / a.w.price))

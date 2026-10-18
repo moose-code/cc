@@ -7,10 +7,11 @@
 export interface ClimbState {
   r: bigint; // Core.rateAtCheckpoint(): the stored price state
   t: number; // Core.checkpointTime()
-  anchorTime: number; // Core.lastFillTime(): the idle loosening counts from here
-  lastFillRate: bigint; // State.anchor.lastFillRate (storage slot 27)
-  peakRate: bigint; // State.anchor.peakRate (slot 30)
-  peakTime: number; // State.anchor.peakTime (slot 29, bits 64..127)
+  anchorTime: number; // Core.lastFillTime()
+  climbRestartTime: number; // State.climbRestartTime (storage slot 10, bits 128..191)
+  lastFillRate: bigint; // State.anchor.lastFillRate (storage slot 28)
+  peakRate: bigint; // State.anchor.peakRate (slot 31)
+  peakTime: number; // State.anchor.peakTime (slot 30, bits 64..127)
   ceilBps: number;
   idleLoosenBps: number;
   idleStepSeconds: number; // settings.idleStepSeconds: the loosening step
@@ -20,11 +21,15 @@ export interface ClimbState {
   climbPerMinBps: number;
   recoveryClimbPerMinBps: number;
   recoveryGapBps: number;
-  ethPot: bigint; // booked pot less the reserve (Core.room): the climb target clamp
-  pending: bigint; // unbooked income share the next book adds: widens only the final read clamp
+  buyToArtistBps: number;
+  ethPot: bigint; // booked pot less the reserve (Core.room), before the artist payment
+  pending: bigint; // unbooked pot income, usable for the read but not elapsed climb
 }
 
 const N = (x: bigint) => Number(x);
+const bidRoomWei = (room: bigint, artistBps: number): bigint => (room * 10_000n) / BigInt(10_000 + artistBps);
+const bidRoom = (room: bigint, artistBps: number): number => N(bidRoomWei(room, artistBps));
+const paused = (c: ClimbState): boolean => bidRoomWei(c.ethPot, c.buyToArtistBps) < c.lastFillRate;
 const halve = (start: number, elapsed: number, halfLife: number) => start * Math.pow(0.5, Math.max(0, elapsed) / halfLife);
 const climbTo = (base: number, lnRate: number, sec: number, target: number) => Math.min(target, base * Math.exp((lnRate * sec) / 60));
 
@@ -33,7 +38,8 @@ export function ceilingAt(c: ClimbState, now: number): number {
   const peakNow = halve(N(c.peakRate), now - c.peakTime, c.peakHalfLife);
   const anchor = Math.max(N(c.lastFillRate), peakNow);
   const step = Math.floor((c.idleLoosenBps * c.climbMultiplierBps) / 10_000); // integer division as in the contract
-  const loosened = 10_000 + step * Math.floor(Math.max(0, now - c.anchorTime) / c.idleStepSeconds);
+  const start = paused(c) ? now : Math.max(c.anchorTime, c.climbRestartTime);
+  const loosened = 10_000 + step * Math.floor(Math.max(0, now - start) / c.idleStepSeconds);
   return Math.min((anchor * loosened * c.ceilBps) / 1e8, N(c.rateCap));
 }
 
@@ -42,8 +48,8 @@ export function priceAt(c: ClimbState, now: number): number {
   const cap = ceilingAt(c, now);
   const r = N(c.r);
   if (r >= cap) return cap;
-  if (now <= c.t || r === 0) return r;
-  const target = Math.min(cap, N(c.ethPot));
+  if (paused(c) || now <= c.t || r === 0) return r;
+  const target = Math.min(cap, bidRoom(c.ethPot, c.buyToArtistBps));
   if (r >= target) return r;
   return recover(c, r, target, now);
 }
@@ -63,7 +69,7 @@ function recover(c: ClimbState, r: number, target: number, now: number): number 
 }
 
 /** Core.ethRate() at `now`: the price state read at the pot with the unbooked share. */
-export const rateAt = (c: ClimbState, now: number): number => Math.min(priceAt(c, now), N(c.ethPot + c.pending));
+export const rateAt = (c: ClimbState, now: number): number => Math.min(priceAt(c, now), bidRoom(c.ethPot + c.pending, c.buyToArtistBps));
 
 /** Core.bidOf(id) at `now` for a credit of `score`, wei. */
 export const bidAt = (c: ClimbState, now: number, score: bigint, scorePer100Points: bigint): number => Math.floor((rateAt(c, now) * N(score)) / N(scorePer100Points));
@@ -88,7 +94,7 @@ export function clearsIn(c: ClimbState, price: bigint, score: bigint, scorePer10
   const hit = (t: number) => bidAt(c, t, score, scorePer100Points) >= p;
   if (hit(now)) return { kind: "now" };
   const need = (p * N(scorePer100Points)) / N(score); // the rate that pays `price`
-  if (need > N(c.ethPot + c.pending)) return { kind: "pot" };
+  if (paused(c) || need > bidRoom(c.ethPot + c.pending, c.buyToArtistBps)) return { kind: "pot" };
   if (need > N(c.rateCap)) return { kind: "cap" };
   let lo = 0;
   let hi = 0;
@@ -99,7 +105,7 @@ export function clearsIn(c: ClimbState, price: bigint, score: bigint, scorePer10
     }
     lo = s;
   }
-  if (!hi) return N(c.ethPot) < need ? { kind: "pot" } : { kind: "far" };
+  if (!hi) return bidRoom(c.ethPot, c.buyToArtistBps) < need ? { kind: "pot" } : { kind: "far" };
   for (let i = 0; i < 24; i++) {
     const mid = (lo + hi) / 2;
     if (hit(now + mid)) hi = mid;
@@ -123,13 +129,15 @@ export type NextRise =
  */
 export function nextRise(c: ClimbState, now: number): NextRise {
   const rate = rateAt(c, now);
+  if (paused(c)) return { kind: "pot", rate };
   const cap = ceilingAt(c, now);
   if (priceAt(c, now) >= cap) {
     if (cap >= N(c.rateCap)) return { kind: "cap", rate: N(c.rateCap) };
-    const at = c.anchorTime + c.idleStepSeconds * (Math.floor(Math.max(0, now - c.anchorTime) / c.idleStepSeconds) + 1);
+    const start = Math.max(c.anchorTime, c.climbRestartTime);
+    const at = start + c.idleStepSeconds * (Math.floor(Math.max(0, now - start) / c.idleStepSeconds) + 1);
     return {
       kind: "ceiling",
-      rate: Math.min(ceilingAt(c, at), N(c.ethPot + c.pending)),
+      rate: Math.min(ceilingAt(c, at), bidRoom(c.ethPot + c.pending, c.buyToArtistBps)),
       seconds: at - now,
       loosenBps: c.idleLoosenBps,
       multiplier: c.climbMultiplierBps / 10_000,

@@ -40,6 +40,7 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 | block | rows |
 |---|---|
 | the bid | `rateStart` (market price on launch day of 100 points, wei), `rateCap` (3 times it), `pointsPerPage` 35,200 (80 credits times the census 440), `climbMultiplierCapBps` 40,000, `spendCapBps` 10,000 (off), `bucketSeconds` 60, `idleStepSeconds` 600 and the other bid settings |
+
 | the sale | `saleFloorBps` 10,000, `saleToBuybackBps` 2,500, the `Sale` struct (markup 15,000, cap 100,000, decay hours 4, anchor half life 604,800, anchor min cost 0.1 eth, `anchorMoveBps` 0) |
 | the credit side | `creditCostToPotBps` 8,000, `chosenComposeOn` false, `minCcToChoose` 1e18, `saleOn` true, `window` 14,400, `spreadBps` 1,000 (the floor is 11,000 of the reference at the cap of 10,000, today's 1.1x; decision 155 keeps 1,000 at launch; at the value switch 100 bps tolerance requires at least 203 bps spread, so the 200 bps proposal of decision 153 requires a different tolerance), `startBps` 15,000 (`pointsPerPage` is a bid setting above) |
 | the credit swap | `swapFeeCc` 10,000e18 (ten thousand coins burned per `swapCredit`) |
@@ -49,6 +50,8 @@ preflight prints a `signoff:` row for each block below; the owner confirms each 
 | the adapters | the Seaport recipient allowlist (the OpenSea fee collector 0x0000a26b00c1F0DF003000390027140000fAa719) |
 | the coin | name CC, symbol CC, supply 1e27, start tick -175000, position -175000 to 887200, skim 1,000 bps, bounty 9,000, lp fee 0, sniper 9,000 bps over 1,800 s, protocol 2,000 bps, restricted, allowlist empty, image, description |
 | the build | the masked runtime code hashes of the five contracts and the library creation hash |
+
+The mode-off ETH bid clock needs booked ETH above `reserve()` to cover the last-fill bid for 100 points plus its artist payment. At `rateStart` 0.0049 ETH, `buyToArtistBps` 250 and a 0.1 ETH reserve with no larger queued reserve, that is 0.1050225 ETH booked in the pot. `book()` below this boundary does not start the clock; crossing it starts at the booking time. A zero-income `book()` changes nothing. Pending fees can widen the current bid clamp but do not accrue price time before booking. `pointsPerPage` 35,200 still measures an 80-Credit page for the ceiling multiplier and is unrelated to this threshold. The web shows the gross pot, reserved ETH and buying room separately. The keeper's existing booking policy is the normal trigger; anyone can call `book()` if it is delayed.
 
 ## 3. verify on etherscan
 

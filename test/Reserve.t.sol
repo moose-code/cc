@@ -60,6 +60,65 @@ contract ReserveTest is Fixture {
         assertEq(core.reserve(), 0.1 ether, "the floor binds above a short queue");
     }
 
+    // promise: decision 176 lowering the queued reserve starts a fresh funded clock without granting empty hours
+    function test_composeReserveDropDoesNotGrantEmptyHours() public {
+        _fillEthPile(240);
+        assertEq(core.reserve(), 0.12285 ether, "three queued pages bind above the reserve floor");
+        vm.prank(owner);
+        core.setRate(0.0049 ether);
+        _setPot(0.11 ether);
+        _warp(6 hours);
+        assertEq(core.ethPrice(), 0.0049 ether, "the old reserve left the clock unfunded");
+
+        vm.fee(0);
+        vm.prank(keeper);
+        core.compose();
+        assertEq(core.reserve(), 0.1 ether, "one compose lowered the reserve to its floor");
+        assertGt(core.ethPot(), 0.1050225 ether, "the remaining pot funds the 100-point bid and royalty");
+        assertEq(core.ethPrice(), 0.0049 ether, "the compose did not grant the prior six hours");
+        _warp(5 minutes);
+        assertGt(core.ethPrice(), 0.0049 ether, "funded time after the compose raises the price");
+    }
+
+    // promise: decision 176 raising the queued reserve preserves the funded climb earned before the new page
+    function test_adoptReserveRiseKeepsEarnedClimb() public {
+        _fillEthPile(239);
+        assertEq(core.reserve(), 0.1 ether, "two pages leave the reserve floor binding");
+        vm.prank(owner);
+        core.setRate(0.0049 ether);
+        _setPot(0.11 ether);
+        _warp(4 minutes);
+        uint256 earned = core.ethPrice();
+        assertGt(earned, 0.0049 ether, "the pot funded four minutes of climb");
+
+        uint256 id = _heldCredit(0);
+        vm.prank(STRATEGY);
+        CREDITS.transferFrom(STRATEGY, address(core), id);
+        core.adopt(_one(id));
+        assertEq(core.reserve(), 0.12285 ether, "the 240th Credit queues a third page");
+        assertEq(core.rateAtCheckpoint(), earned, "the checkpoint kept the funded interval before reserve grew");
+    }
+
+    // promise: decision 176 a controller credit sale cannot backdate a funded climb when the pile crosses a page boundary
+    function test_creditSaleReserveDropDoesNotGrantEmptyHours() public {
+        uint256[] memory ids = _fillEthPile(240);
+        assertEq(core.reserve(), 0.12285 ether, "three pages bind above the reserve floor");
+        vm.prank(owner);
+        core.setRate(0.0049 ether);
+        _setPot(0.11 ether);
+        _warp(6 hours);
+        assertEq(core.ethPrice(), 0.0049 ether, "the old reserve left the clock unfunded");
+
+        (, uint256 cost,) = core.creditInfo(ids[239]);
+        vm.deal(address(ctl), cost);
+        vm.prank(address(ctl));
+        core.sellCreditTo{value: cost}(ids[239], makeAddr("credit buyer"));
+        assertEq(core.reserve(), 0.1 ether, "the sale lowered the queue to two pages");
+        assertEq(core.ethPrice(), 0.0049 ether, "the sale did not grant the prior six hours");
+        _warp(5 minutes);
+        assertGt(core.ethPrice(), 0.0049 ether, "funded time after the sale raises the price");
+    }
+
     // promise: SPEC 4 ethRate never reads above ethPot less the reserve, and is 0 at or under the reserve
     function test_ethRateNeverAboveThePayable() public {
         uint256[] memory ids = _credits(seller, 1);

@@ -3,6 +3,7 @@
 
 // Five Settings words put State.anchor at slot 28 (test/CoreLayout.t.sol).
 export const ETH_ANCHOR_SLOT = 28n;
+export const ETH_CLOCK_SLOT = 10n; // checkpointTime, lastFillTime, climbRestartTime (uint64 each)
 
 // The bucket shares its word with peakTime. Keep uint64 values as bigint.
 export function ethAnchorWords(start: bigint, bucketWord: bigint, now: bigint, bucketSeconds: bigint) {
