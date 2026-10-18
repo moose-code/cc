@@ -53,6 +53,10 @@ jobs:
           UPSTREAM_CREDITS_TOKEN: ${{ secrets.UPSTREAM_CREDITS_TOKEN }}
         run: script/tools/upstream-balance.sh
       - run: forge build
+      - name: indexer ABI pins
+        run: |
+          node indexer/scripts/gen-abis.mjs
+          git diff --exit-code -- indexer/abis
       - run: forge test -vv --chain-id 1
       - name: deep invariants
         if: ${{ inputs.deep }}
@@ -67,7 +71,20 @@ jobs:
   e2e-real:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
+      CANDIDATE_RUN: "1"
       FORK_URL: ${{ secrets.FORK_URL || 'https://gateway.tenderly.co/public/mainnet' }}
     steps:
       - uses: actions/checkout@v4
@@ -80,29 +97,45 @@ jobs:
         with:
           node-version: 22.18
       - run: npm ci
-      # the deployed and seeded fork state, keyed the way script/dev/e2e-real.sh keys it: the contract, deploy and seed
-      # sources, not the phase logic. a hit loads the state with anvil_loadState in seconds
-      - uses: actions/cache@v4
-        with:
-          path: script/dev/.cache
-          key: e2e-real-${{ hashFiles('src/**', 'script/Deploy.s.sol', 'script/Preflight.s.sol', 'script/Postflight.s.sol', 'script/Checks.sol', 'script/deploy.sh', 'script/dev/Seed.s.sol', 'script/config/anvil.json', 'script/env/local.env', 'foundry.toml', 'remappings.txt', 'test/standins/**', 'test/utils/**') }}
+      - run: npm ci
+        working-directory: indexer
+      - run: npm test
+        working-directory: indexer
+      # Always rebuild the chain state for the frozen candidate.
       # Jack's pinned balance token, required by both e2e-real.sh phase 6/7 and the dev seed post path
       - name: upstream balance artifact
         env:
           UPSTREAM_CREDITS_TOKEN: ${{ secrets.UPSTREAM_CREDITS_TOKEN }}
         run: script/tools/upstream-balance.sh
-      - run: script/dev/e2e-real.sh
+      - run: FRESH=1 script/dev/e2e-real.sh
       # the LAUNCH_ONLY record guards of the deferred launch on its own anvil (port 8794)
       - run: script/dev/test-launch-only-guards.sh
-      # the dev seed PHASE=post path the owner's local chain runs, then the chain-read checklist (script/dev/check-post.sh).
-      # reuses the same script/dev/.cache so the seeded post state is cached across runs; ports 8619 and 8618, never 8545
+      # Seed a separate local fork, then check the chain reads and Ponder's Postgres projection.
+      # Ports 8619 and 8618 are local Anvil instances, never mainnet.
       - name: dev seed post path
         env:
           FORK_URL: ${{ secrets.FORK_URL || 'https://gateway.tenderly.co/public/mainnet' }}
         run: |
           PORT=8619 PHASE=post FRESH=1 FORK_BLOCK=26208025 REQUIRE_UPSTREAM_BALANCE=true script/dev/local.sh
           PORT=8619 script/dev/check-post.sh
+          DATABASE_URL=postgresql://postgres@127.0.0.1:5432/postgres PORT=8619 script/dev/check-indexer.sh
           PORT=8619 script/dev/local.sh stop
 
   web:
     uses: ./.github/workflows/web.yml
+
+  # The mainnet signing and interrupted-deploy recovery path, broadcast only to a local chain-id-1 Anvil fork.
+  signer-rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FORK_URL: ${{ secrets.FORK_URL || 'https://gateway.tenderly.co/public/mainnet' }}
+      CANDIDATE_RUN: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.1
+      - run: script/dev/rehearse-signer.sh

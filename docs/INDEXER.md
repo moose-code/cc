@@ -251,7 +251,7 @@ Every 300 blocks a block handler compares projections with views at the same blo
 ### 8.5 tests
 
 - Pure helpers (`src/lib`): unit tests with `node --test`, as in shapes.
-- End to end: the local e2e flow (`script/dev/e2e.sh`) runs the indexer against anvil and asserts the parity checks pass after the scripted trades, composes and sales.
+- End to end: the candidate flow seeds a local Anvil fork, starts Ponder against Postgres, and checks `/ready`, `/health/parity`, and SQL reads against Core state (`script/dev/check-indexer.sh`). `script/dev/e2e.sh` itself exercises the contracts and does not start Ponder.
 
 ## 9. frontend data contract
 
@@ -374,8 +374,8 @@ One path, as in shapes PR #59 and the owner's deploy rule:
 - `indexer/deploy.sh <env>` reads `deployments/<chainId>.json` (Core, deploy block, coin, collections, pool key) and `indexer/env/<env>.env` (values only: chain id, Fly app, RPC caps, database schema name).
 - It refuses when the record is missing, when the database schema name was already used for a different Core address (tracked in `indexer/deployments.json`), or when a required value is empty. `DRY_RUN=1` runs every check without deploying.
 - Each deploy starts under a new `DATABASE_SCHEMA` and the public API switches to it after the backfill is ready (`/ready`), so a reindex never takes the site down.
-- After deploy it probes `/health`, `/ready`, `/graphql` and `/health/parity`.
-- Local: `script/dev` starts the indexer against anvil with PGlite and `cacheRpcRequests: false`, reading `deployments/31337.json`.
+- After Fly deploy it binds the database schema to that Core in `indexer/deployments.json`. Historical catch-up can outlast the deploy command. Before coin launch, run `RPC_URL=<read rpc> indexer/check-live.sh mainnet`; it requires readiness, recent parity, SQL Core and coin identity, an indexed head within five blocks, and pile and ETH pot agreement with fresh chain reads. Retry that read-only check after catch-up without redeploying.
+- Local: `script/dev` writes `deployments/31337.json` for the Anvil fork; `indexer/deploy.sh local` can start Ponder against it. For the web SQL path, use Postgres: the PGlite path has a `credit` temp-table collision and leaves web health in chain mode. The candidate gate uses Postgres.
 
 Prerequisites before mainnet: `deployments/1.json` with the mainnet Core, deploy block, controller block and module block; the collection deploy blocks.
 

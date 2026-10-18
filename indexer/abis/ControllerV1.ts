@@ -240,6 +240,35 @@ export const controllerAbi = [
   },
   {
     "type": "function",
+    "name": "balanceClampFor",
+    "inputs": [
+      {
+        "name": "score",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "posted",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ok",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "balancePoolKey",
     "inputs": [],
     "outputs": [

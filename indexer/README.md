@@ -22,6 +22,7 @@ Endpoints: `/graphql`, `/sql` (`@ponder/client`), `/health/parity` (503 when a r
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | `node --test` on `src/lib` |
 | `DRY_RUN=1 ./deploy.sh <local\|mainnet>` | evaluates every deploy check without deploying |
+| `RPC_URL=<read rpc> ./check-live.sh mainnet` | read-only chain-1 service acceptance after backfill and a parity tick |
 
 ## configuration
 

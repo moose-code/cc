@@ -8,7 +8,7 @@
 #      value, or a DATABASE_SCHEMA already used for a different Core address (indexer/deployments.json).
 #   2. TARGET=fly: `fly deploy` with the record values as release env. TARGET=local: starts `ponder start`
 #      in the foreground against the record's rpcUrl with PGlite.
-#   3. TARGET=fly, after deploy: probes /health, /ready, /graphql and /health/parity, then records the schema.
+#   3. TARGET=fly, after deploy: binds the schema to the Core. After backfill, run check-live.sh.
 #
 # DRY_RUN=1 evaluates every check and prints the command without running it (needs no fly CLI, wallet or network).
 set -euo pipefail
@@ -79,9 +79,8 @@ if [[ "$TARGET" == "local" ]]; then cd indexer && exec "${CMD[@]}"; fi
 
 (cd indexer && "${CMD[@]}")
 [[ -f "$LEDGER" ]] || echo '{}' > "$LEDGER"
+# Bind the deployed schema before any acceptance check. Another Core must not reuse a database that may contain
+# this Core's rows, even while the historical backfill is still running.
 jq --arg s "$DATABASE_SCHEMA" --arg a "$CORE_LC" '.[$s] = $a' "$LEDGER" > "$LEDGER.tmp" && mv "$LEDGER.tmp" "$LEDGER"
-URL="https://${APP}.fly.dev"
-for p in /health /ready /health/parity; do
-  echo "$p: $(curl -s -o /dev/null -w '%{http_code}' "$URL$p")"
-done
-echo "/graphql: $(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/graphql" -H 'content-type: application/json' --data '{"query":"{ __typename }"}')"
+echo "indexer deployed to $APP; schema $DATABASE_SCHEMA is bound to $CORE"
+echo "after backfill, run RPC_URL=<read rpc> indexer/check-live.sh mainnet before coin launch"
