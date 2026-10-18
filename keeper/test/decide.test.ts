@@ -322,13 +322,14 @@ test("compose: not ready is NotReady", () => {
   assert.match(reason(decide(state(), [], gas("1"), policy(), new Map()), "compose"), /NotReady/);
 });
 
-test("redeem: logged only while no balance module is set; paid once one is", () => {
-  const dry = decide(state({ atFloor: [3n] }), [], gas("1"), policy(), new Map());
-  assert.equal(dry.calls.length, 1);
-  assert.equal(dry.calls[0].dryOnly, true);
-  assert.deepEqual(dry.calls[0].args, [3n]);
+test("redeem: skipped without simulation while no balance module is set; considered once one is", () => {
+  const none = decide(state({ atFloor: [3n] }), [], gas("1"), policy(), new Map());
+  assert.equal(none.calls.length, 0);
+  assert.equal(none.skips.filter((k) => k.door === "redeemStatement").length, 1);
+  assert.equal(reason(none, "redeemStatement"), "no balance module bound");
   const live = decide(state({ atFloor: [3n], balanceModule: "0x00000000000000000000000000000000000000b0" }), [], gas("1"), policy(), new Map());
-  assert.equal(live.calls[0].dryOnly, undefined);
+  assert.equal(live.calls[0].door, "redeemStatement");
+  assert.deepEqual(live.calls[0].args, [3n]);
   const off = decide(state({ atFloor: [3n], balanceModule: "0x00000000000000000000000000000000000000b0", settings: { ...state().settings, redeemOn: false } }), [], gas("1"), policy(), new Map());
   assert.match(reason(off, "redeemStatement"), /RedeemOff/);
 });
