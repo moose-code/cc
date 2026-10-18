@@ -14,13 +14,13 @@ import {ICredits, IStatements, CreditSale, Settings, Mainnet} from "../../src/in
 import {StatementBalanceModule} from "../../src/adapters/StatementBalanceModule.sol";
 import {CreditIds} from "../../test/utils/CreditIds.sol";
 
-/// the AuctionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
+/// the ConversionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
 interface IUpstreamToken {
     function renderer() external view returns (address);
     function quote(uint256 id) external view returns (uint256);
     function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256);
     function retireLaunchSupply() external;
-    function transfersOpenBlock() external view returns (uint64);
+    function opensAt() external view returns (uint64);
 }
 
 interface IUpstreamStatements {
@@ -36,7 +36,7 @@ interface IUpstreamStatements {
 ///
 /// PHASE=post then wires Jack's balance side from the pinned artifact `out/upstream-balance.json`
 /// (`script/tools/upstream-balance.sh`), which is required: there is no mock fallback. It deploys Jack's
-/// `AuctionLineageWithdrawals` through the deterministic CREATE2 factory, gives a funder 80 real Credits, registers the
+/// `ConversionLineageWithdrawals` through the deterministic CREATE2 factory, gives a funder 80 real Credits, registers the
 /// Balance renderer as the Statements owner, has the funder compose a page, withdraw and retire the launch supply, then
 /// deploys `StatementBalanceModule` and initializes a native eth / balance token v4 pool (hooks address zero, fee 3000,
 /// spacing 60) at `dev.balancePoolSqrtPriceX96` with no trading depth (Jack's token reaches the module only through
@@ -88,7 +88,7 @@ contract Seed is Script {
 
         // the artifact is required: no mock fallback on the phase 2 path (owner directive)
         require(vm.exists("out/upstream-balance.json"), "run script/tools/upstream-balance.sh");
-        console.log("== PRODUCTION MODULE (Seed post): Jack's pinned AuctionLineageWithdrawals ==");
+        console.log("== PRODUCTION MODULE (Seed post): Jack's pinned ConversionLineageWithdrawals ==");
         (address token, address module) = _deployProduction(owner, poolSqrt);
 
         IControllerV1 ctl = IControllerV1(core.controller());
@@ -119,10 +119,10 @@ contract Seed is Script {
 
         console.log("BALANCE_TOKEN", token);
         console.log("BALANCE_MODULE", module);
-        console.log("TRANSFERS_OPEN_BLOCK", uint256(IUpstreamToken(token).transfersOpenBlock()));
+        console.log("OPENS_AT", uint256(IUpstreamToken(token).opensAt()));
     }
 
-    /// @dev Jack's `AuctionLineageWithdrawals` from the pinned artifact, wired the way the production-module test does:
+    /// @dev Jack's `ConversionLineageWithdrawals` from the pinned artifact, wired the way the production-module test does:
     /// the funder receives 80 real Credits, the Statements owner registers the renderer, the funder composes a page,
     /// withdraws and retires the launch supply, then the module is deployed and the pool is initialized at the config
     /// sqrt with no trading depth (Jack's token reaches the module only through redemptions, which the scenario drives).
@@ -133,20 +133,12 @@ contract Seed is Script {
 
         bytes memory creation = vm.parseJsonBytes(vm.readFile("out/upstream-balance.json"), ".bytecode.object");
         uint8 format = uint8(IUpstreamStatements(Mainnet.STATEMENTS).formatCount());
-        // opensAt is fixed from the frozen simulation block, but `--slow` mines a block per broadcast, so on the node the
-        // block is already past it when the token constructor runs: the seed sends about 350 credit moves to A1/A2/A3
-        // and 80 to the funder before this point. the margin must clear that, or the constructor reverts
-        // InvalidAuctionGate with opensAt already behind the node. e2e.sh mines to transfersOpenBlock before the sell.
-        uint64 opensAt = uint64(block.number + 700);
         bytes memory init = abi.encodePacked(
             creation,
             abi.encode(
                 Mainnet.STATEMENTS,
                 format,
-                opensAt,
-                FUNDER,
-                address(uint160(uint256(keccak256("seed.prod.auction")))),
-                address(uint160(uint256(keccak256("seed.prod.liquidity"))))
+                FUNDER
             )
         );
         bytes32 salt = bytes32(0);

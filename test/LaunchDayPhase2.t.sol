@@ -53,10 +53,7 @@ contract LaunchDayPhase2Test is LaunchDayBase {
             abi.encode(
                 address(STATEMENTS),
                 uint8(IUpstreamStatements(address(STATEMENTS)).formatCount()),
-                uint64(block.number + 100),
-                funderWallet,
-                _user("phase2.upstreamAuction"),
-                _user("phase2.upstreamLiquidity")
+                funderWallet
             )
         );
         assembly ("memory-safe") {
@@ -111,13 +108,13 @@ contract LaunchDayPhase2Test is LaunchDayBase {
         assertEq(up.totalRetired(), up.launchRetirement(), "launch supply retired");
     }
 
-    /// @dev composes and redeems one statement at the opening block; returns the token the module then holds
+    /// @dev composes and redeems one statement at the opening time; returns the token the module then holds
     function _redeemAtOpening(IUpstreamToken up, IBalanceModule module) internal returns (uint256 owed) {
         // close the credit sale so the fresh page composes without waiting out the sale window
         _setCreditSaleOn(false);
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
-        vm.roll(up.transfersOpenBlock());
+        vm.warp(up.opensAt());
         owed = up.quote(sid);
         assertEq(owed, core.ratingOf(sid) * module.unitPerPoint(), "upstream quote is rating times unit");
         vm.prank(keeper);
@@ -135,7 +132,7 @@ contract LaunchDayPhase2Test is LaunchDayBase {
         vm.prank(seller);
         core.sellForBalance(_one(id));
         assertEq(IERC20Min(token).balanceOf(seller) - before, bid, "the balance fill equals balanceBidOf");
-        assertEq(module.available(), owed - bid, "the module paid the fill");
+        assertEq(module.available(), owed - bid - bid * core.settings().buyToArtistBps / 10_000, "the module paid the fill and the artist royalty");
     }
 }
 
@@ -146,7 +143,7 @@ interface IUpstreamToken {
     function retireLaunchSupply() external;
     function totalRetired() external view returns (uint256);
     function launchRetirement() external view returns (uint256);
-    function transfersOpenBlock() external view returns (uint64);
+    function opensAt() external view returns (uint64);
 }
 
 interface IUpstreamStatements {

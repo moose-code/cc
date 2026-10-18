@@ -4,14 +4,14 @@ pragma solidity ^0.8.28;
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {IBalanceModule, Mainnet} from "../interfaces/Interfaces.sol";
 
-/// the fixed AuctionLineageWithdrawals surface used by this module.
+/// the fixed ConversionLineageWithdrawals surface used by this module.
 interface IStatementBalanceToken {
     function statements() external view returns (address);
     function SCORE_TO_TOKEN() external view returns (uint256);
     function decimals() external view returns (uint8);
     function totalRetired() external view returns (uint256);
     function launchRetirement() external view returns (uint256);
-    function transfersOpenBlock() external view returns (uint64);
+    function opensAt() external view returns (uint64);
     function quote(uint256 id) external view returns (uint256);
     function withdraw(uint256 id, uint256 expectedAmount) external returns (uint256);
 }
@@ -90,12 +90,12 @@ contract StatementBalanceModule is IBalanceModule {
         if (out < required) revert RedeemedBelowRating();
     }
 
-    /// returns 0 until upstream retirement is complete and the opening block is reached, then the module's token
+    /// returns 0 until upstream retirement is complete and `block.timestamp` reaches `opensAt`, then the module's token
     /// balance less `totalOwed`. `totalRetired` is 0 or `launchRetirement`: `retireLaunchSupply` assigns it once, behind a
     /// `totalRetired != 0` revert.
     function available() public view override returns (uint256) {
         IStatementBalanceToken token = IStatementBalanceToken(balanceToken);
-        if (token.totalRetired() != token.launchRetirement() || block.number < token.transfersOpenBlock()) return 0;
+        if (token.totalRetired() != token.launchRetirement() || block.timestamp < token.opensAt()) return 0;
         return _unowedBalance();
     }
 

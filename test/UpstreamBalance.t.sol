@@ -26,7 +26,7 @@ interface IUpstreamToken {
     function retireLaunchSupply() external;
     function totalRetired() external view returns (uint256);
     function launchRetirement() external view returns (uint256);
-    function transfersOpenBlock() external view returns (uint64);
+    function opensAt() external view returns (uint64);
     function balanceOf(address) external view returns (uint256);
     function receipts(uint256) external view returns (address, uint256);
     function withdrawnCount() external view returns (uint256);
@@ -59,20 +59,14 @@ contract UpstreamBalanceTest is Fixture {
         }
         string memory artifact = vm.readFile("out/upstream-balance.json");
         bytes memory creation = vm.parseJsonBytes(artifact, ".bytecode.object");
-        assertEq(sha256(creation), 0x980130b1bedb50d2f226fce4509ed80011780ff04d0641eafbdae4e6aeb89a08);
+        assertEq(sha256(creation), 0xecc7afbffdcebc9004e25f2e767e932fe697f266d28c33330862065ff00e98ae);
         super.setUp();
         funderWallet = _user("upstreamFunder");
         nextFormat = uint8(IUpstreamStatements(address(STATEMENTS)).formatCount());
         bytes memory init = abi.encodePacked(
             creation,
             abi.encode(
-                address(STATEMENTS),
-                nextFormat,
-                uint64(block.number + 100),
-                funderWallet,
-                _user("upstreamAuction"),
-                _user("upstreamLiquidity")
-            )
+address(STATEMENTS), nextFormat, funderWallet)
         );
         address deployed;
         assembly ("memory-safe") {
@@ -172,32 +166,27 @@ contract UpstreamBalanceTest is Fixture {
     function test_retirementRequiredEvenAfterOpening() public {
         _register();
         uint256 sid = _readyStatement();
-        vm.roll(balanceToken.transfersOpenBlock());
+        vm.warp(balanceToken.opensAt());
         vm.expectRevert(bytes4(keccak256("LaunchSupplyNotFinalized()")));
         core.redeemStatement(sid);
         _assertUnchanged(sid, 0, 0);
     }
 
-    // promise: current-main module custody can accumulate before opening but advertises no unpayable bid
-    function test_beforeOpeningAccumulatesWithoutAdvertisingPayment() public {
+    // promise: redemption reverts ConversionNotOpen before opensAt and fills the module after it
+    function test_redemptionClosedBeforeOpening() public {
         _register();
         _retire();
         uint256 sid = _readyStatement();
         uint256 owed = balanceToken.quote(sid);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(0x93d19510), balanceToken.opensAt()));
         core.redeemStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(balanceToken));
-        assertEq(balanceToken.balanceOf(address(balanceModule)), owed);
-        assertEq(balanceToken.balanceOf(address(core)), 0);
+        assertEq(balanceToken.balanceOf(address(balanceModule)), 0);
         assertEq(balanceModule.available(), 0);
-        uint256[] memory ids = _credits(seller, 1);
-        vm.prank(seller);
-        vm.expectRevert(ICore.PotTooSmall.selector);
-        core.sellForBalance(ids, 1, address(balanceToken));
-        assertEq(CREDITS.ownerOf(ids[0]), seller);
-        assertEq(balanceToken.balanceOf(seller), 0);
+        vm.warp(balanceToken.opensAt());
+        core.redeemStatement(sid);
         assertEq(balanceToken.balanceOf(address(balanceModule)), owed);
-        vm.roll(balanceToken.transfersOpenBlock());
         assertEq(balanceModule.available(), owed);
+        uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
         core.sellForBalance(ids, 1, address(balanceToken));
         assertGt(balanceToken.balanceOf(seller), 0);
@@ -213,7 +202,7 @@ contract UpstreamBalanceTest is Fixture {
         assertEq(balanceModule.unitPerPoint(), UNIT_PER_SCORE);
         uint256 owed = core.ratingOf(sid) * UNIT_PER_SCORE;
         assertEq(balanceToken.quote(sid), owed);
-        vm.roll(balanceToken.transfersOpenBlock());
+        vm.warp(balanceToken.opensAt());
         core.redeemStatement(sid);
         assertEq(STATEMENTS.ownerOf(sid), address(balanceToken));
         assertEq(balanceModule.available(), owed);
@@ -270,7 +259,7 @@ contract UpstreamBalanceTest is Fixture {
         _register();
         _retire();
         uint256 sid = _readyStatement();
-        vm.roll(balanceToken.transfersOpenBlock());
+        vm.warp(balanceToken.opensAt());
         core.redeemStatement(sid);
         funded = balanceModule.available();
     }
@@ -359,7 +348,7 @@ contract UpstreamBalanceTest is Fixture {
         _retire();
         uint256 sid = _readyStatement();
         uint256 owed = balanceToken.quote(sid);
-        vm.roll(balanceToken.transfersOpenBlock());
+        vm.warp(balanceToken.opensAt());
         core.redeemStatement(sid);
         ICore nextCore = _successorCore(address(0), core.RATE_START(), core.settings());
         IBalanceModule nextModule = IBalanceModule(

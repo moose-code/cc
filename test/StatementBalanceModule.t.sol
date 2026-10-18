@@ -68,7 +68,7 @@ contract BalanceGateTokenDouble {
     uint8 public decimals = 18;
     uint256 public constant launchRetirement = 2_386_7072 * 1e14;
     uint256 public totalRetired;
-    uint64 public transfersOpenBlock;
+    uint64 public opensAt;
     bool public rejectTransfer;
     uint256 public shortfall;
     address public hook;
@@ -80,9 +80,9 @@ contract BalanceGateTokenDouble {
         decimals = precision;
     }
 
-    function setGate(uint256 retired, uint64 opensAt) external {
+    function setGate(uint256 retired, uint64 opensAt_) external {
         totalRetired = retired;
-        transfersOpenBlock = opensAt;
+        opensAt = opensAt_;
     }
 
     function mint(address to, uint256 amount) external {
@@ -178,7 +178,7 @@ contract StatementBalanceModuleTest is Test {
     }
 
     function _open() internal {
-        token.setGate(token.launchRetirement(), uint64(block.number));
+        token.setGate(token.launchRetirement(), uint64(block.timestamp));
     }
 
     function payFromCore(uint256 amount) external {
@@ -263,21 +263,21 @@ contract StatementBalanceModuleTest is Test {
         assertEq(source.approved(7), address(0));
     }
 
-    // promise: both retirement finalization and the inclusive opening block gate the full spendable holding.
+    // promise: both retirement finalization and the inclusive opening timestamp gate the full spendable holding.
     function test_availableRequiresBothGates() public {
         token.mint(address(module), 100 ether);
-        uint64 opensAt = uint64(block.number + 10);
+        uint64 opensAt = uint64(block.timestamp + 10);
         token.setGate(0, opensAt);
         assertEq(module.available(), 0);
-        vm.roll(opensAt);
+        vm.warp(opensAt);
         assertEq(module.available(), 0);
         token.setGate(token.launchRetirement() - 1, opensAt);
         assertEq(module.available(), 0);
         token.setGate(token.launchRetirement(), opensAt);
         assertEq(module.available(), 100 ether);
-        vm.roll(opensAt - 1);
+        vm.warp(opensAt - 1);
         assertEq(module.available(), 0);
-        vm.roll(opensAt);
+        vm.warp(opensAt);
         assertEq(module.available(), 100 ether);
     }
 
@@ -285,18 +285,18 @@ contract StatementBalanceModuleTest is Test {
     function test_availableClosedUnlessRetiredTotalEqualsLaunchRetirement() public {
         token.mint(address(module), 100 ether);
         uint256 launch = token.launchRetirement();
-        token.setGate(launch - 1, uint64(block.number));
+        token.setGate(launch - 1, uint64(block.timestamp));
         assertEq(module.available(), 0);
-        token.setGate(launch + 1, uint64(block.number));
+        token.setGate(launch + 1, uint64(block.timestamp));
         assertEq(module.available(), 0);
-        token.setGate(launch, uint64(block.number));
+        token.setGate(launch, uint64(block.timestamp));
         assertEq(module.available(), 100 ether);
     }
 
     // promise: the Core can spend the available holding, and cannot overdraw it or pay before opening.
     function test_payRespectsLiveAvailable() public {
         token.mint(address(module), 100 ether);
-        token.setGate(token.launchRetirement(), uint64(block.number + 1));
+        token.setGate(token.launchRetirement(), uint64(block.timestamp + 1));
         vm.expectRevert(IStatementBalanceModuleErrors.InsufficientAvailable.selector);
         this.payFromCore(1);
         assertEq(recordedPayments, 0);
@@ -462,15 +462,15 @@ contract StatementBalanceModuleTest is Test {
         retired = true;
         (, IBalanceModule target) = _migrationTarget();
         token.mint(address(module), 100 ether);
-        token.setGate(0, uint64(block.number));
+        token.setGate(0, uint64(block.timestamp));
         vm.expectRevert(IStatementBalanceModuleErrors.InsufficientAvailable.selector);
         _migrateReserve();
-        token.setGate(token.launchRetirement(), uint64(block.number + 1));
+        token.setGate(token.launchRetirement(), uint64(block.timestamp + 1));
         vm.expectRevert(IStatementBalanceModuleErrors.InsufficientAvailable.selector);
         _migrateReserve();
         assertEq(token.balanceOf(address(module)), 100 ether);
         assertEq(token.balanceOf(address(target)), 0);
-        vm.roll(block.number + 1);
+        vm.warp(block.timestamp + 1);
         assertEq(_migrateReserve(), 100 ether);
         assertEq(target.available(), 100 ether);
     }
