@@ -31,7 +31,7 @@ contract Postflight is Script, LaunchChecks {
     }
 
     /// @dev the record fields that come from the chain: the Core, its controller and coin, the CREATE2 adapters and
-    /// renderer (each code checked by the rows above), the linked CoreLib, the stack the Core holds and the Core owner
+    /// renderer (each code checked by the rows above), both linked libraries, the stack the Core holds and the Core owner
     function _printRecord(ICore k, LaunchConfig memory c) private view {
         string memory contracts = string.concat(
             '"core":"',
@@ -50,6 +50,8 @@ contract Postflight is Script, LaunchChecks {
             vm.toString(rendererAddress(c)),
             '","library":"',
             vm.toString(findLibrary(address(k).code)),
+            '","opsLibrary":"',
+            vm.toString(findOpsLibrary(address(k).code)),
             '","credits":"',
             vm.toString(Mainnet.CREDITS),
             '","statements":"',

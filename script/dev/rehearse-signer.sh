@@ -83,7 +83,7 @@ script/deploy.sh rehearsal >"$T/run1.log" 2>&1 || { tail -40 "$T/run1.log"; die 
 W1=$((SECONDS - S1))
 cp "$RECORD_FILE" "$T/record1.json"
 echo "rehearse-signer: phase 1 ok in ${W1}s; gas per tx (hex): $(gas_table)"
-jq -r 'to_entries[] | select(.key|test("core|coin|controller|renderer|library|seaport|strategy|deployBlock")) | "  \(.key) \(.value)"' "$T/record1.json"
+jq -r 'to_entries[] | select(.key|test("core|coin|controller|renderer|[lL]ibrary|seaport|strategy|deployBlock")) | "  \(.key) \(.value)"' "$T/record1.json"
 grep -E 'ef0100|nonce' "$T/run1.log" | head -3 || true
 CORE="$(jq -r .core "$T/record1.json")"
 

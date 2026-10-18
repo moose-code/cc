@@ -41,7 +41,7 @@ abstract contract ArtifactIdentity is CommonBase {
 
 /// @notice reads the artifact `name` from `out/` and keeps its masked runtime hash, length and slots in the process
 /// environment. `PostflightV2` creates one and calls `load` once per artifact: the json and the copies each cheatcode
-/// call makes of it are freed when the frame returns, so a run that loads six artifacts stays under a block's gas. a
+/// call makes of it are freed when the frame returns, so a run that loads seven artifacts stays under a block's gas. a
 /// contract created by a script has cheatcode access; `forge script` refuses a self call from the script contract itself
 contract ArtifactLoader is ArtifactIdentity {
     /// @dev json objects decode in key order: length, then start
@@ -115,7 +115,22 @@ contract ArtifactLoader is ArtifactIdentity {
             string memory fp = string.concat(".deployedBytecode.linkReferences['", files[i], "']");
             string[] memory libs = vm.parseJsonKeys(j, fp);
             for (uint256 k; k < libs.length; ++k) {
-                lnk = _idCollect(j, string.concat(fp, ".", libs[k]), lnk, 0);
+                // Keep the library identity on every slot: the postflight must verify both linked addresses.
+                uint256 group;
+                if (
+                    keccak256(bytes(files[i])) == keccak256("src/lib/CoreLib.sol")
+                        && keccak256(bytes(libs[k])) == keccak256("CoreLib")
+                ) {
+                    group = 0;
+                } else if (
+                    keccak256(bytes(files[i])) == keccak256("src/lib/CoreOpsLib.sol")
+                        && keccak256(bytes(libs[k])) == keccak256("CoreOpsLib")
+                ) {
+                    group = 1;
+                } else {
+                    revert("unknown linked library");
+                }
+                lnk = _idCollect(j, string.concat(fp, ".", libs[k]), lnk, group);
             }
         }
         bytes memory built = _idBuilt(j);

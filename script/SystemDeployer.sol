@@ -24,7 +24,7 @@ struct Deployed {
 /// `owner`, who must be the v2 factory owner and the config owner (a deprecated v2 factory takes only its owner, through
 /// `deployToken`). every contract of ours is created through the deterministic deployer (CREATE2) at an address
 /// that is a function of the salts, the creation code and the config, so the addresses are known before the first
-/// transaction. order: the library `CoreLib` (linked and sent by `forge script` before `run`), the Core, the controller
+/// transaction. order: both linked libraries (sent by `forge script` before `run`), the Core, the controller
 /// (constructed with the Core address), the two listing adapters, the coin renderer (constructed with the config
 /// owner, salted with the config salt), `setCore` on the renderer, `setController`, `addAdapter` for each adapter, then the launch, which names the
 /// renderer in the token config. a contract that has code at its address is skipped and a state step whose effect is on chain is
@@ -54,7 +54,7 @@ abstract contract SystemDeployer is LaunchChecks {
 
     /// @notice execution gas of the transactions of the last `deploySystem`: Core, controller, Seaport adapter,
     /// CreditStrategy adapter, coin renderer, `setCore`, `setController`, `addAdapter` of each adapter, launch. the
-    /// library goes first and is measured by the rehearsal
+    /// both linked libraries go first and are measured by the rehearsal
     uint256[10] internal stepGas;
 
     /// @notice creates the Core at `coreAddress(c, launcher)`. the script (`NewProd`) uses `new` with `CORE_SALT`, a test

@@ -467,6 +467,28 @@ contract ValueReferenceTest is ValueBase {
 }
 
 contract ValueModeTest is ValueBase {
+    // promise: an owner pause freezes the shared value-mode climb through booking, funding and half-life edits
+    function test_pauseFreezesSharedBidAndResumesEarnedClimb() public {
+        _valueOn();
+        vm.warp(block.timestamp + 2 minutes);
+        uint256 earned = core.sharedRate();
+        vm.prank(owner);
+        core.setPaused(true);
+        vm.warp(block.timestamp + 6 hours);
+        vm.deal(address(this), 1 ether);
+        core.fund{value: 1 ether}();
+        core.book();
+        Settings memory s = core.settings();
+        s.peakHalfLife += 1 hours;
+        _setSettings(s);
+        assertEq(core.sharedRate(), earned, "paused booking cannot lift the shared bid");
+        vm.prank(owner);
+        core.setPaused(false);
+        assertEq(core.sharedRate(), earned, "earned climb survives the pause");
+        vm.warp(block.timestamp + 2 minutes);
+        assertGt(core.sharedRate(), earned, "shared climb resumes");
+    }
+
     // promise: SPEC 4 the launch keeps value mode off and the quote placeholders unusable
     function test_launchValues() public view {
         Settings memory s = core.settings();
@@ -1018,21 +1040,23 @@ contract ValueModeTest is ValueBase {
         assertLt(ethBid, s.rateCap, "well under the cap, so a rollback cannot reopen the eth bid at the cap");
     }
 
-    // promise: SPEC 11 a pause in value mode: the controller sales revert Paused while the bid keeps filling, so the
-    // owner can halt buys without freezing the engine's purchases
+    // promise: the owner pause stops value-mode direct fills and the same credit can sell after resume
     function test_pauseInValueMode() public {
         _fundPot(20 ether);
         _valueOn();
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(owner);
         core.setPaused(true);
-        // the bid still fills while paused: the pause gates the controller sales, not sellForEth
         uint256 before = seller.balance;
         vm.prank(seller);
+        vm.expectRevert(ICore.Paused.selector);
         core.sellForEth(ids);
-        assertGt(seller.balance, before, "the eth bid fills while paused in value mode");
+        assertEq(seller.balance, before, "the paused bid does not pay");
         vm.prank(owner);
         core.setPaused(false);
+        vm.prank(seller);
+        core.sellForEth(ids);
+        assertGt(seller.balance, before, "the direct bid resumes");
     }
 }
 

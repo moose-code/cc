@@ -36,7 +36,7 @@ abstract contract SystemResumer is SystemDeployer {
     /// @notice the factory differs from the one the deferred deploy saw: `what` names the setting
     error FactoryChanged(string what);
 
-    /// @notice the extra rows of `LAUNCH_ONLY`: the library, controller, both adapters and the renderer have code at their
+    /// @notice the extra rows of `LAUNCH_ONLY`: both libraries, controller, both adapters and the renderer have code at their
     /// addresses, the renderer's `core()` (set by `setCore`) is the Core, and the Core points at the controller and allows
     /// both adapters. then the factory rows: `deprecated()` is still true, `tokenDeployer()` is `tokenDeployer_` (the value
     /// the deferred run recorded) and the factory prediction for `deployer` is still the Core's `COIN`. only the launch is
@@ -49,6 +49,7 @@ abstract contract SystemResumer is SystemDeployer {
     function _launchOnlyWired(LaunchConfig memory c, address core_) private view {
         ICore k = ICore(payable(core_));
         if (libraryAddress().code.length == 0) revert NotDeferred("library");
+        if (opsLibraryAddress().code.length == 0) revert NotDeferred("ops library");
         address ctl = controllerAddress(core_, c);
         if (ctl.code.length == 0) revert NotDeferred("controller");
         address sea = seaportAdapterAddress(core_, c.seaportRecipients);

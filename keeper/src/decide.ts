@@ -249,11 +249,12 @@ export function decide(
 ): { calls: Intended[]; skips: Skip[]; seen: Map<string, bigint> } {
   const calls: Intended[] = [];
   const skips: Skip[] = [];
-  const on = (d: Door) => p.doorsOn.has(d);
-  // an owner pause stops every keeper door
+  const blockedByPause = (d: Door) => d === "buyListing" || d === "buyback" || d === "compose";
+  const on = (d: Door) => p.doorsOn.has(d) && !(s.paused && blockedByPause(d));
+  // A pause stops acquisitions, composition and buybacks. Bookkeeping, escrow collection, reference refresh and
+  // redemption remain callable by the Core, so the keeper can continue those jobs.
   if (s.paused) {
-    for (const d of p.doorsOn) skips.push({ door: d, reason: "Paused: the Core is paused" });
-    return { calls, skips, seen: new Map() };
+    for (const d of p.doorsOn) if (blockedByPause(d)) skips.push({ door: d, reason: "Paused: the Core is paused" });
   }
   const ceiling = (d: Door) => {
     if (gas.baseFee > p.doors[d].maxBaseFee) {

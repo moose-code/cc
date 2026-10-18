@@ -11,7 +11,7 @@ import {NewProd} from "./NewProd.sol";
 /// comes from the flags only, DEPLOYER only has to agree with it. reads script/config/mainnet.json, or the file named by
 /// LAUNCH_CONFIG. refuses to run while owner, creator, name, symbol or salt is unset, while SETTINGS_CHANGED or
 /// COIN_CHANGED is set, unless CONFIG_HASH is the hash that preflight printed for this config, and unless the signer is
-/// the factory owner. the order of the transactions (docs/DECISIONS.md 10.4): the library, the Core, the controller, the
+/// the factory owner. the order of the transactions (docs/DECISIONS.md 10.4): both libraries, the Core, the controller, the
 /// two adapters, the coin renderer, `setCore` on it, `setController`, `addAdapter` for each adapter, the launch.
 /// DEFER_LAUNCH=1 sends every transaction but the launch and runs the deferred postflight (`Resume` with LAUNCH_ONLY=1
 /// sends the launch later). preflight runs first and

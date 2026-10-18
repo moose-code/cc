@@ -137,6 +137,7 @@ function NextListing() {
 function NextListingBar() {
   const { top } = useAcquireCandidate();
   const { data: snap } = useSnapshot();
+  if (snap?.paused) return null;
   const n = top.find((t) => BigInt(t.bid) < BigInt(t.price)) ?? top[0];
   if (!n) return null;
   const price = BigInt(n.price);

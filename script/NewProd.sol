@@ -10,7 +10,7 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer} from "./SystemDeployer.sol";
 
-/// @notice the broadcast creation of every contract of ours with `new` and a salt, so `forge script` links `CoreLib` and
+/// @notice the broadcast creation of every contract of ours with `new` and a salt, so `forge script` links both libraries and
 /// sends each creation through the deterministic deployer. only the scripts import this file: it pulls the production
 /// sources, so it (and every script that inherits it) compiles on the via_ir profile. tests use `Prod` and `deployCode`
 /// instead
