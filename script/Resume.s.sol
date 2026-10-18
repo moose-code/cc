@@ -26,7 +26,7 @@ contract Resume is Script, SystemResumer, NewProd {
         // the checks simulate the launch on a snapshot, so they run outside the broadcast
         resumeChecks(deployer, c, core);
         // LAUNCH_ONLY=1: the deploy was DEFER_LAUNCH, so the launch is the only transaction left
-        if (vm.envOr("LAUNCH_ONLY", uint256(0)) == 1) launchOnlyChecks(c, core);
+        if (vm.envOr("LAUNCH_ONLY", uint256(0)) == 1) launchOnlyChecks(deployer, c, core, vm.envAddress("RECORD_TOKEN_DEPLOYER"));
         vm.startBroadcast();
         Deployed memory d = resumeSend(deployer, c);
         vm.stopBroadcast();

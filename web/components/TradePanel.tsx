@@ -4,13 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useAccount, useBalance, usePublicClient, useReadContract, useReadContracts, useSwitchChain } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { formatUnits, maxUint256, parseEther, parseEventLogs, parseUnits, zeroAddress, type Address } from "viem";
-import { coinLive, engineDeployed, chain } from "@/lib/config";
+import { engineDeployed, chain } from "@/lib/config";
 import { useCcMarket, potShareBps, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
 import { commas, eth, evmNowAddress, evmNowTx, leftLabel, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
 import { lsGet, lsSet } from "@/lib/cache";
-import { potPoints, useNow, useSnapshot } from "@/lib/live";
+import { potPoints, useCoinLive, useNow, useSnapshot } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
 
 const HOOK_FEE_BPS = 1000; // fallback when the hook reads fail
@@ -25,7 +25,8 @@ const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as numbe
 // allowance to Permit2 and the Permit2 allowance to the router when they are short.
 
 export function TradePanel({ market }: { market?: Market }) {
-  if (!market && !coinLive) return <p className="muted">$CC is not live yet</p>;
+  const live = useCoinLive();
+  if (!market && live === false) return <p className="muted">$CC is not live yet</p>;
   return <TradeBody market={market} />;
 }
 

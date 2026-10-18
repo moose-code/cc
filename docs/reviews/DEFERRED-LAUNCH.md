@@ -4,7 +4,14 @@ dated 2026-10-17. question: between `DEFER_LAUNCH=1 script/deploy.sh mainnet` an
 
 answer: no.
 
-source read: the verified source of the deployed factory `0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c` (Sourcify full match, path `src/v2/ArtCoinsFactoryV2.sol` and `src/v2/utils/ArtCoinsDeployerV2.sol`). state read on the fork: `deprecated()` is true, `owner()` is `0xCB43078C32423F5348Cab5885911C3B5faE217F9`, `pendingOwner()` is zero, `tokenDeployer()` is `0x99EB38d6a757a9f1061dFb1887bffD4637050903`.
+source read: the verified source of the deployed factory `0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c`, Sourcify full match (https://sourcify.dev/server/v2/contract/1/0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c?fields=all). the two files are vendored unchanged in `docs/reviews/factory-source/`; line numbers below refer to them.
+
+| file | sha256 |
+|---|---|
+| `ArtCoinsFactoryV2.sol` | `14135d0f107d80f1b233b2d6bcc781faa51c9804970bc536679bf6ec8771faa5` |
+| `ArtCoinsDeployerV2.sol` | `22eaa7f832915c3e06067d802b52a911650ed997b48d812d9e483d154538deb6` |
+
+mainnet today (read from https://ethereum-rpc.publicnode.com at block 26216576): `deprecated()` is true. state read on the fork: `deprecated()` is true, `owner()` is `0xCB43078C32423F5348Cab5885911C3B5faE217F9`, `pendingOwner()` is zero, `tokenDeployer()` is `0x99EB38d6a757a9f1061dFb1887bffD4637050903`.
 
 ## how the address is derived
 
@@ -13,7 +20,7 @@ source read: the verified source of the deployed factory `0xC27e182ef5D8A1A7C9dd
 | salt | `ArtCoinsFactoryV2.sol` lines 170 to 171, 274 to 276 | the CREATE2 salt is `keccak256(abi.encode(msg.sender, configHash(c)))`. `predictToken(sender, c)` uses the same `_salt` (line 210) |
 | create2 | `ArtCoinsDeployerV2.sol` lines 55 to 71 | the token deployer runs `create2` with that salt over init code that carries every constructor argument. the deployer address is part of the address |
 | entry | `ArtCoinsFactoryV2.sol` lines 148 to 154 | `deployToken` reverts `Deprecated` unless `msg.sender` is the owner while `deprecated` is true |
-| deployer entry | `ArtCoinsDeployerV2.sol` lines 63 | `deploy` reverts `NotFactory` for every caller but the factory |
+| deployer entry | `ArtCoinsDeployerV2.sol` line 63 | `deploy` reverts `NotFactory` for every caller but the factory |
 
 ## what a third party can do
 
@@ -25,13 +32,16 @@ source read: the verified source of the deployed factory `0xC27e182ef5D8A1A7C9dd
 
 ## what changes the address
 
-an owner action on the factory between the two steps. effects:
+an owner action on the factory between the two steps. the owner key is the deployer key (`0xCB43…17F9`, `pendingOwner()` is zero), so that key is the only key that can move the address or create a coin at it. the owner settings that move the prediction or open the factory: `setTokenDeployer`, `setDeprecated`, `setHook`, `setLocker`, `setMevModule`, `setExtension`.
 
-- `LAUNCH_ONLY` runs `resumeChecks` and `launchOnlyChecks` (Core address, no coin code, every earlier step on chain) and `preflightResume` (the stack and factory rows). `forge script` simulates the launch before it broadcasts, and a moved prediction reverts that simulation with `AddressMismatch("coin")`, so nothing is sent.
-- `SystemDeployer._launch` reverts `AddressMismatch("coin")` when the coin lands elsewhere. a moved prediction leaves the Core permanently paired with an address that no longer matches the factory, and a new Core is the recovery (docs/RUNBOOK.md section 5).
+how step 2 detects it, before anything is sent:
 
-the deferred postflight rows `deferred: coin equals the factory prediction for the deployer` and `deferred: coin salt is unused on the factory` hold at the end of the first step.
+- `deploy.sh` guards (collected under `DRY_RUN=1`): `deprecated()` is still true, and `tokenDeployer()` equals the `tokenDeployer` key that step 1 saved in the record.
+- `launchOnlyChecks` in `Resume.s.sol` repeats both as `FactoryChanged("deprecated")` and `FactoryChanged("tokenDeployer")`, and adds `FactoryChanged("predicted coin")` when `predictToken(deployer, config)` no longer equals the Core's `COIN`.
+- `SystemDeployer._launch` reverts `AddressMismatch("coin")` as the last row.
+
+after a moved prediction the Core stays paired with the old address and a new Core is the recovery (docs/RUNBOOK.md section 5).
 
 ## result
 
-a third party cannot take the address. the owner key controls the window between the two steps. keep `setTokenDeployer`, `setDeprecated`, `setHook`, `setLocker`, `setMevModule`, `setExtension` unused on the factory until the launch lands.
+a third party cannot take the address. the deployer key controls the window between the two steps. leave the owner settings above unchanged on the factory until the launch lands.

@@ -8,9 +8,9 @@ import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
-import { coinLive, core, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
+import { core, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { coreAbi, erc20Abi } from "@/lib/abis";
-import { usePile, useSnapshot } from "@/lib/live";
+import { useCoinLive, usePile, useSnapshot } from "@/lib/live";
 
 const FORMATS = [0, 1, 2, 3, 4, 5, 6, 7];
 
@@ -22,6 +22,7 @@ export default function ComposePage() {
   const { address } = useAccount();
   const { data: pile } = usePile();
   const { data: snap } = useSnapshot();
+  const coinLive = useCoinLive();
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [format, setFormat] = useState<"random" | number>("random");
   const [chosenFormat, setChosenFormat] = useState(0);
@@ -39,7 +40,7 @@ export default function ComposePage() {
     abi: erc20Abi,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
-    query: { enabled: Boolean(coinLive && snap?.coin && address && minCc > 0n) },
+    query: { enabled: Boolean(coinLive !== false && snap?.coin && address && minCc > 0n) },
   });
   const ccOk = minCc === 0n || (ccBal ?? 0n) >= minCc;
   const choosable = pile.filter((c) => c.past);

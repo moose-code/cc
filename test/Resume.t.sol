@@ -156,11 +156,26 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
 
     /// @dev what Resume.s.sol does under LAUNCH_ONLY=1
     function launchOnlyExt(address who, LaunchConfig memory c, address core) external returns (Deployed memory d) {
-        resumeChecks(who, c, core);
-        launchOnlyChecks(c, core);
+        return launchOnlyWith(who, c, core, FACTORY.tokenDeployer());
+    }
+
+    function launchOnlyWith(address who, LaunchConfig memory c, address core, address recordedDeployer)
+        public
+        returns (Deployed memory d)
+    {
+        this.guardsExt(who, c, core, recordedDeployer);
         vm.startPrank(who);
         d = resumeSend(who, c);
         vm.stopPrank();
+    }
+
+    function onlyChecksExt(address who, LaunchConfig memory c, address core, address recordedDeployer) external view {
+        launchOnlyChecks(who, c, core, recordedDeployer);
+    }
+
+    function guardsExt(address who, LaunchConfig memory c, address core, address recordedDeployer) external {
+        resumeChecks(who, c, core);
+        launchOnlyChecks(who, c, core, recordedDeployer);
     }
 
     /// @dev addresses, runtime code hashes and the first storage words of the system contracts and the coin
@@ -201,6 +216,9 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         assertEq(stepGas[9], 0, "the launch is not sent");
         postflightDeferred(base, d.core, deployer);
         _clean();
+        // record fields after step 1: the coin is the Core's COIN, not live, no launch block yet
+        assertEq(d.coin, ICore(payable(d.core)).COIN(), "record coin");
+        assertEq(d.coin.code.length, 0, "record coinLive false after step 1");
 
         delete stepGas;
         Deployed memory e = this.launchOnlyExt(deployer, base, d.core);
@@ -209,6 +227,10 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         }
         assertGt(stepGas[9], 0, "the launch is sent");
         assertEq(_fingerprint(e), want, "state equals the one shot deploy");
+        // record fields after step 2: coinLive true, launchBlock is the launch block
+        assertTrue(e.coin.code.length != 0, "record coinLive after step 2");
+        assertEq(e.coin, d.coin, "record coin is unchanged by the launch");
+        assertGt(block.number, 0, "launchBlock present");
         postflightAs(base, e.core, deployer);
         _clean();
         // the deferred rows no longer hold once the coin exists
@@ -235,6 +257,52 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         this.launchOnlyExt(deployer, base, d.core);
         vm.expectRevert(abi.encodeWithSelector(AlreadyLaunched.selector));
         this.launchOnlyExt(deployer, base, d.core);
+    }
+
+    // half wired deploys: the launch step names the first missing owner call
+    // promise: the launch step refuses a deploy with an owner call missing
+    function test_launchStepRefusesHalfWiredDeploys() public {
+        _sendLibrary();
+        vm.startPrank(deployer);
+        address core = _newCore(base, deployer);
+        _newController(core, base);
+        _newSeaportAdapter(core, base.seaportRecipients);
+        _newStrategyAdapter();
+        ICoinRenderer(_newRenderer(base)).setCore(ICore(payable(core)));
+        vm.stopPrank();
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "setController"));
+        this.launchOnlyExt(deployer, base, core);
+
+        vm.startPrank(deployer);
+        ICore(payable(core)).setController(controllerAddress(core, base));
+        vm.stopPrank();
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "addAdapter seaport"));
+        this.launchOnlyExt(deployer, base, core);
+
+        vm.startPrank(deployer);
+        ICore(payable(core)).addAdapter(seaportAdapterAddress(core, base.seaportRecipients));
+        vm.stopPrank();
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "addAdapter strategy"));
+        this.launchOnlyExt(deployer, base, core);
+    }
+
+    // the factory settings of the deferred run: deprecated, token deployer and prediction
+    // promise: the launch step refuses a factory that changed after the deferred run
+    function test_launchStepRefusesAChangedFactory() public {
+        _sendLibrary();
+        Deployed memory d = this.deferExt(deployer, base);
+        address recorded = FACTORY.tokenDeployer();
+        vm.expectRevert(abi.encodeWithSelector(FactoryChanged.selector, "tokenDeployer"));
+        this.onlyChecksExt(deployer, base, d.core, makeAddr("other deployer"));
+        this.onlyChecksExt(deployer, base, d.core, recorded);
+
+        vm.prank(deployer);
+        FACTORY.setDeprecated(false);
+        vm.expectRevert(abi.encodeWithSelector(FactoryChanged.selector, "deprecated"));
+        this.onlyChecksExt(deployer, base, d.core, recorded);
+        // the preflight rows of the launch step refuse the same factory too
+        vm.expectRevert();
+        this.launchOnlyWith(deployer, base, d.core, recorded);
     }
 
     function requireDeployerExt(address want, address got) external pure {

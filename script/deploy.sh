@@ -172,26 +172,40 @@ esac
 STACK="${STACK:-live}"
 export STACK
 
-# LAUNCH_ONLY reads the Core and the start block from the deferred record and checks them against the chain. from here on
-# it runs as RESUME=state with the extra Resume.s.sol rows (every step before the launch on chain)
+# LAUNCH_ONLY reads the Core and the start block from the deferred record and checks them against the chain. a dry run
+# collects every failure through guard. from here on it runs as RESUME=state with the extra Resume.s.sol rows (every step
+# before the launch on chain, the factory settings the deferred run saw). the build identity of the Core is enforced by
+# the CREATE2 address comparison in resumeChecks (the creation code and constructor arguments are in the salt derivation
+# of the address), so the shell compares addresses only
+RECORD_TOKEN_DEPLOYER=""
 if [ "$LAUNCH_ONLY" = 1 ]; then
   [ -f "$RECORD" ] || die "LAUNCH_ONLY needs the deferred record $RECORD (DEFER_LAUNCH=1 writes it)"
-  [ "$(jq -r .coinLive "$RECORD")" = false ] || die "refusing: $RECORD is not a deferred record (coinLive is not false)"
-  [ "$(jq -r '.launchBlock // "none"' "$RECORD")" = none ] || die "refusing: $RECORD already has a launchBlock"
-  [ "$(jq -r .chainId "$RECORD")" = "$CHAIN_ID" ] || die "refusing: $RECORD is for chain $(jq -r .chainId "$RECORD"), not $CHAIN_ID"
   CORE="$(jq -r .core "$RECORD")"; FROM_BLOCK="$(jq -r .deployBlock "$RECORD")"
-  [ "$(cast code "$CORE" --rpc-url "$RPC_URL")" != 0x ] || die "refusing: the record Core $CORE has no code on chain"
-  [ "$(lc "$(cast call "$CORE" 'controller()(address)' --rpc-url "$RPC_URL")")" = "$(lc "$(jq -r .controller "$RECORD")")" ] \
-    || die "refusing: the Core controller on chain differs from the record"
-  RCOIN="$(cast call "$CORE" 'COIN()(address)' --rpc-url "$RPC_URL")"
-  [ "$(lc "$RCOIN")" = "$(lc "$(jq -r .coin "$RECORD")")" ] || die "refusing: the Core coin on chain differs from the record coin"
-  [ "$(cast code "$RCOIN" --rpc-url "$RPC_URL")" = 0x ] || die "refusing: the predicted coin $RCOIN already has code"
-  for k in seaportAdapter strategyAdapter; do
-    [ "$(cast call "$CORE" 'allowedAdapter(address)(bool)' "$(jq -r ".$k" "$RECORD")" --rpc-url "$RPC_URL")" = true ] \
-      || die "refusing: the record $k is not an allowed adapter of the Core"
-  done
+  RECORD_TOKEN_DEPLOYER="$(jq -r '.tokenDeployer // ""' "$RECORD")"
+  [ "$(jq -r .coinLive "$RECORD")" = false ] || guard "$RECORD is not a deferred record (coinLive is not false)"
+  [ "$(jq -r '.launchBlock // "none"' "$RECORD")" = none ] || guard "$RECORD already has a launchBlock"
+  [ "$(jq -r .chainId "$RECORD")" = "$CHAIN_ID" ] || guard "$RECORD is for chain $(jq -r .chainId "$RECORD"), not $CHAIN_ID"
+  [[ "$RECORD_TOKEN_DEPLOYER" =~ ^0x[0-9a-fA-F]{40}$ ]] || guard "$RECORD has no tokenDeployer"
+  if [ "$(cast code "$CORE" --rpc-url "$RPC_URL")" = 0x ]; then
+    guard "the record Core $CORE has no code on chain"
+  else
+    [ "$(lc "$(cast call "$CORE" 'controller()(address)' --rpc-url "$RPC_URL")")" = "$(lc "$(jq -r .controller "$RECORD")")" ] \
+      || guard "the Core controller on chain differs from the record"
+    RCOIN="$(cast call "$CORE" 'COIN()(address)' --rpc-url "$RPC_URL")"
+    [ "$(lc "$RCOIN")" = "$(lc "$(jq -r .coin "$RECORD")")" ] || guard "the Core coin on chain differs from the record coin"
+    [ "$(cast code "$RCOIN" --rpc-url "$RPC_URL")" = 0x ] || guard "the predicted coin $RCOIN already has code"
+    for k in seaportAdapter strategyAdapter; do
+      [ "$(cast call "$CORE" 'allowedAdapter(address)(bool)' "$(jq -r ".$k" "$RECORD")" --rpc-url "$RPC_URL")" = true ] \
+        || guard "the record $k is not an allowed adapter of the Core"
+    done
+  fi
+  [ "$(cast call "$FACTORY" 'deprecated()(bool)' --rpc-url "$RPC_URL")" = true ] \
+    || guard "the factory $FACTORY is no longer deprecated: the deferred run saw deprecated true"
+  [ "$(lc "$(cast call "$FACTORY" 'tokenDeployer()(address)' --rpc-url "$RPC_URL")")" = "$(lc "$RECORD_TOKEN_DEPLOYER")" ] \
+    || guard "the factory tokenDeployer differs from the record tokenDeployer $RECORD_TOKEN_DEPLOYER"
   RESUME=state
 fi
+export RECORD_TOKEN_DEPLOYER
 
 if [ -n "$RESUME" ]; then
   [[ "${CORE:-}" =~ ^0x[0-9a-fA-F]{40}$ ]] || die "RESUME needs CORE=<the Core address of this config>"
@@ -261,7 +275,7 @@ if [ "$DRY_RUN" = 1 ]; then
   if [ "$PRE_OK" = 1 ]; then
     echo "deploy.sh: deploy simulation"
     if [ "$LAUNCH_ONLY" = 1 ]; then SIM=script/Resume.s.sol; else SIM=script/Deploy.s.sol; fi
-    if DEP="$(CORE="${CORE:-}" LAUNCH_ONLY="$LAUNCH_ONLY" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" forge script "$SIM" "${FLAGS[@]}" 2>&1)"; then
+    if DEP="$(CORE="${CORE:-}" LAUNCH_ONLY="$LAUNCH_ONLY" RECORD_TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" forge script "$SIM" "${FLAGS[@]}" 2>&1)"; then
       printf '%s\n' "$DEP" | grep -E '^ +(core|coin|controller|seaport adapter|strategy adapter|renderer) 0x' || true
     else
       echo "$DEP" | tail -40; guard "the deploy simulation failed"
@@ -313,7 +327,7 @@ case "$RESUME" in
     ;;
   state)
     echo "deploy.sh: resume from the chain"
-    run_script "$T/deploy.log" env CORE="$CORE" LAUNCH_ONLY="$LAUNCH_ONLY" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" \
+    run_script "$T/deploy.log" env CORE="$CORE" LAUNCH_ONLY="$LAUNCH_ONLY" RECORD_TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" \
       forge script script/Resume.s.sol "${BFLAGS[@]}" || { tail -60 "$T/deploy.log"; die "resume failed"; }
     ;;
   *)
@@ -371,23 +385,27 @@ if [ "$DEFER_LAUNCH" = 0 ]; then
   LAUNCH_BLOCK="$a"
 fi
 
+# the v2 factory's token deployer: saved at the deferred run, compared again by LAUNCH_ONLY
+if [ "$LAUNCH_ONLY" = 1 ]; then TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER"
+else TOKEN_DEPLOYER="$(cast call "$FACTORY" 'tokenDeployer()(address)' --rpc-url "$RPC_URL")"; fi
+
 # the rpc url of a live record stays out of the file (a url can carry a key)
 if [ "$NODE" = anvil ]; then RECORD_RPC="$RPC_URL"; else RECORD_RPC=""; fi
 mkdir -p "$(dirname "$RECORD")"
 TMPREC="$(mktemp "$(dirname "$RECORD")/.record.XXXXXX")"
-printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC" --argjson deployBlock "$lo" --arg launchBlock "$LAUNCH_BLOCK" '. as $r | {
+printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC" --argjson deployBlock "$lo" --arg launchBlock "$LAUNCH_BLOCK" --arg tokenDeployer "$TOKEN_DEPLOYER" '. as $r | {
   chainId: $chainId, rpcUrl: (if $rpcUrl == "" then null else $rpcUrl end), deployBlock: $deployBlock,
   core: $r.core, controller: $r.controller, coin: $r.coin, seaportAdapter: $r.seaportAdapter,
   strategyAdapter: $r.strategyAdapter, renderer: $r.renderer, library: $r.library,
   credits: $r.credits, statements: $r.statements, poolManager: $r.poolManager, hook: $r.hook,
   poolFee: $r.poolFee, tickSpacing: $r.tickSpacing,
   balanceToken: null, balanceModule: null, balancePool: null, owner: $r.owner,
-  coinLive: ($launchBlock != "")
+  coinLive: ($launchBlock != ""), tokenDeployer: $tokenDeployer
 } + (if $launchBlock != "" then {launchBlock: ($launchBlock | tonumber)} else {} end)' >"$TMPREC"
 # the shape web (local-env.mjs), keeper (readRecord) and indexer (ponder.config.ts, indexer/deploy.sh) read
 jq -e '
   def addr: type == "string" and test("^0x[0-9a-fA-F]{40}$") and (ascii_downcase != "0x0000000000000000000000000000000000000000");
-  (keys | sort) == (["balanceModule","balancePool","balanceToken","chainId","coinLive","controller","coin","core","credits","deployBlock",
+  (keys | sort) == (["balanceModule","balancePool","balanceToken","chainId","coinLive","tokenDeployer","controller","coin","core","credits","deployBlock",
     "hook","library","owner","poolFee","poolManager","renderer","rpcUrl","seaportAdapter","statements","strategyAdapter","tickSpacing"]
     + (if .coinLive == true then ["launchBlock"] else [] end) | sort)
   and (.coinLive | type == "boolean")
@@ -395,7 +413,7 @@ jq -e '
   and (.chainId | type == "number" and . > 0)
   and (.deployBlock | type == "number" and . > 0 and . == floor)
   and ([.core, .controller, .coin, .seaportAdapter, .strategyAdapter, .renderer, .library, .credits, .statements,
-        .poolManager, .hook, .owner] | all(addr))
+        .poolManager, .hook, .owner, .tokenDeployer] | all(addr))
   and (.poolFee | type == "number") and (.tickSpacing | type == "number")
   and (.rpcUrl == null or (.rpcUrl | type == "string"))
 ' "$TMPREC" >/dev/null || die "the record failed the shape check; nothing was written"

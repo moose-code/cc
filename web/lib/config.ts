@@ -32,10 +32,6 @@ export const localAccounts: { name: string; address: Address }[] = (() => {
 // The Core. The controller, the coin and the balance module are read from it.
 export const core = addr(process.env.NEXT_PUBLIC_CORE);
 
-// False while the Core is deployed and the coin is not launched (deployment record coinLive false; set
-// NEXT_PUBLIC_COIN_LIVE=0). The coin pool, price and balance reads are skipped and the swap panel says the coin is not live.
-export const coinLive = process.env.NEXT_PUBLIC_COIN_LIVE !== "0";
-
 // Fixed collections (docs/INTEGRATION.md section 1, packages/engine/src/addresses.ts).
 export { CREDITS as credits, STATEMENTS as statements } from "@cc/engine/addresses";
 

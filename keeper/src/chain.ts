@@ -64,7 +64,11 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
   const snap = await readSnapshot(client, core);
   if (!snap.pinned || snap.blockNumber === undefined) throw new Error("the node refused a pinned read");
   const blockNumber = snap.blockNumber;
-  const [block, extra] = await Promise.all([
+  // the factory reverts NotFound for a coin it has not launched: launchedAt is 0 until the launch is recorded
+  const infoRead = client
+    .readContract({ address: fixed.factory, abi: factoryAbi, functionName: "deploymentInfo", args: [snap.coin], blockNumber })
+    .catch(() => undefined);
+  const [block, extra, info] = await Promise.all([
     client.getBlock({ blockNumber }),
     client.multicall({
       ...mc,
@@ -73,12 +77,12 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
       contracts: [
         { address: core, abi: coreAbi, functionName: "lastBuybackBlock" },
         { address: fixed.escrow, abi: escrowAbi, functionName: "balances", args: [core, zeroAddress] },
-        { address: fixed.factory, abi: factoryAbi, functionName: "deploymentInfo", args: [snap.coin] },
         { address: core, abi: coreAbi, functionName: "spendState" },
       ] as const,
     }),
+    infoRead,
   ]);
-  const [lastBuybackBlock, escrowBalance, info, spendState] = extra;
+  const [lastBuybackBlock, escrowBalance, spendState] = extra;
   // controller.atFloor per held statement, read only when a redemption could be decided
   const held = snap.held.map(BigInt);
   const floors = held.length
@@ -120,7 +124,7 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     retired: snap.retired,
     lastBuybackBlock,
     sniperSeconds: BigInt(st.sniperSeconds),
-    launchedAt: BigInt(info.launchedAt),
+    launchedAt: BigInt(info?.launchedAt ?? 0),
     escrowBalance,
     pageReady: snap.page.ready,
     balanceModule: snap.balanceModule,

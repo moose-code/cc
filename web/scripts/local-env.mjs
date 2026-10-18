@@ -38,8 +38,6 @@ const env = {
   NEXT_PUBLIC_RPC_URL: rec.rpcUrl ?? rpc,
   NEXT_PUBLIC_CORE: rec.core,
   NEXT_PUBLIC_DEPLOY_BLOCK: String(rec.deployBlock),
-  // a deferred deploy (record coinLive false): the coin is not launched yet
-  NEXT_PUBLIC_COIN_LIVE: rec.coinLive === false ? "0" : "1",
   NEXT_PUBLIC_POOL_HOOK: rec.hook,
   NEXT_PUBLIC_POOL_FEE: String(rec.poolFee),
   NEXT_PUBLIC_POOL_TICK_SPACING: String(rec.tickSpacing),
