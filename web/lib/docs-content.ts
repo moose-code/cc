@@ -192,7 +192,7 @@ export const docPages: DocPage[] = [
         id: "automation",
         title: "Permissionless maintenance",
         points: [
-          "Core.book, buyback, and collectEscrow are callable maintenance doors, each with its own readiness checks.",
+          "Core.book, buyback, and collectEscrow are callable maintenance doors, each with its own readiness checks. Buyback is unavailable while the Core is paused; booking and escrow collection remain live.",
           "Do not assume a keeper reward exceeds transaction gas. Simulate the exact call and inspect the current settings.",
         ],
       },
@@ -208,7 +208,8 @@ export const docPages: DocPage[] = [
         id: "authority",
         title: "Authority and locks",
         points: [
-          "The owner can change economic settings immediately, pause sales, select a controller, manage adapters, and nominate a successor.",
+          "The owner can change economic settings immediately, pause acquisitions, composition, sales, Credit swaps and buybacks, select a controller, manage adapters, and nominate a successor.",
+          "Read Core.paused() before an intake, composition, sale, Credit swap or buyback. Funding, fee booking, escrow collection, redemption and reads remain live during a pause.",
           "Controller, adapter, and successor locks are one-way. Read their onchain flags rather than assuming they have been applied.",
         ],
       },
@@ -217,7 +218,7 @@ export const docPages: DocPage[] = [
         title: "Common failure conditions",
         points: [
           "ReturnLocked and SpendCapReached can block an ETH sale even while bidOf is positive.",
-          "Paused, InWindow, NotReady, and BelowFloor distinguish sale timing and floor conditions from a missing asset.",
+          "Paused blocks intake, composition, sales, Credit swaps and buybacks. InWindow, NotReady and BelowFloor identify separate timing or floor conditions.",
         ],
       },
     ],
