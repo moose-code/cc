@@ -55,8 +55,7 @@ contract ColdAuditTest is Fixture {
         uint128 spent;
     }
 
-    // promise: with no engine call after deploy, the cold view matrix at 0, 10 minutes, 2 hours and 24 hours
-    // equals the same-block state after its first book of real unbooked hook income
+    // promise: a first book does not credit prior unbooked time to the bid; its booked-pot multiplier updates at once
     function test_coldViewMatrixFirstBook() public {
         autoBook = false;
         uint256 id = _credits(seller, 1)[0];
@@ -93,7 +92,8 @@ contract ColdAuditTest is Fixture {
             assertEq(core.bidOf(id), c.bid, "bidOf fixed point");
             assertEq(core.bidForScore(_scoreOf(id)), c.scoreBid, "bidForScore fixed point");
             assertEq(core.floorRate(), c.floor, "floorRate fixed point");
-            assertEq(core.climbMultiplier(), c.multiplier, "climbMultiplier fixed point");
+            assertEq(c.multiplier, 10_000, "unbooked fees do not enlarge the multiplier");
+            assertGt(core.climbMultiplier(), c.multiplier, "the booked pot enlarges the multiplier");
             assertEq(ctl.valueOf(1_000_000), c.value, "valueOf fixed point");
             assertEq(core.balanceRate(), c.balanceRate, "balanceRate fixed point");
             (uint64 b2, uint128 bgt2, uint128 spent2) = core.spendState();
@@ -664,9 +664,9 @@ contract ColdLaunchMatrixTest is Fixture {
         }
     }
 
-    // promise: hook fees arriving between idle steps grow the pages-pot multiplier without an engine call or fill,
-    // and the next book is continuous with the view
-    function test_midIdleRealTradesGrowMultiplierBeforeAnyFill() public {
+    // promise: unbooked hook fees do not grow the multiplier; booking them changes its booked-pot numerator without
+    // granting the ETH bid retroactive climb time
+    function test_midIdleRealTradesGrowMultiplierOnlyAfterBook() public {
         autoBook = false;
         _buyCoin(funder, 2 ether);
         vm.warp(block.timestamp + 300);
@@ -679,17 +679,19 @@ contract ColdLaunchMatrixTest is Fixture {
         vm.warp(block.timestamp + 600);
         uint256 later = core.climbMultiplier();
         uint256 rateLater = core.ethRate();
-        assertGt(later, first, "the unbooked pages pot increased the idle multiplier");
-        assertGe(rateLater, rateBefore, "the bid did not need a fill or owner restatement to keep climbing");
+        assertEq(later, first, "unbooked income did not change the booked-pot multiplier");
+        assertEq(rateLater, rateBefore, "unbooked income did not start the funded clock");
         core.book();
-        assertEq(core.climbMultiplier(), later);
+        uint256 booked = core.climbMultiplier();
+        assertGt(booked, later, "booking raised the multiplier");
         assertEq(core.ethRate(), rateLater);
         emit log_named_uint("mid-idle multiplier before", first);
-        emit log_named_uint("mid-idle multiplier after second fee push", later);
+        emit log_named_uint("mid-idle multiplier with pending fees", later);
+        emit log_named_uint("mid-idle multiplier after book", booked);
     }
 
-    // promise: with the real launch reserve and sale switches, real unbooked trading fees produce the same ETH views
-    // before and after the first book at launch, 10 minutes, 2 hours and 24 hours
+    // promise: real unbooked launch fees do not earn earlier climb; the first book changes the booked-pot multiplier
+    // while the ETH bid and other same-block views retain their quoted values
     function test_launchValuesColdViewsEqualFirstBook() public {
         autoBook = false;
         uint256 id = _credits(seller, 1)[0];
@@ -728,7 +730,8 @@ contract ColdLaunchMatrixTest is Fixture {
             assertEq(core.bidOf(id), q[1]);
             assertEq(core.bidForScore(_scoreOf(id)), q[2]);
             assertEq(core.floorRate(), q[3]);
-            assertEq(core.climbMultiplier(), q[4]);
+            assertEq(q[4], 10_000, "unbooked launch fees do not enlarge the multiplier");
+            assertGt(core.climbMultiplier(), q[4], "the booked launch pot enlarges the multiplier");
             assertEq(ctl.valueOf(1_000_000), q[5]);
             assertEq(_spendHash(), spendBefore);
             assertEq(core.balanceRate(), 9_000);

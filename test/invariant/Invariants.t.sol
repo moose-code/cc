@@ -146,7 +146,7 @@ abstract contract InvariantsBase is InvariantFixture {
 
     /// 6. the stored price state and the read follow the model around every action and every warp, against the
     /// settings in force over the interval. the only calls that make the stored rate jump are the owner's `setRate`,
-    /// which lands on the rate asked for: a settings call keeps the rate exactly.
+    /// which lands on the rate asked for: a settings call checkpoints the old rate when open and preserves it when paused.
     // promise: 06 rate follows the model
     function invariant_06_rateFollowsTheModel() public view {
         _zero(g6);
@@ -293,13 +293,13 @@ abstract contract InvariantsBase is InvariantFixture {
         }
     }
 
-    /// 16. the eth bid stays open while the core has not migrated. when a held credit's bid (`bidOf`) is not zero and the
-    /// pot less the reserve covers it, a one credit `sellForEth` by its holder succeeds. the check runs after every action
+    /// 16. the eth bid stays open while the core has not migrated or paused. when a held credit's bid (`bidOf`) is not
+    /// zero and the pot less the reserve covers it, a one credit `sellForEth` by its holder succeeds after every action
     /// under a snapshot that is reverted, so the state is unchanged. it starts with the book of the fee income that
     /// every `sellForEth` makes first, so the price is the one the sale itself reads.
     // promise: 16 the bid never closes
     function invariant_16_theBidNeverCloses() public {
-        if (core.retired()) return;
+        if (core.retired() || core.paused()) return;
         uint256 snap = vm.snapshotState();
         try core.book() {} catch {}
         uint256 pot = core.ethPot();
@@ -400,7 +400,7 @@ abstract contract InvariantsBase is InvariantFixture {
             loose[looseCount++] = owned[i];
         }
         assertEq(owned.length, piled.length + looseCount, "an owned credit is counted twice or missed");
-        if (!core.retired()) _adoptable(loose, looseCount);
+        if (!core.retired() && !core.paused()) _adoptable(loose, looseCount);
         uint256 everPiled = handler.everPiledCount();
         uint256 inPileNow;
         for (uint256 i; i < everPiled; ++i) {
@@ -536,14 +536,14 @@ abstract contract InvariantsBase is InvariantFixture {
         assertEq(handler.gCapViolations(), 0, "successful purchase exceeded the independently tracked bucket budget");
     }
 
-    /// 21. view equals stored for the eth bid: `bidOf(id)` read in a block equals the eth a single-credit `sellForEth`
-    /// pays in that same block. every door books the unbooked fee income as its first step and checkpoints with the pot
+    /// 21. with intake open, `bidOf(id)` read in a block equals the eth a single-credit `sellForEth` pays in that block.
+    /// every door books the unbooked fee income as its first step and checkpoints with the pot
     /// clamp the view reads, so a bid quoted while income waits unbooked, or after idle time, is the bid the fill pays.
     /// checked under a reverted snapshot after every action, so the preceding time warps and value arrivals are in the
     /// state. covers the class where a quote and the value the next call uses disagree once value arrives with no call
     // promise: 21 the eth bid quoted equals the eth the next fill pays
     function invariant_21_ethBidEqualsNextFill() public {
-        if (core.retired()) return;
+        if (core.retired() || core.paused()) return;
         uint256 snap = vm.snapshotState();
         (address holder, uint256 id) = _sellable(core.ethPot());
         if (holder == address(0)) {
@@ -577,12 +577,12 @@ abstract contract InvariantsBase is InvariantFixture {
         vm.revertToState(snap);
     }
 
-    /// 21b. view equals stored for the balance bid: `balanceBidOf(id)` read in a block equals the balance token a
-    /// single-credit `sellForBalance` pays the seller in that same block (decision 164). the posted bid does not climb
+    /// 21b. with intake open, `balanceBidOf(id)` read in a block equals the balance token a single-credit
+    /// `sellForBalance` pays the seller in that block (decision 164). the posted bid does not climb
     /// or drop, so the quote and the fill agree whenever the module can pay the payout and its royalty.
     // promise: 21b the balance bid quoted equals the balance token the next fill pays
     function invariant_21b_balanceBidEqualsNextFill() public {
-        if (core.retired() || !core.settings().balanceBidOn || core.balanceModule() == address(0)) return;
+        if (core.retired() || core.paused() || !core.settings().balanceBidOn || core.balanceModule() == address(0)) return;
         uint256 snap = vm.snapshotState();
         (address holder, uint256 id) = _balanceSellable();
         if (holder == address(0)) {

@@ -560,33 +560,36 @@ abstract contract HandlerBase is Test {
         _bump(a, "unexpected");
     }
 
-    /// the `buyListing` call of a listing action on a retired core
-    function _retiredListing(uint8 a, address target) internal returns (bool) {
-        return _retiredRefusal(a, keeper, abi.encodeCall(ICore.buyListing, (target, 1, "")));
+    /// the `buyListing` call of a listing action while a system door is closed
+    function _closedListing(uint8 a, address target) internal returns (bool) {
+        return _closedDoorRefusal(a, keeper, abi.encodeCall(ICore.buyListing, (target, 1, "")));
     }
 
-    /// the credits an actor holds, at most the first one: the argument of a call a retired core refuses
+    /// the credits an actor holds, at most the first one: the argument of a call a closed door refuses
     function _firstOf(address who) internal view returns (uint256[] memory ids) {
         ids = new uint256[](inventory[who].length == 0 ? 0 : 1);
         if (ids.length == 1) ids[0] = inventory[who][0];
     }
 
-    /// after a migrate the core is retired and `sellForEth`, `buyListing`, `adopt`, `compose`, `composeChosen` and
-    /// `sellForBalance` revert `Retired`. the action sends its call instead of its own body, checks the selector and
-    /// that the books stayed, and ends. returns false while the core is not retired
-    function _retiredRefusal(uint8 a, address who, bytes memory data) internal returns (bool) {
-        if (!gRetired) return false;
+    /// Retired takes precedence over Paused on system doors. Probe the closed door before action-specific validation,
+    /// require its exact selector, and verify that a refused call did not change the Core's books.
+    function _closedDoorRefusal(uint8 a, address who, bytes memory data) internal returns (bool) {
+        if (!gRetired && !core.paused()) return false;
+        _expectRefusal(a, who, data, gRetired ? ICore.Retired.selector : ICore.Paused.selector);
+        return true;
+    }
+
+    function _expectRefusal(uint8 a, address who, bytes memory data, bytes4 want) internal {
         uint256 bal = address(core).balance;
         uint256 pot = core.ethPot();
         uint256 rate = core.ethRate();
         _att(a);
         vm.prank(who);
         (bool ok, bytes memory out) = address(core).call(data);
-        if (ok) _flag(V_RETIRED, "a retired core took a call at a door it must refuse");
-        else if (bytes4(out) != ICore.Retired.selector) _unexpected(a, out);
+        if (ok) _flag(want == ICore.Retired.selector ? V_RETIRED : V_MODEL, "a closed system door accepted a call");
+        else if (bytes4(out) != want) _unexpected(a, out);
         else _ok(a);
-        _failed(bal, pot, rate, "a retired door");
-        return true;
+        _failed(bal, pot, rate, "a closed system door");
     }
 
     function _flag(uint256 code, string memory what) internal {
@@ -726,6 +729,8 @@ abstract contract HandlerBase is Test {
         uint256 peakTime;
         uint256 pend;
         uint256 res;
+        bool paused;
+        uint256 pausedSince;
     }
 
     function _rs() internal view returns (RS memory s) {
@@ -736,6 +741,8 @@ abstract contract HandlerBase is Test {
         s.pend = _pendingPot(s.st);
         s.stored = core.rateAtCheckpoint();
         s.cp = core.checkpointTime();
+        s.paused = core.paused();
+        s.pausedSince = core.pausedSince();
         s.restart = uint64(uint256(vm.load(address(core), bytes32(uint256(10)))) >> 128);
         (s.anchor,,) = _anchorState();
         (s.peakRate, s.peakTime) = _peakState();
@@ -771,7 +778,8 @@ abstract contract HandlerBase is Test {
         peakRate = uint256(vm.load(address(core), bytes32(uint256(slot) + 3)));
     }
 
-    /// The climb uses booked ETH and the funded clock. Pending fees only widen the final read clamp.
+    /// The climb uses booked ETH and the funded clock. Pending fees only widen the final read clamp. Owner pause
+    /// freezes growth at the pause start, preserving idle loosening already earned before the pause.
     function _modelPrice(RS memory s, Settings memory st, uint256 bookedPot, uint256 reserve)
         internal
         view
@@ -779,6 +787,7 @@ abstract contract HandlerBase is Test {
     {
         uint256 room = bookedPot.zeroFloorSub(reserve);
         bool unfunded = BidModel.room(st, room) < s.anchor;
+        uint256 growthNow = s.paused ? s.pausedSince : block.timestamp;
         return BidModel.priceNow(
             st,
             BidModel.Bid({
@@ -790,7 +799,7 @@ abstract contract HandlerBase is Test {
                 peakTime: s.peakTime,
                 lastFillTime: unfunded ? block.timestamp : s.lastFill.max(s.restart),
                 checkpointTime: unfunded ? block.timestamp : s.cp,
-                nowTs: block.timestamp
+                nowTs: growthNow
             })
         );
     }
@@ -1448,7 +1457,7 @@ abstract contract HandlerBase is Test {
     function sellForEth(uint256 aSeed, uint256 nSeed, uint256 pick, uint256 mode) external pulls {
         uint8 a = A_SELL_FOR_ETH;
         address who = _actor(aSeed);
-        if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForEth(uint256[])", _firstOf(who)))) return;
+        if (_closedDoorRefusal(a, who, abi.encodeWithSignature("sellForEth(uint256[])", _firstOf(who)))) return;
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
         uint256 want = bound(nSeed, 1, 10);
@@ -1584,7 +1593,7 @@ abstract contract HandlerBase is Test {
     /// with a wrong value or wrong calldata or above the ceiling, and must revert without moving eth.
     function listingStrategy(uint256 pick, uint256 mode) external pulls {
         uint8 a = A_LISTING_STRATEGY;
-        if (_retiredListing(a, STRATEGY)) return;
+        if (_closedListing(a, STRATEGY)) return;
         uint256 id;
         uint256 price;
         bool allowed;
@@ -1618,7 +1627,7 @@ abstract contract HandlerBase is Test {
     /// the core's eth where it was.
     function listingHostile(uint256 pick, uint256 modeSeed) external pulls {
         uint8 a = A_LISTING_HOSTILE;
-        if (_retiredListing(a, address(probe))) return;
+        if (_closedListing(a, address(probe))) return;
         uint256 n = probeIds.length;
         if (n < 2 || !core.allowedAdapter(rawAdapter)) return _skip(a);
         uint256 id = probeIds[pick % n];
@@ -1814,7 +1823,7 @@ abstract contract HandlerBase is Test {
     /// composes the controller's page. rare by gate, because it costs about 8m gas.
     function compose(uint256 gate, uint256 feeSeed) external pulls {
         uint8 a = A_COMPOSE;
-        if (_retiredRefusal(a, keeper, ComposeCall.noArgs())) return;
+        if (_closedDoorRefusal(a, keeper, ComposeCall.noArgs())) return;
         (bool ready, uint256[] memory ids) = _peekPage();
         // a pile of 80 is composed on one gate in two. a short pile only now and then, to see NotReady
         if (ready ? gate % 2 != 0 : gate % 13 != 0) return _skip(a);
@@ -1870,7 +1879,7 @@ abstract contract HandlerBase is Test {
             got++;
         }
         uint8 format = uint8(fmtSeed % 8);
-        if (_retiredRefusal(a, keeper, abi.encodeCall(ICore.composeChosen, (ids, format)))) return;
+        if (_closedDoorRefusal(a, keeper, abi.encodeCall(ICore.composeChosen, (ids, format)))) return;
         if (got < 80) return _skip(a);
         // a compose of 80 costs several million gas: gate it so a run does not spend its depth here
         if (gate % 2 != 0) return _skip(a);
@@ -2085,6 +2094,10 @@ abstract contract HandlerBase is Test {
     function buyback(uint256 aSeed) external checked {
         uint8 a = A_BUYBACK;
         address who = _actor(aSeed);
+        if (core.paused()) {
+            _expectRefusal(a, who, abi.encodeCall(ICore.buyback, ()), ICore.Paused.selector);
+            return;
+        }
         BbPre memory p;
         p.st = core.settings();
         p.pool = core.ethToBuyback();
@@ -2290,7 +2303,7 @@ abstract contract HandlerBase is Test {
     /// swapper, and the fee burns the swapper's coin
     function swapCredit(uint256, uint256 pick) external checked {
         uint8 a = A_SWAP_CREDIT;
-        if (_retiredRefusal(a, swapper, abi.encodeCall(ICore.swapCredit, (1, 1)))) return;
+        if (_closedDoorRefusal(a, swapper, abi.encodeCall(ICore.swapCredit, (1, 1)))) return;
 
         // the incoming credit: the swapper's credit of the highest score
         uint256 len = swapperCredits.length;
@@ -2375,7 +2388,7 @@ abstract contract HandlerBase is Test {
     function adopt(uint256 aSeed, uint256 nSeed, uint256 mode) external pulls {
         uint8 a = A_ADOPT;
         address who = _actor(aSeed);
-        if (_retiredRefusal(a, who, abi.encodeCall(ICore.adopt, (_firstOf(who))))) return;
+        if (_closedDoorRefusal(a, who, abi.encodeCall(ICore.adopt, (_firstOf(who))))) return;
         uint256 m = mode % 9;
         uint256[] memory ids;
         bytes4 want;
@@ -2542,8 +2555,10 @@ abstract contract HandlerBase is Test {
         if (address(core).balance != b0 - (inc - toPots)) _flag(V_PAYEE, "a book moved other than the pushed share");
         if (_unbooked() != 0) _flag(V_POT, "a book left eth unbooked");
         if (inc != 0) {
-            // the book checkpointed the rate before the pot grew
-            if (core.checkpointTime() != block.timestamp) _flag(V_RATE_BOUND, "a book with income did not checkpoint");
+            // an open Core checkpoints before the pot grows; booking remains live without a checkpoint during pause
+            if (!core.paused() && core.checkpointTime() != block.timestamp) {
+                _flag(V_RATE_BOUND, "a book with income did not checkpoint");
+            }
         }
         _ok(a);
         // the book checkpointed the rate: with the pages multiplier read at the current rate (decision 128 variant d),
@@ -2766,7 +2781,7 @@ abstract contract HandlerBase is Test {
         uint8 a = A_SELL_FOR_BALANCE;
         if (!phase2() || !core.settings().balanceBidOn) return _skip(a);
         address who = _actor(aSeed);
-        if (_retiredRefusal(a, who, abi.encodeWithSignature("sellForBalance(uint256[])", _firstOf(who)))) return;
+        if (_closedDoorRefusal(a, who, abi.encodeWithSignature("sellForBalance(uint256[])", _firstOf(who)))) return;
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
         // the bid pays by the module's live unit (`_unitOf`), nonzero here. a module set to fail its unit read

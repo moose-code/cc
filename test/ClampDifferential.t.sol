@@ -5,11 +5,8 @@ import {console} from "forge-std/console.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {Settings, RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 
-/// the eth price state clamp of adopt and the eth floor is the pages pot less the reserve (decision 158). main clamped
-/// adopt, _moveEth and _ethFloorNow to the booked pot (c.ethPot): no reserve held back. this pins the new numbers at
-/// launch settings with a booked pot, pending fee income and a nonzero reserve, and records main's booked-pot result
-/// and the delta. the pages pot already counts pending income (decision 147); the new rule also holds back the reserve
-/// (decision 155), so the three price-basis reads clamp exactly as the live eth bid does.
+/// The price state climbs only against booked ETH above reserve. Pending fee income widens the executable bid clamp,
+/// but has no known arrival time and cannot raise the funded climb limit before a book.
 contract ClampDifferentialTest is Fixture {
     /// the booked pot the test funds, wei
     uint256 internal constant POT = 0.3 ether;
@@ -28,8 +25,9 @@ contract ClampDifferentialTest is Fixture {
         _setSettings(s);
     }
 
-    // promise: SPEC 4 adopt's cost basis and the eth floor clamp to the pages pot less the reserve (decision 158)
-    function test_clampIsPagesPotLessReserve() public {
+    // promise: the ETH floor and adopted cost basis use the booked funded climb limit, while the pending fee share
+    // widens only the live bid's executable room until a book
+    function test_bookedClimbAndPendingReadLimitsStaySeparate() public {
         // payeePpm 0 at launch, so the pot share of pending income is pending less the redeem-burn share only
         assertEq(core.settings().payeePpm, 0, "launch payeePpm is 0");
 
@@ -42,49 +40,46 @@ contract ClampDifferentialTest is Fixture {
         uint256 pendingShare = PENDING - PENDING * feeBps / 10_000;
         uint256 pagesPot = pot + pendingShare; // _ethPagesPot with payeePpm 0
         uint256 reserve = core.reserve(); // reserveWei, the pile is empty
-        // the room over 1 + buyToArtistBps / 10_000, so a bid at the clamp is payable with its royalty (decision 163)
-        uint256 clampNew = (pagesPot - reserve) * 10_000 / (10_000 + core.settings().buyToArtistBps);
+        // both limits include the purchase royalty; only the read can use pending fees before a book
+        uint256 bookedClamp = (pot - reserve) * 10_000 / (10_000 + core.settings().buyToArtistBps);
+        uint256 readClamp = (pagesPot - reserve) * 10_000 / (10_000 + core.settings().buyToArtistBps);
 
         assertGt(reserve, 0, "the reserve is nonzero");
         assertGt(pendingShare, 0, "there is pending income");
-        assertLt(clampNew, core.settings().rateCap, "the clamp binds below the rate cap");
-        assertLt(core.floorRate(), clampNew, "the price state starts below the clamp");
+        assertLt(readClamp, core.settings().rateCap, "the read clamp binds below the rate cap");
+        assertLt(bookedClamp, readClamp, "pending income widens the read room only");
+        assertLt(core.floorRate(), bookedClamp, "the price state starts below the booked clamp");
 
-        // warp until the eth price state climbs to the clamp; the ceiling grows with idle time past the clamp, so the
-        // pot clamp is the binding constraint and the floor settles at it
-        for (uint256 i; i < 2_000 && core.floorRate() < clampNew; ++i) {
+        uint256 snap = vm.snapshotState();
+        vm.prank(owner);
+        core.setRate(0.25 ether);
+        assertEq(core.ethRate(), 0.25 ether, "pending ETH makes the posted price payable before booking");
+        vm.deal(address(core), address(core).balance - PENDING);
+        assertEq(core.ethRate(), bookedClamp, "without pending ETH the same price is clamped to booked room");
+        vm.revertToState(snap);
+
+        // the funded climb stops at booked room even while the pending-inclusive read has more room
+        for (uint256 i; i < 2_000 && core.floorRate() < bookedClamp; ++i) {
             vm.warp(block.timestamp + 1 hours);
         }
 
-        // new rule: the eth floor is the pages pot less the reserve
-        assertEq(core.floorRate(), clampNew, "the eth floor is the pages pot less the reserve");
+        assertEq(core.floorRate(), bookedClamp, "the eth floor uses booked ETH above reserve");
+        assertEq(core.ethRate(), bookedClamp, "the live bid has room for the booked price and royalty");
 
-        // new rule: a 100-point credit the engine adopts books at the clamped price state plus the artist royalty, as a
-        // bought credit does (decision 163), so its sale floor matches. adopt books the pending income first, so its
-        // pages pot equals the booked pot, and the price state is that pot less the reserve over 1 + buyToArtistBps
+        // adopt books pending income before recording the cost, but does not credit its prior unbooked time
         uint256[] memory ids = _credits(address(core), 1);
         _mockScore(ids[0], RATE_SCORE);
         core.adopt(ids);
         (, uint256 cost,) = core.creditInfo(ids[0]);
         assertEq(
             cost,
-            clampNew + clampNew * core.settings().buyToArtistBps / 10_000,
-            "the adopted basis is the clamped price plus the royalty"
+            bookedClamp + bookedClamp * core.settings().buyToArtistBps / 10_000,
+            "the adopted basis is the funded price plus the royalty"
         );
 
-        // main's booked-pot rule: the clamp was ethPot with no reserve held back, which after the book equals the pages
-        // pot. so main would price both reads at pagesPot; the delta is the reserve plus the royalty's share of the room
-        // (decision 163)
-        uint256 mainClamp = pagesPot;
-        assertEq(
-            mainClamp - clampNew,
-            reserve + (pagesPot - reserve) - (pagesPot - reserve) * 10_000 / (10_000 + core.settings().buyToArtistBps),
-            "the delta from main's booked-pot rule is the reserve and the royalty's share"
-        );
         console.log("pages pot (wei):", pagesPot);
         console.log("reserve (wei):", reserve);
-        console.log("new clamp, eth floor and adopt basis (wei):", clampNew);
-        console.log("main booked-pot clamp (wei):", mainClamp);
-        console.log("delta, the reserve held back (wei):", reserve);
+        console.log("booked funded climb limit (wei):", bookedClamp);
+        console.log("pending-inclusive read limit (wei):", readClamp);
     }
 }
