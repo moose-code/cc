@@ -3,7 +3,13 @@ pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {Settings, RATE_SCORE} from "../src/interfaces/Interfaces.sol";
+import {Settings, Quote, RATE_SCORE} from "../src/interfaces/Interfaces.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
+import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 
 /// promise: SPEC 4 with value mode off the engine prices exactly as main does. this is a differential guard: it
 /// recomputes the bid, climb, drop, ceiling, credit sale price and statement decay from the launch settings (main's
@@ -99,5 +105,119 @@ contract ModeOffDifferentialTest is Fixture {
             "the ask rests at saleFloorBps of the reference after decayHours"
         );
         assertEq(ctl.decayHours(), 4, "the launch 4 hour decay");
+    }
+
+    struct Prices {
+        uint256 bidForScore;
+        uint256 balanceBid;
+        uint256 balanceBidForScore;
+        uint256 valueOf;
+        uint256 statementRef;
+        uint256 statementAsk;
+        uint256 creditRef;
+        uint256 creditAsk;
+        bool statementAtFloor;
+        uint256 composePaid;
+    }
+
+    function _prices() internal returns (Prices memory p) {
+        uint256 cid = _credits(seller, 1)[0];
+        p.bidForScore = core.bidForScore(_scoreOf(cid));
+        p.balanceBid = core.balanceBidOf(cid);
+        p.balanceBidForScore = core.balanceBidForScore(_scoreOf(cid));
+        p.valueOf = ctl.valueOf(5 * RATE_SCORE);
+        uint256 pile = _fillEthPile(1)[0];
+        p.creditAsk = ctl.creditPrice(pile);
+        Composed memory c = _composeOnce();
+        p.composePaid = c.paid;
+        p.statementRef = ctl.referenceOf(c.sid);
+        p.statementAsk = ctl.priceOf(c.sid);
+        p.statementAtFloor = ctl.atFloor(c.sid);
+        p.creditRef = ctl.valueOf(_scoreOf(pile));
+    }
+
+    /// three hourly refresh door calls; a no-op without a pool key, so both runs see the same clock
+    function _refreshCycles() internal {
+        for (uint256 i; i < 3; ++i) {
+            _warp(1 hours);
+            vm.roll(block.number + 1);
+            core.refreshReference();
+        }
+    }
+
+    function _setPoolKeyOffMode() internal {
+        uint160 sp = uint160(FixedPoint96.Q96 * 10 / 7);
+        PoolKey memory key = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(xt)),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(0))
+        });
+        PM.initialize(key, sp);
+        TestLiquidityHelper lp = new TestLiquidityHelper();
+        xt.mint(address(this), 1e24);
+        xt.approve(address(lp), type(uint256).max);
+        vm.deal(address(this), address(this).balance + 2_000 ether);
+        lp.modify{value: 2_000 ether}(key, -887_220, 887_220, int256(1e20));
+        // wei per 1e18 base units at sqrt price sp
+        uint256 spot = (uint256(1e18) * FixedPoint96.Q96 / sp) * FixedPoint96.Q96 / sp;
+        vm.startPrank(owner);
+        ctl.setBalancePoolKey(
+            IControllerV1.PoolKey({
+                currency0: IControllerV1.Currency.wrap(address(0)),
+                currency1: IControllerV1.Currency.wrap(address(xt)),
+                fee: 3000,
+                tickSpacing: 60,
+                hooks: address(0)
+            }),
+            spot
+        );
+        ctl.setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18}));
+        vm.stopPrank();
+        mod.setAvailable(1e30);
+    }
+
+    // promise: with value mode off a pool key changes no price. the same flow runs on a snapshot with no key and on one
+    // with a key and several refreshes; every price and door payment is equal
+    function test_poolKeyChangesNoPriceWhileModeIsOff() public {
+        _enterPhase2();
+        _fundPot(10 ether);
+        uint256 snap = vm.snapshotState();
+        _refreshCycles();
+        Prices memory a = _prices();
+        vm.revertToState(snap);
+
+        _setPoolKeyOffMode();
+        _refreshCycles();
+        Prices memory b = _prices();
+
+        assertFalse(core.settings().valueModeOn, "value mode off");
+        assertEq(b.bidForScore, a.bidForScore, "bidForScore");
+        assertEq(b.balanceBid, a.balanceBid, "balanceBidOf");
+        assertEq(b.balanceBidForScore, a.balanceBidForScore, "balanceBidForScore");
+        assertEq(b.valueOf, a.valueOf, "valueOf");
+        assertEq(b.creditAsk, a.creditAsk, "credit asking price");
+        assertEq(b.creditRef, a.creditRef, "credit value");
+        assertEq(b.statementRef, a.statementRef, "statement reference");
+        assertEq(b.statementAsk, a.statementAsk, "statement asking price");
+        assertEq(b.statementAtFloor, a.statementAtFloor, "atFloor");
+        assertEq(b.composePaid, a.composePaid, "compose door payment");
+    }
+
+    // the reference warms up while value mode is off: the refresh door updates the stored reference
+    function test_referenceWarmsUpWhileModeIsOff() public {
+        _enterPhase2();
+        _fundPot(10 ether);
+        _setPoolKeyOffMode();
+        uint256 r0 = ctl.referencePrice();
+        assertGt(r0, 0, "seeded at the spot");
+        uint256 t0 = ctl.referenceTime();
+        // move the pool spot away from the reference, then refresh past the block and the min interval
+        _warp(1 hours);
+        vm.roll(block.number + 1);
+        core.refreshReference();
+        assertGt(ctl.referenceTime(), t0, "the sample time moved");
+        assertFalse(core.settings().valueModeOn, "value mode off");
     }
 }
