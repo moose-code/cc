@@ -193,7 +193,7 @@ library CoreLib {
     /// the work before the count in `refreshReference` with the transaction base cost, and the most gas its caller
     /// payment counts
     uint256 internal constant REFRESH_OVERHEAD_GAS = 50_000;
-    uint256 internal constant REFRESH_GAS = 2_000_000;
+    uint256 internal constant REFRESH_GAS = 200_000;
     /// gas bound for the non-blocking artist royalty `pay` on the balance route: the module bookkeeping and an ERC20
     /// transfer to a cold wallet with a blacklist check (299,581 gas measured on the pinned token, 117,757 warm). a
     /// call that exceeds the bound or reverts is recorded by the module as a liability
