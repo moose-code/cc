@@ -667,28 +667,20 @@ const R0 = 6.668e15;
   near(low.core.xpLive, 3e-6 / 440, 1e-18, 'the unit is the one the module reports now'); n++;
   ok(Math.abs(low.stats.potCheck) < 1e-6, 'books close with a lowered module unit'); n++;
 }
-// the pool term of valueOf (ControllerV1.valueOf, decision 104): points * unitPerPoint at the pool price joins the rate term once the pool key is set, with the unit read from the module at every call.
-// the curve, the anchor and the redemption test read the engine price. refScore is raised to its bound and the rate cap holds the eth bid at the opening rate, so the rate term of the
-// promise: reference stays under cost
+// with value mode off the pool key prices nothing (ControllerV1.valueOf): the reference is the larger of the cost and the rate term whether or not the pool key and module are set.
+// refScore is raised to its bound and the rate cap holds the eth bid at the opening rate, so the rate term stays under cost
 {
   const U = 2 / 60000, RS = { rateStart: 1e15, rateCap: 1e15, saleFloorBps: 10000 };
-  const st = { cost: 1, t0: 0, rating: 60000 }; // pool term 2 eth
+  const st = { cost: 1, t0: 0, rating: 60000 };
   const unset = fresh(Object.assign({ redeemOn: true, balanceBidOn: true }, RS), 10); unset.setBalanceModule(0, U);
-  near(unset.askingPrice(st, 0), 1.5, 1e-12, 'pool key unset: the curve on the cost'); near(unset.poolTerm(60000), 0, 1e-15, 'and no pool term');
-  const set = fresh(Object.assign({ redeemOn: true, balanceBidOn: true, balancePoolSet: true }, RS), 10);
-  near(set.askingPrice(st, 0), 1.5, 1e-12, 'no balance module: the curve on the cost'); set.setBalanceModule(0, U);
-  near(set.poolTerm(60000), 2, 1e-12, 'the pool term'); near(set.reference(st, 0), 2, 1e-12, 'the pool term lifts the reference above the cost');
-  near(set.askingPrice(st, 0), 3, 1e-12, 'the curve starts at 150 percent of the lifted reference'); near(set.askingPrice(st, 6 * H), 2.5, 1e-12, 'and falls on it'); near(set.askingPrice(st, 100 * H), 2, 1e-12, 'to the floor, 100 percent of the reference');
-  near(set.askingPrice({ cost: 1, t0: 0, rating: 1000 }, 0), 1.5, 1e-12, 'a low pool term leaves the reference at the cost');
-  near(set.lowestPrice(st, 0), 2, 1e-12, 'the lowest price is the floor of the reference');
-  assert.equal(set.atFloor(st, 12 * H - 1), false); assert.equal(set.atFloor(st, 12 * H), true); n += 2; // eligibility reads the age, whatever lifts the reference
-  const r = set.buy(set.compose(1, 0, 60000), 0);
-  near(r.price, 3, 1e-12, 'the engine price'); assert.equal(r.saleBps, 15000); assert.equal(set.anchorAt(0), 12500); n += 2; // the anchor moves on the curve in bps of the reference
-  near(set.ethPot + set.ethToBuyback, 10 + 3, 1e-12, 'the Core books the engine price (no royalty, the launch cuts are 0 here)');
-  // the unit is the one the module reports now, at the pool price (balancePoolMult)
-  set.moduleReports(U / 2); near(set.poolTerm(60000), 1, 1e-12, 'a lower unit lowers the term'); set.moduleReports(U * 3); near(set.poolTerm(60000), 6, 1e-12, 'a higher unit raises it'); set.moduleReports(0); near(set.poolTerm(60000), 0, 1e-15, 'a zero unit leaves no term');
-  const dn = fresh(Object.assign({ redeemOn: true, balanceBidOn: true, balancePoolSet: true, balancePoolMult: 0.5 }, RS), 10); dn.setBalanceModule(0, U); near(dn.poolTerm(60000), 1, 1e-12, 'a pool price at half the unit halves the term');
-  // a small term cannot lower the price: the bound is the cost
+  const set = fresh(Object.assign({ redeemOn: true, balanceBidOn: true, balancePoolSet: true }, RS), 10); set.setBalanceModule(0, U);
+  near(unset.askingPrice(st, 0), 1.5, 1e-12, 'pool key unset: the curve on the cost');
+  near(set.askingPrice(st, 0), 1.5, 1e-12, 'pool key set: the same curve on the cost'); near(set.reference(st, 0), unset.reference(st, 0), 1e-15, 'the pool key leaves the reference');
+  near(set.valueOf(60000, 0), unset.valueOf(60000, 0), 1e-15, 'and valueOf');
+  near(set.lowestPrice(st, 0), unset.lowestPrice(st, 0), 1e-15, 'and the lowest price');
+  assert.equal(set.atFloor(st, 12 * H - 1), false); assert.equal(set.atFloor(st, 12 * H), true); n += 2;
+  set.moduleReports(U * 3); near(set.reference(st, 0), unset.reference(st, 0), 1e-15, 'a changed module unit leaves the reference'); n += 6;
+
   const lowv = fresh({ balancePoolSet: true, saleFloorBps: 7500 }, 10); lowv.setBalanceModule(0, 1e-9);
   near(lowv.askingPrice({ cost: 1, t0: 0, rating: 10 }, 5000 * H), 0.75, 1e-12, 'the floor holds under a small term');
   const launch = fresh({ balancePoolSet: true, saleFloorBps: 10000 }, 10); launch.setBalanceModule(0, 1e-9);
@@ -744,13 +736,12 @@ const R0 = 6.668e15;
   const e = mk({ rateStart: 4e15, rateCap: 1e16 }, 0.0001);
   near(e.ethRate(0), 0.0001 * W, 1e-12, 'the clamped read is the pot'); near(e.ethPrice(0) / W, 4e-3, 1e-12, 'the price state is unclamped'); near(e.creditFloor(cr, 0), 4e-3 * (440 / 100) * 1.1, 1e-12, 'the floor follows the unclamped rate term');
   const low = { pts: 200, cost: 0.0001, t0: 0 }; near(e.valueOf(200, 0), 4e-3 * (200 / 100), 1e-12, 'a score under 100 points scales the rate term down'); near(e.creditFloor(low, 0), 4e-3 * (200 / 100) * 1.1, 1e-12, 'the credit sale floor scales the rate term by its score'); n += 5;
-  // the pool term: score * unit at the pool price, 0 until the pool key and the module are set, and the unit is the one the module reports now
-  const b = mk({ redeemOn: true, balanceBidOn: true, balancePoolSet: true }); near(b.poolTerm(440), 0, 1e-15, 'no module: pool term 0'); b.setBalanceModule(0, 1e-5);
-  near(b.poolTerm(440), 440 * 1e-5, 1e-12, 'pool term = score * unit'); near(b.creditFloor(cr, 0), 440 * 1e-5 * 1.1, 1e-12, 'a pool term over the cost sets the floor');
-  b.moduleReports(5e-6); near(b.poolTerm(440), 440 * 5e-6, 1e-12, 'the unit the module reports now'); near(b.creditFloor({ pts: 440, cost: 0.003, t0: 0 }, 0), 0.003 * 1.1, 1e-12, 'a pool term under the cost leaves the cost'); n += 5;
-  assert.equal(mk({ balancePoolSet: false }).poolTerm(440), 0); n++;
-  // valueOf is the larger of the rate term and the pool term; the credit price has no royalty on top (decision 123)
-  near(b.valueOf(440, 0), Math.max(b.poolTerm(440), (b.floorRate(0) / W) * (440 / 100)), 1e-12, 'valueOf is the larger term'); near(b.valueOf(0, 0), 0, 1e-15, 'no points, no value');
+  // the pool key and the module unit leave the credit floor: it is the larger of the cost and the rate term
+  const b = mk({ redeemOn: true, balanceBidOn: true, balancePoolSet: true }); const b0 = mk({ redeemOn: true, balanceBidOn: true }); b.setBalanceModule(0, 1e-5); b0.setBalanceModule(0, 1e-5);
+  near(b.creditFloor(cr, 0), b0.creditFloor(cr, 0), 1e-15, 'the pool key leaves the credit floor'); b.moduleReports(5e-6);
+  near(b.creditFloor(cr, 0), b0.creditFloor(cr, 0), 1e-15, 'and the module unit does not move it'); n += 2;
+  // valueOf is the rate term; the credit price has no royalty on top
+  near(b.valueOf(440, 0), (b.floorRate(0) / W) * (440 / 100), 1e-12, 'valueOf is the rate term'); near(b.valueOf(0, 0), 0, 1e-15, 'no points, no value');
   ok(c.grossCreditPrice === undefined, 'the gross credit price is gone with the royalty'); n += 3;
   // sellCreditTo and buyCredit (cuts 0 here): creditCostToPotBps of the cost to the pot, the rest to the buyback pot, never under the cost
   const s = mk(), pot0 = s.ethPot, sold = { pts: 440, cost: 0.004, t0: 0 }, price = s.creditPrice(sold, W4);

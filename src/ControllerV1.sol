@@ -29,9 +29,8 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// first policy module. pages the oldest 80 pile credits for the Core, which picks the format.
 /// it prices and sells statements and pile credits. the point rate is `core.floorRate() / RATE_SCORE`, where
-/// `RATE_SCORE` is 100 points in score units (one ten-thousandth of a point each), and `valueOf(points)` is the larger of
-/// `floorRate * points / RATE_SCORE` and the balance token pool value of `points * unitPerPoint` base units, with
-/// `unitPerPoint` read from the balance module at each call. the reference of a statement is the larger of its cost and
+/// `RATE_SCORE` is 100 points in score units (one ten-thousandth of a point each), and `valueOf(points)` is
+/// `floorRate * points / RATE_SCORE` with value mode off. the reference of a statement is the larger of its cost and
 /// `valueOf(rating)`. the asking price is a fraction of the reference in bps that starts at
 /// `start = min(anchorBps * markupBps / 10_000, startCapBps)` and falls in a straight line to the core setting
 /// `saleFloorBps` over `decayHours` hours, where it rests. a `start` at or below `saleFloorBps` is the floor from the
@@ -59,10 +58,9 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// length of a pause and continues from the same age at resume. the anchor decays with wall time in both states, so the
 /// start of the curve, and with it the asking price, can still fall in a pause while the anchor is above 10_000.
 /// its settings belong to the live owner of the core (`core.owner()`), there is no second owner.
-/// once the owner sets the balance token pool (`setBalancePoolKey`), `valueOf` includes the pool term. the pool term is
-/// 0 with the pool key unset, with the stored pool key's `currency1` other than the Core's current `balanceToken()`
-/// (a stale key after an owner module replacement), with no balance module set, on a failed, zero or above
-/// `uint128.max` unit read, or on a zero pool read.
+/// the balance token pool key (`setBalancePoolKey`) feeds the reference only. with value mode off no price the
+/// controller produces reads the pool or the reference; the reference warms up through `refreshReference()` before the
+/// switch.
 /// the protected price (decision 148): the controller keeps a reference price of the balance token, set to the pool spot
 /// by `setBalancePoolKey` and moved toward the spot by `refreshReference()` and the sale doors by at most
 /// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update. a refresh runs at
@@ -225,9 +223,9 @@ contract ControllerV1 is IController {
         _setAnchor(v);
     }
 
-    /// sets the native eth / balance token pool whose sqrt price prices the pool term of `valueOf`.
+    /// sets the native eth / balance token pool the reference follows. no price reads the pool until value mode is on.
     /// `currency0` must be native eth (the zero address) and `currency1` the core's current balance token, the order a
-    /// native eth pool sorts to. the pool must be initialized, so `valueOf` reads a live price at once. the reference is
+    /// native eth pool sorts to. the pool must be initialized. the reference is
     /// seeded from the live spot, and the owner passes `expectedSpot` (wei per 1e18 base units): a live spot more than
     /// 4.5 percent from it reverts, so the reference is not seeded from a pool moved or manipulated between signing and
     /// landing. effective at once
@@ -504,12 +502,9 @@ contract ControllerV1 is IController {
         return CORE.floorRate() / RATE_SCORE;
     }
 
-    /// the value in wei of `points` score units: the larger of `floorRate * points / RATE_SCORE` and the balance token
-    /// pool value of `points * unitPerPoint` base units. `unitPerPoint` is read from the balance module in the call. the
-    /// pool term is 0 when the pool key is unset, no balance module is set, the unit read fails, is zero or exceeds
-    /// `uint128.max`, the pool reads zero, or the pool pricing exceeds 256 bits. in value mode it is `points * unitPerPoint`
-    /// base units at the protected sale price, rounded up, with the floor rate term dropped, and reverts `NoQuote` while
-    /// the quote is unusable
+    /// the value in wei of `points` score units: `floorRate * points / RATE_SCORE` with value mode off, independent of
+    /// the balance pool key. in value mode it is `points * unitPerPoint` base units at the protected sale price, rounded
+    /// up, and reverts `NoQuote` while the quote is unusable
     function valueOf(uint256 points) public view returns (uint256) {
         return _valueOf(points, _cfg());
     }
@@ -520,9 +515,7 @@ contract ControllerV1 is IController {
             if (!ok) revert NoQuote();
             return FullMath.mulDivRoundingUp(points * unit, pSell, 1e18);
         }
-        uint256 rate = FullMath.mulDiv(CORE.floorRate(), points, RATE_SCORE);
-        uint256 pool = _poolValue(points);
-        return pool > rate ? pool : rate;
+        return FullMath.mulDiv(CORE.floorRate(), points, RATE_SCORE);
     }
 
     /// the price reference of statement `sid`, wei: the larger of its cost and `valueOf(rating)`. the curve prices in bps
@@ -691,26 +684,6 @@ contract ControllerV1 is IController {
             unit := mload(0)
         }
         if (!ok || unit == 0 || unit > type(uint128).max) return (0, false);
-    }
-
-    /// the balance token pool value of `points` score units in wei: `points * unitPerPoint` base units priced at the pool
-    /// sqrt price. `unitPerPoint` is read from the balance module in the call. never reverts: 0 when the pool key is
-    /// unset, the stored pool key's `currency1` is not the Core's current `balanceToken()`, no balance module is set,
-    /// the unit read fails (see `_liveUnit`), the owed amount is zero, the pool sqrt price reads zero, or a product of
-    /// the pricing exceeds 256 bits
-    function _poolValue(uint256 points) private view returns (uint256) {
-        if (!balancePoolKeySet) return 0;
-        address module = CORE.balanceModule();
-        if (module == address(0)) return 0;
-        (uint256 unit, bool ok) = _liveUnit(module);
-        if (!ok) return 0;
-        uint256 baseUnits;
-        unchecked {
-            baseUnits = points * unit;
-        }
-        if (points != 0 && baseUnits / points != unit) return 0;
-        (uint256 priceWei, bool priced) = _priceBaseUnits(baseUnits);
-        return priced ? priceWei : 0;
     }
 
     /// `baseUnits` of the balance token priced in wei at the balance token pool. `priced` is false when the pool key is

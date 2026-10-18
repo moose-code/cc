@@ -13,10 +13,8 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
-/// the pool term of `valueOf` (decisions 104 and 105). `valueOf(points)` is the larger of the rate term
-/// `floorRate * points / refScore` and the redeemable value of `points * unitPerPoint` balance token base units in eth,
-/// read from the balance token / native eth uniswap v4 pool with the unit read from the module in the call. the
-/// reference of a statement and the floor of a credit price are built on it
+/// with value mode off `valueOf(points)` is the rate term `floorRate * points / refScore`, whether or not a balance pool
+/// key is set. the reference of a statement and the floor of a credit price are built on it
 contract BalanceValueFloorTest is Fixture {
     /// initializes a native eth / balance token pool at sqrt price `sp` and points the controller at it. native eth is
     /// currency0
@@ -68,54 +66,37 @@ contract BalanceValueFloorTest is Fixture {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
     }
 
-    // promise: SPEC 1 the price reference is at least the redemption value read from the balance token pool (decision 87)
-    function test_poolTermBindsAboveTheRateTerm() public {
+    // promise: with value mode off a pool key changes no value or reference
+    function test_poolKeyDoesNotMoveValueOrReference() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
+        uint256 rating = core.ratingOf(sid);
+        uint256 refBefore = ctl.referenceOf(sid);
+        uint256 askBefore = ctl.priceOf(sid);
         uint160 sp = _lowSqrtPrice();
         _initAndSet(sp, 3000, 60);
-        uint256 rating = core.ratingOf(sid);
-        uint256 pool = _pool(rating, UNIT, sp);
-        assertGt(pool, _rate(rating), "the pool term is above the rate term");
-        assertEq(ctl.valueOf(rating), pool, "valueOf is the pool term");
+        assertGt(_pool(rating, UNIT, sp), _rate(rating), "the pool value is above the rate term");
+        assertEq(ctl.valueOf(rating), _rate(rating), "valueOf is the rate term");
         (, uint256 cost,) = core.statementInfo(sid);
-        assertEq(ctl.referenceOf(sid), _max(cost, pool), "the reference carries the pool term");
-        // the opening ask is the start of the curve on the reference
-        assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * ctl.startBps() / 10_000, "the curve is on the reference");
+        assertEq(ctl.referenceOf(sid), _max(cost, _rate(rating)), "the reference is the cost or the rate term");
+        assertEq(ctl.referenceOf(sid), refBefore, "the reference is unchanged by the key");
+        assertEq(ctl.priceOf(sid), askBefore, "the ask is unchanged by the key");
     }
 
-    // promise: SPEC 1 the unit is read live from the module (decision 103)
-    /// the pool term follows the unit the module reports now, and a failing read gives pool term 0 so the rate term and
-    /// the cost bound the reference
-    function test_poolTermReadsTheLiveUnit() public {
+    // promise: with a pool key set, the unit read and an overflowing pool price leave valueOf and priceOf unchanged
+    function test_poolKeyIgnoresTheUnitAndOverflow() public {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
-        uint160 sp = _lowSqrtPrice();
-        _initAndSet(sp, 3000, 60);
         uint256 rating = core.ratingOf(sid);
-        assertEq(ctl.valueOf(rating), _pool(rating, UNIT, sp), "the unit at the set");
-        mod.setUnitPerPoint(UNIT * 2);
-        assertEq(ctl.valueOf(rating), _pool(rating, UNIT * 2, sp), "a higher unit raises the term");
-        mod.setUnitPerPoint(UNIT / 2);
-        assertEq(ctl.valueOf(rating), _pool(rating, UNIT / 2, sp), "a lower unit lowers the term");
-        mod.setRevertUnit(true);
-        assertEq(ctl.valueOf(rating), _rate(rating), "a failing read leaves the rate term");
-        mod.setRevertUnit(false);
-        mod.setUnitPerPoint(0);
-        assertEq(ctl.valueOf(rating), _rate(rating), "a zero unit leaves the rate term");
-    }
-
-    // promise: SPEC 1 priceOf never reverts for a failed pool read
-    /// an extreme unit with a tiny pool sqrt price overflows 256 bits in the second `mulDiv` of the pool pricing: the pool
-    /// term is 0, `valueOf` answers the rate term and `priceOf` answers
-    function test_poolTerm_overflowYieldsZeroAndNeverReverts() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
         _initAndSet(TickMath.MIN_SQRT_PRICE, 3000, 60);
+        uint256 ask = ctl.priceOf(sid);
         mod.setUnitPerPoint(type(uint128).max);
-        uint256 rating = core.ratingOf(sid);
-        assertEq(ctl.valueOf(rating), _rate(rating), "the overflowing pool term reads 0");
-        assertGt(ctl.priceOf(sid), 0, "priceOf answers");
+        assertEq(ctl.valueOf(rating), _rate(rating), "an extreme unit leaves the rate term");
+        mod.setUnitPerPoint(UNIT * 2);
+        assertEq(ctl.valueOf(rating), _rate(rating), "a changed unit leaves the rate term");
+        mod.setRevertUnit(true);
+        assertEq(ctl.valueOf(rating), _rate(rating), "a failing unit read leaves the rate term");
+        assertEq(ctl.priceOf(sid), ask, "priceOf is unchanged");
     }
 
     // promise: SPEC 1 no pool key gives the rate term only
@@ -128,49 +109,19 @@ contract BalanceValueFloorTest is Fixture {
         assertEq(ctl.pointRate(), core.floorRate() / RATE_SCORE, "the point rate");
     }
 
-    // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) times floorMultBps
-    /// a credit price rests at `max(cost, valueOf(score)) * floorMultBps`, where `valueOf` carries the pool term, so
-    /// the pool lifts the credit floor and never lowers it below the cost
-    function test_creditFloorCarriesThePoolTerm() public {
+    // promise: SPEC 8 the credit sale floor is max(cost, valueOf(score)) times floorMultBps, with or without a pool key
+    function test_creditFloorIgnoresThePoolKey() public {
         _enterPhase2();
         uint256 id = _fillEthPile(1)[0];
         (, uint256 cost, uint64 acquiredAt) = core.creditInfo(id);
         uint256 score = _score(id);
         vm.warp(acquiredAt + ctl.creditWindow());
         uint256 base = ctl.creditPrice(id);
-        uint256 gov = _max(cost, _rate(score));
-        assertEq(base, gov * ctl.floorMultBps() / 10_000, "no pool key: max of the cost and the rate term");
-        uint160 sp = _lowSqrtPrice();
-        _initAndSet(sp, 3000, 60);
-        uint256 pool = _pool(score, UNIT, sp);
-        assertGt(pool, gov, "the pool term is above the cost and the rate term");
-        assertEq(ctl.creditPrice(id), pool * ctl.floorMultBps() / 10_000, "the pool term lifts the credit floor");
+        assertEq(base, _max(cost, _rate(score)) * ctl.floorMultBps() / 10_000, "max of the cost and the rate term");
+        _initAndSet(_lowSqrtPrice(), 3000, 60);
+        assertEq(ctl.creditPrice(id), base, "the pool key leaves the credit floor");
         mod.setRevertUnit(true);
-        assertEq(ctl.creditPrice(id), base, "a failing unit read leaves the floor on the cost and the rate term");
-        assertGe(ctl.creditPrice(id), cost * ctl.floorMultBps() / 10_000, "never below the cost floor");
-    }
-
-    // promise: SPEC 8 a buy at the credit floor and a sale back into the balance bid at its hard cap loses the spread
-    /// the most the balance bid pays for a credit is `score * unit * balanceBidCapBps / 10_000` balance token, worth the
-    /// pool value of par times the cap at the spot. the credit floor is that par value times `(10_000 + spreadBps)` of the
-    /// same cap, so at the launch spread of 200 the floor is 1.02 times the most the bid can pay, at every cap
-    function test_spreadOverTheCapClosesTheBalanceRoundTrip() public {
-        _enterPhase2();
-        uint256 id = _fillEthPile(1)[0];
-        (,, uint64 acquiredAt) = core.creditInfo(id);
-        uint256 score = _score(id);
-        vm.warp(acquiredAt + ctl.creditWindow());
-        uint160 sp = _lowSqrtPrice();
-        _initAndSet(sp, 3000, 60);
-        uint256 par = _pool(score, UNIT, sp); // the eth value of `score * unit` balance token at the spot
-        uint32[2] memory caps = [uint32(11_000), 30_000];
-        for (uint256 i; i < 2; ++i) {
-            Settings memory s = core.settings();
-            s.balanceBidCapBps = caps[i];
-            _setSettings(s);
-            uint256 mostPaid = par * caps[i] / 10_000; // the bid at its hard cap, valued at the spot
-            assertGe(ctl.creditPrice(id), mostPaid * (10_000 + ctl.creditSpreadBps()) / 10_000, "the floor clears the bid's ceiling by the spread");
-        }
+        assertEq(ctl.creditPrice(id), base, "a failing unit read leaves the credit floor");
     }
 
     // promise: INTEGRATION BadSetting on setBalancePoolKey

@@ -275,30 +275,31 @@ contract E2EReal is Scenario {
         console.log("phase5: price / buyback share", price, core.ethToBuyback() - bb0);
     }
 
-    // ------------------------------------------------------------------ phase 6: the balance side (owner's real calls)
+    // ------------------------------------------------------------------ phase 7: the balance sell (value mode on)
 
-    /// A1 sells one credit into the balance bid; the fill pays exactly `balanceBidOf` and the balance bid never exceeds
-    /// par (score times the module unit per point). works against the dev mock and the production module alike, reading
-    /// the unit through `IBalanceModule`.
-    function phase6BalanceSell() external {
+    /// A1 sells one credit into the balance bid with value mode on. the fill pays `min(posted, cap)`: a positive amount
+    /// at most `balanceBidOf`, and `balanceBidOf` never exceeds par (score times the module unit per point). works
+    /// against the dev mock and the production module alike, reading the unit through `IBalanceModule`.
+    function phase7BalanceSell() external {
         _boot();
         _approveCredits(A1);
         uint256[] memory one = _creditsOf(A1, 1);
         uint256 id = one[0];
         uint256 balBid = core.balanceBidOf(id);
-        require(balBid > 0, "phase6: balance bid is zero");
+        require(balBid > 0, "phase7: balance bid is zero");
         uint256 score = ICreditScore(Mainnet.CREDIT_SCORE)
             .scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
         uint256 unit = IBalanceModule(core.balanceModule()).unitPerPoint();
-        require(balBid <= score * unit, "phase6: balance bid exceeds par");
+        require(balBid <= score * unit, "phase7: balance bid exceeds par");
         IERC20R token = IERC20R(core.balanceToken());
         uint256 before = token.balanceOf(A1);
         vm.broadcast(A1);
         core.sellForBalance(one);
-        require(token.balanceOf(A1) - before == balBid, "phase6: balance fill not balanceBidOf");
-        console.log("phase6: balance sell credit", id);
-        console.log("phase6: balanceBidOf / paid", balBid, token.balanceOf(A1) - before);
-        console.log("phase6: buyToArtistBps", core.settings().buyToArtistBps);
+        uint256 paid = token.balanceOf(A1) - before;
+        require(paid > 0 && paid <= balBid, "phase7: balance fill outside (0, balanceBidOf]");
+        console.log("phase7: balance sell credit", id);
+        console.log("phase7: balanceBidOf / paid", balBid, paid);
+        console.log("phase7: buyToArtistBps", core.settings().buyToArtistBps);
     }
 
     // ---------------------------------------------------- phase 6 production: Jack's pinned contracts (the artifact)
@@ -309,7 +310,7 @@ contract E2EReal is Scenario {
     /// deploys Jack's `ConversionLineageWithdrawals` from `out/upstream-balance.json` exactly as the production-module test
     /// does: the funder receives 80 real Credits, the Statements owner registers the Balance renderer, the funder
     /// composes a page, withdraws and retires the launch supply, then the owner deploys `StatementBalanceModule`, sets
-    /// it, switches `redeemOn` and `balanceBidOn` on, initializes a native eth / token pool at the dev sqrt and points
+    /// it, switches `redeemOn` on (`balanceBidOn` follows value mode in `phase7Quote`), initializes a native eth / token pool at the dev sqrt and points
     /// the controller at it. every write goes through the node directly (`_send` / `_sendCreate`) so the deployed token
     /// address is the one the node assigns, not a simulated one. `opensAt` is a constant timestamp; the shell advances
     /// node time to it before the redemption.
@@ -363,7 +364,6 @@ contract E2EReal is Scenario {
         _send(OWNER, address(core), abi.encodeCall(ICore.setBalanceModule, (module)), 0);
         Settings memory s = core.settings();
         s.redeemOn = true;
-        s.balanceBidOn = true;
         _send(OWNER, address(core), abi.encodeCall(ICore.setSettings, (s)), 0);
         _send(
             OWNER,
@@ -385,6 +385,12 @@ contract E2EReal is Scenario {
         );
 
         require(core.balanceModule() == module, "phase6prod: module not set");
+        // preflight: balance bid on, value mode off and a pool key set is the round trip hazard state
+        Settings memory after_ = core.settings();
+        require(
+            !(after_.balanceBidOn && !after_.valueModeOn && ctl.balancePoolKeySet()),
+            "phase6prod: balanceBidOn with value mode off and a pool key set"
+        );
         console.log("== PRODUCTION MODULE: Jack's pinned ConversionLineageWithdrawals ==");
         console.log("BALANCE_TOKEN", token);
         console.log("BALANCE_MODULE", module);
@@ -488,8 +494,8 @@ contract E2EReal is Scenario {
 
     // ------------------------------------------------------------------ phase 7: value mode
 
-    /// sets the value quote and switches value mode on with the eth spend cap active, as the owner. reference values
-    /// 1,200 bps/h, step 200, min 600 s, stale 3,600, tol 0, minLiquidity from the balance pool depth.
+    /// sets the value quote and switches value mode and the balance bid on with the eth spend cap active, as the owner. reference values
+    /// 1,200 bps/h, step 200, min 600 s, stale 3,600, tol 100, minLiquidity from the balance pool depth.
     function phase7Quote(uint128 minLiquidity) external {
         _boot();
         vm.broadcast(OWNER);
@@ -505,6 +511,7 @@ contract E2EReal is Scenario {
         );
         Settings memory s = core.settings();
         s.valueModeOn = true;
+        s.balanceBidOn = true; // the balance bid opens with value mode
         s.spendCapBps = 1_000;
         vm.broadcast(OWNER);
         core.setSettings(s);

@@ -158,6 +158,53 @@ contract ValueReferenceTest is ValueBase {
         assertEq(ctl.referenceTime(), block.timestamp);
     }
 
+    // promise: setting the same pool key again with the live spot resets the reference and the sample ring to that spot
+    function test_resettingTheSameKeyReseedsTheReference() public {
+        uint256 ref0 = ctl.referencePrice();
+        uint256 moved = _swapSpot(3_000);
+        vm.warp(block.timestamp + 30 minutes);
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        assertGt(ctl.referencePrice(), ref0, "the reference drifted up");
+        assertLt(ctl.referencePrice(), moved, "and trails the spot");
+        vm.warp(block.timestamp + 10 minutes);
+        vm.roll(block.number + 1);
+        (uint256 live,) = ctl.spotPrice();
+        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
+            currency0: IControllerV1.Currency.wrap(address(0)),
+            currency1: IControllerV1.Currency.wrap(address(xt)),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: address(0)
+        });
+        vm.prank(owner);
+        ctl.setBalancePoolKey(k, live);
+        assertEq(ctl.referencePrice(), live, "the reference equals the live spot");
+        assertEq(ctl.referenceTime(), block.timestamp, "the sample time is now");
+        // the ring holds the live spot twice, so the buy price is the spot itself
+        (uint256 v, bool ok) = ctl.valuePerPoint(false);
+        assertTrue(ok, "the quote reads the reseeded ring");
+        assertEq(v, FullMath.mulDiv(POINT_UNIT * _moduleUnit(), live, 1e18), "the buy price is the live spot");
+        // the ring and the refresh block hold the live values (slots 9 to 12 of the controller storage layout)
+        assertEq(uint256(vm.load(address(ctl), bytes32(uint256(9)))), live, "spotSampleA");
+        assertEq(uint256(vm.load(address(ctl), bytes32(uint256(10)))), live, "spotSampleB");
+        uint256 liqs = uint256(vm.load(address(ctl), bytes32(uint256(11))));
+        assertEq(uint128(liqs), _liquidityNow(), "liqSampleA");
+        assertEq(uint128(liqs >> 128), _liquidityNow(), "liqSampleB");
+        assertEq(uint48(uint256(vm.load(address(ctl), bytes32(uint256(12))))), uint48(block.number), "lastRefreshBlock");
+        // a refresh in the same block is refused, so the seed block is the last sample
+        assertFalse(ctl.refreshReference(), "no refresh in the seed block");
+        // one block later the quote still reads the reseeded ring
+        vm.roll(block.number + 1);
+        (uint256 v2, bool ok2) = ctl.valuePerPoint(false);
+        assertTrue(ok2, "the quote reads the ring one block later");
+        assertEq(v2, v, "the same buy price one block later");
+        // a stale expected spot is refused by the 4.5 percent guard
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("spot")));
+        ctl.setBalancePoolKey(k, live * 2);
+    }
+
     // promise: SPEC 8 an update moves the reference toward the spot by at most referenceRateBpsPerHour times the elapsed time
     function test_observeMovesAtMostTheRate() public {
         uint256 ref0 = ctl.referencePrice();

@@ -304,29 +304,14 @@ if [ -n "$BTOK" ]; then
     done
     check "phase 6 statement reached its floor" "$([ "$(callc "$CTL" 'atFloor(uint256)(bool)' "$RSID")" = true ] && echo 1 || echo 0)" "atFloor $RSID"
     if step "phase6ProdRedeem(uint256)" "$RSID"; then check "redeem at the floor pays rating times 1e14 into the module" 1 "see step log"; fi
-    ART="$(callc "$CORE" 'artist()(address)')"
-    royalty_held() { echo $(( $(num "$BTOK" 'balanceOf(address)(uint256)' "$ART") + $(num "$BMOD" 'owed(address)(uint256)' "$ART") )); }
-    ROY0="$(royalty_held)"
-    if step "phase6BalanceSell()"; then
-      check "a balance sell pays balanceBidOf and the bid stays under par" 1 "see step log"
-      PAID6="$(grep -m1 'balanceBidOf / paid' "$SCRATCH/step.log" | awk '{print $(NF-1)}')"
-      BPS6="$(grep -m1 'buyToArtistBps' "$SCRATCH/step.log" | awk '{print $NF}')"
-      # the royalty is the artist's token balance plus its owed amount in the module
-      if [ -n "$PAID6" ] && [ -n "$BPS6" ]; then
-        check "the balance sell royalty reached the artist or is owed to the artist" \
-          "$(calc "$(royalty_held) - $ROY0 == $PAID6 * $BPS6 // 10000")" "royalty held $(royalty_held) before $ROY0 bid $PAID6 bps $BPS6"
-      else
-        check "the balance sell royalty reached the artist or is owed to the artist" 0 "step log lacks paid or buyToArtistBps"
-      fi
-    fi
   fi
 fi
 
 ############################################################################## phase 7
 say "PHASE 7: value mode"
 if [ -n "$BTOK" ]; then
-  # Jack's token reaches holders through the module (A1's phase 6 balance sell) and the funder's launch balance. the
-  # funder moves about 2 percent of supply to the liquidity wallet after opensAt and adds a full-range
+  # Jack's token reaches holders through the module (A1's balance sell, run after value mode is on) and the funder's
+  # launch balance. the funder moves about 2 percent of supply to the liquidity wallet after opensAt and adds a full-range
   # position, so the balance pool carries real trading depth. value mode then runs the full pool-move stress: a quote
   # gated on that depth, an 8 percent spot move, a sell inside the bands, the keeper refresh cadence, and a same-block
   # round trip that nets at most zero after pool fees. phase 6 already mined past opensAt for the redemption.
@@ -337,6 +322,26 @@ if [ -n "$BTOK" ]; then
   # the minLiquidity gate at half the seeded depth: usable now, and an 8 percent price move keeps full-range L in place
   MINLIQ="$(python3 -c "print(${DEPTH:-0}//2)")"
   if step "phase7Quote(uint128)" "$MINLIQ"; then check "value mode is on with the quote set" 1 "referencePrice $(num "$CTL" 'referencePrice()(uint256)')"; fi
+  # the balance bid opens with value mode (phase7Quote). two healthy refreshes first: the stored liquidity samples predate
+  # the seeded depth, and the balance cap refuses while a sample is under minLiquidity or the reference is stale
+  : > "$KEEPER_LOG"
+  KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
+  KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
+  ART="$(callc "$CORE" 'artist()(address)')"
+  royalty_held() { echo $(( $(num "$BTOK" 'balanceOf(address)(uint256)' "$ART") + $(num "$BMOD" 'owed(address)(uint256)' "$ART") )); }
+  ROY0="$(royalty_held)"
+  if step "phase7BalanceSell()"; then
+    check "a balance sell pays a positive amount, at most balanceBidOf" 1 "see step log"
+    PAID7="$(grep -m1 'balanceBidOf / paid' "$SCRATCH/step.log" | awk '{print $NF}')"
+    BPS7="$(grep -m1 'buyToArtistBps' "$SCRATCH/step.log" | awk '{print $NF}')"
+    # the royalty is the artist's token balance plus its owed amount in the module, on the amount paid
+    if [ -n "$PAID7" ] && [ -n "$BPS7" ]; then
+      check "the balance sell royalty reached the artist or is owed to the artist" \
+        "$(calc "$(royalty_held) - $ROY0 == $PAID7 * $BPS7 // 10000")" "royalty held $(royalty_held) before $ROY0 paid $PAID7 bps $BPS7"
+    else
+      check "the balance sell royalty reached the artist or is owed to the artist" 0 "step log lacks paid or buyToArtistBps"
+    fi
+  fi
   step "phase7MovePool(address)" "$BTOK" || true
   : > "$KEEPER_LOG"
   KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601

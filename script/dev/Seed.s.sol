@@ -96,7 +96,9 @@ contract Seed is Script {
         core.setBalanceModule(module);
         Settings memory s = core.settings();
         s.redeemOn = true;
-        s.balanceBidOn = true;
+        // the balance bid opens after value mode (docs/RUNBOOK.md). ALLOW_MODE_OFF_BALANCE_BID=1 is the dev opt-in for
+        // scenarios that sell for balance with value mode off
+        s.balanceBidOn = vm.envOr("ALLOW_MODE_OFF_BALANCE_BID", false);
         core.setSettings(s);
         ctl.setBalancePoolKey(
             IControllerV1.PoolKey({
@@ -116,6 +118,13 @@ contract Seed is Script {
         );
         core.setChosenComposeOn(true);
         vm.stopBroadcast();
+
+        // preflight: balance bid on, value mode off and a pool key set is the round trip hazard state
+        Settings memory after_ = core.settings();
+        require(
+            !(after_.balanceBidOn && !after_.valueModeOn && ctl.balancePoolKeySet()),
+            "preflight: balanceBidOn with value mode off and a pool key set"
+        );
 
         console.log("BALANCE_TOKEN", token);
         console.log("BALANCE_MODULE", module);

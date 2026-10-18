@@ -13,8 +13,8 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// the price reference of the sale controller on the live fork. `referenceOf(sid)` is the larger of a statement's cost
-/// and `valueOf(rating)`, computed at each call. `valueOf` is the larger of the rate term, the floor rate times the
-/// rating over 100 points (`RATE_SCORE` score units), and the balance token pool term. the floor rate is the larger of
+/// and `valueOf(rating)`, computed at each call. `valueOf` is the rate term, the floor rate times the
+/// rating over 100 points (`RATE_SCORE` score units). the floor rate is the larger of
 /// the climbed price state and the decayed peak. the sale curve, its floor `saleFloorBps`, the anchor and `atFloor` all
 /// price in bps of the reference. the rate term prices the rating at the engine's per point price, so two statements of
 /// the same rating reference the same amount once it binds, whatever each credit cost. real Core, ControllerV1, Statements

@@ -73,8 +73,8 @@ export const SETTING_KEYS = Object.keys(SETTINGS);
 // mean of the anchor now and the sale price, a sale at or below it leaves it, and so does a sale of a statement that costs less than anchorMinCost (eth here, wei in the
 // contract). the part of the anchor above 10000 halves every anchorHalfLife, continuously.
 // a buyer pays the asking price and gets the statement at once through Core.sellTo.
-// the price reference of a statement is max(cost, valueOf(rating)) (ControllerV1.referenceOf). valueOf(points) is the larger of floorRate * points / refScore, where the floor rate is
-// the larger of the climbed price state and the decayed peak and refScore is a SETTINGS field above, and the balance token pool term points * unitPerPoint at the pool price
+// the price reference of a statement is max(cost, valueOf(rating)) (ControllerV1.referenceOf). valueOf(points) is floorRate * points / refScore with value mode off, where the floor rate is
+// the larger of the climbed price state and the decayed peak and refScore is a SETTINGS field above
 export const CONTROLLER = {
   markupBps: _sale.markupBps,
   startCapBps: _sale.startCapBps,
@@ -87,8 +87,8 @@ export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
 // the credit settings (script/config/mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
 // (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditSpreadBps and creditStartBps are controller
 // settings (FLOW 88 to 90, 93, 94). refScore is a Core setting the eth doors and the controller share. while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
-// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, valueOf(score)) * floorMultBps / 10000, floorMultBps = max(10000, (10000 + creditSpreadBps) * balanceBidCapBps / 10000) (decisions 104, 115, 150, 153). valueOf is the larger of the rate term
-// floorRate * score / refScore (the floor rate is the larger of the climbed price state and the decayed peak) and the pool term score * unitPerPoint at the balance token pool price, 0 while no module or pool key is set.
+// start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, valueOf(score)) * floorMultBps / 10000, floorMultBps = max(10000, (10000 + creditSpreadBps) * balanceBidCapBps / 10000) (decisions 104, 115, 150, 153). valueOf is the rate term
+// floorRate * score / refScore with value mode off (the floor rate is the larger of the climbed price state and the decayed peak).
 // every sale adds royaltyBps of the engine price on top, paid by the buyer and claimed by the royalty recipient (decision 112).
 // Core.sellCreditTo takes at least saleFloorBps of the credit's cost; after the artist and operator cuts it books creditCostToPotBps of the cost to the pot and the rest to the buyback pot.
 // compose waits for a credit's window while the sale is on (ControllerV1.pastWindow). refScore is the per-credit score of the statement price reference, in
@@ -288,7 +288,7 @@ export const SIM_DEFAULTS = {
   balanceDayMode: 2, // switches set at balanceDay: 1 redeemOn only, 2 redeemOn and balanceBidOn
   xpPerPoint: 0.0108 / 440, // eth value of the balance token per whole score point, at the balance token price. a 440 point credit redeems 0.0108 eth. the module's unitPerPoint is per stored unit (1/10000 point), so this value is 10000 times the module's unit read times the price
   redeemPayFrac: 1, // share of rating * unitPerPoint the balance module returns. the Core requires at least 1 - redeemSlippageBps / 10000, else the redemption reverts
-  balancePoolSet: false, // ControllerV1.setBalancePoolKey done (native eth as currency0, the balance token as currency1, pool initialized): the pool term of valueOf (points * unitPerPoint at the pool price) joins the statement reference and the credit floor, unset at launch. the balance token bid works without it
+  balancePoolSet: false, // ControllerV1.setBalancePoolKey done (native eth as currency0, the balance token as currency1, pool initialized): the pool seeds the reference only; with value mode off no price reads it. unset at launch. the balance token bid works without it
   balancePoolMult: 1, // the balance token pool price against the price the unit assumes. values the pool term and is the spot of the protected price. 1 at the unit; below 1 is a pool price pushed down. a schedule patch `poolMult` moves it mid run
   poolLiquidity: 1e30, // the balance token pool's liquidity, read against the quote's minLiquidity
   // credit sale and composition (FLOW 88 to 90). the buyers of pile credits and the composer exist only in the model
@@ -712,17 +712,16 @@ export class Core {
   compose(costSum, now, rating = 0) {
     return { cost: costSum, t0: now, rating, pauseMark: this.pausedNow(now) };
   }
-  // ControllerV1.valueOf: the value in eth of `pts` points, the larger of the rate term floorRate * pts / refScore and the pool term pts * unitPerPoint at the pool price.
+  // ControllerV1.valueOf: the value in eth of `pts` points, the rate term floorRate * pts / refScore with value mode off, whether or not the pool key is set.
   // the floor rate is the larger of the climbed price state and the decayed peak. points are in points here, refScore in ten-thousandths of a point, so refScore/1e4 is the
-  // reference score in points and floorRate/W is the per-credit rate in eth. the pool term is 0 while the pool key or the module is unset or the unit reads 0
+  // reference score in points and floorRate/W is the per-credit rate in eth.
   // in value mode it is pts at the protected sale value per point, the rate term dropped, and 0 while the quote is
   // unusable (the controller reverts NoQuote there; the sale doors refuse)
   valueOf(pts, now) {
     if (this.s.valueModeOn) { const v = this.valuePerPoint(true, now); return v.ok ? pts * v.value : 0; }
     const rateTerm = (this.floorRate(now) / W) * (pts / (RATE_SCORE / 1e4));
-    return Math.max(rateTerm, this.poolTerm(pts));
+    return rateTerm;
   }
-  poolTerm(pts) { return this.p.balancePoolSet && this.moduleSet && this.xpLive > 0 ? pts * this.xpLive * this.poolMult : 0; }
   // ControllerV1.referenceOf: the price reference of a statement, max(cost, valueOf(rating)). a record without a rating references its cost.
   // in value mode the protected floor valueOf(rating) * floorMultBps / 10000, the cost term dropped (decision 150)
   reference(st, now) {

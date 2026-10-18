@@ -268,7 +268,7 @@ contract BalanceTokenReplacementTest is Fixture {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("balancePoolKey")));
         ctl.setBalancePoolKey(badCk, 0);
-        // a key on the new token is accepted and prices valueOf above the rate floor
+        // a key on the new token is accepted and seeds the reference; valueOf stays the rate term
         uint256 points = RATE_SCORE;
         uint256 rateValue = ctl.valueOf(points);
         PoolKey memory newKey = PoolKey({
@@ -288,10 +288,11 @@ contract BalanceTokenReplacementTest is Fixture {
         });
         vm.prank(owner);
         ctl.setBalancePoolKey(goodCk, spotOf(uint160((uint256(1) << 96) / 1000)));
-        assertGt(ctl.valueOf(points), rateValue, "the new token pool key prices valueOf");
+        assertTrue(ctl.balancePoolKeySet(), "the key is accepted");
+        assertEq(ctl.valueOf(points), rateValue, "the pool key leaves valueOf");
     }
 
-    // rule: valueOf, priceOf and atFloor ignore a pool key whose currency1 is not the current token
+    // rule: valueOf, priceOf and atFloor are unchanged by a pool key and by a module replacement
     function test_oldPoolIgnoredUntilMatchingTokenSelected() public {
         uint256 sid = _composeOnce().sid;
         uint256 points = RATE_SCORE;
@@ -313,17 +314,16 @@ contract BalanceTokenReplacementTest is Fixture {
         });
         vm.prank(owner);
         ctl.setBalancePoolKey(ck, spotOf(uint160((uint256(1) << 96) / 1000)));
-        uint256 poolValue = ctl.valueOf(points);
         uint256 poolPrice = ctl.priceOf(sid);
         bool poolFloor = ctl.atFloor(sid);
-        assertGt(poolValue, rateValue);
+        assertEq(ctl.valueOf(points), rateValue, "the pool key leaves valueOf");
         _setBalanceModule(address(nextModule));
-        assertEq(ctl.valueOf(points), rateValue, "valueOf drops the stale pool term");
-        assertLe(ctl.priceOf(sid), poolPrice, "priceOf drops the stale pool term");
+        assertEq(ctl.valueOf(points), rateValue, "valueOf is unchanged after the module replacement");
+        assertEq(ctl.priceOf(sid), poolPrice, "priceOf is unchanged after the module replacement");
         _setBalanceModule(address(mod));
-        assertEq(ctl.valueOf(points), poolValue, "valueOf restores the pool term for the matching token");
-        assertEq(ctl.priceOf(sid), poolPrice, "priceOf restores the pool term");
-        assertEq(ctl.atFloor(sid), poolFloor, "atFloor restores");
+        assertEq(ctl.valueOf(points), rateValue, "valueOf is unchanged for the matching token");
+        assertEq(ctl.priceOf(sid), poolPrice, "priceOf is unchanged");
+        assertEq(ctl.atFloor(sid), poolFloor, "atFloor is unchanged");
     }
 
     // rule: the single currency invariant handler rejects a forbidden token rather than any differing token
