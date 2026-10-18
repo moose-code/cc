@@ -11,12 +11,12 @@ import {CreditDrawing} from "./lib/CreditDrawing.sol";
 
 /// @notice the coin's metadata renderer: the Core's pile drawn as a Statement page, 8 columns by 10 rows.
 /// @dev    retained for an owner swap after the LogoCoinRenderer launch. the constructor owner keeps its CREATE2
-///         address independent of the Core; `setCore` binds the Core once. a pile of at most 80 credits is drawn whole, in pile order. a larger pile is
-///         read whole, then 80 of its credits are sampled by `block.prevrandao`, so the selection changes each block and holds
-///         within a block. every cell is the credit's own drawing, `CreditDrawing.body`, the code the live
-///         CreditArt and StatementArt run. a view contract: every call reads the Core, Credits and the coin. the pile
-///         walk costs about 2,200 gas per pile credit and the page about 10,000,000 gas at 80 cells; the whole call
-///         is about 25,000,000 gas at 80 cells.
+/// address independent of the Core; `setCore` binds the Core once. a pile of at most 80 credits is drawn whole, in
+/// pile order. a larger pile is read whole, then 80 of its credits are sampled by `block.prevrandao`, so the
+/// selection changes each block and holds within a block. every cell is the credit's own drawing,
+/// `CreditDrawing.body`, the code the live CreditArt and StatementArt run. a view contract: every call reads the
+/// Core, Credits and the coin. the pile walk costs about 2,200 gas per pile credit and the page about 10,000,000
+/// gas at 80 cells; the whole call is about 25,000,000 gas at 80 cells.
 contract CoinRenderer is ICoinRenderer {
     uint256 private constant COLS = 8;
     uint256 private constant ROWS = 10;
