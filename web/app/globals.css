@@ -563,8 +563,10 @@ a:hover {
   font-weight: 400;
   color: var(--muted);
 }
-/* pre-balance phase: the balance token is not deployed yet; the value size, faded */
+/* pre-balance phase: the balance token is not deployed yet; faded, sized to fit one line */
 .stat-cell .value .stat-wait {
+  font-size: 12px;
+  white-space: nowrap;
   color: var(--faint);
 }
 .stat-cell.ink-pot {
@@ -1321,6 +1323,12 @@ button.tp-row:disabled {
 .theme-toggle svg {
   width: 15px;
   height: 15px;
+}
+/* the credits brand mark links to the Credits site: the "credits" word and the CMYK plates together */
+.credits-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 .plates {
   display: flex;
@@ -2856,6 +2864,36 @@ button.slot:disabled {
   padding-top: 8px;
   border-top: 1px dashed var(--divider);
 }
+/* a forming statement: the actual Credits of the page in the 8 x 10 grid a composed statement uses. The frame is
+   square and the portrait grid is centred on white, exactly like a composed statement's art (.art-frame .tile-statement). */
+.forming-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  background: var(--art);
+  outline: 1px solid var(--hairline);
+}
+/* the credit grid fills the central ~83% of the square, like a composed statement's content within its canvas */
+.forming-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-auto-rows: 1fr;
+  height: 83%;
+  aspect-ratio: 8 / 10;
+}
+.forming-slot {
+  overflow: hidden;
+}
+.forming-slot .tile-credit {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+.forming-foot {
+  color: var(--muted);
+}
 
 /* credits table */
 .ctable-row {
@@ -3479,8 +3517,17 @@ button.slot:disabled {
   font-size: 11px;
   color: var(--quiet);
 }
-/* the listings tab sits in the feed column, narrower than the listings page: tighter tracks so the credit id keeps
-   its width instead of collapsing under the page-width fixed columns */
+/* the listings tab matches the ledger table: same side margin, a 2px header rule and the ledger row height. The feed
+   column is narrower than the listings page, so the tracks are tighter to keep the credit id from collapsing. */
+.ledger .ltable {
+  margin: 0 24px;
+}
+.ledger .ltable-head {
+  border-top: 2px solid var(--structure);
+}
+.ledger .ltable-row {
+  min-height: 40px;
+}
 @media (min-width: 861px) {
   .ledger .ltable-row {
     grid-template-columns: 28px minmax(72px, 1fr) 96px 48px 72px 72px 120px 56px 108px 76px;

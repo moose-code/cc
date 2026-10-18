@@ -2,12 +2,12 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { StatementCard, StateMark, useStatementRating, type StatementState } from "@/components/Cards";
+import { FormingCard, StatementCard, StateMark, useStatementRating, type StatementState } from "@/components/Cards";
 import { StatementTile } from "@/components/Tiles";
 import { PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
 import { useComposeEta } from "@/components/ComposeEta";
-import { engineDeployed } from "@/lib/config";
+import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { useHistoryDown, useStatementIndex, useStats } from "@/lib/data";
 import { useBlockTs } from "@/lib/engine";
 import { useTokenMeta } from "@/lib/art";
@@ -71,6 +71,24 @@ export default function StatementsPage() {
   const rest = items.filter((i) => i.state !== "for sale" && i.state !== "at floor");
   const count = (s: StatementState) => items.filter((i) => i.state === s).length;
   const next = eta.at(0);
+  // statements forming in the pile, before they compose: full pages of credits are "upcoming" (waiting for the newest
+  // credit to clear the sale window), the partial page is still "building". FIFO, so page k is credits k*size..(k+1)*size.
+  const pileIds = (pile ?? []).map((c) => c.id);
+  const pileIncomplete = snap != null && pileIds.length < Number(snap.pileSize);
+  const fullPages = Math.floor(pileIds.length / STATEMENT_SIZE);
+  const forming: { kind: "upcoming" | "building"; ids: number[]; foot: string }[] = [];
+  for (let k = 0; k < fullPages; k++) {
+    const e = eta.at(k * STATEMENT_SIZE);
+    forming.push({
+      kind: "upcoming",
+      ids: pileIds.slice(k * STATEMENT_SIZE, (k + 1) * STATEMENT_SIZE),
+      foot: snap?.paused ? "engine paused" : e == null ? "composes next" : e.seconds <= 0 ? "ready to compose" : `composes in ${etaLabel(e)}`,
+    });
+  }
+  const remainder = pileIds.length % STATEMENT_SIZE;
+  if (remainder > 0 && !pileIncomplete)
+    forming.push({ kind: "building", ids: pileIds.slice(fullPages * STATEMENT_SIZE), foot: `${STATEMENT_SIZE - remainder} more Credits` });
+
   const meta = [
     `${forSale.length} for sale`,
     `${count("sold")} sold`,
@@ -78,7 +96,7 @@ export default function StatementsPage() {
     count("not held") > 0 && `${count("not held")} not held`,
     stats && `${stats.composed} composed`,
     historyDown && "history unavailable",
-    next && `next composes in ${etaLabel(next)}`,
+    snap?.paused ? "composition paused" : next && `next composes in ${etaLabel(next)}`,
   ].filter(Boolean);
 
   const more = (total: number) => (
@@ -114,6 +132,23 @@ export default function StatementsPage() {
       </PageHead>
 
       <div className="split-pad">
+        {(forming.length > 0 || pileIncomplete) && (
+          <section className="sect">
+            <div className="sect-head">
+              <b>forming</b>
+              <span className="caption">
+                {pileIncomplete
+                  ? "Additional forming pages are unavailable until the full pile loads."
+                  : `Credits compose into Statements ${STATEMENT_SIZE} at a time, oldest first, once a page's newest Credit clears the sale window.`}
+              </span>
+            </div>
+            <div className="cgrid">
+              {forming.map((f, i) => (
+                <FormingCard key={i} kind={f.kind} ids={f.ids} size={STATEMENT_SIZE} foot={f.foot} />
+              ))}
+            </div>
+          </section>
+        )}
         {view === "grid" ? (
           <>
             <section className="sect">

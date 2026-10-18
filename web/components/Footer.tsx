@@ -32,9 +32,10 @@ const THEME_ICON: Record<Theme, React.ReactNode> = {
   ),
 };
 
-// One icon button cycling auto -> light -> dark. auto removes data-theme so the CSS follows prefers-color-scheme.
+// One icon button cycling auto -> light -> dark. The default is light; auto removes data-theme so the CSS follows
+// prefers-color-scheme.
 function ThemeControl() {
-  const [theme, setTheme] = useState<Theme>("auto");
+  const [theme, setTheme] = useState<Theme>("light");
   useEffect(() => {
     const t = lsGet<Theme>(THEME_KEY);
     if (t && THEMES.includes(t)) setTheme(t);
@@ -87,12 +88,15 @@ export function Footer() {
       </span>
       <div className="footer-right">
         <ThemeControl />
-        <span className="plates" aria-hidden>
-          <i className="c" />
-          <i className="m" />
-          <i className="y" />
-          <i className="k" />
-        </span>
+        <a className="credits-link" href="https://jack.art/credits/" target="_blank" rel="noreferrer">
+          credits
+          <span className="plates" aria-hidden>
+            <i className="c" />
+            <i className="m" />
+            <i className="y" />
+            <i className="k" />
+          </span>
+        </a>
       </div>
     </footer>
   );
