@@ -13,7 +13,7 @@ import { MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
 import { useIxMode } from "./indexer";
 import { bucketCount, cheapestPerId, fitsBucket, type Priced } from "./acquire";
 import { gatherListings, scoresFor, spendCost, spendRoom } from "./useAcquire";
-import { ETH_ANCHOR_SLOT } from "./sell";
+import { ETH_ANCHOR_SLOT, ETH_CLOCK_SLOT } from "./sell";
 import { clearsIn, type ClearsIn, type ClimbState } from "./climb";
 
 const LIVE = 100; // rows (smallest estimated gap first) whose bid and listing are re-read from the chain
@@ -73,7 +73,7 @@ export function useListings() {
       const balanceReads = snap.balanceOn && snap.settings.balanceBidOn; // one balanceBidOf per live row, after the per-row triples
       const cc = { address: core!, abi: coreAbi } as const;
       const word = (i: bigint) => c.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }) });
-      const [res, w0, w2, w3] = await Promise.all([
+      const [res, w0, w2, w3, clock] = await Promise.all([
         c.multicall({
           ...mc,
           allowFailure: true,
@@ -98,6 +98,7 @@ export function useListings() {
         word(0n),
         word(2n),
         word(3n),
+        c.getStorageAt({ address: core!, slot: numberToHex(ETH_CLOCK_SLOT, { size: 32 }) }),
       ]);
       const val = <T,>(i: number) => (res[i].status === "success" ? ((res[i] as { result: unknown }).result as T) : undefined);
       // the room a purchase may spend and the climb clamp: the live pot less the reserve of the snapshot (Core.room)
@@ -145,6 +146,7 @@ export function useListings() {
         r: val<bigint>(4) ?? snap.ethPrice,
         t: Number(val<bigint>(5) ?? 0n),
         anchorTime: Number(val<bigint>(6) ?? 0n),
+        climbRestartTime: Number((BigInt(clock ?? "0x0") >> 128n) & ((1n << 64n) - 1n)),
         lastFillRate: BigInt(w0 ?? "0x0"),
         peakRate: BigInt(w3 ?? "0x0"),
         peakTime: Number((w >> 64n) & ((1n << 64n) - 1n)),
@@ -157,8 +159,9 @@ export function useListings() {
         climbPerMinBps: s.climbPerMinBps,
         recoveryClimbPerMinBps: s.recoveryClimbPerMinBps,
         recoveryGapBps: s.recoveryGapBps,
+        buyToArtistBps: s.buyToArtistBps,
         ethPot: pot,
-        pending: snap.potWithPending > pot ? snap.potWithPending - pot : 0n,
+        pending: snap.potWithPending - snap.ethPot,
       };
       const now = head!.ts;
       const room = spendRoom(val<readonly [bigint, bigint, bigint]>(7), s, now + (Date.now() - head!.at) / 1000);

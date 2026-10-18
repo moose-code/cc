@@ -62,11 +62,11 @@ export function Tween({ wei }: { wei: bigint | undefined }) {
 }
 
 
-// Pot figures for the header. `pts` is the points the pot (with pending income) buys at the rate; `per1` the rate,
-// eth per single point (ethRate is wei per 100 points).
+// Pot figures for the header. Only room above the reserve buys Credits, and the artist payment comes on top.
 export function usePotPage() {
   const { data: snap } = useSnapshot();
-  const pts = snap ? potPoints(snap.potWithPending, snap.ethRate) : undefined;
+  const bidRoom = snap ? (snap.potRoom * 10_000n) / BigInt(10_000 + snap.settings.buyToArtistBps) : undefined;
+  const pts = snap && bidRoom != null ? potPoints(bidRoom, snap.ethRate) : undefined;
   const per1 = snap ? eth(snap.ethRate / 100n, 7) : undefined;
   return { pts, per1 };
 }

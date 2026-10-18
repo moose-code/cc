@@ -359,6 +359,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.rateAtCheckpoint = rateStart_;
         s.checkpointTime = uint64(block.timestamp);
         s.lastFillTime = uint64(block.timestamp);
+        s.climbRestartTime = uint64(block.timestamp);
         s.anchor.lastFillRate = rateStart_;
         s.anchor.peakRate = rateStart_;
         s.anchor.peakTime = uint64(block.timestamp);
@@ -471,7 +472,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
                                ETH RATE
     //////////////////////////////////////////////////////////////*/
 
-    /// the eth bid rate right now, wei per 100 points: the price state climbed lazily, bounded by the ceiling and
+    /// the eth bid rate right now, wei per 100 points: the price state climbed lazily while funded, bounded by the ceiling and
     /// `rateCap`, lowered to the clamp (`ethPot` plus the share of the unbooked fee income the next `_book` adds, less
     /// the reserve). a credit of score `score` is paid `ethRate() * score / RATE_SCORE`; `bidForScore` and `bidOf` apply
     /// the scaling. the math is in `CoreLib.ethRate`
@@ -1394,8 +1395,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// restates the mode-off eth rate (wei per 100 points) as `rate`, within the rate bounds. the stored rate, the
-    /// last fill rate and the remembered peak are all `rate`, the fill clock is unchanged. the clamp and the
-    /// ceiling still bound the rate on read
+    /// last fill rate and the remembered peak are all `rate`; the actual last fill time stays and the funded ceiling
+    /// clock restarts. the clamp and the ceiling still bound the rate on read
     function setRate(uint256 rate) external onlyOwner nonReentrant {
         if (!SettingsBounds.rateInBounds(rate) || rate > s.settings.rateCap) revert BadRate();
         s.anchor.lastFillRate = rate;
@@ -1403,6 +1404,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         s.anchor.peakTime = uint64(block.timestamp);
         s.rateAtCheckpoint = rate;
         s.checkpointTime = uint64(block.timestamp);
+        s.climbRestartTime = uint64(block.timestamp);
         emit RateSet(rate);
     }
 

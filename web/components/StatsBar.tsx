@@ -5,7 +5,7 @@ import { formatUnits } from "viem";
 import { useStats } from "@/lib/data";
 import { useBalanceToken, useSnapshot } from "@/lib/live";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { BALANCE_SYMBOL, commas } from "@/lib/format";
+import { BALANCE_SYMBOL, commas, eth } from "@/lib/format";
 import { Tween } from "./EngineFeed";
 
 const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
@@ -41,7 +41,7 @@ export function StatsBar() {
       </Cell>
       <Cell ink="pot" label="pot">
         {on ? <Tween wei={snap.potWithPending} /> : "—"}
-        {on && <small>ETH</small>}
+        {on && <small>ETH · {eth(snap.potRoom)} buying room · {eth(snap.reserve)} reserved</small>}
       </Cell>
     </div>
   );

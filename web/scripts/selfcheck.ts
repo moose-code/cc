@@ -114,6 +114,7 @@ const cs: ClimbState = {
   r: 1n * E,
   t: 1000,
   anchorTime: 1000,
+  climbRestartTime: 1000,
   lastFillRate: 1n * E,
   peakRate: 1n * E,
   peakTime: 1000,
@@ -126,6 +127,7 @@ const cs: ClimbState = {
   climbPerMinBps: 100,
   recoveryClimbPerMinBps: 300,
   recoveryGapBps: 1000,
+  buyToArtistBps: 0,
   ethPot: 50n * E,
   pending: 0n,
 };
@@ -173,4 +175,13 @@ if (ev.kind === "ceiling") close(ev.rate, Math.min(100e18, 50e18, 1e18 * 1.1 * (
 // at rateCap and at the pot
 assert.equal(nextRise({ ...top, rateCap: 11n * E / 10n }, 1000 + 86_400).kind, "cap");
 assert.equal(nextRise({ ...cs, ethPot: E / 2n }, 1000).kind, "pot");
+const empty = { ...cs, ethPot: 0n, pending: 50n * E };
+assert.equal(priceAt(empty, 1000 + 6 * 3600), 1e18);
+assert.equal(nextRise(empty, 1000 + 6 * 3600).kind, "pot");
+assert.deepEqual(clearsIn(empty, 2n * E, 1000n, 1000n, 1000 + 6 * 3600), { kind: "pot" });
+const refilled = { ...cs, t: 1000 + 6 * 3600, climbRestartTime: 1000 + 6 * 3600 };
+assert.equal(priceAt(refilled, refilled.t), 1e18);
+assert.ok(priceAt(refilled, refilled.t + 60) > 1e18);
+const restartStep = nextRise({ ...refilled, r: 100n * E }, refilled.t + 5);
+assert.ok(restartStep.kind === "ceiling" && restartStep.seconds === 595);
 console.log("climb selfcheck ok");
