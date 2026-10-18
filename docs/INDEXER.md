@@ -230,7 +230,7 @@ Backfill: the engine's history starts at its deploy block, so its sources cost a
 
 ### 8.1 reorgs
 
-Ponder rolls back writes inside `reorgWindow`. Snapshot rows written by block handlers roll back the same way.
+Ponder rolls back writes inside `reorgWindow`. Snapshot rows written by block handlers roll back the same way. The snapshot gate checks the persisted row for the block; an RPC or write failure, or a same-height rollback, leaves the block eligible for retry. It does not cache the last attempted height in process memory.
 
 ### 8.2 ordering facts the handlers rely on
 
