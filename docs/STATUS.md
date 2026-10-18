@@ -4,6 +4,8 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
+Baton (2026-10-18): candidate 85dbc51 is frozen pending owner acceptance (suite, deep, e2e, rehearsal and delta review rows in section 4). Next: owner acceptance; the deploy-morning rate pull (rateStart placeholder 0.0049); `DRY_RUN=1 script/deploy.sh mainnet`; then the `DEFER_LAUNCH=1` deploy and `LAUNCH_ONLY` per docs/RUNBOOK.md.
+
 Delta audit of main `e6a7654` (2026-10-18, decision 173; record in docs/reviews/REVIEW-codex-delta-e6a7654.md): verification held (suite 751 passed, 0 failed, 7 skipped; e2e-real 35 passed, 0 failed; deep campaigns 21 and 21b, 7 suites at 64 runs of depth 200). Four fixes land outside `src/` on branch `fix/delta-audit-e6a7654`: the dev scenario closes the balance bid again (L-01), the sell page pays 0 and disables the action when value mode has no protected sale price (B-01), `useCoinLive` polls every 15 seconds until the coin has code (B-02), and `/api/listings` has a global upstream POST budget (SEC-02, burst 8, refill 4 per second, for the owner to confirm against the OpenSea plan). The freeze row stays pending.
 
 Decisions 163 and 164 are merged on main (PR 78): the artist royalty on every engine purchase (`buyToArtistBps` 250, on top, both currencies, pushed to the artist) and the flat discounted balance bid (`balanceDiscountBps` 1,000, posted, no climb, no drop, independent of the eth bid; `sharedRate()` reads value mode's shared instance). Decision 165 (PR 80, the value mode balance payout clamp) and the adopt basis royalty (PR 81) are merged after them. The implementation spec and its outcomes are docs/reviews/SPEC-royalty-balance-161.md. The audited candidate `7919099` is superseded. The release candidate is not frozen: the owner has changes incoming, and the freeze (full suite, deep invariants, rehearsal, `CANDIDATE_RUN=1`) runs once on the frozen commit.
@@ -85,11 +87,17 @@ runtime sizes at the tip (limit 24,576) after decisions 163, 164 and the review 
 
 ## 4. the freeze table
 
-`script/tools/check-freeze.sh` reads the one table below, the lines between this heading and the next heading of any level. the candidate row must equal `git rev-parse HEAD` (or an ancestor with only docs/ changed since), and when the candidate is frozen each gate row needs a commit and a result file that exists. while the candidate is not frozen the table holds the single row `candidate | pending`, and the script exits 1 with one pending line.
+`script/tools/check-freeze.sh` reads the one table below, the lines between this heading and the next heading of any level. the candidate row must equal `git rev-parse HEAD` (or an ancestor with only docs/ changed since), and when the candidate is frozen each gate row needs a commit and a result file that exists. the acceptance row holds `pending` until the owner signs off, and the script exits 1 with one pending line until then.
 
 | gate | commit | result |
 |---|---|---|
-| candidate | pending | not frozen: the owner has changes incoming. the freeze commit replaces `pending` with its SHA and adds one row each for the full suite, deep runs, rehearsal, security review and acceptance, each with the commit it covers and its result file |
+| candidate | 85dbc51 | docs/reviews/CANDIDATE-85dbc51.md |
+| suite | 85dbc51 | docs/reviews/CANDIDATE-85dbc51.md |
+| deep | 85dbc51 | docs/reviews/CANDIDATE-85dbc51.md |
+| e2e | 85dbc51 | docs/reviews/CANDIDATE-85dbc51.md |
+| rehearsal | 85dbc51 | docs/reviews/REHEARSAL-85dbc51.md |
+| review | e6a7654 | docs/reviews/REVIEW-codex-delta-e6a7654.md |
+| acceptance | pending | (owner signs off) |
 
 ### history (outside the gate)
 
