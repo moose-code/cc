@@ -104,8 +104,8 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
   // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
   // the whole snapshot. defaults to 1x (10_000 bps) when the Core does not answer
   // and the reserve (the eth the pot keeps for processing), a tolerant read that defaults to 0 for a Core without it
-  // the eth bid and price state, tolerant: in value mode they revert NoQuote while the controller's quote is unusable,
-  // which reads as no eth bid (0) with `noQuote` set, and leaves the rest of the snapshot intact
+  // The eth bid and price state degrade to the last good value while the protected quote is unusable. A failed Core
+  // read still leaves the rest of the snapshot intact.
   const [climbMultiplierRes, reserveRes, ethRateRes, ethPriceRes] = await client.multicall({
     ...mc,
     blockNumber,
@@ -122,7 +122,6 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
   const ethRate = ethRateRes.status === "success" ? (ethRateRes.result as bigint) : 0n;
   const ethPrice = ethPriceRes.status === "success" ? (ethPriceRes.result as bigint) : 0n;
   const valueModeOn = (settings as { valueModeOn?: boolean }).valueModeOn === true;
-  const noQuote = valueModeOn && (ethRateRes.status !== "success" || ethPriceRes.status !== "success");
   // ethPot plus the share of the unbooked fee income that the next Core._book adds (Core._income, _split)
   const pending = pendingIncome(coreEth, ethPot, ethToBuyback, ethRedeemBurn, payeeOn, settings.payeePpm, settings.feeToRedeemBurnBps);
   const potWithPending = ethPot + pending.toPot;
@@ -205,14 +204,14 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     perPointBuy: vBuy && vBuy[1] ? vBuy[0] : undefined,
     perPointSell: vSell && vSell[1] ? vSell[0] : undefined,
   };
+  const noQuote = valueModeOn && !value.usable;
   const num = (r: { status: string; result?: unknown }) => {
     const v = ok<bigint | number>(r);
     return v === undefined ? undefined : Number(v);
   };
   const statementSupply = ok<bigint>(supplyRes);
   return {
-    // in value mode the eth bid is the shared balance instance times the protected buy value; 0 with noQuote set while
-    // the quote is unusable (the Core reverts NoQuote)
+    // In value mode an unusable protected quote sets noQuote; the Core's eth bid can still use its last good rate.
     ethRate,
     ethPrice,
     noQuote,

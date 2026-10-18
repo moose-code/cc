@@ -15,7 +15,7 @@ export function txError(e: unknown): string {
   if (/user rejected|user denied|rejected the request/i.test(all)) return CANCELLED;
   if (/SpendCapReached|0x3e085885/i.test(all)) return "eth purchase budget exhausted, try again in the next bucket";
   if (/ReturnLocked|0x8dd81991/i.test(all)) return "the engine sold this credit recently, it returns after the return lock";
-  if (/NoQuote|0xc3186163/i.test(all)) return "the balance token price quote is unavailable, eth sales and engine sales wait for it";
+  if (/NoQuote|0xc3186163/i.test(all)) return "the balance token price quote is unavailable for this action";
   if (/V4TooLittleReceived|V4TooMuchRequested|slippage|0x8b063d73|0x12bacdd3/i.test(all)) return "price moved, try again";
   if (/TransactionDeadlinePassed|0x5bf6f916/.test(all)) return "deadline passed, try again";
   if (/insufficient funds/i.test(all)) return "not enough eth for gas";

@@ -14,8 +14,9 @@ import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { createClient, and, asc, count, desc, eq, gte, inArray, min, ne, or, sql } from "@ponder/client";
 import { getTableColumns } from "drizzle-orm";
 import { formatUnits } from "viem";
-import { engineDeployed, indexerUrl, STATEMENT_SIZE } from "./config";
+import { chain, core, engineDeployed, indexerUrl, STATEMENT_SIZE } from "./config";
 import { eth, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
+import { indexedBlockForChain } from "./indexer-health";
 import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
 import * as schema from "./indexer-schema";
 import type { AcquiredHow } from "./indexer-schema";
@@ -43,14 +44,17 @@ const subscribe = (f: () => void) => {
 /** The source of indexer reads. The server render and the first client render are "checking" (or "chain" without an indexer). */
 export const useIxMode = (): IxMode => useSyncExternalStore(subscribe, getIxMode, () => (ix ? "checking" : "chain"));
 
-/** Health of the indexer: its latest indexed block and the number of credits it holds in the pile. */
+/** Health and identity of the indexer, checked before any indexed history is shown. */
 export async function fetchIxHealth() {
-  const [status, held] = await Promise.all([
+  const [status, held, identity] = await Promise.all([
     ix!.getStatus(),
     ix!.db.select({ n: count() }).from(credit).where(eq(credit.state, "held")),
+    ix!.db.select({ core: engine.core, coin: engine.coin, deployBlock: engine.deployBlock })
+      .from(engine).where(eq(engine.id, core!.toLowerCase() as `0x${string}`)).limit(1),
   ]);
-  const block = Math.max(0, ...Object.values(status).map((c) => c.block.number));
-  return { block, held: Number(held[0]?.n ?? 0) };
+  const block = indexedBlockForChain(status, chain.id);
+  if (block === undefined) throw new Error("indexer chain does not match website chain");
+  return { block, held: Number(held[0]?.n ?? 0), identity: identity[0] };
 }
 
 function useIx<T>(key: unknown[], fn: (db: Db) => Promise<T>, opts: { enabled?: boolean } = {}) {

@@ -33,6 +33,9 @@ export type ActivityKind =
 
 export const engine = pgTable("engine", {
   id: hex("id").primaryKey(),
+  core: hex("core").notNull(),
+  coin: hex("coin"),
+  deployBlock: big("deploy_block").notNull(),
   balanceToken: hex("balance_token"),
   artist: hex("artist"),
   payee: hex("payee"),
