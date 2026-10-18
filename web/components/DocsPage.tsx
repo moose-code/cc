@@ -28,12 +28,12 @@ export function DocsPage({ page }: { page: DocPage }) {
 
         {page.slug === "" && (
           <div className="docs-quick-grid">
-            {docPages.filter((item) => item.group === "Contract API").map((item, i) => (
+            {docPages.filter((item) => item.group === "Contracts").map((item, i) => (
               <Link href={docHref(item)} key={item.slug} className="docs-quick-card">
                 <span className={`docs-quick-icon docs-quick-icon-${i}`}>{["C", "V", "B", "A"][i]}</span>
                 <strong>{item.title}</strong>
                 <span>{item.summary}</span>
-                <b>Explore API →</b>
+                <b>View reference →</b>
               </Link>
             ))}
           </div>
@@ -74,7 +74,7 @@ export function DocsPage({ page }: { page: DocPage }) {
         {catalog && (
           <section className="docs-section docs-catalog" id="full-interface">
             <div className="docs-section-head"><span className="docs-section-rule" /><h2>Complete interface</h2></div>
-            <p className="docs-section-intro">Every function, event, and custom error declared by the generated interfaces at the source revision above. The entries above explain the main integration paths.</p>
+            <p className="docs-section-intro">Functions, events, and errors from the generated interfaces.</p>
             {catalog.map((source, fileIndex) => (
               <div className="docs-catalog-source" key={source.file}>
                 <h3>{source.file}</h3>
@@ -106,7 +106,6 @@ export function DocsPage({ page }: { page: DocPage }) {
         <p>On this page</p>
         {page.sections.map((section) => <a key={section.id} href={`#${section.id}`}>{section.title}</a>)}
         {catalog && <a href="#full-interface">Complete interface</a>}
-        <div className="docs-toc-note">Reference follows the generated interfaces on main at <code>a6099d2</code>. Check live settings before sending a transaction.</div>
       </aside>
     </div>
   );

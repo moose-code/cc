@@ -18,7 +18,7 @@ export type DocSection = {
 
 export type DocPage = {
   slug: string;
-  group: "Start here" | "Guides" | "Contract API";
+  group: "Start here" | "Guides" | "Contracts";
   title: string;
   eyebrow: string;
   summary: string;
@@ -30,39 +30,28 @@ export const docPages: DocPage[] = [
   {
     slug: "",
     group: "Start here",
-    title: "The contracts are the API",
-    eyebrow: "CC / documentation",
-    summary: "Read the engine as a set of onchain interfaces. Start with a user journey, then open the contract that owns each step.",
+    title: "Overview",
+    eyebrow: "Documentation",
+    summary: "Guides and contract reference for the CC engine.",
     sections: [
       {
-        id: "map",
-        title: "System map",
-        intro: "Four surfaces matter to integrators. The Core holds the state and assets, the Controller prices sales, the balance module holds the balance token, and listing adapters quote external venues.",
-        points: [
-          "Core: bids for Credits, composes Statements, books fees, and controls custody and settings.",
-          "ControllerV1: quotes Statement and Credit sales, and maintains the balance pool reference used in value mode.",
-          "StatementBalanceModule: redeems Statements into the balance token, holds that token, and pays Core-directed sellers.",
-          "Listing adapters: turn venue listings into a target, value, calldata, and offerer for Core.buyListing.",
-        ],
-      },
-      {
         id: "journeys",
-        title: "Choose a path",
+        title: "Common tasks",
         points: [
-          "Read bids and prices: use Core.bidOf or Core.balanceBidOf for a Credit, and ControllerV1.priceOf for a held Statement.",
-          "Sell a Credit: approve Credits to the Core, then call sellForEth or sellForBalance with a minimum output.",
-          "Buy from the engine: call ControllerV1.buy for a Statement, or buyCredit / buyCredits while the Credit sale is on.",
-          "Observe activity: index Core and Controller events; a Controller Bought event and Core StatementSoldTo event describe one Statement sale.",
+          "Read a Credit bid with Core.bidOf or Core.balanceBidOf. Read a Statement ask with ControllerV1.priceOf.",
+          "Sell Credits through Core.sellForEth or Core.sellForBalance after approving the Core.",
+          "Buy a Statement with ControllerV1.buy. Buy Credits with buyCredit or buyCredits.",
+          "Track activity through contract events. A Statement sale emits ControllerV1.Bought and Core.StatementSoldTo.",
         ],
       },
       {
         id: "before-you-call",
-        title: "Before you call",
+        title: "Before a transaction",
         points: [
-          "Read the live contract address and switches. The balance module and balance bid may be unset or off.",
-          "Treat quotes as time-sensitive. Bid rates, sale curves, pool references, spend buckets, and custody can change before a transaction lands.",
-          "Simulate a transaction and set a minimum output where the interface offers one. Owner settings take effect immediately.",
-          "Amounts are raw token units. Credit scores use 10,000 units per point; the Core bid rate is quoted per 100 points.",
+          "Read the deployed addresses and active switches. The balance module and balance bid can be unset or off.",
+          "Quotes change with time, settings, and state. Simulate the call before sending it.",
+          "Use a minimum output where available. Owner settings take effect immediately.",
+          "Amounts use raw token units. Credit scores use 10,000 units per point. The ETH bid rate is per 100 points.",
         ],
       },
     ],
@@ -108,7 +97,7 @@ export const docPages: DocPage[] = [
     group: "Guides",
     title: "Call the engine",
     eyebrow: "Guide / transactions",
-    summary: "Approval, quote, simulation, and a bounded call are the normal path for an integrator.",
+    summary: "Approve assets, read quotes, simulate calls, and set output limits.",
     sections: [
       {
         id: "sell",
@@ -147,7 +136,7 @@ export const docPages: DocPage[] = [
     group: "Guides",
     title: "Lifecycle and trust",
     eyebrow: "Guide / operating model",
-    summary: "The same interface behaves differently before the balance module is live, after locks, and after migration.",
+    summary: "Contract behavior during launch, balance activation, locks, and migration.",
     sections: [
       {
         id: "phases",
@@ -180,7 +169,7 @@ export const docPages: DocPage[] = [
   },
   {
     slug: "contracts/core",
-    group: "Contract API",
+    group: "Contracts",
     title: "Core",
     eyebrow: "Contract / custody + execution",
     summary: "The Core holds ETH and Credits, owns the bid and pile, composes Statements, and is the authority boundary for settings and modules.",
@@ -245,7 +234,7 @@ export const docPages: DocPage[] = [
   },
   {
     slug: "contracts/controller",
-    group: "Contract API",
+    group: "Contracts",
     title: "ControllerV1",
     eyebrow: "Contract / sale pricing",
     summary: "The Controller quotes and executes the engine's Statement and Credit sales. In value mode it protects quotes with a rate-limited balance pool reference.",
@@ -297,7 +286,7 @@ export const docPages: DocPage[] = [
   },
   {
     slug: "contracts/balance-module",
-    group: "Contract API",
+    group: "Contracts",
     title: "StatementBalanceModule",
     eyebrow: "Contract / balance custody",
     summary: "The module redeems Statements through the balance token, holds proceeds, and pays balance bids on Core instruction.",
@@ -336,7 +325,7 @@ export const docPages: DocPage[] = [
   },
   {
     slug: "contracts/adapters",
-    group: "Contract API",
+    group: "Contracts",
     title: "Listing adapters",
     eyebrow: "Contract / venue boundary",
     summary: "An adapter prices one venue listing and returns the exact call the Core may execute. The Core approves adapters one by one.",
@@ -376,7 +365,7 @@ export const docPages: DocPage[] = [
   },
 ];
 
-export const docGroups = ["Start here", "Guides", "Contract API"] as const;
+export const docGroups = ["Start here", "Guides", "Contracts"] as const;
 
 export function docHref(page: DocPage) {
   return page.slug ? `/docs/${page.slug}` : "/docs";

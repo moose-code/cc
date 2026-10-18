@@ -9,7 +9,7 @@ for (const page of docPages) {
   slugs.add(page.slug);
 
   const anchors = new Set();
-  const contractPage = page.group === "Contract API";
+  const contractPage = page.group === "Contracts";
   const source = page.source && readFileSync(new URL(`../../${page.source}`, import.meta.url), "utf8");
   if (contractPage) assert(source, `${page.title} needs a source interface`);
 

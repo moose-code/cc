@@ -71,7 +71,6 @@ export function DocsNav() {
           <Link href="/docs" className="docs-sidebar-brand" onClick={() => setOpen(false)}>
             <span className="docs-brand-mark" aria-hidden>▦</span>
             <span>CC docs</span>
-            <span className="docs-sidebar-version">v1</span>
           </Link>
           <div className="docs-search-wrap">
             <span className="docs-search-icon" aria-hidden>⌕</span>
@@ -113,7 +112,7 @@ export function DocsNav() {
                     {active && page.sections.length > 0 && (
                       <div className="docs-nav-subsections">
                         {page.sections.map((section) => <a key={section.id} href={`#${section.id}`} onClick={() => setOpen(false)}>{section.title}</a>)}
-                        {page.group === "Contract API" && <a href="#full-interface" onClick={() => setOpen(false)}>Complete interface</a>}
+                        {page.group === "Contracts" && <a href="#full-interface" onClick={() => setOpen(false)}>Complete interface</a>}
                       </div>
                     )}
                   </div>
@@ -122,7 +121,6 @@ export function DocsNav() {
             </div>
           ))}
         </nav>
-        <div className="docs-sidebar-bottom">Contract reference · main</div>
       </aside>
     </>
   );
