@@ -1040,21 +1040,23 @@ contract ValueModeTest is ValueBase {
         assertLt(ethBid, s.rateCap, "well under the cap, so a rollback cannot reopen the eth bid at the cap");
     }
 
-    // promise: SPEC 11 a pause in value mode: the controller sales revert Paused while the bid keeps filling, so the
-    // owner can halt buys without freezing the engine's purchases
+    // promise: the owner pause stops value-mode direct fills and the same credit can sell after resume
     function test_pauseInValueMode() public {
         _fundPot(20 ether);
         _valueOn();
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(owner);
         core.setPaused(true);
-        // the bid still fills while paused: the pause gates the controller sales, not sellForEth
         uint256 before = seller.balance;
         vm.prank(seller);
+        vm.expectRevert(ICore.Paused.selector);
         core.sellForEth(ids);
-        assertGt(seller.balance, before, "the eth bid fills while paused in value mode");
+        assertEq(seller.balance, before, "the paused bid does not pay");
         vm.prank(owner);
         core.setPaused(false);
+        vm.prank(seller);
+        core.sellForEth(ids);
+        assertGt(seller.balance, before, "the direct bid resumes");
     }
 }
 
