@@ -115,8 +115,6 @@ export interface Intended {
   // the payment the Core sends at `gas`, at the worst base fee
   payment: bigint;
   cost: bigint;
-  // logged only (redeemStatement while no balance module is set)
-  dryOnly?: boolean;
   key: string;
   note?: { [k: string]: unknown };
 }
@@ -362,19 +360,17 @@ export function decide(
     }
   }
 
-  // 6. redeemStatement: reverts NoBalanceModule until a module is set, so it is logged only until then
+  // 6. redeemStatement: reverts NoBalanceModule until a module is set, so it is skipped (one log per tick, no simulation) until then
   if (on("redeemStatement") && s.atFloor.length > 0) {
     const pol = p.doors.redeemStatement;
-    const noModule = /^0x0{40}$/i.test(s.balanceModule);
-    if (!noModule && !s.settings.redeemOn) skips.push({ door: "redeemStatement", reason: "RedeemOff" });
-    else if (noModule || ceiling("redeemStatement")) {
+    if (/^0x0{40}$/i.test(s.balanceModule)) skips.push({ door: "redeemStatement", reason: "no balance module bound" });
+    else if (!s.settings.redeemOn) skips.push({ door: "redeemStatement", reason: "RedeemOff" });
+    else if (ceiling("redeemStatement")) {
       for (const sid of s.atFloor) {
         const payment = callerPayment(s, GAS_GUESS.redeemStatement, REDEEM_GAS, worstBaseFee(gas, pol));
         const cost = ownCost(GAS_GUESS.redeemStatement, gas, pol);
         const key = `redeem:${sid}`;
-        if (noModule) {
-          calls.push({ door: "redeemStatement", functionName: "redeemStatement", args: [sid], gas: GAS_GUESS.redeemStatement, payment, cost, key, dryOnly: true, note: { sid, why: "NoBalanceModule: no module set" } });
-        } else if (!profitable(payment, cost, p.margin)) {
+        if (!profitable(payment, cost, p.margin)) {
           skips.push({ door: "redeemStatement", key, reason: `unprofitable: payment ${payment} under cost ${cost} plus margin` });
         } else {
           calls.push({ door: "redeemStatement", functionName: "redeemStatement", args: [sid], gas: GAS_GUESS.redeemStatement, payment, cost, key, note: { sid } });
