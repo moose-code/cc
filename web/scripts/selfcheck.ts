@@ -108,6 +108,7 @@ assert.deepEqual(shortlist([...cheapLow, L(9, 500n, "opensea")], 100n, 1000n, ma
 
 // ---- eth bid forecast (lib/climb.ts, mirror of CoreLib._climb / _recover) ----
 import { bidAt, ceilingAt, clearsIn, nextRise, priceAt, rateAt, type ClimbState } from "../lib/climb.ts";
+import { pendingIncome } from "../../packages/engine/src/snapshot.ts";
 
 const E = 10n ** 18n;
 const cs: ClimbState = {
@@ -179,6 +180,12 @@ const empty = { ...cs, ethPot: 0n, pending: 50n * E };
 assert.equal(priceAt(empty, 1000 + 6 * 3600), 1e18);
 assert.equal(nextRise(empty, 1000 + 6 * 3600).kind, "pot");
 assert.deepEqual(clearsIn(empty, 2n * E, 1000n, 1000n, 1000 + 6 * 3600), { kind: "pot" });
+// promise: booking fee income changes its accounting bucket once, not the snapshot buying room
+const beforeBook = pendingIncome(110n, 100n, 0n, 0n, false, 0, 0).toPot;
+const afterBook = pendingIncome(110n, 110n, 0n, 0n, false, 0, 0).toPot;
+assert.equal(beforeBook, 10n);
+assert.equal(afterBook, 0n);
+assert.equal(100n + beforeBook - 100n, 110n + afterBook - 100n);
 // One wei below the funding threshold still pauses, even when Number would round the amounts together.
 const oneWeiShort = { ...cs, r: 14_700_000_000_000_000n, lastFillRate: 14_700_000_000_000_000n, peakRate: 14_700_000_000_000_000n, ethPot: 14_699_999_999_999_999n };
 close(ceilingAt(oneWeiShort, 1000 + 6 * 3600), Number(oneWeiShort.lastFillRate) * 1.1);

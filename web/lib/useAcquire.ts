@@ -2,17 +2,17 @@
 
 // The listing the header acquire button buys (owner decision 134). Candidates come from the CreditStrategy
 // (indexer table strategy_listing; in chain mode a browser scan of its two events) and from the OpenSea route. They
-// are shortlisted by an estimated bid, read live (price, owner, Core.bidOf, pot) and filtered by lib/acquire.ts.
+// are shortlisted by an estimated bid, read at one snapshot block (price, owner, Core.bidOf, buying room) and filtered by lib/acquire.ts.
 // One query per chain head; the route caches OpenSea for 20 s on the server.
 
 import { useEffect, useState } from "react";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
-import { creditScores, MULTICALL3, readSnapshot, useHead, type Snapshot } from "./live";
+import { creditScores, MULTICALL3, readSnapshot, useHead } from "./live";
 import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
 import { useTx } from "./tx";
 import { clearing, fitsBucket, shortlist, type Listing, type Priced, type SpendRoom } from "./acquire";
@@ -164,7 +164,6 @@ export interface Diag {
 export function useAcquireCandidate() {
   const { address } = useAccount();
   const client = usePublicClient();
-  const qc = useQueryClient();
   const mode = useIxMode();
   const { data: head } = useHead();
   const on = engineDeployed && Boolean(client) && Boolean(strategyAdapter) && head != null && mode !== "checking";
@@ -178,7 +177,7 @@ export function useAcquireCandidate() {
     queryFn: async () => {
       try {
       const c = client!;
-      const snap = await qc.ensureQueryData<Snapshot>({ queryKey: ["snapshot", core], queryFn: () => readSnapshot(c, core!) });
+      const snap = await readSnapshot(c, core!);
 
       // 1. listings and known scores
       const { listings, known } = await gatherListings(c, head!.n);
@@ -194,9 +193,9 @@ export function useAcquireCandidate() {
       const cc = { address: core!, abi: coreAbi } as const;
       const res = await c.multicall({
         ...mc,
+        blockNumber: snap.blockNumber,
         allowFailure: true,
         contracts: [
-          { ...cc, functionName: "ethPot" },
           { ...cc, functionName: "retired" },
           { ...cc, functionName: "allowedAdapter", args: [strategyAdapter!] },
           { ...cc, functionName: "allowedAdapter", args: [seaportAdapter ?? strategyAdapter!] },
@@ -209,21 +208,19 @@ export function useAcquireCandidate() {
         ] as any, // mixed contracts; results are cast by position below
       });
       const val = <T,>(i: number) => (res[i].status === "success" ? ((res[i] as { result: unknown }).result as T) : undefined);
-      // The purchase books pending fees first. Include their pot share in executable buying room.
-      const potLive = val<bigint>(0) ?? 0n;
-      const potAfterBook = potLive + (snap.potWithPending - snap.ethPot);
-      const pot = potAfterBook > snap.reserve ? potAfterBook - snap.reserve : 0n;
-      const retired = val<boolean>(1) ?? true;
-      const allowed: Record<Listing["source"], boolean> = { strategy: val<boolean>(2) ?? false, opensea: Boolean(seaportAdapter) && (val<boolean>(3) ?? false) };
+      // Snapshot buying room includes pending income once; the bid and listing reads use its block.
+      const pot = snap.potRoom;
+      const retired = val<boolean>(0) ?? true;
+      const allowed: Record<Listing["source"], boolean> = { strategy: val<boolean>(1) ?? false, opensea: Boolean(seaportAdapter) && (val<boolean>(2) ?? false) };
 
-      const room = spendRoom(val<readonly [bigint, bigint, bigint]>(4), snap.settings, head!.ts + (Date.now() - head!.at) / 1000);
+      const room = spendRoom(val<readonly [bigint, bigint, bigint]>(3), snap.settings, head!.ts + (Date.now() - head!.at) / 1000);
       const fee = snap.settings.keeperFee;
 
       const priced: Priced[] = [];
       picked.forEach((l, i) => {
-        const bid = val<bigint>(5 + 3 * i);
-        const owner = val<Address>(6 + 3 * i);
-        const live = val<bigint>(7 + 3 * i);
+        const bid = val<bigint>(4 + 3 * i);
+        const owner = val<Address>(5 + 3 * i);
+        const live = val<bigint>(6 + 3 * i);
         if (bid == null || owner == null || !allowed[l.source]) return;
         if (l.source === "strategy") {
           if (!live || owner.toLowerCase() !== strategy.toLowerCase()) return;
