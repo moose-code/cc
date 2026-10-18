@@ -4,6 +4,8 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
+Decision 173 (2026-10-18) makes the deferred interval a whole-product readiness gate. The next launch work is to deploy and verify the indexer, public website and keeper against the actual deferred mainnet Core, then rehearse their coin-dependent paths on a chain-id-1 fork of that state. No production-service evidence is recorded yet; `LAUNCH_ONLY` remains a no-go until the dated evidence in docs/RUNBOOK.md's deferred-launch checklist is complete and the owner authorizes the mainnet coin transaction. This planning change does not freeze or deploy the candidate.
+
 Decisions 163 and 164 are merged on main (PR 78): the artist royalty on every engine purchase (`buyToArtistBps` 250, on top, both currencies, pushed to the artist) and the flat discounted balance bid (`balanceDiscountBps` 1,000, posted, no climb, no drop, independent of the eth bid; `sharedRate()` reads value mode's shared instance). Decision 165 (PR 80, the value mode balance payout clamp) and the adopt basis royalty (PR 81) are merged after them. The implementation spec and its outcomes are docs/reviews/SPEC-royalty-balance-161.md. The audited candidate `7919099` is superseded. The release candidate is not frozen: the owner has changes incoming, and the freeze (full suite, deep invariants, rehearsal, `CANDIDATE_RUN=1`) runs once on the frozen commit.
 
 PR 70 proposes a 100 bps executable tolerance default for phase-two value pricing (decision 162), with a 200 bps minimum credit spread and the existing independent 4.5 percent pool-key seed guard. The 100 bps tolerance needs 203 bps spread under the rounded loop-closure rule; the launch spread remains 1,000. The owner can tune tolerance with `setQuote`. ControllerV1 is 17,211 bytes, with its build hash re-pinned. The branch is rebased on main `6c7f39c` and reopens the release freeze. A held pool move can still exploit the band and move the reference by up to 2 percent every 600 seconds.
@@ -70,6 +72,7 @@ runtime sizes at the tip (limit 24,576) after decisions 163, 164 and the review 
 
 ## 3. open items
 
+- deferred launch service gate (decision 173): after `DEFER_LAUNCH`, run and record the indexer, public website, keeper and alert checks on mainnet; use a chain-id-1 fork of that state for the integrated coin launch and service transition. Hosting, endpoints, wallet funding and alert delivery are unverified, so do not mark the coin launch ready from contract postflight alone. See docs/RUNBOOK.md, deferred launch.
 - the launch config's `image` and `description` are empty owner inputs; the preflight metadata row fails until they are filled with the final content.
 - `coin.lockRecipients()` and `lockSuccessor()`: later owner decisions (RUNBOOK section 4, the lock table). `coin.lockAllowlist()`: the owner's.
 - the owner keeper: built in `keeper/` to ship before launch (decisions 136 to 139, docs/RUNBOOK.md section 8); its unit tests, the per door end to end on the local stack and the Seaport sweep on a chain id 1 fork pass. hosting, the alert webhook and the keeper wallet are the owner's to set up. compose and redeem pay their caller at launch (decision 138), a launch config change the preflight sign off and the freeze re-run must cover.
