@@ -18,11 +18,8 @@ import {OrderComponents} from "./utils/SeaportTypes.sol";
 /// Seaport orders, holders sell at the bid, and a keeper address evaluates the ported `keeper/src/decide.ts` gates at
 /// every block and sends exactly those calls.
 ///
-/// the launch-stalling defect decision 147 fixes: on a fresh deploy the stored climb was clamped by the booked pot,
-/// which stays 0 while fee income arrives unbooked, so the eth bid never rose until a door booked.
-/// `test_bidClimbsFromUnbookedIncomeWithNoSellersOrListings` isolates it: zero sellers and zero under-bid listings for
-/// the first 30 minutes, the bid must still climb from the opening rate. it fails without the fix (the bid is flat) and
-/// passes with it.
+/// The funded climb waits for fee income to be booked. Unbooked hook income can support the opening bid, but cannot
+/// start a climb clock whose fee arrival time the Core does not know.
 abstract contract LaunchDayBase is SeaportBase {
     using FixedPointMathLib for uint256;
 
@@ -346,14 +343,13 @@ abstract contract LaunchDayBase is SeaportBase {
                              the checkpoints
     //////////////////////////////////////////////////////////////*/
 
-    /// @dev at a checkpoint the eth bid climbs strictly when no fill happened since the last one, and holds or climbs
-    /// across a fill. the eth rate never exceeds the pot plus the pending pot share (the decision 147 clamp), and the
-    /// pots never exceed the Core balance
-    function _checkpoint(string memory tag) internal {
+    /// @dev after a known funded interval the eth bid climbs strictly when no fill happened since the last checkpoint.
+    /// the read never exceeds the pot plus the pending pot share, and the pots never exceed the Core balance
+    function _checkpoint(string memory tag, bool fundedInterval) internal {
         uint256 r = core.ethRate();
         // the promise is a strict climb only across a fill-free interval; a fill drops the rate, so across one only the
         // clamp and solvency are asserted
-        if (!fillSinceCheck && prevCheckRate < core.settings().rateCap) {
+        if (fundedInterval && !fillSinceCheck && prevCheckRate < core.settings().rateCap) {
             assertGt(r, prevCheckRate, string.concat(tag, ": the bid climbs while nothing fills"));
         }
         Settings memory s = core.settings();
@@ -375,9 +371,8 @@ contract LaunchDayTest is LaunchDayBase {
                     1. the launch day, keeper only
     //////////////////////////////////////////////////////////////*/
 
-    // promise: SPEC 1 decision 147 launch day: the eth bid climbs from unbooked fee income with the keeper the only
-    // caller; under-bid listings fill within the delay, organic sells pay the bid, the payee latches at the first
-    // post-window book, and ethRate() is the rate the next fill pays
+    // promise: the keeper-only launch day waits for booked funding to climb; under-bid listings fill within the delay,
+    // organic sells pay the bid, the payee latches at the first post-window book, and the rate equals the next fill
     function test_launchDayKeeperIsTheOnlyEngineCaller() public {
         assertEq(core.ethPot(), 0, "nothing booked at launch");
         assertEq(address(core).balance, 0, "the fresh engine holds no eth");
@@ -386,8 +381,7 @@ contract LaunchDayTest is LaunchDayBase {
         assertEq(core.settings().reserveWei, 0.1 ether, "the launch reserve is active");
         assertTrue(ctl.creditSaleOn(), "the launch credit sale is on");
         statementsBefore = STATEMENTS.supply();
-        // the opening rate is the reference the live bid climbs from once income exists; the 5 min checkpoint must clear
-        // it, which without the fix it never does
+        // the opening rate is the reference the live bid climbs from once income is booked
         prevCheckRate = LAUNCH_RATE;
 
         // the strategy listings sit on the book from the start: one reachable as the rate climbs (35377, 0.036 eth, a
@@ -400,10 +394,10 @@ contract LaunchDayTest is LaunchDayBase {
         _advance(launchTime + 60, 12, false);
         _burst();
 
-        // t = 5 min: no door has fired, so nothing booked. without the fix the bid is pinned to the opening rate; with
-        // it the bid has climbed on the pending pot clamp
+        // t = 5 min: no door has booked the fee income, so the opening bid is payable but has not climbed
         _advance(launchTime + 300, 12, false);
-        _checkpoint("5 min");
+        assertEq(core.ethRate(), LAUNCH_RATE, "unbooked income did not start the funded clock");
+        _solvent();
 
         // place the Seaport orders just after 5 min: two under the opening bid (must fill), one near the cap (sits above
         // the bid). they are sweepable at once; the keeper buys them LISTING_DELAY later
@@ -414,7 +408,7 @@ contract LaunchDayTest is LaunchDayBase {
         // to 30 min, 12 s blocks: the keeper sweeps the two under-bid orders near 8 min, then books to latch the payee
         // share at the first block past the sniper window
         _advance(launchTime + 1800, 12, true);
-        _checkpoint("30 min");
+        _checkpoint("30 min", false); // earlier listing fills break a strict between-checkpoint climb comparison
         assertTrue(payeeLatchedByBook, "the payee share latched on the keeper's book, not an organic fill");
         Settings memory s = core.settings();
         assertGe(payeeLatchTime, launchedAt + s.sniperSeconds, "the latch waited for the sniper window");
@@ -427,17 +421,17 @@ contract LaunchDayTest is LaunchDayBase {
         (uint256 q2, uint256 p2, uint256 f2) = _organicSell(sell2h);
         assertEq(p2, q2, "the 2 h organic sell paid the quoted bid");
         assertLe(f2, q2, "the fill event's post-drop rate is at or below the paid rate");
-        _checkpoint("2 h");
+        _checkpoint("2 h", true);
 
         // to 6 h, 60 s blocks: the climb clears 35377's price along the way and the keeper buys it; a second holder sells
         _advance(launchTime + 21600, 60, true);
         (uint256 q6, uint256 p6,) = _organicSell(sell6h);
         assertEq(p6, q6, "the 6 h organic sell paid the quoted bid");
-        _checkpoint("6 h");
+        _checkpoint("6 h", true);
 
         // to 24 h, 5 min blocks: nothing new lists or sells, the keeper is idle, the bid rides the idle loosening up
         _advance(launchTime + 86400, 300, true);
-        _checkpoint("24 h");
+        _checkpoint("24 h", true);
         assertEq(hourSamples, 24, "every launch hour has a keeper-driven state sample");
         for (uint256 h = 1; h <= 24; ++h) {
             emit log_named_uint("launch hour", h);
@@ -480,10 +474,9 @@ contract LaunchDayTest is LaunchDayBase {
           2. the climb from unbooked income, the main failure
     //////////////////////////////////////////////////////////////*/
 
-    // promise: SPEC 1 decision 147: with no seller and no under-bid listing for the first 30 minutes the eth bid still
-    // climbs from the opening rate, because the climb's pot clamp counts the unbooked fee income. this fails without the
-    // fix, where the clamp is the booked pot (0) and the bid is pinned to the opening rate until a door books
-    function test_bidClimbsFromUnbookedIncomeWithNoSellersOrListings() public {
+    // promise: unbooked fee income makes the opening bid payable without starting the climb clock; the first keeper
+    // book starts that clock, and a funded interval with no fill raises the bid
+    function test_unbookedIncomeWaitsForBookBeforeBidClimbs() public {
         assertEq(core.ethPot(), 0, "nothing booked at launch");
         assertEq(address(core).balance, 0, "the fresh engine holds no eth");
         assertEq(core.ethRate(), 0, "an empty pot clamps the live bid to 0 until income arrives");
@@ -496,31 +489,34 @@ contract LaunchDayTest is LaunchDayBase {
         assertGt(_pending(), 0.1 ether, "the hook pushed unbooked fee income");
         assertEq(core.ethPot(), 0, "still nothing booked");
 
-        // the first 30 minutes, 12 s blocks, no seller and no listing: the keeper has no door to fire, nothing books.
-        // with the fix the climb's pot clamp counts the pending income, so the bid rises above the opening rate at each
-        // sample; without it the clamp is the booked pot (0), the stored price cannot climb, and the bid is pinned to
-        // the opening rate, so the first assertGt fails
+        // before the sniper window ends, no seller or listing opens a door and the keeper has not booked the fees
         _advance(launchTime + 300, 12, false);
         uint256 r5 = core.ethRate();
-        assertGt(r5, LAUNCH_RATE, "5 min: the bid climbed above the opening rate on the unbooked income");
+        assertEq(r5, LAUNCH_RATE, "5 min: unbooked fees do not earn climb time");
 
         _advance(launchTime + 900, 12, false);
         uint256 r15 = core.ethRate();
-        assertGt(r15, r5, "15 min: the bid kept climbing, still nothing booked");
+        assertEq(r15, r5, "15 min: the funded clock has not started");
 
         _advance(launchTime + 1740, 12, false);
         uint256 r29 = core.ethRate();
-        assertGt(r29, r15, "29 min: the bid kept climbing before any book");
+        assertEq(r29, r15, "29 min: pending income still earns no climb");
 
-        // the whole climb happened with an empty booked pot: the defect is the clamp to this pot
         assertEq(core.ethPot(), 0, "no door booked in the first 30 minutes");
         assertLe(r29, core.ethPot() + _pendingPot(core.settings()), "the climb stayed inside the pending pot clamp");
+        _advance(launchTime + 1800, 12, false);
+        assertGt(core.ethPot(), 0, "the keeper booked income at the sniper-window end");
+        assertEq(core.ethRate(), r29, "booking did not credit the preceding empty time");
+        _advance(launchTime + 2100, 12, false);
+        assertGt(core.ethRate(), r29, "the bid climbed over the funded interval");
     }
 
     // promise: a real Seaport ask exactly at the capped bid is legal but supplies no gap to pay the keeper, so the
     // keeper's profit gate leaves it idle even after the listing delay
     function test_equalAskAtCappedBidRemainsIdleForTheKeeper() public {
         _buyCoin(funder, 3 ether);
+        vm.prank(keeper);
+        core.book();
         vm.warp(launchTime + 24 hours);
         uint256 bid = core.ethRate();
         assertEq(bid, core.settings().rateCap, "the bid has reached its hard cap");

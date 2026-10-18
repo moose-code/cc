@@ -170,6 +170,7 @@ abstract contract HandlerOwner is HandlerBase {
         uint256 reserve;
         uint256 rate;
         uint256 price;
+        uint256 stored;
         uint256 xBal;
         address xToken;
     }
@@ -181,6 +182,7 @@ abstract contract HandlerOwner is HandlerBase {
         p.reserve = core.ethRedeemBurn();
         p.rate = core.ethRate();
         p.price = _priceNow(core.settings());
+        p.stored = core.rateAtCheckpoint();
         p.xBal = _xBal(address(core));
         p.xToken = core.balanceToken();
     }
@@ -198,9 +200,8 @@ abstract contract HandlerOwner is HandlerBase {
     }
 
     /// the owner changes the settings to random valid ones, effective at once. nothing may revert. afterwards the
-    /// settings are what was set, the stored eth rate is exactly what it was (the call checkpoints it, it never jumps),
-    /// and the pots and balances
-    /// did not move
+    /// settings are what was set; the call checkpoints accrued ETH growth while open and preserves the stored rate
+    /// while paused. The pots and balances do not move.
     /// the owner sets exactly `ns` and the ghost follows. not in the fuzz selector list: the smoke tests use it
     function setSettingsExact(Settings memory ns) external {
         vm.prank(owner);
@@ -246,13 +247,14 @@ abstract contract HandlerOwner is HandlerBase {
 
     function _afterSettings(Settings memory ns, OPre memory p) internal {
         _opost(p, "setSettings");
-        // invariant 6 across a settings call: the call checkpoints under the old settings, so it stores the price state it
-        // found. the read under the new settings is that price state, bounded by the new ceiling and rate cap and, while
-        // funded, lowered to the new clamp
+        // Outside an owner pause the call checkpoints under the old settings. During a pause the stored rate remains
+        // frozen. The new settings still bound the read through the ceiling, rate cap and live clamp.
         {
             uint256 stored = core.rateAtCheckpoint();
             uint256 want = BidModel.read(ns, _room(), _priceNow(ns));
-            if (stored != p.price) _flag(V_RATE_BOUND, "a settings call moved the stored eth rate");
+            if (stored != (core.paused() ? p.stored : p.price)) {
+                _flag(V_RATE_BOUND, "a settings call moved the stored eth rate");
+            }
             if (core.ethRate() != want) _flag(V_RATE_BOUND, "a settings call moved the eth rate");
         }
     }
