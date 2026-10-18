@@ -2,9 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const sources = {
-  "contracts/core": ["src/interfaces/ICore.sol"],
-  "contracts/controller": ["src/interfaces/IControllerV1.sol"],
-  "contracts/balance-module": ["src/interfaces/IStatementBalanceModule.sol"],
   "contracts/credit-score-lens": [{ file: "src/interfaces/ICreditScoreLens.sol", readFrom: "web/docs-sources/ICreditScoreLens.sol" }],
   "contracts/adapters": [
     "src/interfaces/IListingAdapter.sol",

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { contractCatalog } from "../lib/docs-catalog.ts";
 import { docPages, entryId } from "../lib/docs-content.ts";
 
 const slugs = new Set();
@@ -41,4 +42,6 @@ for (const page of docPages) {
 }
 
 assert(docPages.some((page) => page.slug === ""), "docs landing page missing");
+assert(!docPages.some((page) => page.slug === "contracts/balance-module"), "deferred balance module page must stay unpublished");
+assert(!Object.hasOwn(contractCatalog, "contracts/balance-module"), "deferred balance module catalog must stay unpublished");
 console.log(`docs: ${docPages.length} routes and contract reference names verified`);

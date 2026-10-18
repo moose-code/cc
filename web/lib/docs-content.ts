@@ -42,7 +42,7 @@ export const docPages: DocPage[] = [
         title: "Common tasks",
         points: [
           "Credits: read bids and scores, buy or sell Credits, swap a pile Credit, and sweep listings.",
-          "Statements: read asks and scores, compose, buy, restyle, and redeem held Statements.",
+          "Statements: read asks and scores, compose, buy, and restyle held Statements.",
           "Track activity through contract events. A Statement sale emits ControllerV1.Bought and Core.StatementSoldTo.",
         ],
       },
@@ -50,7 +50,7 @@ export const docPages: DocPage[] = [
         id: "before-you-call",
         title: "Before a transaction",
         points: [
-          "Read the deployed addresses and active switches. The balance module and balance bid can be unset or off.",
+          "These guides describe published contract interfaces. Check current deployment addresses and settings before sending a transaction.",
           "Quotes change with time, settings, and state. Simulate the call before sending it.",
           "Use a minimum output where available. Owner settings take effect immediately.",
           "Amounts use raw token units. Credit scores use 10,000 units per point. The ETH bid rate is per 100 points.",
@@ -70,7 +70,6 @@ export const docPages: DocPage[] = [
         title: "Read a Credit",
         entries: [
           { signature: "Core.bidOf(uint256 id) → uint256", description: "Current ETH bid for this Credit, including its score and the live rate." },
-          { signature: "Core.balanceBidOf(uint256 id) → uint256", description: "Current balance-token bid, zero if the module cannot fund the payout and royalty. Check settings.balanceBidOn separately." },
           { signature: "Core.spendState() → (bucket, budget, spent)", description: "Remaining ETH purchase budget in the current bucket. A positive bid does not guarantee this bucket can buy." },
           { signature: "CreditScoreLens.creditScore(uint256 creditId) → uint256", description: "Credit score in ten-thousandths of a point, including for burned Credits." },
         ],
@@ -91,13 +90,12 @@ export const docPages: DocPage[] = [
         id: "sell",
         title: "Sell Credits",
         points: [
-          "Approve the Core to transfer each Credit. Read bidOf or balanceBidOf, then simulate the chosen sell call against the latest block.",
-          "Use the minOut overload to bound payment. For balance sales, the expectedToken overload also pins the token address if the owner replaces the module before inclusion.",
-          "The return lock, reserve, spend cap, module availability, and active switches may prevent a quoted sale from executing.",
+          "Approve the Core to transfer each Credit. Read bidOf, then simulate the sell call against the latest block.",
+          "Use minOut to bound the ETH payment.",
+          "The return lock, reserve, and spend cap may prevent a quoted sale from executing.",
         ],
         entries: [
           { signature: "Core.sellForEth(uint256[] ids, uint256 minOut)", description: "Sell one or more Credits for ETH. The caller receives the bid; the artist royalty is paid on top." },
-          { signature: "Core.sellForBalance(uint256[] ids, uint256 minOut, address expectedToken)", description: "Sell for the current module's balance token, with minimum output and token pinning." },
         ],
       },
       {
@@ -136,7 +134,7 @@ export const docPages: DocPage[] = [
     group: "Guides",
     title: "Statements",
     eyebrow: "Guide / Statements",
-    summary: "Read Statement prices and scores, compose, buy, restyle, and redeem held Statements.",
+    summary: "Read Statement prices and scores, compose, buy, and restyle held Statements.",
     sections: [
       {
         id: "read-statement",
@@ -144,7 +142,6 @@ export const docPages: DocPage[] = [
         entries: [
           { signature: "Core.statementInfo(uint256 sid) → (held, cost, composedAt)", description: "Check custody and cost before reading a sale quote." },
           { signature: "ControllerV1.priceOf(uint256 sid) → uint256", description: "Current ETH ask. The curve and reference can move with time and settings." },
-          { signature: "ControllerV1.atFloor(uint256 sid) → bool", description: "Redemption eligibility under the active curve or age rule. Check that the Core still holds the Statement." },
           { signature: "CreditScoreLens.statementScore(uint256 statementId) → uint256", description: "Stored total score across a Statement's pages, including overprints." },
         ],
       },
@@ -161,24 +158,12 @@ export const docPages: DocPage[] = [
         ],
       },
       {
-        id: "redeem-statement",
-        title: "Redeem a held Statement",
-        points: [
-          "Check Core.statementInfo(sid).held, ControllerV1.atFloor(sid), Core.balanceModule, and Core.settings().redeemOn. The module must be configured and redemption enabled.",
-          "Simulate Core.redeemStatement(sid). Any caller can submit it. The Core transfers the Statement to the module; the balance tokens remain in the module for its reserve and bids. They are not paid to the caller or a Statement holder.",
-          "The caller may receive an ETH caller payment from the Core. Core.StatementRedeemed records the balance amount received by the module.",
-        ],
-        entries: [
-          { signature: "Core.redeemStatement(uint256 sid)", description: "Redeem a Core-held, eligible Statement into the configured balance module." },
-        ],
-      },
-      {
         id: "compose",
         title: "Compose a Statement",
         points: [
           "Read ControllerV1.nextPage(). Once ready, call Core.compose() for its chosen format or Core.compose(format) for a specific format.",
           "Core.composeChosen requires chosenComposeOn, the minimum CC holding, and 80 eligible pile Credit IDs. Check the sale window before submitting.",
-          "Composition emits Core.Composed. The resulting Statement stays held by the Core for sale or redemption.",
+          "Composition emits Core.Composed. The resulting Statement stays held by the Core for sale.",
           "A caller holding at least minCcToChoose CC can change the format of a held Statement with Core.setHeldFormat(sid, format).",
         ],
         entries: [
@@ -191,7 +176,7 @@ export const docPages: DocPage[] = [
         id: "statement-events",
         title: "Statement events",
         points: [
-          "Use Composed, StatementSoldTo, and StatementRedeemed for Statement activity. Pair each log with its transaction and block.",
+          "Use Composed and StatementSoldTo for Statement activity. Pair each log with its transaction and block.",
         ],
       },
     ],
@@ -201,13 +186,13 @@ export const docPages: DocPage[] = [
     group: "Guides",
     title: "Lifecycle",
     eyebrow: "Guide / operating model",
-    summary: "Contract behavior during launch, balance activation, locks, and migration.",
+    summary: "Shared operations, settings, and common call conditions.",
     sections: [
       {
         id: "automation",
         title: "Permissionless maintenance",
         points: [
-          "Core.book, buyback, collectEscrow, and refreshReference are callable maintenance doors, each with its own readiness checks.",
+          "Core.book, buyback, and collectEscrow are callable maintenance doors, each with its own readiness checks.",
           "Do not assume a keeper reward exceeds transaction gas. Simulate the exact call and inspect the current settings.",
         ],
       },
@@ -215,32 +200,22 @@ export const docPages: DocPage[] = [
         id: "history",
         title: "Historical quotes",
         points: [
-          "SettingsSet, SaleSet, CreditSaleSet, QuoteSet, and BalanceModuleSet change how later quotes should be interpreted.",
+          "SettingsSet, SaleSet, and CreditSaleSet change how later quotes should be interpreted.",
           "A current view is not a historical quote. Read at the historical block or replay the relevant settings and events.",
-        ],
-      },
-      {
-        id: "phases",
-        title: "Operating phases",
-        points: [
-          "Launch: the ETH bid and Credit and Statement sales can run. The balance bid is off until the owner sets a module and enables it.",
-          "Balance phase: the module must advertise available tokens before balance bids can fill. Value mode additionally needs a usable controller quote.",
-          "Retirement: Core.migrate transfers the bid pot and pile to a successor. The old Core can continue its held Statement sale and redemption paths.",
         ],
       },
       {
         id: "authority",
         title: "Authority and locks",
         points: [
-          "The owner can change economic settings immediately, pause sales, select a controller and module, manage adapters, and nominate a successor.",
-          "Controller, balance module, adapter, and successor locks are one-way. Read their onchain flags rather than assuming they have been applied.",
+          "The owner can change economic settings immediately, pause sales, select a controller, manage adapters, and nominate a successor.",
+          "Controller, adapter, and successor locks are one-way. Read their onchain flags rather than assuming they have been applied.",
         ],
       },
       {
         id: "failure",
         title: "Common failure conditions",
         points: [
-          "NoBalanceModule and BalanceBidOff mean the balance route is unavailable. NoQuote blocks a protected value-mode sale quote; the ETH bid may use its last good value rate.",
           "ReturnLocked and SpendCapReached can block an ETH sale even while bidOf is positive.",
           "Paused, InWindow, NotReady, and BelowFloor distinguish sale timing and floor conditions from a missing asset.",
         ],
@@ -252,7 +227,7 @@ export const docPages: DocPage[] = [
     group: "Contracts",
     title: "Core",
     eyebrow: "Contract / custody + execution",
-    summary: "The Core holds ETH and Credits, owns the bid and pile, composes Statements, and is the authority boundary for settings and modules.",
+    summary: "The Core holds ETH and Credits, owns the bid and pile, composes Statements, and manages the engine's settings.",
     source: "src/interfaces/ICore.sol",
     sections: [
       {
@@ -261,7 +236,6 @@ export const docPages: DocPage[] = [
         entries: [
           { signature: "bidOf(uint256 id) → uint256", description: "Live ETH bid for a Credit ID.", access: "view" },
           { signature: "bidForScore(uint256 score) → uint256", description: "Live ETH bid for a raw score.", access: "view" },
-          { signature: "balanceBidOf(uint256 id) → uint256", description: "Funded balance bid for an ID, zero if the module cannot pay it and its royalty. Check balanceBidOn before selling.", access: "view" },
           { signature: "ethRate() → uint256", description: "ETH rate for the reference score of 100 points.", access: "view" },
           { signature: "spendState() → (uint64 bucket, uint128 budget, uint128 spent)", description: "Current ETH purchase bucket and spend.", access: "view" },
           { signature: "pilePage(uint256 startAfter, uint256 n) → uint256[]", description: "Page through Credits held in the pile.", access: "view" },
@@ -274,7 +248,6 @@ export const docPages: DocPage[] = [
         title: "Credit doors",
         entries: [
           { signature: "sellForEth(uint256[] ids, uint256 minOut)", description: "Transfer approved Credits in and pay the caller in ETH.", errors: "ReturnLocked, SpendCapReached, PotTooSmall, Slippage" },
-          { signature: "sellForBalance(uint256[] ids, uint256 minOut, address expectedToken)", description: "Transfer approved Credits in and pay in the module token. The token pin guards replacement.", errors: "BalanceBidOff, NoBalanceModule, BalanceTokenChanged, Slippage" },
           { signature: "buyListing(address adapter, uint256 id, bytes params)", description: "Buy one approved venue listing at or below the bid, subject to the ETH spend budget.", errors: "AdapterNotAllowed, AboveBid, SpendCapReached" },
           { signature: "swapCredit(uint256 inId, uint256 outId)", description: "Swap an eligible pile Credit for a holder's Credit of equal or higher score, burning the CC fee." },
         ],
@@ -286,7 +259,6 @@ export const docPages: DocPage[] = [
           { signature: "compose() / compose(uint8 format)", description: "Compose 80 eligible pile Credits into a Statement when the next page is ready." },
           { signature: "composeChosen(uint256[80] ids, uint8 format)", description: "Choose the 80 Credits when the choice switch and CC holding requirement permit it." },
           { signature: "setHeldFormat(uint256 sid, uint8 format)", description: "Change the format of a held Statement when the caller holds enough CC." },
-          { signature: "redeemStatement(uint256 sid)", description: "Transfer an eligible Core-held Statement to the module. Balance proceeds remain in the module; the caller may receive an ETH caller payment.", errors: "NoBalanceModule, RedeemOff, NotHeld, NotEligible, BadModule" },
           { signature: "sellTo(uint256 sid, address buyer) payable", description: "Controller-only settlement of a Statement sale.", access: "Controller only" },
         ],
       },
@@ -296,7 +268,6 @@ export const docPages: DocPage[] = [
         entries: [
           { signature: "book() / collectEscrow() / buyback()", description: "Book fee income, collect escrow, and burn CC with the buyback allocation.", access: "Permissionless, guarded by readiness" },
           { signature: "setSettings(Settings settings)", description: "Replace the complete settings struct, effective immediately.", access: "Owner only" },
-          { signature: "setBalanceModule(address module)", description: "Bind or replace the module while unlocked.", access: "Owner only" },
           { signature: "migrate(uint256 amount)", description: "Move the bid pot and pile to the configured successor and retire the Core.", access: "Owner only" },
         ],
       },
@@ -308,7 +279,7 @@ export const docPages: DocPage[] = [
           { signature: "ListingBought(id, adapter, caller, cost, paid, rate, toArtist)", description: "The Core swept an external listing." },
           { signature: "Composed(sid, ids, format, cost, price, caller)", description: "The pile became a Statement." },
           { signature: "StatementSoldTo(sid, buyer, price, toBuyback, toArtist, toOperator)", description: "The Core settled a Statement sale." },
-          { signature: "SettingsSet(settings) / BalanceModuleSet(module, token, unit)", description: "Owner changes that alter subsequent calls and quotes." },
+          { signature: "SettingsSet(settings)", description: "Owner settings change that alters subsequent calls and quotes." },
         ],
       },
     ],
@@ -318,7 +289,7 @@ export const docPages: DocPage[] = [
     group: "Contracts",
     title: "ControllerV1",
     eyebrow: "Contract / sale pricing",
-    summary: "The Controller quotes and executes the engine's Statement and Credit sales. In value mode it protects quotes with a rate-limited balance pool reference.",
+    summary: "The Controller quotes and executes the engine's Statement and Credit sales.",
     source: "src/interfaces/IControllerV1.sol",
     sections: [
       {
@@ -327,11 +298,8 @@ export const docPages: DocPage[] = [
         entries: [
           { signature: "priceOf(uint256 sid) → uint256", description: "Current Statement ask in wei.", access: "view" },
           { signature: "referenceOf(uint256 sid) → uint256", description: "Reference used by the Statement sale curve.", access: "view" },
-          { signature: "atFloor(uint256 sid) → bool", description: "Redemption eligibility under the active curve or age rule.", access: "view" },
           { signature: "creditPrice(uint256 id) → uint256", description: "Current sale price for a held Credit.", access: "view" },
           { signature: "nextPage() → (bool ready, uint256[80] ids, uint8 format)", description: "Whether the Core can compose the next page.", access: "view" },
-          { signature: "valuePerPoint(bool forSale) → (uint256 value, bool ok)", description: "Protected balance value per point and quote usability.", access: "view" },
-          { signature: "spotPrice() → (uint256 spot, bool ok)", description: "Current pool spot and read status; it is distinct from the stored reference.", access: "view" },
         ],
       },
       {
@@ -344,62 +312,12 @@ export const docPages: DocPage[] = [
         ],
       },
       {
-        id: "reference",
-        title: "Reference and configuration",
-        entries: [
-          { signature: "refreshReference() → bool", description: "Move the stored reference toward a sampled spot when its cadence permits.", access: "Permissionless" },
-          { signature: "referencePrice() → uint256 / referenceTime() → uint40", description: "Stored value and timestamp used by protected quotes.", access: "view" },
-          { signature: "setBalancePoolKey(PoolKey key, uint256 expectedSpot)", description: "Set or reseed the pool key with an expected spot guard.", access: "Owner only" },
-          { signature: "setQuote(Quote quote) / setSale(Sale sale) / setCredit(CreditSale credit)", description: "Change the quote bounds and sale policies.", access: "Owner only" },
-        ],
-      },
-      {
         id: "events",
         title: "Events to index",
         entries: [
           { signature: "Bought(sid, buyer, price)", description: "Statement purchase; pair with Core.StatementSoldTo in the same transaction." },
           { signature: "AnchorMoved(sid, saleBps, anchorBps)", description: "A sale changed the curve anchor." },
-          { signature: "ReferenceRefreshed(referencePrice, spot)", description: "Stored reference sampled a pool price." },
-          { signature: "SaleSet(sale) / CreditSaleSet(credit) / QuoteSet(quote)", description: "Policy changes that affect later quotes." },
-        ],
-      },
-    ],
-  },
-  {
-    slug: "contracts/balance-module",
-    group: "Contracts",
-    title: "StatementBalanceModule",
-    eyebrow: "Contract / balance custody",
-    summary: "The module redeems Statements through the balance token, holds proceeds, and pays balance bids on Core instruction.",
-    source: "src/interfaces/IStatementBalanceModule.sol",
-    sections: [
-      {
-        id: "reads",
-        title: "Reads",
-        entries: [
-          { signature: "available() → uint256", description: "Unowed balance available for bids. Zero until upstream retirement completes and the token opening time arrives.", access: "view" },
-          { signature: "unitPerPoint() → uint256", description: "Fixed token unit per rating point used by this module.", access: "view" },
-          { signature: "owed(address account) → uint256", description: "Payment accrued to an address after an incomplete token transfer.", access: "view" },
-          { signature: "balanceToken() → address / core() → address", description: "Immutable bindings; compare with Core.balanceModule and Core.balanceToken.", access: "view" },
-        ],
-      },
-      {
-        id: "calls",
-        title: "Calls",
-        entries: [
-          { signature: "redeem(uint256 statementId) → uint256 out", description: "Withdraw balance tokens for a transferred Statement and check its rating minimum.", access: "Core only", errors: "OnlyCore, RedeemedBelowRating" },
-          { signature: "pay(address to, uint256 amount)", description: "Pay a Core-directed seller; an incomplete transfer can accrue an owed balance.", access: "Core only", errors: "OnlyCore, InsufficientAvailable" },
-          { signature: "claim(address to) → uint256 amount", description: "Send the accrued owed[to] balance to that same address. Anyone may trigger the claim.", access: "Permissionless" },
-          { signature: "migrateReserve() → uint256 amount", description: "Move unowed reserve to a same-token module of the retired Core's successor.", access: "Permissionless after retirement", errors: "CoreNotRetired, InvalidSuccessor" },
-        ],
-      },
-      {
-        id: "events",
-        title: "Events to index",
-        entries: [
-          { signature: "PaymentAccrued(to, amount)", description: "A payment was owed after transfer shortfall." },
-          { signature: "OwedClaimed(to, amount)", description: "An owed balance was claimed." },
-          { signature: "ReserveMigrated(successor, module, amount)", description: "Unowed reserve moved to the successor module." },
+          { signature: "SaleSet(sale) / CreditSaleSet(credit)", description: "Sale policy changes that affect later quotes." },
         ],
       },
     ],
@@ -429,7 +347,7 @@ export const docPages: DocPage[] = [
         id: "statement-read",
         title: "Statement read",
         entries: [
-          { signature: "statementScore(uint256 statementId) → uint256 score", description: "Stored total across all pages, including overprints. A never-composed ID returns zero. This read does not indicate ownership or redemption eligibility.", access: "view" },
+          { signature: "statementScore(uint256 statementId) → uint256 score", description: "Stored total across all pages, including overprints. A never-composed ID returns zero. This read does not indicate ownership.", access: "view" },
         ],
       },
       {
