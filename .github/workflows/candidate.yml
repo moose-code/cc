@@ -62,5 +62,31 @@ jobs:
           FOUNDRY_INVARIANT_DEPTH: "200"
         run: forge test --match-contract '.*Deep' -vv --chain-id 1
 
+  # the full launch on a local chain id 1 fork with nothing faked: real deploy, seed, pool swaps, the real keeper binary,
+  # signed Seaport orders and the owner's value mode calls (script/dev/e2e-real.sh, docs/RUNBOOK.md section 7)
+  e2e-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FORK_URL: ${{ secrets.FORK_URL || 'https://gateway.tenderly.co/public/mainnet' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18
+      - run: npm ci
+      # the deployed and seeded fork state, keyed the way script/dev/e2e-real.sh keys it: the contract, deploy and seed
+      # sources, not the phase logic. a hit loads the state with anvil_loadState in seconds
+      - uses: actions/cache@v4
+        with:
+          path: script/dev/.cache
+          key: e2e-real-${{ hashFiles('src/**', 'script/Deploy.s.sol', 'script/Preflight.s.sol', 'script/Postflight.s.sol', 'script/Checks.sol', 'script/deploy.sh', 'script/dev/Seed.s.sol', 'script/config/anvil.json', 'script/env/local.env', 'foundry.toml', 'remappings.txt', 'test/standins/**', 'test/utils/**') }}
+      - run: script/dev/e2e-real.sh
+
   web:
     uses: ./.github/workflows/web.yml

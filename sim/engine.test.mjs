@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { runSpendCapStudy } from './market.mjs';
-import { Core, SpendBucket, balanceConversion, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, quoteViolation, QUOTE, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, stepVolume, W } from './engine.js';
+import { Core, SpendBucket, balanceConversion, Pool, DEFAULTS, SETTINGS, CONTROLLER, CREDIT, CREDIT_CONFIG_KEY, creditViolation, simulate, controllerViolation, quoteViolation, QUOTE, summary, firstViolation, skimFraction, pathPrice, bountyFeeFraction, stepVolume, W, UNIT_PER_POINT, DECIMALS, redeemQuote } from './engine.js';
 
 let n = 0;
 const near = (a, b, tol, msg) => {
@@ -1389,5 +1389,20 @@ const R0 = 6.668e15;
   ok(hb.S.pot.every((x) => x >= -1e-12), 'hourly book: the pot never goes negative');
   ok(hb.core.unbooked === 0, 'hourly book: the final flush left no unbooked drip');
   n += 4;
+}
+// the balance token constants mirror Jack's pinned contract, from the single source sim/upstream.js. test/UpstreamBalance.t.sol
+// promise: and test_phase2DayWithProductionModule assert these against the real bytecode on a fork: a redeem of a statement of
+// stored rating R pays R * 1e14 base units at 18 decimals. a known 100 point statement (RATE_SCORE = 1e6 score units) redeems
+// 1e20 base units, matching the forge assertion balanceToken.quote(sid) == ratingOf(sid) * 1e14
+{
+  ok(UNIT_PER_POINT === 1e14, 'upstream unitPerPoint is 1e14');
+  ok(DECIMALS === 18, 'upstream balance token is 18 decimals');
+  const rating = 1_000_000; // 100 points in stored score units, the eth rate divisor RATE_SCORE
+  ok(redeemQuote(rating) === rating * 1e14, 'redeemQuote is rating * unitPerPoint');
+  ok(redeemQuote(rating) === 1e20, 'a 100 point statement redeems 1e20 base units (the forge number)');
+  const c = new Core(Object.assign({}, DEFAULTS), 0);
+  ok(c.redeemBaseUnits(rating) === rating * UNIT_PER_POINT, 'the balance model redemption reads UNIT_PER_POINT');
+  ok(c.tokenOne() === 1e18, 'the balance model token unit reads DECIMALS');
+  n += 6;
 }
 console.log(`ok, ${n} checks passed`);
