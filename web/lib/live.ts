@@ -451,7 +451,7 @@ export function useScores(ids: bigint[]) {
 
 // Credit price floor input: controller valueOf(score) per id, id to wei. Credit floor price =
 // max(cost, value) * snap.creditFloorBps / 10000 (the controller's floorMultBps) and start = floor * snap.creditStartBps / 10000 (see Snapshot).
-// Scores are cached (useScores). valueOf includes a pool value that moves, so the query is keyed on the snapshot's
+// Scores are cached (useScores). valueOf follows the floor rate, so the query is keyed on the snapshot's
 // last update and refreshes with the snapshot's 15 s cadence. A failed read leaves the id out of the map.
 export function useCreditValues(ids: bigint[]) {
   const client = usePublicClient();

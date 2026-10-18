@@ -112,6 +112,16 @@ At `tolBps` 100, the quote permits at most a 1 percent band around the recorded 
 
 while the quote is unusable, the controller's sale doors revert `NoQuote`; the Core's eth bid and purchase routes use the last good value rate, and `sellForBalance`, compose, redemption, the buyback and `book` keep running. to leave value mode send `setSettings` with `valueModeOn` false; the eth instance resumes from its stored state.
 
+### reset the reference
+
+use when the reference has drifted from a pool that moved for good, or a bad sample was stored. three levers, in order of reach:
+
+1. value mode off: `setSettings` with `valueModeOn` false returns every price to the curve at once. the reference keeps its state and keeps refreshing, and no price reads it.
+2. re-seed: `setBalancePoolKey` with the same key and the current spot as `expectedSpot` (wei per 1e18 base units, read `spotPrice()`). it sets the reference and both sample slots to the live spot and liquidity and the sample time to now. a live spot more than 4.5 percent from `expectedSpot` reverts `BadSetting("spot")`, so a pool moved or manipulated between signing and landing is refused. if the pool moved more than 4.5 percent, read the spot again in the same block as the send, or use value mode off and wait.
+3. `setQuote` changes the step, tolerance and cadence (`referenceStepBps`, `tolBps`, `referenceRateBpsPerHour`, `referenceMinSeconds`, `referenceMaxStale`) within the coupled bounds. a smaller step slows the reference, a larger step catches up faster.
+
+after a re-seed the refresh door is refused in the seed block and runs from the next block.
+
 ### bounds and coupled checks
 
 bounds use the declared unsigned integer width where no narrower limit follows. uint16 max is 65,535, uint32 max is 4,294,967,295. the defaults stay the launch values; wider bounds make owner choices possible and do not promise sensible economics for every combination.
