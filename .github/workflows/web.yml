@@ -33,6 +33,8 @@ jobs:
         working-directory: indexer
       - run: npm run typecheck
         working-directory: indexer
+      - run: node --test scripts/check-service.test.mjs
+        working-directory: indexer
       - run: bash script/dev/test-indexer-deploy-guards.sh
         working-directory: .
       - run: npx tsc --noEmit

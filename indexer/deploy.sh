@@ -8,7 +8,7 @@
 #      value, or a DATABASE_SCHEMA already used for a different Core address (indexer/deployments.json).
 #   2. TARGET=fly: `fly deploy` with the record values as release env. TARGET=local: starts `ponder start`
 #      in the foreground against the record's rpcUrl with PGlite.
-#   3. TARGET=fly, after deploy: binds the schema to the Core, then requires healthy HTTP probes.
+#   3. TARGET=fly, after deploy: binds the schema to the Core. After backfill, run check-live.sh.
 #
 # DRY_RUN=1 evaluates every check and prints the command without running it (needs no fly CLI, wallet or network).
 set -euo pipefail
@@ -79,28 +79,8 @@ if [[ "$TARGET" == "local" ]]; then cd indexer && exec "${CMD[@]}"; fi
 
 (cd indexer && "${CMD[@]}")
 [[ -f "$LEDGER" ]] || echo '{}' > "$LEDGER"
-# The deploy has already happened, so bind its schema even if catch-up or parity fails. A retry for a different
-# Core must not reuse a database that may contain the first Core's rows.
+# Bind the deployed schema before any acceptance check. Another Core must not reuse a database that may contain
+# this Core's rows, even while the historical backfill is still running.
 jq --arg s "$DATABASE_SCHEMA" --arg a "$CORE_LC" '.[$s] = $a' "$LEDGER" > "$LEDGER.tmp" && mv "$LEDGER.tmp" "$LEDGER"
-URL="https://${APP}.fly.dev"
-probe() {
-  local path="$1" code
-  if [[ "$path" == "/graphql" ]]; then
-    code="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X POST "$URL$path" \
-      -H 'content-type: application/json' --data '{"query":"{ __typename }"}')" || code=000
-  else
-    code="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "$URL$path")" || code=000
-  fi
-  echo "$path: $code"
-  [[ "$code" == "200" ]]
-}
-ATTEMPTS="$(printenv PROBE_ATTEMPTS || echo 30)"
-INTERVAL="$(printenv PROBE_INTERVAL || echo 10)"
-for attempt in $(seq 1 "$ATTEMPTS"); do
-  failed=0
-  for path in /health /ready /health/parity /graphql; do probe "$path" || failed=1; done
-  [[ "$failed" == 0 ]] && exit 0
-  if [[ "$attempt" -lt "$ATTEMPTS" ]]; then sleep "$INTERVAL"; fi
-done
-echo "indexer deployed to $APP but readiness or parity is unhealthy; schema $DATABASE_SCHEMA remains bound to $CORE" >&2
-exit 1
+echo "indexer deployed to $APP; schema $DATABASE_SCHEMA is bound to $CORE"
+echo "after backfill, run RPC_URL=<read rpc> indexer/check-live.sh mainnet before coin launch"

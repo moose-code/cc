@@ -123,3 +123,19 @@ jobs:
 
   web:
     uses: ./.github/workflows/web.yml
+
+  # The mainnet signing and interrupted-deploy recovery path, broadcast only to a local chain-id-1 Anvil fork.
+  signer-rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FORK_URL: ${{ secrets.FORK_URL || 'https://gateway.tenderly.co/public/mainnet' }}
+      CANDIDATE_RUN: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.1
+      - run: script/dev/rehearse-signer.sh

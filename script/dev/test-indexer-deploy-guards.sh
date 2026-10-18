@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# promise: a deployed indexer reports unhealthy probes as failure without freeing its schema for another Core.
+# promise: a deployed indexer binds its schema, and read-only acceptance fails on an unhealthy service.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -7,6 +7,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/indexer/env" "$TMP/deployments" "$TMP/bin"
 cp "$ROOT/indexer/deploy.sh" "$TMP/indexer/deploy.sh"
+cp "$ROOT/indexer/check-live.sh" "$TMP/indexer/check-live.sh"
 cat > "$TMP/indexer/env/mainnet.env" <<'EOF'
 CHAIN_ID=1
 TARGET=fly
@@ -23,13 +24,27 @@ exit 0
 EOF
 cat > "$TMP/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-for last; do :; done
-case "$last" in
-  */health/parity) printf '%s' "$MOCK_PARITY" ;;
-  *) printf '200' ;;
+exit 0
+EOF
+cat > "$TMP/bin/cast" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  chain-id) echo 1 ;;
+  block-number) echo 301 ;;
+  code) echo 0x ;;
+  call)
+    case "$3" in
+      COIN*) echo 0x3333333333333333333333333333333333333333 ;;
+      *) echo 0 ;;
+    esac ;;
+  *) exit 1 ;;
 esac
 EOF
-chmod +x "$TMP/bin/fly" "$TMP/bin/curl"
+cat > "$TMP/bin/node" <<'EOF'
+#!/usr/bin/env bash
+exit "$MOCK_NODE_EXIT"
+EOF
+chmod +x "$TMP/bin/fly" "$TMP/bin/curl" "$TMP/bin/cast" "$TMP/bin/node"
 
 A=0x1111111111111111111111111111111111111111
 B=0x2222222222222222222222222222222222222222
@@ -41,21 +56,22 @@ record() {
     > "$TMP/deployments/1.json"
 }
 record "$A"
-if MOCK_PARITY=503 PATH="$TMP/bin:$PATH" PROBE_ATTEMPTS=1 bash "$TMP/indexer/deploy.sh" mainnet > "$TMP/out" 2>&1; then
-  echo "unhealthy parity was accepted" >&2
-  exit 1
-fi
-grep -q '/health/parity: 503' "$TMP/out"
+PATH="$TMP/bin:$PATH" bash "$TMP/indexer/deploy.sh" mainnet > "$TMP/out" 2>&1
+grep -q 'after backfill' "$TMP/out"
 [[ "$(jq -r .cc_test "$TMP/indexer/deployments.json")" == "$A" ]]
 
 record "$B"
-if MOCK_PARITY=200 PATH="$TMP/bin:$PATH" PROBE_ATTEMPTS=1 bash "$TMP/indexer/deploy.sh" mainnet > "$TMP/out" 2>&1; then
+if PATH="$TMP/bin:$PATH" bash "$TMP/indexer/deploy.sh" mainnet > "$TMP/out" 2>&1; then
   echo "schema reuse for another Core was accepted" >&2
   exit 1
 fi
 grep -q "was used for $A" "$TMP/out"
 
 record "$A"
-MOCK_PARITY=200 PATH="$TMP/bin:$PATH" PROBE_ATTEMPTS=1 bash "$TMP/indexer/deploy.sh" mainnet > "$TMP/out" 2>&1
-grep -q '/health/parity: 200' "$TMP/out"
+if MOCK_NODE_EXIT=1 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1; then
+  echo "unhealthy SQL acceptance was accepted" >&2
+  exit 1
+fi
+MOCK_NODE_EXIT=0 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1
+grep -q 'production read-only acceptance passed' "$TMP/out"
 echo "indexer deploy guards passed"

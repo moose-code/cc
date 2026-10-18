@@ -13,6 +13,7 @@ RECORD="deployments/31337.json"
 [[ -f "$RECORD" ]] || { echo "missing $RECORD" >&2; exit 1; }
 [[ "$(cast chain-id --rpc-url "$RPC")" == "31337" ]] || { echo "expected local Anvil chain 31337" >&2; exit 1; }
 CORE="$(jq -r .core "$RECORD")"
+COIN="$(jq -r .coin "$RECORD")"
 START="$(jq -r .deployBlock "$RECORD")"
 
 # A Tick after the last seeded action creates a parity row and a fresh engine snapshot.
@@ -41,7 +42,8 @@ for _ in $(seq 1 180); do
   fi
   if curl -fsS --max-time 2 "$ORIGIN/ready" >/dev/null 2>&1 &&
      curl -fsS --max-time 2 "$ORIGIN/health/parity" >/dev/null 2>&1 &&
-     (cd indexer && node scripts/check-smoke.mjs "$ORIGIN" "$CORE" "$PILE" "$POT" "$TARGET") >"$SMOKE_LOG" 2>&1; then
+     (cd indexer && node scripts/check-service.mjs "$ORIGIN" 31337 "$CORE" "$COIN" "$START" \
+       "$PILE" "$POT" "$TARGET" 0 1) >"$SMOKE_LOG" 2>&1; then
     cat "$SMOKE_LOG"
     echo "indexer candidate smoke passed at block $TARGET"
     exit 0
