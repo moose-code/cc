@@ -15,6 +15,7 @@ import { core, credits, engineDeployed, SCORE_PER_100_POINTS, statements } from 
 import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { ETH_ANCHOR_SLOT, ethAnchorWords, replayBalanceFills, replayEthFills, replayValueFills } from "./sell";
+import { coinCodePollInterval } from "./coin-live";
 import { useCreditRow, useCreditTraitsIx, useHeldCredits, useIxMode, useStatementDetailIx, useWalletCreditsIx } from "./indexer";
 import type { AcquiredHow } from "./indexer-schema";
 import type { BalanceTokenInfo } from "./format";
@@ -76,7 +77,7 @@ export function useSnapshot() {
 }
 
 // Whether the coin has code: false while the Core is deployed and the coin is not launched (deferred launch, decision 172),
-// undefined until read. One getCode per session once the answer is true; while false it is read again on window focus.
+// undefined until read. Poll while false so an open page notices the launch; stop once code exists.
 export function useCoinLive(): boolean | undefined {
   const client = usePublicClient();
   const coin = useSnapshot().data?.coin;
@@ -84,6 +85,7 @@ export function useCoinLive(): boolean | undefined {
     queryKey: ["coin-live", coin],
     enabled: Boolean(client && coin),
     staleTime: Infinity,
+    refetchInterval: (q) => coinCodePollInterval(q.state.data),
     refetchOnWindowFocus: (q) => (q.state.data === false ? "always" : false),
     queryFn: async () => ((await client!.getCode({ address: coin! })) ?? "0x") !== "0x",
   }).data;
