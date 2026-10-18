@@ -22,7 +22,8 @@ graph LR
 | name | role |
 |---|---|
 | Core | custody and every rule: pots, the bid, the pile, compose, sales, fee booking, the pause, buyback, the balance side, owner powers, locks, migrate |
-| CoreLib | the Core's linked library, run by delegatecall in the Core's storage |
+| CoreLib | linked pricing and accounting library, run by delegatecall in Core's storage |
+| CoreOpsLib | linked pause, pool swap and owner operations library, run by delegatecall in Core's storage |
 | ControllerV1 | pricing: the statement curve and anchor, the credit sale, `valueOf`, the royalty |
 | SeaportBasicAdapter, CreditStrategyAdapter | read only pricers for `buyListing` |
 
@@ -52,7 +53,7 @@ tests run on a mainnet fork against the live v2 stack. during work: `forge build
 
 ## deploy
 
-one wrapper, `script/deploy.sh <local|rehearsal|mainnet>` (values in script/env/), runs script/Deploy.s.sol, eleven transactions through the deterministic deployer, driven by script/config/mainnet.json copied to the gitignored local.json. the runbook is docs/RUNBOOK.md.
+one wrapper, `script/deploy.sh <local|rehearsal|mainnet>` (values in script/env/), runs script/Deploy.s.sol. The twelve-transaction path deploys both linked libraries, Core, controller, adapters and renderer, then wires and launches the coin. It is driven by script/config/mainnet.json copied to the gitignored local.json. The runbook is docs/RUNBOOK.md.
 
 ## docs
 

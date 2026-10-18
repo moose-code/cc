@@ -42,11 +42,11 @@ export default function KeeperPage() {
   const open = last != null ? last + delay : undefined; // first block a buyback is accepted
   const wait = open != null && head != null && head < open ? open - head : 0n;
   const status =
-    s.ethToBuyback === 0n ? "the buyback pot is empty" : wait > 0n ? `in ${commas(Number(wait))} blocks` : "open now";
+    s.paused ? "engine paused" : s.ethToBuyback === 0n ? "the buyback pot is empty" : wait > 0n ? `in ${commas(Number(wait))} blocks` : "open now";
 
   return (
     <>
-      <PageHead title="keeper" ink="k" meta={s.retired ? "retired" : s.paused ? "sales paused" : "running"} />
+      <PageHead title="keeper" ink="k" meta={s.retired ? "retired" : s.paused ? "engine paused" : "running"} />
       <main className="page detail">
         <div className="keeper">
           <section>
@@ -82,8 +82,8 @@ export default function KeeperPage() {
             <p className="panel-note">swaps a slice of the buyback pot for coin and burns it.</p>
             <div className="actions">
               <Act
-                label="buyback"
-                disabled={s.ethToBuyback === 0n || wait > 0n}
+                label={s.paused ? "engine paused" : "buyback"}
+                disabled={s.paused || s.ethToBuyback === 0n || wait > 0n}
                 steps={async (w) => void (await w({ address: core, abi: coreAbi, functionName: "buyback" }))}
               />
             </div>

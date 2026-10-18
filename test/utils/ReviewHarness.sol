@@ -52,8 +52,8 @@ abstract contract ReviewHarness is Test, ProdDeployer {
         base.mevModule = v2.mev;
         // the artifact data of the build rows is read once into the process environment. a mutation (preflight and
         // deploy) runs in one call under the block gas limit, so the cold read happens here
-        string[5] memory names =
-            ["Core", "CoreLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter"];
+        string[6] memory names =
+            ["Core", "CoreLib", "CoreOpsLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter"];
         for (uint256 i; i < names.length; ++i) {
             artifactHash(names[i]);
         }

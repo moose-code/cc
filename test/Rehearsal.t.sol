@@ -130,19 +130,21 @@ contract RehearsalTest is Test, ProdDeployer {
         require(ok, "create2 failed");
     }
 
-    /// @dev gas of the six creations (the library, the core, the controller, the two adapters and the renderer) with
+    /// @dev gas of the seven creations (both libraries, the core, the controller, the two adapters and the renderer) with
     /// the calldata and the intrinsic gas of their transactions, each from a clean frame
-    function _creationGas(Deployed memory first) internal returns (uint256[6] memory tx_) {
-        bytes32[6] memory salts = [
+    function _creationGas(Deployed memory first) internal returns (uint256[7] memory tx_) {
+        bytes32[7] memory salts = [
             bytes32(uint256(1)),
+            bytes32(uint256(2)),
             CORE_SALT,
             CONTROLLER_SALT,
             SEAPORT_ADAPTER_SALT,
             STRATEGY_ADAPTER_SALT,
             rendererSalt(c)
         ];
-        bytes[6] memory inits = [
+        bytes[7] memory inits = [
             vm.getCode("CoreLib.sol:CoreLib"),
+            vm.getCode("CoreOpsLib.sol:CoreOpsLib"),
             coreInitCode(c, deployer),
             abi.encodePacked(vm.getCode("ControllerV1.sol:ControllerV1"), abi.encode(first.core, c.sale, c.credit, c.quote)),
             abi.encodePacked(
@@ -151,7 +153,7 @@ contract RehearsalTest is Test, ProdDeployer {
             vm.getCode("CreditStrategyAdapter.sol:CreditStrategyAdapter"),
             abi.encodePacked(vm.getCode("LogoCoinRenderer.sol:LogoCoinRenderer"), abi.encode(c.owner))
         ];
-        for (uint256 i; i < 6; ++i) {
+        for (uint256 i; i < 7; ++i) {
             // 21000 intrinsic and the calldata (4 gas per zero byte, 16 per other byte)
             tx_[i] = this.createGas(inits[i], salts[i]) + 21_000 + _calldataGas(abi.encodePacked(salts[i], inits[i]));
         }
@@ -159,8 +161,9 @@ contract RehearsalTest is Test, ProdDeployer {
 
     function _deploy() internal {
         uint256 balBefore = deployer.balance;
-        // the linked library is deployed first, once, by the same deployer
+        // both linked libraries are deployed first, once, by the same deployer
         address lib = deployCode("CoreLib.sol:CoreLib");
+        address ops = deployCode("CoreOpsLib.sol:CoreOpsLib");
         uint256 snap = vm.snapshotState();
         vm.startPrank(deployer);
         d = deploySystem(deployer, c);
@@ -170,10 +173,10 @@ contract RehearsalTest is Test, ProdDeployer {
         // the creations are measured again from a clean frame on the state before the deploy; the deploy then continues
         // from there (the contracts that exist are skipped)
         vm.revertToState(snap);
-        uint256[11] memory txGas;
+        uint256[12] memory txGas;
         {
-            uint256[6] memory cg = _creationGas(first);
-            for (uint256 i; i < 6; ++i) {
+            uint256[7] memory cg = _creationGas(first);
+            for (uint256 i; i < 7; ++i) {
                 txGas[i] = cg[i];
             }
         }
@@ -183,27 +186,28 @@ contract RehearsalTest is Test, ProdDeployer {
         assertEq(d.core, first.core);
         assertEq(d.coin, first.coin);
         ICore core = ICore(payable(d.core));
-        txGas[6] = used[5] + 21_000 + _calldataGas(abi.encodeCall(ICoinRenderer.setCore, (core)));
-        txGas[7] = used[6] + 21_000 + _calldataGas(abi.encodeCall(core.setController, (d.controller)));
-        txGas[8] = used[7] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.seaportAdapter)));
-        txGas[9] = used[8] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.strategyAdapter)));
-        txGas[10] = used[9] + 21_000
+        txGas[7] = used[5] + 21_000 + _calldataGas(abi.encodeCall(ICoinRenderer.setCore, (core)));
+        txGas[8] = used[6] + 21_000 + _calldataGas(abi.encodeCall(core.setController, (d.controller)));
+        txGas[9] = used[7] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.seaportAdapter)));
+        txGas[10] = used[8] + 21_000 + _calldataGas(abi.encodeCall(core.addAdapter, (d.strategyAdapter)));
+        txGas[11] = used[9] + 21_000
             + _calldataGas(abi.encodeCall(IArtCoinsFactoryV2.deployToken, (buildConfig(c, c.owner, d.core))));
-        string[11] memory names = [
+        string[12] memory names = [
             "1 library CoreLib (create2 deployer)",
-            "2 core (create2 deployer)",
-            "3 controller (create2 deployer)",
-            "4 seaport adapter (create2 deployer)",
-            "5 strategy adapter (create2 deployer)",
-            "6 coin renderer (create2 deployer)",
-            "7 setCore on the renderer",
-            "8 setController",
-            "9 addAdapter seaport adapter",
-            "10 addAdapter strategy adapter",
-            "11 launch through the factory (deployToken)"
+            "2 library CoreOpsLib (create2 deployer)",
+            "3 core (create2 deployer)",
+            "4 controller (create2 deployer)",
+            "5 seaport adapter (create2 deployer)",
+            "6 strategy adapter (create2 deployer)",
+            "7 coin renderer (create2 deployer)",
+            "8 setCore on the renderer",
+            "9 setController",
+            "10 addAdapter seaport adapter",
+            "11 addAdapter strategy adapter",
+            "12 launch through the factory (deployToken)"
         ];
         uint256 total;
-        for (uint256 i; i < 11; ++i) {
+        for (uint256 i; i < 12; ++i) {
             total += txGas[i];
             console.log(string.concat("deploy gas, tx ", names[i]), txGas[i]);
             assertLt(txGas[i], TX_GAS_CAP, string.concat("over the per transaction gas cap: ", names[i]));
@@ -213,9 +217,10 @@ contract RehearsalTest is Test, ProdDeployer {
         assertLe(total, DEPLOY_GAS_ESTIMATE, "the measured deploy gas is above DEPLOY_GAS_ESTIMATE");
         console.log("DEPLOY_GAS_ESTIMATE", DEPLOY_GAS_ESTIMATE);
         console.log("library at", lib);
-        console.log("total deploy gas, eleven transactions", total);
+        console.log("ops library at", ops);
+        console.log("total deploy gas, twelve transactions", total);
         console.log("per transaction gas cap", TX_GAS_CAP);
-        console.log("factory deploy fee (wei, sent as value of tx 11)", fee);
+        console.log("factory deploy fee (wei, sent as value of tx 12)", fee);
         uint256[3] memory gwei_ = [uint256(1), 5, 20];
         for (uint256 i; i < 3; ++i) {
             uint256 cost = total * gwei_[i] * 1 gwei;

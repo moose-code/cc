@@ -12,7 +12,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
-import { creditScores, MULTICALL3, readSnapshot, useHead } from "./live";
+import { creditScores, MULTICALL3, readSnapshot, useHead, useSnapshot } from "./live";
 import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
 import { useTx } from "./tx";
 import { clearing, fitsBucket, shortlist, type Listing, type Priced, type SpendRoom } from "./acquire";
@@ -178,6 +178,7 @@ export function useAcquireCandidate() {
       try {
       const c = client!;
       const snap = await readSnapshot(c, core!);
+      if (snap.paused) return { cleared: [], top: [], waiting: 0, nextIn: 0 };
 
       // 1. listings and known scores
       const { listings, known } = await gatherListings(c, head!.n);
@@ -295,13 +296,14 @@ const keyOf = (l: { source: string; id: bigint; price: bigint }) => `${l.source}
 export function useAcquireTx(block: bigint | undefined) {
   const { address } = useAccount();
   const client = usePublicClient();
+  const paused = useSnapshot().data?.paused ?? false;
   const { openConnectModal } = useConnectModal();
   const { run, pending, err } = useTx();
   const [dropped, setDropped] = useState<{ block?: bigint; keys: string[] }>({ keys: [] });
   const [done, setDone] = useState<{ id: bigint; hash: `0x${string}` }>();
 
   const live = dropped.block === block ? dropped.keys : [];
-  const available = <T extends Listing>(list: T[]) => list.filter((l) => !live.includes(keyOf(l)));
+  const available = <T extends Listing>(list: T[]) => paused ? [] : list.filter((l) => !live.includes(keyOf(l)));
 
   // the confirmation stays 20 s
   useEffect(() => {
@@ -311,6 +313,7 @@ export function useAcquireTx(block: bigint | undefined) {
   }, [done]);
 
   const buy = (candidates: Priced[]) => {
+    if (paused) return;
     if (!address) return openConnectModal?.();
     setDone(undefined);
     run(async (write) => {

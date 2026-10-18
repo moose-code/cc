@@ -4,13 +4,6 @@ pragma solidity ^0.8.28;
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {SafeCastLib} from "solady/utils/SafeCastLib.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {
     IController,
     ICredits,
@@ -24,13 +17,6 @@ import {
 } from "../interfaces/Interfaces.sol";
 import {Halving} from "./Halving.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
-
-/// the v2 hook swap `hookData` layout. `mevModuleSwapData` is `abi.encode(refundTo)`; the hook credits skim charged on
-/// an unfilled part of the swap to that address in the fee escrow
-struct SwapData {
-    bytes mevModuleSwapData;
-    bytes poolExtensionSwapData;
-}
 
 /// every state variable of the Core, in one struct. the Core declares it once (`State internal s`, slot 0) and the library
 /// reads it at slot 0 (`CoreLib.state`), so both address the same storage
@@ -73,7 +59,7 @@ struct State {
     bool chosenComposeOn;
     /// least coin balance the caller of `composeChosen` and `setHeldFormat` must hold, read at the call
     uint96 minCcToChoose;
-    /// whether `sellTo`, `sellCreditTo` and `swapCredit` are paused
+    /// whether the owner pause blocks acquisitions, composition, sales, Credit swaps and buybacks
     bool paused;
     /// when the open pause began, 0 while not paused
     uint40 pausedSince;
@@ -109,9 +95,8 @@ struct State {
     mapping(address => bool) everBalanceTarget;
 }
 
-/// the one linked library of the Core: the settings write (validation, storage, event), the eth rate (the climb with its
-/// clamp and ceiling, and the drop on a fill), the pool manager swap of the coin buyback, the
-/// sale of credits into the balance token bid.
+/// the Core's pricing and accounting library: settings validation and writes, the eth bid and its ceiling, and the
+/// sale of Credits into the balance token bid. CoreOpsLib holds the pool swap and low-frequency operations.
 /// it holds no state of its own and is called by delegatecall, so it works on the Core's storage and balance, and the
 /// Core keeps its runtime under the size limit. deployed once before the Core (docs/RUNBOOK.md)
 library CoreLib {
@@ -245,7 +230,6 @@ library CoreLib {
     /// value mode's shared eth instance was reset to `rateBps` (bps of par), its floor, on a margin raise or the value
     /// switch turning on. the posted balance bid does not use this instance
     event BalanceRateSet(uint256 rateBps);
-    error BadSwap();
     error ZeroAddress();
     error ForbiddenTarget();
     error OnlyOwner();
@@ -422,12 +406,13 @@ library CoreLib {
         return (bucket, SafeCastLib.toUint128(_ethPagesPot(c).mulDiv(c.settings.spendCapBps, BPS)), 0);
     }
 
-    /// restates the remembered peak of `a` at `oldHalf`: decays it to now under the old half life and marks now, so a
-    /// half life change decays the peak forward only
+    /// Restates a peak under the old half life. Paused time never decays the peak, including an owner settings edit.
     function _restatePeak(Anchor storage a, uint256 oldHalf) private {
-        a.peakRate = Halving.halve(a.peakRate, block.timestamp.zeroFloorSub(a.peakTime), oldHalf);
+        State storage c = state();
+        uint256 t = c.paused ? c.pausedSince : block.timestamp;
+        a.peakRate = Halving.halve(a.peakRate, t.zeroFloorSub(a.peakTime), oldHalf);
         // forge-lint: disable-next-line(unsafe-typecast)
-        a.peakTime = uint64(block.timestamp);
+        a.peakTime = uint64(t);
     }
 
     /// checkpoints value mode's shared instance under the old settings before `setSettings` replaces them
@@ -617,7 +602,8 @@ library CoreLib {
     /// the eth instance price state and peak at now. booked ETH above the reserve funds the climb; the separate read
     /// may also use pending fee income, which has no known arrival time and earns no prior climb. when the
     /// booked room cannot pay the last-fill bid for 100 points plus the artist payment, the funded climb and idle
-    /// loosening pause; peak decay still follows wall time. the normal ceiling, recovery rate and rateCap still bind
+    /// loosening pause; peak decay follows wall time outside an owner pause. the normal ceiling, recovery rate and
+    /// rateCap still bind
     function _ethClimb(State storage c) private view returns (uint256 price, uint256 peakNow, bool paused) {
         uint256 bookedRoom = _bookedBidRoom(c);
         paused = bookedRoom < c.anchor.lastFillRate;
@@ -724,10 +710,12 @@ library CoreLib {
         uint256 t,
         uint256 nowTs
     ) private view returns (uint256 price, uint256 peakNow) {
-        Settings storage s = state().settings;
-        peakNow = Halving.halve(a.peakRate, nowTs.zeroFloorSub(a.peakTime), s.peakHalfLife);
+        State storage c = state();
+        Settings storage s = c.settings;
+        uint256 growthNow = c.paused ? c.pausedSince : nowTs;
+        peakNow = Halving.halve(a.peakRate, growthNow.zeroFloorSub(a.peakTime), s.peakHalfLife);
         uint256 anchor = a.lastFillRate.max(peakNow);
-        uint256 idle = nowTs.zeroFloorSub(anchorTime);
+        uint256 idle = growthNow.zeroFloorSub(anchorTime);
         // the multiplier is the pot divided by the pages the last fill rate affords, clamped to [BPS, cap]. the last
         // fill rate is the denominator and holds between fills, so a checkpoint that climbs the stored rate leaves it
         // unchanged; the pot numerator moves as `fund` and sale booking change `pagesPot`, so the multiplier tracks the
@@ -738,9 +726,9 @@ library CoreLib {
         price = r;
         if (r >= cap) {
             price = cap;
-        } else if (nowTs > t && r != 0) {
+        } else if (growthNow > t && r != 0) {
             uint256 target = cap.min(clampTo);
-            if (r < target) price = _recover(r, target, t, nowTs, a, s);
+            if (r < target) price = _recover(r, target, t, growthNow, a, s);
         }
     }
 
@@ -831,42 +819,6 @@ library CoreLib {
         uint256 denom = 10_000 * RATE_SCORE;
         uint256 dropped = fallNum >= denom ? 0 : price.mulDiv(denom - fallNum, denom);
         return dropped.max(a.minuteStartRate * s.dropFloorBps / 10_000).max(absFloor);
-    }
-
-    /// @notice the swap of the coin buyback, run inside the pool manager unlock callback of the Core: exact eth in for
-    /// coin on the canonical pool, the eth settled from the Core balance and the coin taken to the Core. returns the eth
-    /// spent, skim included, and the coin bought. the pool took no more than it was given. hookData carries the refund
-    /// address so the hook credits skim on an unfilled part of the input to the Core in the fee escrow, which
-    /// `collectEscrow` books to the pot; an empty refund address reverts the hook on a partial fill
-    function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)
-        external
-        returns (uint256 owed, uint256 bought)
-    {
-        IPoolManager pm = IPoolManager(manager);
-        PoolKey memory key = PoolKey({
-            currency0: Currency.wrap(address(0)),
-            currency1: Currency.wrap(coin),
-            fee: fee,
-            tickSpacing: spacing,
-            hooks: IHooks(hook)
-        });
-        bytes memory hookData =
-            abi.encode(SwapData({mevModuleSwapData: abi.encode(address(this)), poolExtensionSwapData: ""}));
-        // forge-lint: disable-start(unsafe-typecast)
-        BalanceDelta d = pm.swap(
-            key,
-            SwapParams({
-                zeroForOne: true, amountSpecified: -int256(amountIn), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-            }),
-            hookData
-        );
-        if (d.amount0() > 0 || d.amount1() < 0) revert BadSwap();
-        owed = uint256(uint128(-d.amount0()));
-        if (owed > amountIn) revert BadSwap();
-        pm.settle{value: owed}();
-        bought = uint256(uint128(d.amount1()));
-        pm.take(key.currency1, address(this), bought);
-        // forge-lint: disable-end(unsafe-typecast)
     }
 
     /// @notice sends coin the Core holds to `to`. the Core's `rescueCoin` forwards its call here untouched, so the owner

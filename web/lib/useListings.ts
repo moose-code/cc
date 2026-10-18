@@ -21,6 +21,7 @@ const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
 
 export interface ListingRow extends Priced {
   score: bigint;
+  paused: boolean;
   live: boolean; // bid and price are chain reads, else the bid is an estimate
   gap: number; // price / bid - 1, as a fraction; Infinity with no bid
   clears: boolean; // Core.buyListing would accept it now
@@ -31,6 +32,7 @@ export interface ListingRow extends Priced {
 
 export interface ListingsData {
   rows: ListingRow[];
+  paused: boolean;
   osMax: number;
   pot: bigint;
   now: number;
@@ -166,7 +168,7 @@ export function useListings() {
       const room = spendRoom(val<readonly [bigint, bigint, bigint]>(6), s, now + (Date.now() - head!.at) / 1000);
       const under: bigint[] = []; // spend cost of every row under its bid and the pot
       const out: ListingRow[] = rows.map((r) => {
-        const covered = !retired && allowed[r.source] && r.price > 0n && r.price <= r.bid && r.price <= pot;
+        const covered = !snap.paused && !retired && allowed[r.source] && r.price > 0n && r.price <= r.bid && r.price <= pot;
         const cost = spendCost(r.price, r.bid, pot, s.keeperFee);
         if (covered) under.push(cost);
         const clears = covered && fitsBucket(room, cost);
@@ -174,10 +176,10 @@ export function useListings() {
         // at or under the bid yet not clearing: the venue's adapter is off or the Core is retired, no time applies
         const f = clearsIn(state, r.price, r.score, SCORE_PER_100_POINTS, now);
         const eta: ClearsIn = clears ? { kind: "now" } : r.price > pot ? { kind: "pot" } : f.kind === "now" ? { kind: "far" } : f;
-        return { ...r, gap: gapOf(r.price, r.bid), clears, wait, eta, balanceBid: balanceOf(r) };
+        return { ...r, paused: snap.paused, gap: gapOf(r.price, r.bid), clears, wait, eta, balanceBid: balanceOf(r) };
       });
       out.sort((a, b) => a.gap - b.gap);
-      return { rows: out, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state };
+      return { rows: out, paused: snap.paused, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state };
     },
   });
 }

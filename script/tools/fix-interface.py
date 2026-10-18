@@ -6,7 +6,7 @@ src = re.sub(r"library \w+ \{.*?\n\}\n\n", "", src, flags=re.S)
 for t in ("Settings", "Stack", "Sale", "CreditSale", "Quote"):
     src = re.sub(r"\n    struct %s \{.*?\n    \}\n" % t, "\n", src, flags=re.S)
 src = src.replace("// SPDX-License-Identifier: UNLICENSED", "// SPDX-License-Identifier: MIT")
-if name == "ICoreLib":
+if name == "ICoreOpsLib":
     # state changing library functions are not in the library abi: added from the source signatures, selectors are
     # pinned by test/BuildIdentity.t.sol against the artifact
     # setSettings is left out on purpose: a library selector names the struct (`setSettings(Settings)`)

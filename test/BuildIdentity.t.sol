@@ -2,27 +2,28 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
-import {ICoreLib} from "../src/interfaces/ICoreLib.sol";
+import {ICoreOpsLib} from "../src/interfaces/ICoreOpsLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 
 /// @notice proof that the suite exercises the production build. tests and scripts compile on the default profile (no
 /// via_ir), the production contracts on the via_ir profile (foundry.toml). this test fails unless
-///  1. the runtime code the fixture deployed for the Core, the ControllerV1, the two listing adapters, the CoinRenderer and the linked CoreLib equals, byte for byte,
+///  1. the runtime code the fixture deployed for the Core, the ControllerV1, the two listing adapters, the CoinRenderer and both linked libraries equals, byte for byte,
 ///     the runtime code of the artifact in `out/` (the immutable slots and the library address slots are masked in both:
 ///     they are the constructor arguments and the link, not compiler output),
 ///  2. every one of those artifacts records, in its own solc metadata, viaIR true, optimizer 200 runs, cancun, no
 ///     metadata hash, solc 0.8.30. the artifact cannot claim that by accident: solc writes it from the settings it ran,
 ///  3. this very test contract was compiled WITHOUT viaIR, so the profile split is live. a config that put everything on
 ///     one profile fails here (all via_ir) or at 2 (none via_ir), and a split that deployed a different build fails at 1,
-///  4. the sizes are the shipped ones, and the masked runtime code hashes of the six production artifacts and the creation
-///     code hash of CoreLib equal the constants of script/Checks.sol that preflight compares with `out/`. update the
+///  4. the sizes are the shipped ones, and the masked runtime code hashes of the seven production artifacts and the creation
+///     code hashes of both libraries equal the constants of script/Checks.sol that preflight compares with `out/`. update the
 ///     sizes and the constants in the same commit that changes a production contract on purpose.
 /// the generated interfaces are not part of the proof: `script/tools/gen-interfaces.sh --check` covers them, and the
-/// two library functions the abi does not list are pinned to the artifact selectors below.
+/// the two library functions the abi does not list are pinned to the artifact selectors below.
 contract BuildIdentityTest is Fixture {
-    uint256 internal constant CORE_RUNTIME = 24556;
+    uint256 internal constant CORE_RUNTIME = 23674;
     uint256 internal constant CONTROLLER_RUNTIME = 17189;
-    uint256 internal constant LIB_RUNTIME = 24543;
+    uint256 internal constant LIB_RUNTIME = 23635;
+    uint256 internal constant OPS_LIB_RUNTIME = 3378;
     uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_536;
     uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 534;
     uint256 internal constant RENDERER_RUNTIME = 4_464;
@@ -110,21 +111,23 @@ contract BuildIdentityTest is Fixture {
     /// computations of the masked hash
     // promise: the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent computations of the masked hash
     function test_pinnedBuildHashesEqualTheArtifacts() public {
-        string[6] memory names =
-            ["Core", "CoreLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter", "LogoCoinRenderer"];
-        bytes32[6] memory pins = [
+        string[7] memory names =
+            ["Core", "CoreLib", "CoreOpsLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter", "LogoCoinRenderer"];
+        bytes32[7] memory pins = [
             BUILD_HASH_CORE,
             BUILD_HASH_CORELIB,
+            BUILD_HASH_COREOPSLIB,
             BUILD_HASH_CONTROLLER,
             BUILD_HASH_SEAPORT_ADAPTER,
             BUILD_HASH_STRATEGY_ADAPTER,
             BUILD_HASH_RENDERER
         ];
-        for (uint256 i; i < 6; ++i) {
+        for (uint256 i; i < 7; ++i) {
             assertEq(_maskedHash(names[i]), pins[i], string.concat(names[i], ": masked hash of the artifact"));
             assertEq(artifactHash(names[i]), pins[i], string.concat(names[i], ": hash the preflight row reads"));
         }
         assertEq(keccak256(vm.getCode("CoreLib.sol:CoreLib")), BUILD_CREATION_HASH_CORELIB, "CoreLib creation code");
+        assertEq(keccak256(vm.getCode("CoreOpsLib.sol:CoreOpsLib")), BUILD_CREATION_HASH_COREOPSLIB, "CoreOpsLib creation code");
     }
 
     // promise: the fixture deploys the via ir artifacts
@@ -137,19 +140,25 @@ contract BuildIdentityTest is Fixture {
         address lib = findLibrary(address(core).code);
         assertTrue(lib != address(0), "the core is linked to a compiled CoreLib");
         _identical(lib, "CoreLib", LIB_RUNTIME);
+        address ops = findOpsLibrary(address(core).code);
+        assertTrue(ops != address(0), "the core is linked to a compiled CoreOpsLib");
+        _identical(ops, "CoreOpsLib", OPS_LIB_RUNTIME);
     }
 
     /// the deployed code size limit of EIP-170
     uint256 internal constant EIP170_LIMIT = 24_576;
 
-    // promise: Core and CoreLib stay under the EIP-170 deployed code size limit, with the margin reported
+    // promise: Core and both linked libraries stay under the EIP-170 deployed code size limit, with the margin reported
     function test_coreAndCoreLibFitEip170() public {
         emit log_named_uint("Core runtime bytes", CORE_RUNTIME);
         emit log_named_uint("Core margin under EIP-170", EIP170_LIMIT - CORE_RUNTIME);
         emit log_named_uint("CoreLib runtime bytes", LIB_RUNTIME);
         emit log_named_uint("CoreLib margin under EIP-170", EIP170_LIMIT - LIB_RUNTIME);
+        emit log_named_uint("CoreOpsLib runtime bytes", OPS_LIB_RUNTIME);
+        emit log_named_uint("CoreOpsLib margin under EIP-170", EIP170_LIMIT - OPS_LIB_RUNTIME);
         assertLt(CORE_RUNTIME, EIP170_LIMIT, "Core exceeds the EIP-170 code size limit");
         assertLt(LIB_RUNTIME, EIP170_LIMIT, "CoreLib exceeds the EIP-170 code size limit");
+        assertLt(OPS_LIB_RUNTIME, EIP170_LIMIT, "CoreOpsLib exceeds the EIP-170 code size limit");
     }
 
     /// @dev the comparison is not vacuous: one flipped byte in code that is not an immutable or a link slot fails it
@@ -174,13 +183,13 @@ contract BuildIdentityTest is Fixture {
         assertFalse(vm.keyExistsJson(j, ".metadata.settings.viaIR") && vm.parseJsonBool(j, ".metadata.settings.viaIR"));
     }
 
-    /// @dev the one library function the library abi leaves out (state changing) is in `ICoreLib` by hand, and its
-    /// selector is the artifact one. `setSettings` is not in the interface: a library names a struct argument by its
+    /// @dev `swapIn` is added to `ICoreOpsLib` by hand because the library abi leaves it out. `setSettings` is not in the interface: a library names a struct argument by its
     /// name in the selector (`setSettings(Settings)`), an interface by its tuple, so the interface selector would differ
-    // promise: the one library function the library abi leaves out (state changing) is in `ICoreLib` by hand, and its selector is the artifact one
+    // promise: the hand-added swap selector and the CoreLib setting selector match their artifacts
     function test_libraryInterfaceSelectorsMatchTheArtifact() public view {
-        string memory j = _json("CoreLib");
-        assertEq(_id(j, "swapIn(address,address,uint24,int24,address,uint256)"), ICoreLib.swapIn.selector, "swapIn");
+        string memory j = _json("CoreOpsLib");
+        assertEq(_id(j, "swapIn(address,address,uint24,int24,address,uint256)"), ICoreOpsLib.swapIn.selector, "swapIn");
+        j = _json("CoreLib");
         assertEq(_id(j, "setSettings(Settings)"), bytes4(keccak256("setSettings(Settings)")), "setSettings");
         assertEq(_id(j, "adopt(uint256[])"), ICore.adopt.selector, "adopt");
     }

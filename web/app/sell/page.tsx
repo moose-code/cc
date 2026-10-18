@@ -425,6 +425,10 @@ export default function SellPage() {
                 <button className="action" disabled>
                   select credits to sell
                 </button>
+              ) : snap.paused ? (
+                <button className="action" disabled>
+                  engine paused
+                </button>
               ) : balanceQuoteMissing ? (
                 <button className="action" disabled>
                   balance quote unavailable

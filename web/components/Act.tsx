@@ -30,7 +30,7 @@ export function Act({
           {pending ? "confirm in wallet…" : label}
         </button>
       ) : (
-        <button className={`action${secondary ? " secondary" : ""}`} onClick={openConnectModal}>
+        <button className={`action${secondary ? " secondary" : ""}`} onClick={openConnectModal} disabled={disabled} title={title}>
           connect to {label}
         </button>
       )}

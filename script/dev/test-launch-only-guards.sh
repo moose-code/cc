@@ -43,6 +43,8 @@ expect() {
 }
 expect "coinLive true" '.coinLive = true' "is not a deferred record"
 expect "wrong controller" '.controller = "0x0000000000000000000000000000000000000001"' "controller on chain differs"
+expect "wrong CoreLib" '.library = "0x0000000000000000000000000000000000000001"' "record library differs"
+expect "wrong CoreOpsLib" '.opsLibrary = "0x0000000000000000000000000000000000000001"' "record opsLibrary differs"
 expect "wrong chain id" '.chainId = 1' "is for chain 1"
 expect "wrong token deployer" '.tokenDeployer = "0x0000000000000000000000000000000000000001"' "tokenDeployer differs"
 

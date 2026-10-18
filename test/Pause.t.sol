@@ -4,11 +4,10 @@ pragma solidity ^0.8.28;
 import {SaleShapeBase} from "./Sale.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {CreditSale} from "../src/interfaces/Interfaces.sol";
+import {CreditSale, Settings} from "../src/interfaces/Interfaces.sol";
 
-/// the owner pause of the Core on the live fork: `sellTo` and `sellCreditTo` revert `Paused`, so `buy` and `buyCredit`
-/// refuse, `priceOf` answers, the age a statement's price falls with excludes every paused second, composing, the bids
-/// and redemptions are unaffected
+/// the owner pause of the Core on the live fork: acquisition, composition and buybacks stop; statement age excludes
+/// paused seconds, while fee booking, funding and redemption remain available
 contract PauseTest is SaleShapeBase {
     address internal buyer = address(0xB0B);
 
@@ -138,22 +137,24 @@ contract PauseTest is SaleShapeBase {
         assertLt(ctl.priceOf(sid), before);
     }
 
-    // promise: SPEC 1 composing runs in a pause and a statement composed then ages from the resume
-    /// a statement composed during a pause starts aging at the resume, and one composed before it keeps its age
-    function test_compose_worksWhilePausedAndAgesFromTheResume() public {
+    // promise: an owner pause stops composition without changing a held statement's age
+    function test_compose_stopsWhilePausedAndResumesWithTheSameAge() public {
         uint256 first = _composeOnce().sid;
         _age(first, 3 * H);
         _setPaused(true);
-
         uint256 supply = STATEMENTS.supply();
-        uint256 second = _another();
-        assertEq(second, supply + 1, "compose went through while paused");
-        uint256 cost = _cost(second);
+        vm.prank(keeper);
+        vm.expectRevert(ICore.Paused.selector);
+        core.compose();
+        vm.prank(keeper);
+        vm.expectRevert(ICore.Paused.selector);
+        core.compose(0);
+        assertEq(STATEMENTS.supply(), supply);
         vm.warp(block.timestamp + 5 days);
-        assertEq(ctl.priceOf(second), _launch(cost, 0), "no age accrued in the pause");
         assertEq(ctl.priceOf(first), _launch(_cost(first), 3 * H), "the older statement keeps its age");
-
         _setPaused(false);
+        uint256 second = _another();
+        uint256 cost = _cost(second);
         assertEq(ctl.priceOf(second), _launch(cost, 0), "age zero at the resume");
         vm.warp(block.timestamp + 10 * H);
         assertEq(ctl.priceOf(second), _launch(cost, 10 * H), "it ages from the resume");
@@ -195,13 +196,110 @@ contract PauseTest is SaleShapeBase {
         assertTrue(ctl.pastWindow(acquiredAt), "the window passed during the pause");
     }
 
-    // promise: SPEC 1 the eth bid runs in a pause
-    /// the eth bid is unaffected: credits sell into it while paused
-    function test_sellForEth_worksWhilePaused() public {
+    // promise: an owner pause stops every intake route and buyback before they move assets
+    function test_allIntakeAndBuybackDoorsStopWhilePaused() public {
         _setPaused(true);
         uint256 size = core.pileSize();
+        uint256[] memory ids = new uint256[](0);
+        vm.expectRevert(ICore.Paused.selector);
+        core.sellForEth(ids);
+        vm.expectRevert(ICore.Paused.selector);
+        core.sellForEth(ids, 0);
+        vm.expectRevert(ICore.Paused.selector);
+        core.sellForBalance(ids);
+        vm.expectRevert(ICore.Paused.selector);
+        core.sellForBalance(ids, 0);
+        vm.expectRevert(ICore.Paused.selector);
+        core.sellForBalance(ids, 0, address(0));
+        vm.expectRevert(ICore.Paused.selector);
+        core.buyListing(address(0), 0, "");
+        vm.expectRevert(ICore.Paused.selector);
+        core.adopt(ids);
+        uint256[80] memory chosen;
+        vm.expectRevert(ICore.Paused.selector);
+        core.composeChosen(chosen, 0);
+        vm.expectRevert(ICore.Paused.selector);
+        core.buyback();
+        assertEq(core.pileSize(), size);
+        _setPaused(false);
         _fillEthPile(5);
-        assertEq(core.pileSize(), size + 5, "the credits entered the pile");
+        assertEq(core.pileSize(), size + 5);
+    }
+
+    // promise: paused time cannot raise the bid, including through funding and booking, and earned climb survives
+    function test_bidClockFreezesAcrossPauseAndResumes() public {
+        _liftRateCap();
+        vm.deal(buyer, 10 ether);
+        vm.prank(buyer);
+        core.fund{value: 1 ether}();
+        vm.warp(block.timestamp + 11 minutes);
+        uint256 earned = core.ethPrice();
+        _setPaused(true);
+        assertEq(core.ethPrice(), earned);
+        vm.warp(block.timestamp + 6 hours);
+        vm.prank(buyer);
+        core.fund{value: 1 ether}();
+        core.book();
+        assertEq(core.ethPrice(), earned, "fund and book cannot credit paused time");
+        _setPaused(false);
+        assertEq(core.ethPrice(), earned, "pre-pause climb survives the resume");
+        vm.warp(block.timestamp + 11 minutes);
+        assertGt(core.ethPrice(), earned, "climb resumes after the pause");
+    }
+
+    // promise: repeated pauses exclude only paused time and an owner rate reset remains usable during a pause
+    function test_rateResetAndSecondPauseDoNotLoseEarnedBid() public {
+        _liftRateCap();
+        vm.deal(buyer, 3 ether);
+        vm.prank(buyer);
+        core.fund{value: 1 ether}();
+        _setPaused(true);
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(owner);
+        core.setRate(3e15);
+        vm.warp(block.timestamp + 1 hours);
+        assertEq(core.ethPrice(), 3e15, "a reset during pause does not climb");
+        _setPaused(false);
+        assertEq(core.ethPrice(), 3e15, "the reset survives resume");
+        vm.warp(block.timestamp + 11 minutes);
+        uint256 earned = core.ethPrice();
+        assertGt(earned, 3e15);
+        _setPaused(true);
+        vm.warp(block.timestamp + 2 hours);
+        _setPaused(false);
+        assertEq(core.ethPrice(), earned, "a second pause preserves earned climb");
+    }
+
+    // promise: an owner half-life edit during a pause cannot consume paused hours from the remembered peak
+    function test_halfLifeEditDuringPausePreservesBid() public {
+        _liftRateCap();
+        vm.deal(buyer, 2 ether);
+        vm.prank(buyer);
+        core.fund{value: 1 ether}();
+        vm.warp(block.timestamp + 11 minutes);
+        uint256 earned = core.ethPrice();
+        _setPaused(true);
+        vm.warp(block.timestamp + 6 hours);
+        Settings memory s = core.settings();
+        s.peakHalfLife += 1 hours;
+        _setSettings(s);
+        assertEq(core.ethPrice(), earned, "settings edit cannot decay the peak through a pause");
+        _setPaused(false);
+        assertEq(core.ethPrice(), earned, "the remembered bid survives resume");
+    }
+
+    // promise: pausing intake does not take away an eligible holder's redemption or the public fee and funding doors
+    function test_redemptionAndFeeIntakeRemainLiveWhilePaused() public {
+        _enterPhase2();
+        uint256 sid = _composeOnce().sid;
+        _makeEligible(sid);
+        _setPaused(true);
+        vm.deal(buyer, 1 ether);
+        vm.prank(buyer);
+        core.fund{value: 0.1 ether}();
+        core.book();
+        core.redeemStatement(sid);
+        assertEq(STATEMENTS.ownerOf(sid), address(mod));
     }
 }
 
@@ -277,7 +375,7 @@ contract PauseClockTest is SaleShapeBase {
                 } else {
                     we[nw - 1] = block.timestamp;
                 }
-            } else if (op == 2 && ns < 3) {
+            } else if (op == 2 && ns < 3 && !isPaused) {
                 sids[ns++] = _another();
             } else {
                 vm.prank(owner);

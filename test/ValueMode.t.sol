@@ -467,6 +467,28 @@ contract ValueReferenceTest is ValueBase {
 }
 
 contract ValueModeTest is ValueBase {
+    // promise: an owner pause freezes the shared value-mode climb through booking, funding and half-life edits
+    function test_pauseFreezesSharedBidAndResumesEarnedClimb() public {
+        _valueOn();
+        vm.warp(block.timestamp + 2 minutes);
+        uint256 earned = core.sharedRate();
+        vm.prank(owner);
+        core.setPaused(true);
+        vm.warp(block.timestamp + 6 hours);
+        vm.deal(address(this), 1 ether);
+        core.fund{value: 1 ether}();
+        core.book();
+        Settings memory s = core.settings();
+        s.peakHalfLife += 1 hours;
+        _setSettings(s);
+        assertEq(core.sharedRate(), earned, "paused booking cannot lift the shared bid");
+        vm.prank(owner);
+        core.setPaused(false);
+        assertEq(core.sharedRate(), earned, "earned climb survives the pause");
+        vm.warp(block.timestamp + 2 minutes);
+        assertGt(core.sharedRate(), earned, "shared climb resumes");
+    }
+
     // promise: SPEC 4 the launch keeps value mode off and the quote placeholders unusable
     function test_launchValues() public view {
         Settings memory s = core.settings();

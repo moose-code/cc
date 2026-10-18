@@ -9,7 +9,6 @@ interface ICoreLib {
     error BadQuote();
     error BadSetting(bytes32 field);
     error BadSuccessor(address who);
-    error BadSwap();
     error BalanceBidOff();
     error BalanceTokenChanged();
     error CallFailed();
@@ -66,8 +65,4 @@ interface ICoreLib {
     function room() external view returns (uint256);
     function sharedRate() external view returns (uint256);
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent);
-
-    function swapIn(address manager, address coin, uint24 fee, int24 spacing, address hook, uint256 amountIn)
-        external
-        returns (uint256 owed, uint256 bought);
 }

@@ -32,15 +32,15 @@ abstract contract PostflightV2 is SystemBuilder, Report, ArtifactIdentity {
         (imm, lnk) = abi.decode(vm.envBytes(_idKey(name, "SLOTS")), (uint256[], uint256[]));
     }
 
-    /// @notice the keccak256 of the runtime code of the compiled artifact `name` (`Core`, `CoreLib`, `ControllerV1`,
-    /// `SeaportBasicAdapter`, `CreditStrategyAdapter`) with the immutable slots and the library address slots zeroed, as read from `out/`
+    /// @notice the keccak256 of a compiled production artifact's runtime code, with immutable and both linked library
+    /// address slots zeroed, as read from `out/`
     function artifactHash(string memory name) internal returns (bytes32) {
         _idEnsure(name);
         return vm.envBytes32(_idKey(name, "HASH"));
     }
 
-    /// @notice whether the runtime code at `at` is the runtime code of the compiled artifact `name` (`Core`,
-    /// `ControllerV1`), the immutable slots and the linked library address masked in both (the method of
+    /// @notice whether the runtime code at `at` is the runtime code of the compiled artifact `name`,
+    /// with immutable slots and linked library addresses masked in both (the method of
     /// test/BuildIdentity.t.sol). false when `at` has no code. the artifact side is read once and kept, and the copy
     /// of the live code is released, so a run of hundreds of postflights stays cheap
     function runtimeMatchesArtifact(address at, string memory name) internal returns (bool ok) {
@@ -64,10 +64,10 @@ abstract contract PostflightV2 is SystemBuilder, Report, ArtifactIdentity {
     }
 
     /// @notice whether every masked slot of the runtime code at `at` holds the value the live contract reports: each
-    /// library address slot equals `lib`, and every site of the immutable with index g (declaration order) holds
+    /// library address slot equals its library in `libs`, and every site of the immutable with index g (declaration order) holds
     /// `want[g]`. the runtime hash comparison masks these slots, so this is the check of their content. false when `at`
     /// has no code or `want` does not have one entry per immutable
-    function runtimeSlotsMatch(address at, string memory name, address lib, uint256[] memory want)
+    function runtimeSlotsMatch(address at, string memory name, address[] memory libs, uint256[] memory want)
         internal
         returns (bool ok)
     {
@@ -80,7 +80,8 @@ abstract contract PostflightV2 is SystemBuilder, Report, ArtifactIdentity {
         bytes memory live = at.code;
         ok = true;
         for (uint256 i; i < lnk.length && ok; ++i) {
-            ok = _slotWord(live, lnk[i]) == uint256(uint160(lib));
+            uint256 g = lnk[i] >> 192;
+            ok = g < libs.length && _slotWord(live, lnk[i]) == uint256(uint160(libs[g]));
         }
         for (uint256 i; i < imm.length && ok; ++i) {
             uint256 g = imm[i] >> 192;
