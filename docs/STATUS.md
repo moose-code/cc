@@ -4,6 +4,8 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
+Web docs branch (2026-10-18, decision 174): `codex/contract-docs-ui` starts at latest fetched `origin/main` `a6099d2`. It adds a static `/docs` guide, searchable contract API reference and complete generated interface catalog. Contract bytecode and the frozen release candidate are unchanged. Focused verification passed: `npm run check:docs`, `npx tsc --noEmit`, eight local docs routes returned 200, and desktop/mobile navigation and search were exercised in the browser. Next for this branch: review the docs commit; the release acceptance row below stays pending.
+
 Baton (2026-10-18): candidate 85dbc51 is frozen pending owner acceptance (suite, deep, e2e, rehearsal and delta review rows in section 4). Next: owner acceptance; the deploy-morning rate pull (rateStart placeholder 0.0049); `DRY_RUN=1 script/deploy.sh mainnet`; then the `DEFER_LAUNCH=1` deploy and `LAUNCH_ONLY` per docs/RUNBOOK.md.
 
 Delta audit of main `e6a7654` (2026-10-18, decision 173; record in docs/reviews/REVIEW-codex-delta-e6a7654.md): verification held (suite 751 passed, 0 failed, 7 skipped; e2e-real 35 passed, 0 failed; deep campaigns 21 and 21b, 7 suites at 64 runs of depth 200). Four fixes land outside `src/` on branch `fix/delta-audit-e6a7654`: the dev scenario closes the balance bid again (L-01), the sell page pays 0 and disables the action when value mode has no protected sale price (B-01), `useCoinLive` polls every 15 seconds until the coin has code (B-02), and `/api/listings` has a global upstream POST budget (SEC-02, burst 8, refill 4 per second, for the owner to confirm against the OpenSea plan). The freeze row stays pending.

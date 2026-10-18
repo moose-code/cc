@@ -362,6 +362,10 @@ Server side (`web/lib/meta.ts`), cached 60 s, each source under a 2.5 s timeout.
 | token art of the share image | I `tokenUri`; L `tokenURI` when the row is absent |
 | held and composed counts on the index share images | I count of `credit` rows in `held`, count of `statement` rows |
 
+### 9.9 documentation
+
+The `/docs` section is static, curated content in `web/lib/docs-content.ts` plus a complete interface catalog generated into `web/lib/docs-catalog.ts` from `src/interfaces/` by `web/scripts/gen-docs-catalog.mjs`. Its behavior follows the product rules in `docs/SPEC.md`, as of main `a6099d2`. Search runs locally over both sources. It does not read the indexer, the chain, or deployment configuration. Live addresses and settings must be checked separately before a transaction.
+
 ## 10. deploy
 
 One path, as in shapes PR #59 and the owner's deploy rule:

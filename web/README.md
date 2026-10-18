@@ -49,6 +49,9 @@ artist and operator cuts come off the payment inside the sale. The balance side
 | `/sell` | `ethRate`, `ethPot`, `settings`, `Credits.tokensOf` | `Credits.setApprovalForAll(core)`, `core.sellForEth(ids, minOut)`, `core.sellForBalance(ids, minOut, expectedToken)` while `balanceBidOn` |
 | `/compose` | `nextPage`, `pileSize`, `chosenComposeOn`, `minCcToChoose` | `core.compose()`, `core.compose(format)`, `core.composeChosen(ids, format)` while `chosenComposeOn` |
 | `/statements`, `/statements/[id]` | `heldStatements`, `statementInfo`, `statementAge`, `ratingOf`, `composerOf`, `priceOf`, `referenceOf`, `atFloor`, `valueOf` | `controller.buy(sid)` at the asking price, `core.setHeldFormat(sid, format)`, `core.redeemStatement(sid)` when `redeemOn` and `atFloor` |
+| `/docs` and `/docs/...` | static guides and a generated catalog from `src/interfaces/` | search and navigation only; no chain write |
+
+For contract surface changes, run `npm run gen:docs` to refresh the complete signature catalog, then `npm run check:docs` to check it and the curated reference. The docs are pinned to main `a6099d2`; update the source link and copy when rebasing onto a newer contract revision.
 
 `sellForEth` and `sellForBalance` send `minOut` at 99.5% of the batch total,
 replayed from the Core's per-credit rules at click time (`lib/sell.ts`, read by
