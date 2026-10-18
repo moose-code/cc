@@ -563,8 +563,10 @@ a:hover {
   font-weight: 400;
   color: var(--muted);
 }
-/* pre-balance phase: the balance token is not deployed yet; the value size, faded */
+/* pre-balance phase: the balance token is not deployed yet; faded, sized to fit one line */
 .stat-cell .value .stat-wait {
+  font-size: 12px;
+  white-space: nowrap;
   color: var(--faint);
 }
 .stat-cell.ink-pot {
@@ -3479,8 +3481,17 @@ button.slot:disabled {
   font-size: 11px;
   color: var(--quiet);
 }
-/* the listings tab sits in the feed column, narrower than the listings page: tighter tracks so the credit id keeps
-   its width instead of collapsing under the page-width fixed columns */
+/* the listings tab matches the ledger table: same side margin, a 2px header rule and the ledger row height. The feed
+   column is narrower than the listings page, so the tracks are tighter to keep the credit id from collapsing. */
+.ledger .ltable {
+  margin: 0 24px;
+}
+.ledger .ltable-head {
+  border-top: 2px solid var(--structure);
+}
+.ledger .ltable-row {
+  min-height: 40px;
+}
 @media (min-width: 861px) {
   .ledger .ltable-row {
     grid-template-columns: 28px minmax(72px, 1fr) 96px 48px 72px 72px 120px 56px 108px 76px;
