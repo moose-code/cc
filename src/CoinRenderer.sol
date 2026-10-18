@@ -10,9 +10,8 @@ import {ICredits, Mainnet} from "./interfaces/Interfaces.sol";
 import {CreditDrawing} from "./lib/CreditDrawing.sol";
 
 /// @notice the coin's metadata renderer: the Core's pile drawn as a Statement page, 8 columns by 10 rows.
-/// @dev    `contractURI(token)` is the view the artcoins coin calls on its renderer. the launch names this contract in
-///         the token config. its constructor takes `owner`, the config owner, which keeps the CREATE2 address
-///         independent of the Core; `setCore` binds the Core once. a pile of at most 80 credits is drawn whole, in pile order. a larger pile is
+/// @dev    retained for an owner swap after the LogoCoinRenderer launch. the constructor owner keeps its CREATE2
+///         address independent of the Core; `setCore` binds the Core once. a pile of at most 80 credits is drawn whole, in pile order. a larger pile is
 ///         read whole, then 80 of its credits are sampled by `block.prevrandao`, so the selection changes each block and holds
 ///         within a block. every cell is the credit's own drawing, `CreditDrawing.body`, the code the live
 ///         CreditArt and StatementArt run. a view contract: every call reads the Core, Credits and the coin. the pile

@@ -6,12 +6,6 @@ import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {IListingAdapter} from "./interfaces/IListingAdapter.sol";
 import {IArtCoinsFactoryV2, IArtCoinsFeeEscrowV2} from "./interfaces/ArtCoinsV2.sol";
 import {
@@ -37,9 +31,9 @@ import {CreditBounds} from "./lib/CreditBounds.sol";
 /// custody and every rule of the credits engine. the owner sets the controller, the balance module and the adapter list at
 /// once, can set a successor that receives the assets on `migrate`, and can close each of the controller, the balance
 /// module, the adapters and the successor door with a one way lock (docs/SPEC.md section 11).
-/// credits and statements sent to the core outside its doors are not tracked and stay in the core.
+/// untracked credits enter the pile through `adopt`; untracked statements may be recovered through `rescueNft`.
 /// the Core is the bounty recipient of the pool. `receive()` accepts eth from the hook and the fee escrow only, and every
-/// door starts with `_book()`, which pushes `payeePpm` of the eth above the tracked pots to the payee and splits the
+/// pot-dependent door starts with `_book()`, which pushes the active payee share of untracked eth and splits the
 /// rest between the redeem burn pot and the pot.
 contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     using FixedPointMathLib for uint256;
@@ -75,7 +69,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error BadSwap();
     /// `buyListing` names an adapter the owner has not approved
     error AdapterNotAllowed();
-    /// the adapter reverted, ran out of its gas cap, or answered with fewer than three words or more than `QUOTE_MAX` bytes
+    /// the adapter reverted, ran out of its gas cap, or answered with fewer than four words or more than `QUOTE_MAX` bytes
     error BadQuote();
     error ForbiddenTarget();
     error AlreadyOwned();
@@ -92,10 +86,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error RedeemOff();
     /// `sellForBalance` while `balanceBidOn` is false
     error BalanceBidOff();
-    /// `redeemStatement`: the controller's `atFloor` is false (the curve price has not reached its floor) or the
-    /// controller did not answer
+    /// `redeemStatement`: the controller refuses eligibility under its curve or age rule, or did not answer
     error NotEligible();
-    /// the door `what` ("controller", "balanceModule" or "adapters") was locked by the owner
+    /// the door `what` ("controller", "balanceModule", "adapters" or "successor") was locked by the owner
     error Locked(bytes32 what);
     error OnlyController();
     error BadController();
@@ -136,8 +129,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     // inside the Core
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
-    /// an eth door or bid view in value mode while the controller's bounded `valuePerPoint` read fails (raised by
-    /// CoreLib, declared here for the abi)
+    /// retained for ABI compatibility; ETH quote failures now fall back to the last good value rate
     error NoQuote();
 
     /*//////////////////////////////////////////////////////////////
@@ -151,7 +143,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// `collectEscrow` claimed `amount` from the fee escrow into the pot
     event EscrowCollected(uint256 amount);
     event PayeeSet(address indexed payee);
-    /// `setArtist` set the address the artist cut of nft sales is pushed to
+    /// the artist receives sale cuts and on-top purchase royalties
     event ArtistSet(address indexed artist);
     /// the engine bought a credit: the seller, the pile cost basis (the eth routes: the price plus the artist royalty,
     /// plus the keeper payment for a listing; the balance route: the eth floor basis) and the royalty paid to the
@@ -267,13 +259,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     uint256 private constant QUOTE_GAS = 2_000_000;
     /// bytes of the answer of a listing adapter the Core accepts
     uint256 private constant QUOTE_MAX = 8_192;
-    /// gas the controller's `priceOf` may use: its reads of the Core, the settings, `floorRate`, the module's
-    /// `unitPerPoint` and the pool `getSlot0`
+    /// gas bound of the controller's statement price read; failure logs a zero compose price
     uint256 private constant PRICE_GAS = 400_000;
     /// gas the controller's `nextPage` may use. a full page of ControllerV1 costs under 350,000 gas on a
     /// cold read
     uint256 private constant PAGE_GAS = 500_000;
-    address private constant DEAD = Mainnet.DEAD;
 
     ICredits private constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements private constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
@@ -530,7 +520,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.ethPrice();
     }
 
-    /// wei per credit of the floor rate now: the larger of `ethPrice`, the price state climbed before the pot clamp,
+    /// wei per 100 points of the floor rate now: the larger of `ethPrice`, the price state climbed before the pot clamp,
     /// and the remembered peak of the eth bid decayed to now. selling credits lowers only the rate and the peak decays
     /// between fills, so the maximum follows the climb and holds against a sale within the block. the engine's price
     /// floors read it. the math is in `CoreLib.floorRate`
@@ -556,12 +546,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.balanceRate();
     }
 
-    /// the balance token payout for a score of `score` stored units now: score times unitPerPoint times balanceRate() over 10_000
+    /// executable balance payout for `score` stored units: the posted discount, lowered by the value-mode cap;
+    /// zero when the module cannot cover the payout and artist royalty
     function balanceBidForScore(uint256 score) external view returns (uint256) {
         return CoreLib.balanceBidForScore(score);
     }
 
-    /// the executable balance token payout for credit id now: the floor payout when the module can pay it, else 0, so
+    /// the executable balance token payout for credit id now: the clamped posted payout when the module can pay it, else 0, so
     /// the view returns 0 for a payout the fill would refuse
     function balanceBidOf(uint256 id) external view returns (uint256) {
         return CoreLib.balanceBidOf(id);
@@ -601,12 +592,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
     }
 
-    function _nextPage() private view returns (bool ready, uint256[80] memory ids, uint256 format) {
+    function _nextPage() private view returns (bool ready, uint256[80] memory ids) {
         (bool ok, bytes memory out) =
             _ask(s.controller, abi.encodeCall(IController.nextPage, ()), PAGE_GAS, (PAGE + 2) * 32);
-        if (!ok) return (false, ids, 0);
+        if (!ok) return (false, ids);
         uint256 flag;
-        (flag, ids, format) = abi.decode(out, (uint256, uint256[80], uint256));
+        (flag, ids,) = abi.decode(out, (uint256, uint256[80], uint256));
         ready = flag == 1;
     }
 
@@ -696,7 +687,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         uint256 artistTotal;
         uint256 royaltyBps = s.settings.buyToArtistBps;
         for (uint256 i; i < ids.length; ++i) {
-            uint256 id = _owned(ids[i]);
+            uint256 id = ids[i];
+            _owned(id);
             CoreLib.checkReturn(s, id, msg.sender);
             uint256 score = _scoreOf(id);
             uint256 bid = _bid();
@@ -818,10 +810,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// checks that the caller owns credit id, which must not be the zero sentinel.
-    function _owned(uint256 id) private view returns (uint256) {
+    function _owned(uint256 id) private view {
         if (id == 0) revert ZeroId();
         if (CREDITS.ownerOf(id) != msg.sender) revert NotOwner();
-        return id;
     }
 
     /// a forbidden target: the base set, or any module or token a `setBalanceModule` has ever selected. a replaced
@@ -858,7 +849,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the shared body of the two system composes. the controller's `nextPage` format is not used
     function _composePage(uint256 format, bool random, uint256 gasStart) private {
         _openDoor();
-        (bool ready, uint256[80] memory ids,) = _nextPage();
+        (bool ready, uint256[80] memory ids) = _nextPage();
         if (!ready) revert NotReady();
         if (random) format = uint256(keccak256(abi.encode(block.prevrandao, ids[0]))) % (MAX_FORMAT + 1);
         _compose(ids, format, gasStart);
@@ -1042,8 +1033,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// hands a held statement to the balance module. the balance token the redemption returns stays in the module.
-    /// requires `redeemOn` and a module set. a statement is eligible when the controller's curve price has reached its
-    /// floor. the module's balance token holding must rise by at least
+    /// requires `redeemOn`, a module and the controller's approval under its curve or age eligibility rule. the module's balance token holding must rise by at least
     /// `rating * unitPerPoint * (10_000 - redeemSlippageBps) / 10_000`, with `unitPerPoint` read from the module in the
     /// call. a module whose read fails, is zero or exceeds uint128, or whose holding rises by less than that, reverts
     /// `BadModule`. every redemption moves `redeemBurnBps` of the redeem burn pot into the coin buyback
@@ -1259,11 +1249,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _toLib();
     }
 
-    /// sends `amount` of a stray ERC20 `token` the core holds to `to`. owner only and guarded. it refuses every
+    /// sends `amount` of a stray ERC20 `token` the core holds to `to`. owner only. it refuses every
     /// forbidden target (the coin, recovered through `rescueCoin`, Credits, Statements, the core, the hook, the managers,
     /// and the current and every past balance token and module), so a balance token reserve is never moved out of its
-    /// module path. it never touches tracked eth, which is not an ERC20. a balance token sent directly to the core is
-    /// recovered with this. logs `TokenRescued`. no reentrancy guard: it is owner only,
+    /// module path. balance tokens sent directly to the Core cannot be rescued. logs `TokenRescued`.
+    /// no reentrancy guard: it is owner only,
     /// transfers a token the Core does not track, and does nothing after the transfer, so a token callback changes
     /// nothing here and any Core door it re-enters is itself guarded
     /// the body is `CoreLib.rescueToken`, called with the calldata untouched (the owner check is there)
@@ -1272,8 +1262,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// sets the successor that `migrate` sends the assets to. the zero address means no migration. it must have code.
-    /// reverts `Locked("successor")` after `lockSuccessor`, and `BadSuccessor` for the core, the balance module, the balance
-    /// token, the coin, Credits and Statements. owner only, checked by the library, to which
+    /// reverts `Locked("successor")` after `lockSuccessor`, and `BadSuccessor` for the Core, coin, Credits, Statements,
+    /// and all current and past balance modules and tokens. owner only, checked by the library, to which
     /// the call is handed untouched. logs `SuccessorSet`
     function setSuccessor(address) external {
         _toLib();
@@ -1310,7 +1300,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// puts credits the core holds without a record into the pile, anyone may call. the fee income is booked first,
     /// like at every door that reads the pot, so it is in the pot before the price is read. the cost basis of
-    /// each credit is the price state (`ethPrice`) times its score over 100 points, at least 1 wei. the price
+    /// each credit is `ethPrice * score / RATE_SCORE` plus its on-top artist royalty, at least 1 wei. the price
     /// state is the figure the engine pays with a funded pot, so a statement built from adopted credits is priced at
     /// that level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the pile grows: eth,
     /// the rate state and the pots keep their values. a donor who inflates the basis of a statement
@@ -1353,7 +1343,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         emit ChosenComposeOnSet(v);
     }
 
-    /// sets the least coin balance a caller of `composeChosen` must hold
+    /// sets the least coin balance a caller of `composeChosen` or `setHeldFormat` must hold
     function setMinCcToChoose(uint96 v) external onlyOwner {
         s.minCcToChoose = v;
         emit MinCcToChooseSet(v);
@@ -1404,7 +1394,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         }
     }
 
-    /// restates the eth rate (wei per credit) as `rate`, within the rate bounds. the stored rate, the last fill rate and
+    /// restates the mode-off eth rate (wei per 100 points) as `rate`, within the rate bounds. the stored rate, the last fill rate and
     /// the remembered peak are all `rate`, the fill clock is unchanged. the clamp and the ceiling still bound the rate
     /// on read
     function setRate(uint256 rate) external onlyOwner nonReentrant {

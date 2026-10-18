@@ -138,7 +138,7 @@ contract ControllerV1 is IController {
     /// may take it. 1 to uint32.max seconds
     uint32 public creditWindow;
     /// the sale spread over the bid's hard cap, bps: the credit floor multiplier is `(10_000 + creditSpreadBps)` of the
-    /// Core's `balanceBidCapBps`. 0 to uint16.max
+    /// Core's `balanceBidCapBps`. at least 200 bps, and enough to close the quote tolerance band
     uint16 public creditSpreadBps;
     /// the credit sale start price over the floor, bps. 10_000 to uint32.max
     uint32 public creditStartBps;
@@ -189,7 +189,7 @@ contract ControllerV1 is IController {
     /// sets the six sale settings at once. every field is checked against the bounds of the others in the call:
     /// `markupBps` 10_000 to uint16.max, at least the core's `saleFloorBps` and at most `startCapBps`; `startCapBps` at
     /// least `markupBps`, at most uint32.max; `decayHours` 1 to uint16.max; `anchorHalfLife` 1 to uint32.max seconds;
-    /// `anchorMinCost` 0 to uint128.max. an `anchorBps()` above the new `startCapBps` is lowered to it. a change of
+    /// `anchorMinCost` 0 to uint128.max; `anchorMoveBps` 0 to 10_000. an `anchorBps()` above the new `startCapBps` is lowered to it. a change of
     /// `anchorHalfLife` stores the anchor at the call first, so the new half life applies from now on
     function setSale(Sale calldata v) external onlyOwner {
         if (v.anchorHalfLife != anchorHalfLife) _setAnchorStored(anchorBps());
@@ -354,12 +354,6 @@ contract ControllerV1 is IController {
         return _spot();
     }
 
-    /// the pool spot of the balance token, wei per 1e18 base units. false with no pool key, a key for another token than
-    /// the Core's, a zero sqrt price or a product above 256 bits
-    function _spot() private view returns (uint256 spot, bool ok) {
-        return _priceBaseUnits(1e18);
-    }
-
     /// the buy price, the sale price and the unit, wei per 1e18 base units and base units per score unit, and whether the
     /// reference price is usable. the band is centred on the reference and clamped to the pool spot sampled at the last
     /// refresh (a prior block), never the live spot, so a same-block pool move cannot change the quote. the quote is
@@ -368,7 +362,7 @@ contract ControllerV1 is IController {
     /// with `project` true the views and the sale doors run the read-only equivalent of `refreshReference` first, so a
     /// view read in the same block as a sale door's refresh equals the price the door charges. the Core's
     /// eth bid and the balance cap read it with `project` false, so a lapsed refresh reads stale: the eth bid falls
-    /// back to the eth instance and the balance fill refuses
+    /// back to the last good value rate and the balance fill refuses
     function _protected(bool project) private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
         Quote memory q = quote;
         uint256 ref = referencePrice;
@@ -419,7 +413,7 @@ contract ControllerV1 is IController {
         uint256 pSell;
         uint256 unit;
         // the Core's eth bid reads the stored reference without a projected refresh, so a lapsed refresh reads stale and
-        // the Core falls back to the eth instance rather than halting
+        // the Core falls back to its last good value rate rather than halting
         (pBuy, pSell, unit, ok) = _protected(false);
         if (!ok) return (0, false);
         value = forSale
@@ -518,8 +512,8 @@ contract ControllerV1 is IController {
         return FullMath.mulDiv(CORE.floorRate(), points, RATE_SCORE);
     }
 
-    /// the price reference of statement `sid`, wei: the larger of its cost and `valueOf(rating)`. the curve prices in bps
-    /// of this value. reverts `NotForSale` for a statement the core does not hold
+    /// statement reference, wei: `max(cost, valueOf(rating))` in mode off;
+    /// `valueOf(rating) * floorMultBps() / 10_000` in value mode. reverts `NotForSale` for a statement the core does not hold
     function referenceOf(uint256 sid) public view returns (uint256) {
         (bool held, uint256 cost,) = CORE.statementInfo(sid);
         if (!held) revert NotForSale();
@@ -540,12 +534,10 @@ contract ControllerV1 is IController {
         (price,,) = _quote(sid, _cfg());
     }
 
-    /// true when statement `sid` is eligible for redemption. with `ageEligibilityOn` the rule is age only: the start at
-    /// or below 10_000, or the statement aged `decayHours`, with no price or pool read, so eligibility never restarts on
-    /// a price move and never waits on a quote. with `ageEligibilityOn` false (the launch rule) the curve price is
-    /// compared with its floor, which reads the reference. the age excludes paused seconds, so eligibility holds its
-    /// value while sales are paused. reverts `NotForSale` for a statement the core does not hold. the core reads it to
-    /// gate a balance side redemption
+    /// redemption eligibility for a held statement. age-only mode requires `startBps() <= 10_000` or age at least
+    /// `decayHours`; the curve rule compares its price with its floor. paused seconds do not age the statement,
+    /// but owner settings and reference changes can still affect eligibility. age-only mode short-circuits the
+    /// held-statement read when the start is already at the floor; the Core checks custody before calling.
     function atFloor(uint256 sid) external view returns (bool) {
         if (ageEligibilityOn) {
             return startBps() <= BPS || CORE.statementAge(sid) >= uint256(decayHours) * 1 hours;
@@ -558,8 +550,8 @@ contract ControllerV1 is IController {
         return _ask(ref, CORE.statementAge(sid), floor) <= ref * floor / BPS;
     }
 
-    /// pays the asking price, gets the statement at once, and moves the anchor halfway to the sale price in bps of the
-    /// reference when the cost is at least `anchorMinCost`. the excess of `msg.value` is refunded to the caller last
+    /// buys a statement at the quote. qualifying sales move the anchor by `anchorMoveBps` of the gap to their
+    /// reference-normalized price; 0 disables movement. the excess of `msg.value` is refunded to the caller last
     function buy(uint256 sid) external payable {
         if (_busy) revert Reentrant();
         _busy = true;
@@ -686,44 +678,21 @@ contract ControllerV1 is IController {
         if (!ok || unit == 0 || unit > type(uint128).max) return (0, false);
     }
 
-    /// `baseUnits` of the balance token priced in wei at the balance token pool. `priced` is false when the pool key is
-    /// unset, the stored pool key's `currency1` is not the Core's current `balanceToken()`, the pool sqrt price reads
-    /// zero, or either `mulDiv` of the price exceeds 256 bits. native eth is `currency0`, so wei per token base unit is
-    /// `(2^96 / sqrtPrice)^2`. `mulDiv` carries the sqrt price squared at full precision
-    function _priceBaseUnits(uint256 baseUnits) private view returns (uint256 priceWei, bool priced) {
+    /// live pool spot, wei per 1e18 balance base units. unusable without the current token's pool key or a nonzero
+    /// sqrt price. the two divisions retain their separate floors; `1e18 * 2^192` fits within 256 bits.
+    function _spot() private view returns (uint256 spot, bool ok) {
         if (!balancePoolKeySet) return (0, false);
         if (Currency.unwrap(balancePoolKey.currency1) != CORE.balanceToken()) return (0, false);
         (uint160 sqrtPriceX96,,,) = IPoolManager(Mainnet.POOL_MANAGER).getSlot0(balancePoolKey.toId());
         if (sqrtPriceX96 == 0) return (0, false);
         uint256 q = FixedPoint96.Q96;
         uint256 p = sqrtPriceX96;
-        bool fits;
-        (fits, priceWei) = _mulDivFits(baseUnits, q, p);
-        if (!fits) return (0, false);
-        (fits, priceWei) = _mulDivFits(priceWei, q, p);
-        if (!fits) return (0, false);
-        priced = true;
-    }
-
-    /// `a * b / d` rounded down with `fits` false when the quotient exceeds 256 bits. `d` is nonzero
-    function _mulDivFits(uint256 a, uint256 b, uint256 d) private pure returns (bool fits, uint256 r) {
-        uint256 hi;
-        unchecked {
-            uint256 lo = a * b;
-            uint256 mm;
-            assembly ("memory-safe") {
-                mm := mulmod(a, b, not(0))
-            }
-            hi = mm - lo - (mm < lo ? 1 : 0);
-        }
-        if (hi >= d) return (false, 0);
-        return (true, FullMath.mulDiv(a, b, d));
+        return ((1e18 * q / p) * q / p, true);
     }
 
     /// with `cost` at least `anchorMinCost`, a sale price in bps of the reference (rounded up) above the anchor sets the
     /// anchor by anchorMoveBps of their gap, at most `startCapBps`; zero leaves its clock unchanged. every other sale leaves the stored anchor and `anchorTime`
-    /// unchanged. measuring in bps of the reference keeps a rating-rich statement sold at the normal markup from moving
-    /// the anchor
+    /// unchanged. normalizing by reference prevents a higher rating alone from inflating the measured sale multiple
     function _moveAnchor(uint256 sid, uint256 price, uint256 cost, uint256 ref) private {
         if (anchorMoveBps == 0 || cost < anchorMinCost) return;
         // a zero reference would divide by zero below

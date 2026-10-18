@@ -4,7 +4,7 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
-Baton (2026-10-18): candidate 85dbc51 is frozen pending owner acceptance (suite, deep, e2e, rehearsal and delta review rows in section 4). Next: owner acceptance; the deploy-morning rate pull (rateStart placeholder 0.0049); `DRY_RUN=1 script/deploy.sh mainnet`; then the `DEFER_LAUNCH=1` deploy and `LAUNCH_ONLY` per docs/RUNBOOK.md.
+Baton (2026-10-18, decision 174): contract tightness review on `codex/contracts-tightness-pass`, based on `a6099d2`. Scope: all production contracts and shared interfaces; remove proven dead code, correct comments and NatSpec, preserve storage and integrations, and fix the confirmed statement quote that can fall below the Core's historical cost floor in value mode. Dead-code cleanup is verified: build, interface regeneration and 134 focused checks passed. The statement quote regression fails before repair as expected. No open product decision or deployment authority. Next: repair the statement quote, finish comment corrections and focused verification, then commit the fix. The prior `85dbc51` candidate gates do not cover changed executable code; freeze is reopened, without rerunning broad gates during cleanup.
 
 Delta audit of main `e6a7654` (2026-10-18, decision 173; record in docs/reviews/REVIEW-codex-delta-e6a7654.md): verification held (suite 751 passed, 0 failed, 7 skipped; e2e-real 35 passed, 0 failed; deep campaigns 21 and 21b, 7 suites at 64 runs of depth 200). Four fixes land outside `src/` on branch `fix/delta-audit-e6a7654`: the dev scenario closes the balance bid again (L-01), the sell page pays 0 and disables the action when value mode has no protected sale price (B-01), `useCoinLive` polls every 15 seconds until the coin has code (B-02), and `/api/listings` has a global upstream POST budget (SEC-02, burst 8, refill 4 per second, for the owner to confirm against the OpenSea plan). The freeze row stays pending.
 
@@ -91,15 +91,17 @@ runtime sizes at the tip (limit 24,576) after decisions 163, 164 and the review 
 
 | gate | commit | result |
 |---|---|---|
-| candidate | 85dbc51 | docs/reviews/CANDIDATE-85dbc51.md |
-| suite | 85dbc51 | docs/reviews/CANDIDATE-85dbc51.md |
-| deep | 85dbc51 | docs/reviews/CANDIDATE-85dbc51.md |
-| e2e | 85dbc51 | docs/reviews/CANDIDATE-85dbc51.md |
-| rehearsal | 85dbc51 | docs/reviews/REHEARSAL-85dbc51.md |
-| review | e6a7654 | docs/reviews/REVIEW-codex-delta-e6a7654.md |
+| candidate | pending | freeze reopened by decision 174 contract cleanup |
+| suite | pending | prior 85dbc51 evidence is historical |
+| deep | pending | prior 85dbc51 evidence is historical |
+| e2e | pending | prior 85dbc51 evidence is historical |
+| rehearsal | pending | prior 85dbc51 evidence is historical |
+| review | pending | focused cleanup review does not replace release review |
 | acceptance | pending | (owner signs off) |
 
 ### history (outside the gate)
+
+Previous candidate `85dbc51`: suite, deep and e2e results in `docs/reviews/CANDIDATE-85dbc51.md`, rehearsal in `docs/reviews/REHEARSAL-85dbc51.md`, delta review of `e6a7654` in `docs/reviews/REVIEW-codex-delta-e6a7654.md`. Superseded by decision 174 executable changes; owner acceptance was pending.
 
 records of earlier candidates. the check script does not read them and none of them covers the current source.
 
