@@ -12,6 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| design directive | rebuild the eth bid as a time-path anchor (reference `R`, anchor `A` raised by time only and pulled down by fills below it, price state `r` with a drop scaling as `(A / R)^2`, `rateCap` 5 times the opening as a fuse, the pot sizing the budget not the bid); direct single and batch sales and listing purchases stay; no auction. accepted, not built, no deployment authority | 176 |
 | publication directive | Push `codex/contracts-tightness-pass`, open a PR containing verified commits `d1c27ab` and `335ca76`, and merge it into main with both commits preserved. Release freeze remains reopened; deployment is not authorized | 175 |
 | review directive | Review all production contracts and shared interfaces for dead code, unnecessary helpers and developer legibility. Correct comments and NatSpec to rules, invariants and caveats in plain technical voice, balance vocabulary, no em or en dashes; return the guidelines, verify affected paths and commit the cleanup. Preserve intended behavior and storage layout; reopen affected release evidence for executable changes | 174 |
 | review directive | Audit main `7919099` from a cold deploy with real Artcoins v2 trading fees and a keeper-only launch day. Compare each view with its first stored path, probe external inflows and time-only state, and test value pricing with real v4 pool operations. Record findings, reproduction numbers, structural fixes and the limits of synthetic BALANCE liquidity in `docs/reviews/REVIEW-codex-cold-7919099.md`; make no production contract change or mainnet transaction | 159 |
@@ -51,7 +52,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 | behavior | an owner keeper (`keeper/`) runs from launch on its own hot wallet: it sweeps a listing below the bid after 2 minutes, buys back, composes, collects the escrow, books and, once a module is set, redeems, each only when the Core's payment covers its gas plus a margin, through a private relay | 128, 129, 131 |
 | parameter | compose, `composeChosen` and `redeemStatement` pay their caller at launch: gas up to 3 gwei plus 0.0003 eth, owner settings editable after launch | 130 |
 | parameter | every economic number is an owner setting, effective at once, no timelock | 3, 15 |
-| parameter | `rateCap` 3 times the opening rate; the opening rate is the market price on launch day of 100 points; the point rate basis is the fixed 100 points | 46, 60, 69, 116 |
+| parameter | `rateCap` 3 times the opening rate at the frozen candidate; 5 times once decision 176 is built, where it is a fuse on one credit's price and no longer the bound on the chase; the opening rate is the market price on launch day of 100 points; the point rate basis is the fixed 100 points | 46, 60, 69, 116, 176 |
 | parameter | payee 0 at launch (`payeePpm` 0, the setting stays for the owner to raise later), protocol 1.0 point of volume, engine 9.0 points | 31, 112, 120 |
 | parameter | buyback slice 0.5 eth, bounded by uint128 and the keeper-payment invariant | 51 |
 | risk | a market above `rateCap` stops buying until the owner raises it | 49 |
