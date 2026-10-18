@@ -1,5 +1,7 @@
 # Time-path anchor: the implementation spec after decision 176
 
+**Status (decision 177, 2026-10-18): deferred.** Not for implementation until current market depth is measured. In a deep market with arbitrage bots the public bid is pinned to the public floor within a block and the blind climb problem this spec solves does not arise; see the premise note in docs/reviews/DESIGN-bid-time-path-anchor-f843f5a.md. The cheap items that are right in both regimes are specified in docs/reviews/SPEC-acquisition-safety-177.md and proceed.
+
 Date 2026-10-18. Base: main `f843f5a`. Source of each rule: decision 176 and the design review
 docs/reviews/DESIGN-bid-time-path-anchor-f843f5a.md with the owner discussion that followed it. Nothing here is built.
 No deployment authority. Items marked **open** carry a proposed default; the owner confirms them before packet A

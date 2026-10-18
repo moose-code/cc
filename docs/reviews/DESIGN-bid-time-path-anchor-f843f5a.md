@@ -7,6 +7,22 @@ changed. Evidence: the source at f843f5a; a minute-step model of the current and
 (scratchpad `bidmodel.py`, tables below; 440 point credits, 10 eth pot, market equal to the opening rate
 unless stated). The model is synthetic; forge did not run.
 
+## 0. Premise note, added 2026-10-18 after the owner's challenge
+
+This review models a patient seller against a blind bid and omits the environment around it. The engine's bid and the
+marketplace floor are both public, so whenever the bid is above the floor for a score, a bot buys the floor listing and
+sells it to the engine directly at the bid within a block, with no tip. In a deep market the bid is therefore pinned one
+block above the floor; the climb and loosening are only catch-up speed when the floor is above the bid, the ratchet
+anchors on the floor, and a crash costs one burst of stale bid fills bounded by the drop. The quiet period premium of
+sections 1 and 5 needs a market thin enough that no competitor undercuts a waiting seller.
+
+The calibration data in sim/data/notes.md (window to 2026-10-06) shows a deep market with 13.7k holders and 12.5k
+distinct sellers, and a volume that fell a hundredfold over the window (1,327 eth on mint day, 12 eth on the last day).
+Which regime holds now is not in the repository. Decision 177 defers the time-path anchor until it is measured and
+proceeds with the items that are right in both regimes (docs/reviews/SPEC-acquisition-safety-177.md). The arbitrage
+also means the engine pays about its bid for listed supply and keeps little of the listing discount; the listing tip
+pays its finder only where the gap is under the arbitrage's gas.
+
 ## 1. What the code does today, and the defect
 
 - The eth bid is a price state `r` that climbs 2 percent a minute toward `min(ceiling, rateCap, pot)`.
