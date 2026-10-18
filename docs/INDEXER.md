@@ -363,6 +363,10 @@ Server side (`web/lib/meta.ts`), cached 60 s, each source under a 2.5 s timeout.
 | token art of the share image | I `tokenUri`; L `tokenURI` when the row is absent |
 | held and composed counts on the index share images | I count of `credit` rows in `held`, count of `statement` rows |
 
+### 9.9 documentation
+
+The `/docs` section is static, curated content in `web/lib/docs-content.ts` plus a signature catalog generated into `web/lib/docs-catalog.ts` by `web/scripts/gen-docs-catalog.mjs`. The curated Core, Controller and adapter references use public `src/interfaces/` on main `08e2102`; the balance module is omitted from the docs pages and catalog. The CreditScoreLens interface snapshot in `web/docs-sources/ICreditScoreLens.sol` matches the deployed helper's historical interface at `5875fbd`. Its Ethereum mainnet address comes from the recorded deployment in `docs/DEPLOY-credit-score-lens.md` at `5875fbd`, confirmed against Sourcify's matching creation and runtime record on 2026-10-18. Search runs locally over the content and catalog. The docs UI does not read the indexer, chain, or deployment configuration. Check live engine addresses and settings separately before a transaction.
+
 ## 10. deploy
 
 One path, as in shapes PR #59 and the owner's deploy rule:

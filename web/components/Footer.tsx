@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useCoinLive, useHead, useSnapshot } from "@/lib/live";
 import { lsGet, lsSet } from "@/lib/cache";
@@ -77,6 +78,7 @@ export function Footer() {
           ))}
         </span>
       )}
+      <Link href="/docs">docs</Link>
       <span>
         by{" "}
         <a href="https://x.com/ripe0x" target="_blank" rel="noreferrer">
