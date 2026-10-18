@@ -21,10 +21,10 @@ const plex = IBM_Plex_Mono({
   display: "swap",
 });
 
-// Applies the stored theme choice before first paint. "auto" leaves data-theme
-// unset so the CSS follows prefers-color-scheme. Same key and JSON format as
-// ThemeControl in Footer.tsx.
-const THEME_SCRIPT = `try{var t=JSON.parse(localStorage.getItem("cc:theme"));if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}`;
+// Applies the stored theme choice before first paint. The default is light: with no stored choice, data-theme is set
+// to light. "auto" (an explicit choice) leaves data-theme unset so the CSS follows prefers-color-scheme. Same key and
+// JSON format as ThemeControl in Footer.tsx.
+const THEME_SCRIPT = `try{var t=JSON.parse(localStorage.getItem("cc:theme"));if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;else if(t===null)document.documentElement.dataset.theme="light"}catch(e){document.documentElement.dataset.theme="light"}`;
 
 export default function RootLayout({
   children,

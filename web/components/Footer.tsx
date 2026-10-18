@@ -31,9 +31,10 @@ const THEME_ICON: Record<Theme, React.ReactNode> = {
   ),
 };
 
-// One icon button cycling auto -> light -> dark. auto removes data-theme so the CSS follows prefers-color-scheme.
+// One icon button cycling auto -> light -> dark. The default is light; auto removes data-theme so the CSS follows
+// prefers-color-scheme.
 function ThemeControl() {
-  const [theme, setTheme] = useState<Theme>("auto");
+  const [theme, setTheme] = useState<Theme>("light");
   useEffect(() => {
     const t = lsGet<Theme>(THEME_KEY);
     if (t && THEMES.includes(t)) setTheme(t);
