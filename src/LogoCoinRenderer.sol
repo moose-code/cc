@@ -20,7 +20,7 @@ contract LogoCoinRenderer is ICoinRenderer {
     /// the animated CC logo. three 58 unit CMY squares, slots TL(6,6) TR(36,6) BR(36,36) BL(6,36); the square bbox
     /// runs 6 to 94. the viewBox is -38 -38 176 176 so the bbox leaves a 44 unit margin on every side, 25 percent of
     /// the box, matching the credit artwork's 80 of 320 inset. square i rests in slot (i + step) % 4; step advances
-    /// every 1.6s with a 0.7s cubic-bezier(.6,0,.3,1) move and holds between. values and splines run move then hold
+    /// every 1.6s: a 0.9s hold followed by a 0.7s cubic-bezier(.6,0,.3,1) move. values and splines run hold then move
     /// per step so the 6.4s loop returns to the rest frame. multiply blend darkens the overlaps on the white ground.
     string private constant IMAGE =
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-38 -38 176 176"><rect x="-38" y="-38" width="176" height="176" fill="#ffffff"/>'

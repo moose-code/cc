@@ -28,8 +28,7 @@ library SettingsBounds {
         if (!rateInBounds(s.rateCap)) return "rateCap";
         if (s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
         if (s.redeemSlippageBps > 10_000) return "redeemSlippageBps";
-        // The balance bid opens at 10,000 minus this margin, so the cap of 9,999 keeps the opening value at or above
-        // 1 bps of par (decision 143).
+        // Value mode opens its shared ETH instance at 10,000 minus this margin; the bound keeps it positive.
         if (s.balanceBidMarginBps > 9_999) return "balanceBidMarginBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 1_000_000) return "payeePpm";

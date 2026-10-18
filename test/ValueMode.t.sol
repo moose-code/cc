@@ -17,8 +17,9 @@ import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 
 /// the value switch (decisions 148, 150 to 154): the controller's rate limited reference of the balance token, its
 /// protected buy and sale prices, `valuePerPoint`, and the Core in value mode: the eth bid is the shared balance instance
-/// times the value per point at the buy price, every eth or balance fill drops that one instance, the switch resets it,
-/// an unusable quote halts the eth routes only, and sales price off the protected value with the cost term dropped
+/// times the protected buy value per point. ETH fills drop the shared instance; flat balance fills leave it alone.
+/// Unusable quotes use the last good ETH value rate and refuse balance payouts. Sale references exclude cost;
+/// final quotes still cover the Core's historical cost floor.
 abstract contract ValueBase is Fixture {
     /// wei per balance token base unit is 0.49, so one point (`POINT_UNIT * UNIT` base units) is worth 4.9e13 wei, the
     /// opening eth rate of 4.9e15 per 100 points: `2^96 / sqrt(0.49)`
@@ -914,6 +915,28 @@ contract ValueModeTest is ValueBase {
         ctl.refreshReference();
         ref = ctl.valueOf(core.ratingOf(c.sid)) * ctl.floorMultBps() / 10_000;
         assertEq(ctl.priceOf(c.sid), ref, "the aged curve rests at the protected floor, not at saleFloorBps");
+    }
+
+    // promise: a value-mode statement quote executes at the historical cost floor while its reference stays value-only
+    function test_statementQuoteCoversHistoricalCostFloor() public {
+        Composed memory c = _composeOnce();
+        _valueOn();
+        vm.warp(block.timestamp + uint256(ctl.decayHours()) * 1 hours);
+        vm.roll(block.number + 1);
+        uint256 spot = _swapToSpot(ctl.referencePrice() / 100);
+        IControllerV1.PoolKey memory k = abi.decode(abi.encode(key), (IControllerV1.PoolKey));
+        vm.prank(owner);
+        ctl.setBalancePoolKey(k, spot);
+        uint256 ref = ctl.valueOf(core.ratingOf(c.sid)) * ctl.floorMultBps() / 10_000;
+        uint256 coreFloor = c.cost * core.settings().saleFloorBps / 10_000;
+        assertLt(ref, coreFloor, "historical cost dominates protected value");
+        assertEq(ctl.referenceOf(c.sid), ref, "reference stays value-only");
+        uint256 price = ctl.priceOf(c.sid);
+        assertEq(price, coreFloor, "quote covers Core cost floor");
+        vm.deal(seller, price);
+        vm.prank(seller);
+        ctl.buy{value: price}(c.sid);
+        assertEq(STATEMENTS.ownerOf(c.sid), seller, "quoted purchase executes");
     }
 
     // promise: SPEC 8 the controller sale doors move the reference before they price
