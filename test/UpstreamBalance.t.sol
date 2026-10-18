@@ -245,8 +245,9 @@ contract UpstreamBalanceTest is Fixture {
         uint256 paid = balanceToken.balanceOf(seller);
         assertEq(paid, postedTotal, "the seller receives the posted total exactly");
         assertLe(paid, parTotal);
-        // the artist holds the royalty or the module owes it, and available() excludes an owed amount
-        assertEq(_artistHolds(), royaltyTotal);
+        // the royalty transfer to the cold artist wallet fits ARTIST_PAY_GAS and lands directly
+        assertEq(balanceToken.balanceOf(core.artist()), royaltyTotal);
+        assertEq(IOwedModule(address(balanceModule)).owed(core.artist()), 0);
         assertEq(balanceModule.available(), owed - paid - royaltyTotal);
         for (uint256 i; i < ids.length; ++i) {
             assertEq(CREDITS.ownerOf(ids[i]), address(core));
@@ -265,11 +266,6 @@ contract UpstreamBalanceTest is Fixture {
         core.redeemStatement(sid);
     }
 
-    function _artistHolds() private view returns (uint256) {
-        address art = core.artist();
-        return balanceToken.balanceOf(art) + IOwedModule(address(balanceModule)).owed(art);
-    }
-
     function _fundedModule() private returns (uint256 funded) {
         _register();
         _retire();
@@ -285,9 +281,9 @@ contract UpstreamBalanceTest is Fixture {
         one[0] = ids[0];
     }
 
-    // promise: a one credit sale to a cold artist wallet pays the seller in full and the royalty reaches the artist or is
-    // owed to the artist, never lost, and an owed amount is outside available()
-    function test_oneCreditColdArtistRoyaltyIsPaidOrOwed() public {
+    // promise: a one credit sale to a cold artist wallet pays the seller in full and the royalty transfers to the artist
+    // directly inside ARTIST_PAY_GAS, with nothing recorded as owed
+    function test_oneCreditColdArtistRoyaltyIsPaidDirectly() public {
         uint256 funded = _fundedModule();
         uint256[] memory one = _oneCredit();
         uint256 posted = _scoreOf(one[0]) * UNIT_PER_SCORE * (10_000 - core.settings().balanceDiscountBps) / 10_000;
@@ -297,10 +293,10 @@ contract UpstreamBalanceTest is Fixture {
         vm.prank(seller);
         core.sellForBalance(one, posted, address(balanceToken));
         assertEq(balanceToken.balanceOf(seller), posted);
-        uint256 owedNow = IOwedModule(address(balanceModule)).owed(art);
-        assertEq(balanceToken.balanceOf(art) + owedNow, royalty);
+        assertEq(balanceToken.balanceOf(art), royalty);
+        assertEq(IOwedModule(address(balanceModule)).owed(art), 0);
         assertEq(balanceModule.available(), funded - posted - royalty);
-        assertEq(IOwedModule(address(balanceModule)).totalOwed(), owedNow);
+        assertEq(IOwedModule(address(balanceModule)).totalOwed(), 0);
     }
 
     // promise: with full gas the payment transfers directly; logs the measured gas of a cold and a warm recipient
@@ -316,7 +312,8 @@ contract UpstreamBalanceTest is Fixture {
         IOwedModule(address(balanceModule)).pay(cold, amount);
         uint256 warmGas = g - gasleft();
         vm.stopPrank();
-        assertGt(coldGas, 200_000, "a cold transfer exceeds the stipend the Core forwards");
+        assertGt(coldGas, 200_000, "a cold transfer exceeds the former 200k bound");
+        assertLt(coldGas, 600_000, "a cold transfer fits the ARTIST_PAY_GAS bound");
         assertLt(warmGas, coldGas);
         assertEq(balanceToken.balanceOf(cold), 2 * amount);
         assertEq(IOwedModule(address(balanceModule)).owed(cold), 0);
@@ -330,7 +327,7 @@ contract UpstreamBalanceTest is Fixture {
         address to = _user("starvedArtist");
         uint256 amount = 5e18;
         vm.prank(address(core));
-        m.pay{gas: 70_000}(to, amount);
+        m.pay{gas: 100_000}(to, amount);
         assertEq(m.owed(to), amount, "accrued");
         assertEq(m.totalOwed(), amount);
         assertEq(balanceToken.balanceOf(to), 0);
