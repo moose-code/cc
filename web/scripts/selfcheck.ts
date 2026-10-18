@@ -62,6 +62,10 @@ assert.equal(replayBalance([5n, 3n], { ...b, rate: 9000n }), 450n + 270n);
 const v = { ...b, valueModeOn: true, valueSell: 10000n };
 assert.deepEqual(replayBalanceFills([3n], { ...v, rate: 10000000n, ethPrice: 4000n }), [120000n]);
 assert.deepEqual(replayBalanceFills([3n], { ...v, rate: 10000000n, ethPrice: 400n }), [12000n]);
+// value mode with the protected sale price missing or zero: the contract returns no quote, the replay pays 0
+assert.deepEqual(replayBalanceFills([3n, 4330000n], { ...b, valueModeOn: true, ethPrice: 4000n }), [0n, 0n]);
+assert.deepEqual(replayBalanceFills([3n, 4330000n], { ...v, valueSell: 0n, ethPrice: 4000n }), [0n, 0n]);
+assert.equal(replayBalance([3n], { ...v, valueSell: undefined }), 0n);
 
 console.log("selfcheck ok");
 

@@ -3,8 +3,9 @@
 # side the owner's local chain wires from Jack's pinned artifact: the module is set, the balance token is Jack's pinned
 # build (deployed runtime hash with immutables masked equals the pinned hash in out/upstream-balance.json), redeem and
 # balance bid are on, the launch supply holder holds balance tokens, the module holds a nonzero redemption balance, and
-# a sellForBalance from A1 pays exactly balanceBidOf. Reads deployments/31337.json for the addresses; a failed assertion
-# exits nonzero.
+# a sellForBalance from A1 pays exactly balanceBidOf when the bid is on. The balance bid is off in the safe final state,
+# so the probe is skipped there; the scenario stage and e2e-real exercise the fill. Reads deployments/31337.json for
+# the addresses; a failed assertion exits nonzero.
 #
 #   PORT=8619 script/dev/check-post.sh          check the node on that port against deployments/31337.json
 set -uo pipefail
@@ -94,7 +95,7 @@ check "the module available balance is nonzero" "$(calc "$AVAIL > 0")" "availabl
 cast send "$CREDITS" 'setApprovalForAll(address,bool)' "$CORE" true --from "$A1" --unlocked --rpc-url "$RPC" >/dev/null 2>&1
 ID="$(callc "$CREDITS" 'tokensOf(address)(uint256[])' "$A1" | tr -d '[]' | tr ',' '\n' | grep -oE '[0-9]+' | head -1)"
 if [ "$BALBID_ON" != "true" ]; then
-  echo "  skip: balance bid is off until value mode is on"
+  echo "  skip: balance-fill probe skipped, the bid is off in the safe final state (scenario stage and e2e-real exercise the fill)"
 elif [ -n "$ID" ]; then
   BID="$(callc "$CORE" 'balanceBidOf(uint256)(uint256)' "$ID" | awk '{print $1}')"
   BEFORE="$(callc "$BTOK" 'balanceOf(address)(uint256)' "$A1" | awk '{print $1}')"

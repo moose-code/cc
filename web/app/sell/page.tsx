@@ -50,14 +50,15 @@ export default function SellPage() {
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined);
   const isBal = cur === "bal" && balanceBid;
   const now = useNow(5000);
+  const balanceQuoteMissing = isBal && Boolean(snap?.value.on) && (snap?.value.perPointSell ?? 0n) === 0n;
 
   const { data: wallet, ready } = useWalletCredits(isConnected ? address : undefined);
   // each credit's own eth bid, ethRate() * score / 1,000,000 (one multicall of Core.bidOf); the snapshot rate
   // gives the same figure while the multicall loads
   const { data: bids } = useBidsOf(wallet.map((c) => BigInt(c.id)), now);
   const bidForId = (c: Credit): bigint => bids?.[c.id.toString()] ?? (bid * c.score) / SCORE_PER_100_POINTS;
-  // the per-credit balance payout from the indexed scores and the snapshot, through balanceFills so it carries the
-  // value mode clamp to the protected sale price (decision 165); the posted par rate outside value mode
+  // the per-credit balance payout from the indexed scores and the snapshot, through balanceFills: the posted rate
+  // outside value mode, the value rate clamp at the protected sale price in value mode, and 0 when that price is missing
   const balanceForId = (c: Credit): bigint => (balanceBid && snap ? (balanceFills(snap, [c.score])[0] ?? 0n) : 0n);
 
   // the offer is the bid times the score, so offer order is score order; ties by id
@@ -426,6 +427,10 @@ export default function SellPage() {
               {n === 0 || !snap ? (
                 <button className="action" disabled>
                   select credits to sell
+                </button>
+              ) : balanceQuoteMissing ? (
+                <button className="action" disabled>
+                  balance quote unavailable
                 </button>
               ) : isBal ? (
                 <Act
