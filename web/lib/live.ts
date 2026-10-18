@@ -75,6 +75,20 @@ export function useSnapshot() {
   });
 }
 
+// Whether the coin has code: false while the Core is deployed and the coin is not launched (deferred launch, decision 172),
+// undefined until read. One getCode per session once the answer is true; while false it is read again on window focus.
+export function useCoinLive(): boolean | undefined {
+  const client = usePublicClient();
+  const coin = useSnapshot().data?.coin;
+  return useQuery<boolean>({
+    queryKey: ["coin-live", coin],
+    enabled: Boolean(client && coin),
+    staleTime: Infinity,
+    refetchOnWindowFocus: (q) => (q.state.data === false ? "always" : false),
+    queryFn: async () => ((await client!.getCode({ address: coin! })) ?? "0x") !== "0x",
+  }).data;
+}
+
 // ---- credits --------------------------------------------------------------------
 
 export interface PileCredit {

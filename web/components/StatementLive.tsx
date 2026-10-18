@@ -17,7 +17,7 @@ import type { StatementRecord } from "@/lib/events";
 import { useBlockTs } from "@/lib/engine";
 import { useTokenMeta } from "@/lib/art";
 import { controllerAbi, coreAbi, erc20Abi } from "@/lib/abis";
-import { countdown, useBalanceToken, useNow, useSnapshot, useStatements, type HeldStatement, type Snapshot } from "@/lib/live";
+import { countdown, useBalanceToken, useCoinLive, useNow, useSnapshot, useStatements, type HeldStatement, type Snapshot } from "@/lib/live";
 import { etaLabel } from "@/lib/compose-eta";
 import { BALANCE_SYMBOL, agoLabel, commas, eth, formatHistoricalBalance, signedPct, tokens } from "@/lib/format";
 
@@ -309,13 +309,14 @@ function PriceSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapshot
 // Restyle a held statement (Core.setHeldFormat). Needs snap.minCcToChoose of $CC in the wallet.
 function RestyleSection({ s, snap, current }: { s: HeldStatement; snap: Snapshot; current?: number }) {
   const { address } = useAccount();
+  const coinLive = useCoinLive();
   const [pick, setPick] = useState<number | undefined>();
   const { data: ccBal } = useReadContract({
     address: snap.coin,
     abi: erc20Abi,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
-    query: { enabled: Boolean(address && snap.minCcToChoose > 0n) },
+    query: { enabled: Boolean(coinLive !== false && address && snap.minCcToChoose > 0n) },
   });
   const ccOk = snap.minCcToChoose === 0n || (ccBal ?? 0n) >= snap.minCcToChoose;
   const sel = pick ?? current;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useHead, useSnapshot } from "@/lib/live";
+import { useCoinLive, useHead, useSnapshot } from "@/lib/live";
 import { lsGet, lsSet } from "@/lib/cache";
 import { commas, evmNowAddress } from "@/lib/format";
 import { core, credits, statements } from "@/lib/config";
@@ -55,10 +55,11 @@ function ThemeControl() {
 export function Footer() {
   const block = useHead().data?.n;
   const snap = useSnapshot().data;
+  const coinLive = useCoinLive();
   const contracts = [
     { label: "core", address: core },
     { label: "controller", address: snap?.controller },
-    { label: "cc", address: snap?.coin },
+    { label: "cc", address: coinLive === false ? undefined : snap?.coin },
     { label: "credits", address: credits },
     { label: "statements", address: statements },
   ].filter((c): c is { label: string; address: `0x${string}` } => Boolean(c.address) && Boolean(core));

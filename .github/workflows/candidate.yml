@@ -92,6 +92,8 @@ jobs:
           UPSTREAM_CREDITS_TOKEN: ${{ secrets.UPSTREAM_CREDITS_TOKEN }}
         run: script/tools/upstream-balance.sh
       - run: script/dev/e2e-real.sh
+      # the LAUNCH_ONLY record guards of the deferred launch on its own anvil (port 8794)
+      - run: script/dev/test-launch-only-guards.sh
       # the dev seed PHASE=post path the owner's local chain runs, then the chain-read checklist (script/dev/check-post.sh).
       # reuses the same script/dev/.cache so the seeded post state is cached across runs; ports 8619 and 8618, never 8545
       - name: dev seed post path

@@ -81,6 +81,16 @@ abstract contract SystemDeployer is LaunchChecks {
     /// @param owner the address that sends every transaction: the broadcaster or the active prank, the factory owner
     /// and the first owner of the Core
     function deploySystem(address owner, LaunchConfig memory c) internal returns (Deployed memory d) {
+        return _deploy(owner, c, true);
+    }
+
+    /// @notice every transaction of `deploySystem` except the launch. `d.coin` is the address the Core holds as its coin
+    /// immutable, which has no code until the launch (`resumeSend` or `deploySystem` sends it later)
+    function deploySystemUntilLaunch(address owner, LaunchConfig memory c) internal returns (Deployed memory d) {
+        return _deploy(owner, c, false);
+    }
+
+    function _deploy(address owner, LaunchConfig memory c, bool launch) private returns (Deployed memory d) {
         _requireConfig(c);
         _requireOwner(c, owner);
         d.core = _ensureCore(c, owner);
@@ -89,7 +99,7 @@ abstract contract SystemDeployer is LaunchChecks {
         d.renderer = _ensureRenderer(d.core, c);
         _wire(c, d);
         d.coin = ICore(payable(d.core)).COIN();
-        if (d.coin.code.length == 0) _launch(c, d.coin, d.core);
+        if (launch && d.coin.code.length == 0) _launch(c, d.coin, d.core);
         d.launchKey = poolKeyOf(d.coin, c.stack);
         d.poolId = keccak256(abi.encode(d.launchKey));
     }

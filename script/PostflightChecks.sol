@@ -50,6 +50,30 @@ abstract contract PostflightChecks is PostflightPool {
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
     }
 
+    /// @notice the postflight of a deploy that stopped before the launch (`DEFER_LAUNCH=1`): the Core, payee and adapter
+    /// rows, the Core address row, and four coin rows. the coin is the address the Core holds as its immutable: it has
+    /// no code, the factory has no launch record for it, and it equals the factory prediction for `deployer`. the pool
+    /// and coin rows run after the launch (`postflightAs`)
+    function postflightDeferred(LaunchConfig memory c, address core_, address deployer) internal {
+        _reset();
+        _code("code: core", core_);
+        if (core_.code.length == 0) return;
+        ICore core = ICore(payable(core_));
+        _postCore(c, core);
+        address coin = core.COIN();
+        _noCode("deferred: coin has no code", coin);
+        (bool okr, bool recorded) = _bool(c.stack.factory, abi.encodeCall(IArtCoinsFactoryV2.isCoin, (coin)));
+        _check("deferred: coin salt is unused on the factory", okr && !recorded, vm.toString(coin));
+        _postPayee(c, core);
+        _postAdapters(c, core);
+        if (deployer != address(0)) {
+            _eq("core: address is the CREATE2 address of the config and the deployer", core_, coreAddress(c, deployer));
+            (bool okp, address want) = _predict(c, deployer, core_);
+            _check("deferred: coin equals the factory prediction for the deployer", okp && want == coin, vm.toString(want));
+        }
+        _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
+    }
+
     /// @dev with the deployer known, the Core address is `coreAddress(c, deployer)`, which commits to the creation code
     /// and every constructor argument. the coin equals the factory's prediction for the deployer. the prediction reads
     /// mutable factory state (the default allowlist, the hook escrow), so a later change of it is a warning
