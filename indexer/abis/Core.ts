@@ -1493,7 +1493,7 @@ export const coreAbi = [
     "name": "releaseRedeemBurn",
     "inputs": [
       {
-        "name": "amount",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1506,7 +1506,7 @@ export const coreAbi = [
     "name": "removeAdapter",
     "inputs": [
       {
-        "name": "a",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -1756,7 +1756,7 @@ export const coreAbi = [
     "name": "setChosenComposeOn",
     "inputs": [
       {
-        "name": "v",
+        "name": "",
         "type": "bool",
         "internalType": "bool"
       }
@@ -1782,7 +1782,7 @@ export const coreAbi = [
     "name": "setCreditCostToPotBps",
     "inputs": [
       {
-        "name": "v",
+        "name": "",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -1813,7 +1813,7 @@ export const coreAbi = [
     "name": "setMinCcToChoose",
     "inputs": [
       {
-        "name": "v",
+        "name": "",
         "type": "uint96",
         "internalType": "uint96"
       }
@@ -1852,7 +1852,7 @@ export const coreAbi = [
     "name": "setRate",
     "inputs": [
       {
-        "name": "rate",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }

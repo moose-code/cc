@@ -1,5 +1,4 @@
-# the npm workspaces: web/ (typecheck, the selfchecks and a production build), keeper/ (typecheck and the unit
-# tests) and packages/engine, which both import. Reusable: called by ci and candidate.
+# The web, keeper and indexer source checks. Reusable: called by ci and candidate.
 name: web
 
 on:
@@ -27,9 +26,15 @@ jobs:
       # one lockfile at the root installs every workspace
       - run: npm ci
         working-directory: .
-      # web/lib/indexer-schema.ts type checks against indexer/ponder.schema.ts, which imports the ponder package
+      # The web schema guard and Ponder's own codegen/typecheck both use this install.
       - run: npm ci
         working-directory: indexer
+      - run: npm run codegen
+        working-directory: indexer
+      - run: npm run typecheck
+        working-directory: indexer
+      - run: bash script/dev/test-indexer-deploy-guards.sh
+        working-directory: .
       - run: npx tsc --noEmit
       - run: npm run check
       # next's build cache, keyed on the lockfile and the sources
