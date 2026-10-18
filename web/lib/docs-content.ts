@@ -41,11 +41,8 @@ export const docPages: DocPage[] = [
         id: "journeys",
         title: "Common tasks",
         points: [
-          "Read a Credit bid with Core.bidOf or Core.balanceBidOf. Read a Statement ask with ControllerV1.priceOf.",
-          "Read Credit scores and traits, or a Statement's total score, with CreditScoreLens.",
-          "Sell Credits through Core.sellForEth or Core.sellForBalance after approving the Core.",
-          "Buy a Statement with ControllerV1.buy. Buy Credits with buyCredit or buyCredits.",
-          "Compose a Statement from the pile, or redeem an eligible held Statement into the balance module.",
+          "Credits: read bids and scores, buy or sell Credits, swap a pile Credit, and sweep listings.",
+          "Statements: read asks and scores, compose, buy, restyle, and redeem held Statements.",
           "Track activity through contract events. A Statement sale emits ControllerV1.Bought and Core.StatementSoldTo.",
         ],
       },
@@ -62,56 +59,34 @@ export const docPages: DocPage[] = [
     ],
   },
   {
-    slug: "guides/read",
+    slug: "guides/credits",
     group: "Guides",
-    title: "Read the engine",
-    eyebrow: "Guide / reads",
-    summary: "Use contract views for current quotes and the event stream for historical actions.",
+    title: "Credits",
+    eyebrow: "Guide / Credits",
+    summary: "Read prices and scores, buy and sell Credits, swap pile Credits, and sweep listings.",
     sections: [
       {
-        id: "credit",
-        title: "A Credit bid",
+        id: "read-credit",
+        title: "Read a Credit",
         entries: [
           { signature: "Core.bidOf(uint256 id) → uint256", description: "Current ETH bid for this Credit, including its score and the live rate." },
           { signature: "Core.balanceBidOf(uint256 id) → uint256", description: "Current balance-token bid, zero if the module cannot fund the payout and royalty. Check settings.balanceBidOn separately." },
           { signature: "Core.spendState() → (bucket, budget, spent)", description: "Remaining ETH purchase budget in the current bucket. A positive bid does not guarantee this bucket can buy." },
-        ],
-      },
-      {
-        id: "statement",
-        title: "A Statement sale",
-        entries: [
-          { signature: "Core.statementInfo(uint256 sid) → (held, cost, composedAt)", description: "Check custody and cost before reading a sale quote." },
-          { signature: "ControllerV1.priceOf(uint256 sid) → uint256", description: "Current ETH ask. The curve and reference can move with time and settings." },
-          { signature: "ControllerV1.atFloor(uint256 sid) → bool", description: "Redemption eligibility under the active curve or age rule. Check that the Core still holds the Statement." },
-        ],
-      },
-      {
-        id: "scores",
-        title: "Scores and traits",
-        entries: [
           { signature: "CreditScoreLens.creditScore(uint256 creditId) → uint256", description: "Credit score in ten-thousandths of a point, including for burned Credits." },
-          { signature: "CreditScoreLens.statementScore(uint256 statementId) → uint256", description: "Stored total score across a Statement's pages, including overprints." },
         ],
       },
       {
-        id: "history",
-        title: "History comes from events",
+        id: "buy-credit",
+        title: "Buy Credits",
         points: [
-          "Use CreditBought, CreditSold, Composed, StatementSoldTo, and StatementRedeemed for activity; pair each log with its transaction and block.",
-          "SettingsSet, SaleSet, CreditSaleSet, QuoteSet, and BalanceModuleSet change how later quotes should be interpreted.",
-          "A current view is not a historical quote. Read at the historical block or replay the relevant settings and events.",
+          "Check creditSaleOn and choose IDs from Core.pilePage. Read ControllerV1.creditPrice for each ID, then simulate the purchase with enough ETH for the total.",
+          "The Controller refunds excess ETH. A Credit sale emits Core.CreditSold; a recently sold Credit may be subject to the return lock before it can be sold back to the engine.",
+        ],
+        entries: [
+          { signature: "ControllerV1.buyCredit(uint256 id) payable", description: "Buy one held Credit while the Credit sale is enabled. Its price declines over the sale window." },
+          { signature: "ControllerV1.buyCredits(uint256[] ids) payable", description: "Buy multiple pile Credits in one call. Each is priced and sold in order." },
         ],
       },
-    ],
-  },
-  {
-    slug: "guides/write",
-    group: "Guides",
-    title: "Call the engine",
-    eyebrow: "Guide / transactions",
-    summary: "Approve assets, read quotes, simulate calls, and set output limits.",
-    sections: [
       {
         id: "sell",
         title: "Sell Credits",
@@ -126,6 +101,54 @@ export const docPages: DocPage[] = [
         ],
       },
       {
+        id: "swap-credit",
+        title: "Swap a Credit",
+        points: [
+          "Choose an outId from Core.pilePage and an inId you own with an equal or higher score. Approve the Core for the incoming Credit and, if swapFeeCc is nonzero, the CC fee.",
+          "Simulate Core.swapCredit(inId, outId). The incoming Credit takes the outgoing Credit's pile position, cost, and sale-window timestamp; the outgoing Credit goes to the caller.",
+        ],
+        entries: [
+          { signature: "Core.swapCredit(uint256 inId, uint256 outId)", description: "Exchange an eligible owned Credit for a pile Credit and burn the configured CC fee." },
+        ],
+      },
+      {
+        id: "listing",
+        title: "Sweep a listing",
+        points: [
+          "Core.buyListing can purchase a Credit through an allowlisted adapter when the listing price and caller payment fit the bid and spend budget. Use the adapter's quote and params format for that venue.",
+          "Simulate the call against the current listing and bid before submitting it.",
+        ],
+        entries: [
+          { signature: "Core.buyListing(address adapter, uint256 id, bytes params)", description: "Buy an eligible venue listing through an approved adapter." },
+        ],
+      },
+      {
+        id: "credit-events",
+        title: "Credit events",
+        points: [
+          "Use CreditBought, CreditSold, CreditSwapped, and ListingBought for Credit activity. Pair each log with its transaction and block.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "guides/statements",
+    group: "Guides",
+    title: "Statements",
+    eyebrow: "Guide / Statements",
+    summary: "Read Statement prices and scores, compose, buy, restyle, and redeem held Statements.",
+    sections: [
+      {
+        id: "read-statement",
+        title: "Read a Statement",
+        entries: [
+          { signature: "Core.statementInfo(uint256 sid) → (held, cost, composedAt)", description: "Check custody and cost before reading a sale quote." },
+          { signature: "ControllerV1.priceOf(uint256 sid) → uint256", description: "Current ETH ask. The curve and reference can move with time and settings." },
+          { signature: "ControllerV1.atFloor(uint256 sid) → bool", description: "Redemption eligibility under the active curve or age rule. Check that the Core still holds the Statement." },
+          { signature: "CreditScoreLens.statementScore(uint256 statementId) → uint256", description: "Stored total score across a Statement's pages, including overprints." },
+        ],
+      },
+      {
         id: "buy-statement",
         title: "Buy a Statement",
         points: [
@@ -135,18 +158,6 @@ export const docPages: DocPage[] = [
         ],
         entries: [
           { signature: "ControllerV1.buy(uint256 sid) payable", description: "Buy a held Statement at its current ask. Send at least priceOf(sid)." },
-        ],
-      },
-      {
-        id: "buy-credit",
-        title: "Buy Credits",
-        points: [
-          "Check creditSaleOn and choose IDs from Core.pilePage. Read ControllerV1.creditPrice for each ID, then simulate the purchase with enough ETH for the total.",
-          "The Controller refunds excess ETH. A Credit sale emits Core.CreditSold; a recently sold Credit may be subject to the return lock before it can be sold back to the engine.",
-        ],
-        entries: [
-          { signature: "ControllerV1.buyCredit(uint256 id) payable", description: "Buy one held Credit while the Credit sale is enabled. Its price declines over the sale window." },
-          { signature: "ControllerV1.buyCredits(uint256[] ids) payable", description: "Buy multiple pile Credits in one call. Each is priced and sold in order." },
         ],
       },
       {
@@ -177,23 +188,10 @@ export const docPages: DocPage[] = [
         ],
       },
       {
-        id: "swap-credit",
-        title: "Swap a Credit",
+        id: "statement-events",
+        title: "Statement events",
         points: [
-          "Choose an outId from Core.pilePage and an inId you own with an equal or higher score. Approve the Core for the incoming Credit and, if swapFeeCc is nonzero, the CC fee.",
-          "Simulate Core.swapCredit(inId, outId). The incoming Credit takes the outgoing Credit's pile position, cost, and sale-window timestamp; the outgoing Credit goes to the caller.",
-        ],
-        entries: [
-          { signature: "Core.swapCredit(uint256 inId, uint256 outId)", description: "Exchange an eligible owned Credit for a pile Credit and burn the configured CC fee." },
-        ],
-      },
-      {
-        id: "automation",
-        title: "Permissionless maintenance",
-        points: [
-          "Core.book, buyback, collectEscrow, and refreshReference are callable maintenance doors, each with its own readiness checks.",
-          "Core.buyListing can purchase a Credit through an allowlisted adapter when the listing price and caller payment fit the bid and spend budget. Use the adapter's quote and params format for that venue.",
-          "Do not assume a keeper reward exceeds transaction gas. Simulate the exact call and inspect the current settings.",
+          "Use Composed, StatementSoldTo, and StatementRedeemed for Statement activity. Pair each log with its transaction and block.",
         ],
       },
     ],
@@ -205,6 +203,22 @@ export const docPages: DocPage[] = [
     eyebrow: "Guide / operating model",
     summary: "Contract behavior during launch, balance activation, locks, and migration.",
     sections: [
+      {
+        id: "automation",
+        title: "Permissionless maintenance",
+        points: [
+          "Core.book, buyback, collectEscrow, and refreshReference are callable maintenance doors, each with its own readiness checks.",
+          "Do not assume a keeper reward exceeds transaction gas. Simulate the exact call and inspect the current settings.",
+        ],
+      },
+      {
+        id: "history",
+        title: "Historical quotes",
+        points: [
+          "SettingsSet, SaleSet, CreditSaleSet, QuoteSet, and BalanceModuleSet change how later quotes should be interpreted.",
+          "A current view is not a historical quote. Read at the historical block or replay the relevant settings and events.",
+        ],
+      },
       {
         id: "phases",
         title: "Operating phases",
