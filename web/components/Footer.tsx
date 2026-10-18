@@ -85,12 +85,15 @@ export function Footer() {
       </span>
       <div className="footer-right">
         <ThemeControl />
-        <span className="plates" aria-hidden>
-          <i className="c" />
-          <i className="m" />
-          <i className="y" />
-          <i className="k" />
-        </span>
+        <a className="credits-link" href="https://jack.art/credits/" target="_blank" rel="noreferrer">
+          credits
+          <span className="plates" aria-hidden>
+            <i className="c" />
+            <i className="m" />
+            <i className="y" />
+            <i className="k" />
+          </span>
+        </a>
       </div>
     </footer>
   );

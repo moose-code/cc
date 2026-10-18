@@ -1324,6 +1324,12 @@ button.tp-row:disabled {
   width: 15px;
   height: 15px;
 }
+/* the credits brand mark links to the Credits site: the "credits" word and the CMYK plates together */
+.credits-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .plates {
   display: flex;
   gap: 4px;
