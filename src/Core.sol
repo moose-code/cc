@@ -391,12 +391,13 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         _book();
     }
 
-    /// books the pending fee income, then forwards to `CoreLib.refreshReference`, which calls the controller's refresh
-    /// and, when it updated the reference, pays the caller from the booked pot like compose. booking first means the
+    /// books pending fee income and checkpoints the mode-off bid before `CoreLib.refreshReference` can pay the caller.
+    /// the library calls the controller's refresh and, when it updated the reference, pays from the booked pot like compose. booking first means the
     /// caller is paid from the pot share of the pending income the keeper's gate counts.
     /// anyone may call; the keeper calls this door. the controller's own `refreshReference` stays public and unpaid
     function refreshReference() external nonReentrant {
         _book();
+        if (!s.settings.valueModeOn) _checkpoint();
         _toLib();
     }
 
@@ -474,7 +475,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// the eth bid rate right now, wei per 100 points: the price state climbed lazily while funded, bounded by the ceiling and
     /// `rateCap`, lowered to the clamp (`ethPot` plus the share of the unbooked fee income the next `_book` adds, less
-    /// the reserve). a credit of score `score` is paid `ethRate() * score / RATE_SCORE`; `bidForScore` and `bidOf` apply
+    /// the reserve, divided by `1 + buyToArtistBps / 10_000`). a credit of score `score` is paid
+    /// `ethRate() * score / RATE_SCORE`; `bidForScore` and `bidOf` apply
     /// the scaling. the math is in `CoreLib.ethRate`
     function ethRate() external view returns (uint256) {
         return _bid();
@@ -654,10 +656,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// the first action of `sellForEth`, `sellForBalance`, `buyListing`, `adopt`, `compose` and `composeChosen`. two
     /// steps in order:
     /// 1. reverts `Retired` once `migrate` has run.
-    /// 2. books the fee income, before the entry point reads a rate or checkpoints
+    /// 2. books fee income and checkpoints the bid before a door can change the pile or reserve
     function _openDoor() private {
         if (s.retired) revert Retired();
         _book();
+        _checkpoint();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -680,9 +683,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function _sellForEth(uint256[] calldata ids, uint256 minOut) private {
         _openDoor();
         if (ids.length == 0) revert Empty();
-        // climb the eth instance to now once; each credit's drop walks down from it and the batch does not re-climb per
-        // credit. `_openDoor` books first, so the checkpoint climbs under the booked pot
-        _checkpoint();
+        // `_openDoor` climbs once under the booked pot; each credit's drop walks down without re-climbing.
         uint256 total;
         uint256 artistTotal;
         uint256 royaltyBps = s.settings.buyToArtistBps;
@@ -728,7 +729,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         // the return lock reads the listing offerer: a credit the engine sold is refused while its buyer offers it back
         CoreLib.checkReturn(s, id, offerer);
         if (_forbidden(target)) revert ForbiddenTarget();
-        _checkpoint();
         uint256 score = _scoreOf(id);
         uint256 bid = _bid().mulDiv(score, RATE_SCORE);
         if (value == 0) revert ZeroAmount();
@@ -957,6 +957,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// forgets a held statement and compacts the held list.
     function _unhold(uint256 sid) private {
+        // Releasing a held statement can lower the reserve and start a funded bid clock.
+        _checkpoint();
         CoreLib.Statement storage st = s.statements[sid];
         uint256 slot = st.slot;
         uint256 last = s.heldIds[s.heldIds.length - 1];
@@ -1008,6 +1010,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (!c.inPile) revert NotInPile(id);
         uint256 cost = c.cost;
         if (msg.value < cost * s.settings.saleFloorBps / BPS) revert BelowFloor();
+        // Removing the last Credit in a page can lower the processing reserve.
+        _checkpoint();
         _pull(id);
         // record the buyer in the high 160 bits and the sale time in the low 96, so every intake door refuses this
         // credit while the same buyer offers it back within the return lock (no round trip into a bid)
@@ -1302,8 +1306,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// like at every door that reads the pot, so it is in the pot before the price is read. the cost basis of each
     /// credit is `ethPrice * score / RATE_SCORE` plus its on-top artist royalty, at least 1 wei. the price state is
     /// the figure the engine pays with a funded pot, so a statement built from adopted credits is priced at that
-    /// level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the pile grows: eth, the
-    /// rate state and the pots keep their values. a donor who inflates the basis of a statement gives credits away.
+    /// level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the pile grows: eth and the
+    /// pots keep their values. the bid checkpoints before the pile changes, preserving earned climb under the old
+    /// reserve without changing the live price. a donor who inflates the basis of a statement gives credits away.
     /// reverts `Retired` after `migrate`, `InPile`, `NotHolder`, `ZeroId` and `Empty`. logs `CreditAdopted`. the
     /// body is `CoreLib.adopt`, called with the calldata untouched
     function adopt(uint256[] calldata) external nonReentrant {

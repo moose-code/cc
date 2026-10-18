@@ -520,8 +520,7 @@ library CoreLib {
         if (!IController(ctrl).refreshReference()) return;
         Settings storage cfg = c.settings;
         if (cfg.callerMaxBaseFee == 0 && cfg.callerFee == 0) return;
-        // the Core already booked the pending income into the pot; pay from it, which lowers the pot the next eth read
-        // clamps against, as compose does
+        // The Core checkpointed the mode-off bid before this payment can lower its funding room.
         uint256 pay = ((gasStart - gasleft() + REFRESH_OVERHEAD_GAS).min(REFRESH_GAS)
                 * block.basefee.min(cfg.callerMaxBaseFee) + cfg.callerFee)
         .min(c.ethPot);
@@ -530,8 +529,8 @@ library CoreLib {
         SafeTransferLib.safeTransferETH(msg.sender, pay);
     }
 
-    /// @notice the eth bid rate now, wei per 100 points: the price state lowered to the clamp, `ethPot` plus the pending
-    /// pot share less the reserve. in value mode the price state is `_valueRate`, falling back to the last good value
+    /// @notice the eth bid rate now, wei per 100 points: the price state lowered to the royalty-adjusted room from
+    /// `ethPot` plus the pending pot share less the reserve. in value mode the price state is `_valueRate`, falling back to the last good value
     /// rate while the quote is unusable. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint` and `bidOf` and its
     /// doors read it
     function ethRate() external view returns (uint256 read) {
@@ -617,8 +616,8 @@ library CoreLib {
 
     /// the eth instance price state and peak at now. booked ETH above the reserve funds the climb; the separate read
     /// may also use pending fee income, which has no known arrival time and earns no prior climb. when the
-    /// booked room cannot pay the last-fill bid for 100 points plus the artist payment, neither clock advances.
-    /// the normal ceiling, recovery rate and rateCap still bound the funded climb
+    /// booked room cannot pay the last-fill bid for 100 points plus the artist payment, the funded climb and idle
+    /// loosening pause; peak decay still follows wall time. the normal ceiling, recovery rate and rateCap still bind
     function _ethClimb(State storage c) private view returns (uint256 price, uint256 peakNow, bool paused) {
         uint256 bookedRoom = _bookedBidRoom(c);
         paused = bookedRoom < c.anchor.lastFillRate;
@@ -933,12 +932,12 @@ library CoreLib {
     }
 
     /// @notice puts credits the Core holds without a record into the eth pile, anyone may call. The cost basis of a
-    /// credit is the price state at `block.timestamp` (`climb`, before the clamp, no checkpoint is written) times the
+    /// credit is the price state at `block.timestamp` (`climb`, before the clamp) times the
     /// credit's score over 100 points, plus the artist royalty `buyToArtistBps` the eth bid would pay, at least 1 wei,
     /// so the sale floor matches a bought credit (decision 163). The price state is what the engine pays with a funded
     /// pot, so statements built from adopted credits are priced at that level; the clamp of a thin pot would book a
     /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
-    /// eth pile grows: the rate state and the pots keep their values. `acquiredAt` is the current
+    /// eth pile grows; the Core checkpoints before the reserve may rise. `acquiredAt` is the current
     /// time. Reverts `Empty` for an empty list, `ZeroId` for id zero, `InPile` for a credit that is in a pile (the same
     /// id twice included), and `NotHolder` for a credit the Core does not hold. The Core books the fee income, then
     /// forwards its call here untouched, under its own reentrancy guard

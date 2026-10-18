@@ -7,6 +7,7 @@ import {BidModel} from "./utils/BidModel.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, Mainnet, ICreditStrategy} from "../src/interfaces/Interfaces.sol";
+import {ListingTarget} from "./attackers/ListingTarget.sol";
 
 /// @notice the credit bid rule on the real stack: the drop per credit with its minute floor, the compounded climb per
 /// minute, the ceiling at a share of the last rate paid with its idle loosening, the funded clamp (the price of one credit
@@ -352,6 +353,35 @@ contract BidRuleTest is Fixture {
         assertGt(core.ethRate(), opening, "only funded time raises the bid");
     }
 
+    function _thresholdEdge(uint256 rate, uint16 artistBps) internal {
+        Settings memory s = core.settings();
+        s.reserveWei = 0.1 ether;
+        s.rateCap = type(uint64).max;
+        s.buyToArtistBps = artistBps;
+        _setSettings(s);
+        vm.prank(owner);
+        core.setRate(rate);
+        uint256 threshold = uint256(s.reserveWei) + (rate * (10_000 + artistBps) + 9_999) / 10_000;
+
+        vm.deal(address(core), threshold - 1);
+        core.book();
+        _warp(6 hours);
+        assertEq(core.ethPrice(), rate, "one wei short remains paused after six hours");
+        vm.deal(address(core), threshold);
+        core.book();
+        assertEq(core.ethPrice(), rate, "exact funding starts now, with no prior climb");
+    }
+
+    // promise: decision 176 the minimum allowed rate and zero royalty have an exact one-wei funding boundary
+    function test_minimumRateFundingEdge() public {
+        _thresholdEdge(1, 0);
+    }
+
+    // promise: decision 176 the high launch cap and maximum royalty have an exact one-wei funding boundary
+    function test_highRateMaximumRoyaltyFundingEdge() public {
+        _thresholdEdge(0.0147 ether, 1_000);
+    }
+
     // promise: each sale that leaves less than one 100-point bid pauses the clock until booked ETH refills it
     function test_repeatedEmptyAndRefillDoesNotAccrueIdleHours() public {
         _potTo(2 * START - 1);
@@ -370,6 +400,59 @@ contract BidRuleTest is Fixture {
         uint256 secondFill = core.rateAtCheckpoint();
         _warp(6 hours);
         assertEq(core.ethPrice(), secondFill, "the next empty interval is paused too");
+    }
+
+    // promise: decision 176 a seller cannot use empty hours or changing asks to bypass the bid, reserve, drop or cap
+    function test_risingThenFallingListingAsksStayInsideTheBid() public {
+        Settings memory s = core.settings();
+        s.reserveWei = 0.1 ether;
+        _setSettings(s);
+        _approveAdapter(rawAdapter);
+        _addToPot(0.1 ether + START + START / 2);
+        _sellOne();
+        uint256 afterDrain = core.rateAtCheckpoint();
+        assertLt(core.ethPot() - core.reserve(), afterDrain, "the first purchase drained the 100-point funding room");
+        _warp(6 hours);
+        _addToPot(1 ether);
+        assertEq(core.ethRate(), afterDrain, "refill did not import the six empty hours");
+
+        ListingTarget listing = new ListingTarget();
+        uint256[3] memory ids;
+        for (uint256 i; i < 3; ++i) {
+            ids[i] = _heldCredit(i);
+            _unitScore(ids[i]);
+            vm.prank(STRATEGY);
+            CREDITS.transferFrom(STRATEGY, address(listing), ids[i]);
+        }
+        uint256 firstAsk = afterDrain * 3 / 2;
+        vm.prank(keeper);
+        vm.expectRevert(ICore.AboveBid.selector);
+        _buyRaw(firstAsk, abi.encodeCall(ListingTarget.fill, (ids[0], 0)), ids[0], address(listing));
+
+        for (uint256 i; i < 48 && core.bidOf(ids[0]) < firstAsk; ++i) _warp(10 minutes);
+        assertGe(core.bidOf(ids[0]), firstAsk, "funded climb can reach a rising ask");
+        vm.fee(0);
+        uint256 rateBefore = core.ethPrice();
+        vm.prank(keeper);
+        _buyRaw(firstAsk, abi.encodeCall(ListingTarget.fill, (ids[0], 0)), ids[0], address(listing));
+        assertEq(address(listing).balance, firstAsk, "the listing receives its ask, not the higher bid");
+        assertLt(core.rateAtCheckpoint(), rateBefore, "the fill drops the bid");
+
+        uint256 higherAsk = afterDrain * 2;
+        vm.prank(keeper);
+        vm.expectRevert(ICore.AboveBid.selector);
+        _buyRaw(higherAsk, abi.encodeCall(ListingTarget.fill, (ids[1], 0)), ids[1], address(listing));
+        for (uint256 i; i < 48 && core.bidOf(ids[1]) < higherAsk; ++i) _warp(10 minutes);
+        assertGe(core.bidOf(ids[1]), higherAsk, "the bid reaches a second rising ask only with funded time");
+        vm.prank(keeper);
+        _buyRaw(higherAsk, abi.encodeCall(ListingTarget.fill, (ids[1], 0)), ids[1], address(listing));
+
+        uint256 lowerAsk = afterDrain / 2;
+        vm.prank(keeper);
+        _buyRaw(lowerAsk, abi.encodeCall(ListingTarget.fill, (ids[2], 0)), ids[2], address(listing));
+        assertEq(address(listing).balance, firstAsk + higherAsk + lowerAsk, "falling ask is paid at its live quote");
+        assertGe(core.ethPot(), core.reserve(), "the reserve remains funded after the purchase sequence");
+        assertLe(core.ethRate(), core.settings().rateCap, "the hard cap survives the price path");
     }
 
     // promise: SPEC 1 the price state stays at or below rateCap (inv 19)

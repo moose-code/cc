@@ -27,8 +27,9 @@ export interface ClimbState {
 }
 
 const N = (x: bigint) => Number(x);
-const bidRoom = (room: bigint, artistBps: number): number => N((room * 10_000n) / BigInt(10_000 + artistBps));
-const paused = (c: ClimbState): boolean => bidRoom(c.ethPot, c.buyToArtistBps) < N(c.lastFillRate);
+const bidRoomWei = (room: bigint, artistBps: number): bigint => (room * 10_000n) / BigInt(10_000 + artistBps);
+const bidRoom = (room: bigint, artistBps: number): number => N(bidRoomWei(room, artistBps));
+const paused = (c: ClimbState): boolean => bidRoomWei(c.ethPot, c.buyToArtistBps) < c.lastFillRate;
 const halve = (start: number, elapsed: number, halfLife: number) => start * Math.pow(0.5, Math.max(0, elapsed) / halfLife);
 const climbTo = (base: number, lnRate: number, sec: number, target: number) => Math.min(target, base * Math.exp((lnRate * sec) / 60));
 

@@ -107,7 +107,7 @@ const cheapLow = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => L(i, BigInt(10 * i)));
 assert.deepEqual(shortlist([...cheapLow, L(9, 500n, "opensea")], 100n, 1000n, many, 1).map((l) => Number(l.id)), [9]);
 
 // ---- eth bid forecast (lib/climb.ts, mirror of CoreLib._climb / _recover) ----
-import { bidAt, clearsIn, nextRise, priceAt, rateAt, type ClimbState } from "../lib/climb.ts";
+import { bidAt, ceilingAt, clearsIn, nextRise, priceAt, rateAt, type ClimbState } from "../lib/climb.ts";
 
 const E = 10n ** 18n;
 const cs: ClimbState = {
@@ -179,6 +179,9 @@ const empty = { ...cs, ethPot: 0n, pending: 50n * E };
 assert.equal(priceAt(empty, 1000 + 6 * 3600), 1e18);
 assert.equal(nextRise(empty, 1000 + 6 * 3600).kind, "pot");
 assert.deepEqual(clearsIn(empty, 2n * E, 1000n, 1000n, 1000 + 6 * 3600), { kind: "pot" });
+// One wei below the funding threshold still pauses, even when Number would round the amounts together.
+const oneWeiShort = { ...cs, r: 14_700_000_000_000_000n, lastFillRate: 14_700_000_000_000_000n, peakRate: 14_700_000_000_000_000n, ethPot: 14_699_999_999_999_999n };
+close(ceilingAt(oneWeiShort, 1000 + 6 * 3600), Number(oneWeiShort.lastFillRate) * 1.1);
 const refilled = { ...cs, t: 1000 + 6 * 3600, climbRestartTime: 1000 + 6 * 3600 };
 assert.equal(priceAt(refilled, refilled.t), 1e18);
 assert.ok(priceAt(refilled, refilled.t + 60) > 1e18);

@@ -101,9 +101,12 @@ export function useListings() {
         c.getStorageAt({ address: core!, slot: numberToHex(ETH_CLOCK_SLOT, { size: 32 }) }),
       ]);
       const val = <T,>(i: number) => (res[i].status === "success" ? ((res[i] as { result: unknown }).result as T) : undefined);
-      // the room a purchase may spend and the climb clamp: the live pot less the reserve of the snapshot (Core.room)
+      // A purchase books pending fees first; only booked room advances the funded bid clock.
       const potLive = val<bigint>(0) ?? snap.ethPot;
-      const pot = potLive > snap.reserve ? potLive - snap.reserve : 0n;
+      const pendingPot = snap.potWithPending - snap.ethPot;
+      const potAfterBook = potLive + pendingPot;
+      const pot = potAfterBook > snap.reserve ? potAfterBook - snap.reserve : 0n;
+      const bookedRoom = potLive > snap.reserve ? potLive - snap.reserve : 0n;
       const retired = val<boolean>(1) ?? true;
       const allowed = { strategy: val<boolean>(2) ?? false, opensea: Boolean(seaportAdapter) && (val<boolean>(3) ?? false) };
 
@@ -160,8 +163,8 @@ export function useListings() {
         recoveryClimbPerMinBps: s.recoveryClimbPerMinBps,
         recoveryGapBps: s.recoveryGapBps,
         buyToArtistBps: s.buyToArtistBps,
-        ethPot: pot,
-        pending: snap.potWithPending - snap.ethPot,
+        ethPot: bookedRoom,
+        pending: pendingPot,
       };
       const now = head!.ts;
       const room = spendRoom(val<readonly [bigint, bigint, bigint]>(7), s, now + (Date.now() - head!.at) / 1000);
@@ -174,7 +177,7 @@ export function useListings() {
         const wait = covered && !clears ? room.nextIn : undefined;
         // at or under the bid yet not clearing: the venue's adapter is off or the Core is retired, no time applies
         const f = clearsIn(state, r.price, r.score, SCORE_PER_100_POINTS, now);
-        const eta: ClearsIn = clears ? { kind: "now" } : r.price > snap.potRoom ? { kind: "pot" } : f.kind === "now" ? { kind: "far" } : f;
+        const eta: ClearsIn = clears ? { kind: "now" } : r.price > pot ? { kind: "pot" } : f.kind === "now" ? { kind: "far" } : f;
         return { ...r, gap: gapOf(r.price, r.bid), clears, wait, eta, balanceBid: balanceOf(r) };
       });
       out.sort((a, b) => a.gap - b.gap);
