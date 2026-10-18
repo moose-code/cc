@@ -25,6 +25,7 @@ FUNDER=0x6666666666666666666666666666666666666666   # holds Jack's launch supply
 [ "$(cast chain-id --rpc-url "$RPC" 2>/dev/null)" = "31337" ] || { echo "no chain id 31337 node on $RPC" >&2; exit 1; }
 
 CORE="$(jq -r .core "$REC")"
+CTL="$(jq -r .controller "$REC")"
 BMOD="$(jq -r .balanceModule "$REC")"
 BTOK="$(jq -r .balanceToken "$REC")"
 
@@ -72,7 +73,12 @@ SETTINGS_JSON="$(cast call "$CORE" "$SIG" --json --rpc-url "$RPC")"
 REDEEM_ON="$(echo "$SETTINGS_JSON" | jq -r '.[0][11]' 2>/dev/null)"
 BALBID_ON="$(echo "$SETTINGS_JSON" | jq -r '.[0][12]' 2>/dev/null)"
 check "redeem is on" "$([ "$REDEEM_ON" = "true" ] && echo 1 || echo 0)" "redeemOn $REDEEM_ON"
-check "balance bid is on" "$([ "$BALBID_ON" = "true" ] && echo 1 || echo 0)" "balanceBidOn $BALBID_ON"
+# the hazard state: balance bid on, value mode off and a balance pool key set (docs/RUNBOOK.md, activation order)
+VALUE_ON="$(echo "$SETTINGS_JSON" | jq -r '.[0][36]' 2>/dev/null)"
+KEY_SET="$(callc "$CTL" 'balancePoolKeySet()(bool)' | awk '{print $1}')"
+check "no balance bid on with value mode off and a pool key set" \
+  "$([ "$BALBID_ON" = "true" ] && [ "$VALUE_ON" != "true" ] && [ "$KEY_SET" = "true" ] && echo 0 || echo 1)" \
+  "balanceBidOn $BALBID_ON valueModeOn $VALUE_ON poolKeySet $KEY_SET"
 
 # 4. the launch supply holder (funder) holds balance tokens; the module holds a nonzero redemption balance
 FUNDER_BAL="$(callc "$BTOK" 'balanceOf(address)(uint256)' "$FUNDER" | awk '{print $1}')"
@@ -84,10 +90,12 @@ check "the module available balance is nonzero" "$(calc "$AVAIL > 0")" "availabl
 
 # 6. a sellForBalance from A1 pays balanceBidOf. the credit approval lands in its own block first, then the bid is read
 # and the sell sent, one block apart; the balance bid climbs a little each block, so the realized pay is checked within
-# a small tolerance of the read. e2e-real's phase6BalanceSell asserts the exact equality atomically in one tx.
+# a small tolerance of the read. e2e-real's phase7BalanceSell asserts the exact equality atomically in one tx.
 cast send "$CREDITS" 'setApprovalForAll(address,bool)' "$CORE" true --from "$A1" --unlocked --rpc-url "$RPC" >/dev/null 2>&1
 ID="$(callc "$CREDITS" 'tokensOf(address)(uint256[])' "$A1" | tr -d '[]' | tr ',' '\n' | grep -oE '[0-9]+' | head -1)"
-if [ -n "$ID" ]; then
+if [ "$BALBID_ON" != "true" ]; then
+  echo "  skip: balance bid is off until value mode is on"
+elif [ -n "$ID" ]; then
   BID="$(callc "$CORE" 'balanceBidOf(uint256)(uint256)' "$ID" | awk '{print $1}')"
   BEFORE="$(callc "$BTOK" 'balanceOf(address)(uint256)' "$A1" | awk '{print $1}')"
   if cast send "$CORE" 'sellForBalance(uint256[])' "[$ID]" --from "$A1" --unlocked --rpc-url "$RPC" >/dev/null 2>&1; then

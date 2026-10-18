@@ -10,6 +10,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
+import {ValueBase} from "./ValueMode.t.sol";
 
 /// promise: SPEC 4 with value mode off the engine prices exactly as main does. this is a differential guard: it
 /// recomputes the bid, climb, drop, ceiling, credit sale price and statement decay from the launch settings (main's
@@ -219,5 +220,86 @@ contract ModeOffDifferentialTest is Fixture {
         core.refreshReference();
         assertGt(ctl.referenceTime(), t0, "the sample time moved");
         assertFalse(core.settings().valueModeOn, "value mode off");
+    }
+}
+
+/// the balance route and the activation order (docs/RUNBOOK.md, phase 2): `balanceBidOn` stays false until value mode is
+/// on. with value mode off the balance payout is par based and the credit ask is curve based, so a pool spot above the
+/// curve opens a round trip; value mode prices both off the same reference. the setup is the value mode fixture: a real
+/// pool with depth, a pool key and a usable quote, value mode off, `balanceBidOn` true
+contract ModeOffBalanceRouteTest is ValueBase {
+    address internal constant TRIPPER = address(0x7419);
+
+    function _arm() internal returns (uint256[] memory ids) {
+        ids = _fillEthPile(4);
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(50 ether);
+    }
+
+    /// buys credit `id` at its ask, sells it for balance token in the next second and returns the eth paid and the
+    /// balance token received valued at the pool spot
+    function _balanceTrip(uint256 id) internal returns (uint256 paid, uint256 back) {
+        ctl.refreshReference();
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(TRIPPER, price * 2);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price * 2}(id);
+        paid = price * 2 - TRIPPER.balance;
+        _nextSecond();
+        vm.startPrank(TRIPPER);
+        CREDITS.setApprovalForAll(address(core), true);
+        core.sellForBalance(_one(id));
+        vm.stopPrank();
+        (uint256 spot,) = ctl.spotPrice();
+        back = xt.balanceOf(TRIPPER) * spot / 1e18;
+    }
+
+    /// the pool spot at which selling credit `id` for balance and dumping the balance into the pool returns exactly the
+    /// ask, wei per 1e18 base units, from the mode off payout and the mode off ask
+    function _breakEvenSpot(uint256 id) internal view returns (uint256) {
+        return ctl.creditPrice(id) * 1e18 / core.balanceBidOf(id);
+    }
+
+    // promise: with the balance bid off the balance route is closed
+    function test_balanceBidOffClosesTheRoute() public {
+        uint256[] memory ids = _arm();
+        _setSwitches(true, false);
+        assertFalse(core.settings().valueModeOn, "value mode off");
+        vm.startPrank(seller);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.expectRevert(ICore.BalanceBidOff.selector);
+        core.sellForBalance(_one(ids[0]));
+        vm.stopPrank();
+    }
+
+    // see the activation order in docs/RUNBOOK.md: the balance bid opens after value mode, because with value mode off
+    // a pool spot 30 percent above the curve makes buy credit, sell for balance, sell the balance into the pool profitable
+    function test_documentedHazard_modeOffBalanceBidOpensRoundTripWhenSpotLeads() public {
+        uint256[] memory ids = _arm();
+        assertFalse(core.settings().valueModeOn, "value mode off");
+        assertTrue(core.settings().balanceBidOn, "balance bid on");
+        // the pool spot 30 percent above the break even of the curve ask against the par based payout
+        _swapToSpot(_breakEvenSpot(ids[0]) * 130 / 100);
+        (uint256 paid, uint256 back) = _balanceTrip(ids[0]);
+        assertGt(back, paid, "mode off, spot above the curve: the round trip is profitable");
+    }
+
+    // the same setup in value mode: both legs price off the reference, so the round trip loses the spread
+    function test_valueModeClosesTheRoundTripWhenSpotLeads() public {
+        uint256[] memory ids = _arm();
+        uint256 target = _breakEvenSpot(ids[0]) * 130 / 100;
+        _valueOn();
+        _swapToSpot(target);
+        // the prior-block sample catches the pushed spot while the reference walks one step a block behind it
+        for (uint256 i; i < 3; ++i) {
+            vm.warp(block.timestamp + 1 hours);
+            vm.roll(block.number + 1);
+            ctl.refreshReference();
+        }
+        (uint256 paid, uint256 back) = _balanceTrip(ids[0]);
+        uint256 m = 10_000 + ctl.creditSpreadBps();
+        assertLe(back * m, (paid + 1) * 10_000, "value mode: the round trip loses at least the spread");
     }
 }
