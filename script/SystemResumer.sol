@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ICore} from "../src/interfaces/ICore.sol";
+import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer, Deployed} from "./SystemDeployer.sol";
 
@@ -26,6 +27,28 @@ abstract contract SystemResumer is SystemDeployer {
         if (ICore(payable(want)).COIN().code.length != 0) revert AlreadyLaunched();
         preflightResume(c, deployer);
         _require();
+    }
+
+    /// @notice a step before the launch is not on chain, so the run is not a deferred deploy awaiting its launch
+    error NotDeferred(string what);
+
+    /// @notice the extra rows of `LAUNCH_ONLY`: the controller, both adapters and the renderer have code at their
+    /// addresses, the renderer is bound to the Core, and the Core points at the controller and allows both adapters. only
+    /// the launch is then left to send. reverts on the first missing step
+    function launchOnlyChecks(LaunchConfig memory c, address core_) internal view {
+        ICore k = ICore(payable(core_));
+        address ctl = controllerAddress(core_, c);
+        address sea = seaportAdapterAddress(core_, c.seaportRecipients);
+        address strat = strategyAdapterAddress();
+        address ren = rendererAddress(c);
+        if (ctl.code.length == 0) revert NotDeferred("controller");
+        if (sea.code.length == 0) revert NotDeferred("seaport adapter");
+        if (strat.code.length == 0) revert NotDeferred("strategy adapter");
+        if (ren.code.length == 0) revert NotDeferred("renderer");
+        if (address(ICoinRenderer(ren).core()) != core_) revert NotDeferred("renderer setCore");
+        if (k.controller() != ctl) revert NotDeferred("setController");
+        if (!k.allowedAdapter(sea)) revert NotDeferred("addAdapter seaport");
+        if (!k.allowedAdapter(strat)) revert NotDeferred("addAdapter strategy");
     }
 
     /// @notice sends the steps the chain is still missing (after `resumeChecks`). the caller must be the deployer of the

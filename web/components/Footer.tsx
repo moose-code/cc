@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useHead, useSnapshot } from "@/lib/live";
 import { lsGet, lsSet } from "@/lib/cache";
 import { commas, evmNowAddress } from "@/lib/format";
-import { core, credits, statements } from "@/lib/config";
+import { coinLive, core, credits, statements } from "@/lib/config";
 
 const THEME_KEY = "cc:theme"; // read before first paint by the script in app/layout.tsx
 const THEMES = ["auto", "light", "dark"] as const;
@@ -58,7 +58,7 @@ export function Footer() {
   const contracts = [
     { label: "core", address: core },
     { label: "controller", address: snap?.controller },
-    { label: "cc", address: snap?.coin },
+    { label: "cc", address: coinLive ? snap?.coin : undefined },
     { label: "credits", address: credits },
     { label: "statements", address: statements },
   ].filter((c): c is { label: string; address: `0x${string}` } => Boolean(c.address) && Boolean(core));

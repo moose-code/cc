@@ -13,7 +13,8 @@ import {NewProd} from "./NewProd.sol";
 /// COIN_CHANGED is set, unless CONFIG_HASH is the hash that preflight printed for this config, and unless the signer is
 /// the factory owner. the order of the transactions (docs/DECISIONS.md 10.4): the library, the Core, the controller, the
 /// two adapters, the coin renderer, `setCore` on it, `setController`, `addAdapter` for each adapter, the launch.
-/// preflight runs first and
+/// DEFER_LAUNCH=1 sends every transaction but the launch and runs the deferred postflight (`Resume` with LAUNCH_ONLY=1
+/// sends the launch later). preflight runs first and
 /// postflight runs on the simulated result, both before anything is sent. the full runbook is docs/RUNBOOK.md
 contract Deploy is Script, NewProd {
     /// @notice runs the deploy as the broadcaster
@@ -34,15 +35,17 @@ contract Deploy is Script, NewProd {
         _print("preflight");
         _require();
         vm.startBroadcast();
-        d = deploySystem(deployer, c);
+        bool deferred = vm.envOr("DEFER_LAUNCH", uint256(0)) == 1;
+        d = deferred ? deploySystemUntilLaunch(deployer, c) : deploySystem(deployer, c);
         vm.stopBroadcast();
         // the same read back as the Postflight script, on the result of the run. a failure reverts the simulation, so
         // nothing is sent
-        postflightAs(c, d.core, deployer);
+        if (deferred) postflightDeferred(c, d.core, deployer);
+        else postflightAs(c, d.core, deployer);
         _print("postflight of the simulated launch");
         _require();
         console.log("core", d.core);
-        console.log("coin", d.coin);
+        console.log(deferred ? "coin (predicted, launch deferred)" : "coin", d.coin);
         console.log("controller", d.controller);
         console.log("seaport adapter", d.seaportAdapter);
         console.log("strategy adapter", d.strategyAdapter);

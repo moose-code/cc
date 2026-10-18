@@ -8,7 +8,7 @@ import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
-import { core, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
+import { coinLive, core, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { coreAbi, erc20Abi } from "@/lib/abis";
 import { usePile, useSnapshot } from "@/lib/live";
 
@@ -39,7 +39,7 @@ export default function ComposePage() {
     abi: erc20Abi,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
-    query: { enabled: Boolean(snap?.coin && address && minCc > 0n) },
+    query: { enabled: Boolean(coinLive && snap?.coin && address && minCc > 0n) },
   });
   const ccOk = minCc === 0n || (ccBal ?? 0n) >= minCc;
   const choosable = pile.filter((c) => c.past);

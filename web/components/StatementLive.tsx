@@ -11,7 +11,7 @@ import { Breadcrumb } from "./Shell";
 import { Fact, HeroArt, HistLine, type Ink } from "./Detail";
 import { NotDeployed } from "./NotDeployed";
 import { useStatementRating } from "./Cards";
-import { core, engineDeployed, statements } from "@/lib/config";
+import { coinLive, core, engineDeployed, statements } from "@/lib/config";
 import { useHistoryDown, useStatementIndex, useStatementView } from "@/lib/data";
 import type { StatementRecord } from "@/lib/events";
 import { useBlockTs } from "@/lib/engine";
@@ -315,7 +315,7 @@ function RestyleSection({ s, snap, current }: { s: HeldStatement; snap: Snapshot
     abi: erc20Abi,
     functionName: "balanceOf",
     args: address ? [address] : undefined,
-    query: { enabled: Boolean(address && snap.minCcToChoose > 0n) },
+    query: { enabled: Boolean(coinLive && address && snap.minCcToChoose > 0n) },
   });
   const ccOk = snap.minCcToChoose === 0n || (ccBal ?? 0n) >= snap.minCcToChoose;
   const sel = pick ?? current;

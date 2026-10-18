@@ -189,6 +189,28 @@ cast code $COIN --rpc-url $MAINNET_RPC_URL | head -c 12     # 0x means the launc
 | the forge run stopped with transactions left in its saved file | the delegated owner account allows one transaction in flight and rejects nonce gaps (`gapped-nonce tx from delegated accounts`, `in-flight transaction limit reached`), so a run can land the first transaction and fail the rest. read `cast nonce $DEPLOYER` and the nonces in `broadcast/Deploy.s.sol/1/run-latest.json`. while the nonce lies from the first saved nonce to the first plus the number of saved transactions: `RESUME=replay CORE=$CORE FROM_BLOCK=<start block of the first run> script/deploy.sh mainnet` runs `forge script --resume --slow`, which sends only the transactions without a receipt, then postflight, the record and verification. outside that range the wrapper refuses and the row above applies |
 | launched | `RESUME=record CORE=$CORE FROM_BLOCK=<start block of the first run> script/deploy.sh mainnet` sends nothing and runs postflight, the record and verification; then step 9 |
 
+### deferred launch (decision 172)
+
+the Core takes the coin as a constructor immutable from the salt predicted address, so the deploy can stop before the launch transaction. the Core, controller, both adapters and the renderer go on chain first; the coin is created later with one transaction. the factory finding is docs/reviews/DEFERRED-LAUNCH.md (a third party cannot take the predicted address).
+
+```sh
+# step 1: every transaction but the launch. same guards, preflight, signoff hash and verification as the full run
+DEFER_LAUNCH=1 CONFIG_HASH=$CONFIG_HASH PRIVATE_RPC=... ETHERSCAN_API_KEY=... KEYSTORE_ACCOUNT=<name> PASSWORD_FILE=<path> script/deploy.sh mainnet
+# step 2: the launch alone, from the record. full postflight, record rewrite, verification
+LAUNCH_ONLY=1 CONFIG_HASH=$CONFIG_HASH PRIVATE_RPC=... ETHERSCAN_API_KEY=... KEYSTORE_ACCOUNT=<name> PASSWORD_FILE=<path> script/deploy.sh mainnet
+```
+
+step 1 runs the postflight without the coin and pool rows and adds `deferred: coin has no code`, `deferred: coin salt is unused on the factory` and `deferred: coin equals the factory prediction for the deployer`. the record has the predicted coin, `coinLive` false and no `launchBlock`. step 2 reads the Core and start block from that record and refuses unless the record is deferred, the chain matches it (Core code, controller, coin address, both adapters allowed, coin without code), every earlier step is on chain (`NotDeferred`), the config is the config of the Core (`CoreMismatch`) and the signer is the factory owner. it sends the launch, runs the full postflight, and writes the record with `coinLive` true and `launchBlock`. `DRY_RUN=1` with either variable evaluates the guards and simulates.
+
+between the steps the web shows the engine with an empty pot and "$CC is not live yet" in place of the swap panel; the pool, price and coin balance reads are off. set `NEXT_PUBLIC_COIN_LIVE=0` in the web environment for the interval (`npm run dev:local` takes it from the record) and remove it after step 2. the indexer reads `Core.COIN()` and filters coin `Transfer` events to the zero address, so it runs with no coin events until the launch.
+
+| situation | action |
+|---|---|
+| step 1 stopped half way | the table above applies (`RESUME=replay` with `DEFER_LAUNCH=1`, or `RESUME=state`, which also sends the launch) |
+| step 2 stopped or failed | rerun `LAUNCH_ONLY=1`; a landed launch is `RESUME=record CORE=$CORE FROM_BLOCK=<deployBlock of the record>` |
+| abort the launch | leave the Core as deployed and deploy a successor engine (section 4, moving to a successor engine) |
+| the factory owner changed the stack between the steps | step 2 refuses before it sends. the Core stays paired with the old prediction; recovery is a new Core |
+
 ### signer drill (script/dev/rehearse-signer.sh)
 
 proves the mainnet signing path on a chain id 1 anvil fork (port 8618, no impersonation during the run): `script/deploy.sh rehearsal` signs with a foundry keystore (`--account`, `--password-file`) and `--slow`, passes postflight and writes the record, then the `RESUME=replay` drill. the script creates a throwaway keystore (`cast wallet new`, a password file in a temp directory outside the repository, both removed on exit), funds it on the fork, gives it the owner's EIP 7702 delegation code, makes it the v2 factory owner (the real owner's `transferOwnership` is the only impersonated send, accepted by the keystore) and the owner and creator of a gitignored copy of script/config/rehearsal.json. `REHEARSAL_DEPLOYER=<addr>` (env rehearsal only, refused in every other env) makes that address the owner, signer and `DEPLOYER` with `WALLET=keystore`; `REHEARSAL_SKIP_GIT=1` drops the git guards. script/config/rehearsal.json carries placeholder `image` and `description` values that fail the preflight row `rule: image and description are empty or real values`; the drill writes its config copy with both set to empty strings, and any other rehearsal run from that file needs the same two blanks. drill: the wrapper is killed after the third transaction lands, `RESUME=replay` sends the remaining eight with the saved constructor arguments and the record equals the full run record; with one extra transaction from the signer between the kill and the resume, the wrapper refuses because a saved transaction below the signer nonce has no landed hash. mainnet differs in the private relay, the real keystore, Etherscan verification and the git and signoff guards.

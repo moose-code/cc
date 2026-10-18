@@ -142,6 +142,101 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         this.resume(deployer, base, core);
     }
 
+    function oneShotExt(address who, LaunchConfig memory c) external returns (Deployed memory d) {
+        vm.startPrank(who);
+        d = deploySystem(who, c);
+        vm.stopPrank();
+    }
+
+    function deferExt(address who, LaunchConfig memory c) external returns (Deployed memory d) {
+        vm.startPrank(who);
+        d = deploySystemUntilLaunch(who, c);
+        vm.stopPrank();
+    }
+
+    /// @dev what Resume.s.sol does under LAUNCH_ONLY=1
+    function launchOnlyExt(address who, LaunchConfig memory c, address core) external returns (Deployed memory d) {
+        resumeChecks(who, c, core);
+        launchOnlyChecks(c, core);
+        vm.startPrank(who);
+        d = resumeSend(who, c);
+        vm.stopPrank();
+    }
+
+    /// @dev addresses, runtime code hashes and the first storage words of the system contracts and the coin
+    function _fingerprint(Deployed memory d) internal view returns (bytes32 h) {
+        h = keccak256(abi.encode(d.core, d.coin, d.controller, d.seaportAdapter, d.strategyAdapter, d.renderer, d.poolId));
+        address[6] memory all = [d.core, d.coin, d.controller, d.seaportAdapter, d.strategyAdapter, d.renderer];
+        for (uint256 a; a < all.length; ++a) {
+            h = keccak256(abi.encode(h, all[a].codehash));
+            for (uint256 i; i < 48; ++i) {
+                h = keccak256(abi.encode(h, vm.load(all[a], bytes32(i))));
+            }
+        }
+    }
+
+    function _clean() internal view {
+        (string memory list,) = _failed();
+        assertEq(list, "", "postflight is clean");
+    }
+
+    // a deferred deploy followed by the launch step leaves the state of a one shot deploy
+    // promise: a deferred deploy followed by the launch step leaves the state of a one shot deploy
+    function test_deferredDeployThenLaunchEqualsOneShot() public {
+        _sendLibrary();
+        uint256 snap = vm.snapshotState();
+        Deployed memory one = this.oneShotExt(deployer, base);
+        bytes32 want = _fingerprint(one);
+        postflightAs(base, one.core, deployer);
+        _clean();
+        vm.revertToState(snap);
+
+        Deployed memory d = this.deferExt(deployer, base);
+        assertEq(d.core, one.core, "same core");
+        assertEq(d.coin, one.coin, "same predicted coin");
+        assertEq(d.coin.code.length, 0, "the coin is not launched");
+        for (uint256 i; i < 9; ++i) {
+            assertGt(stepGas[i], 0, "every step before the launch is sent");
+        }
+        assertEq(stepGas[9], 0, "the launch is not sent");
+        postflightDeferred(base, d.core, deployer);
+        _clean();
+
+        delete stepGas;
+        Deployed memory e = this.launchOnlyExt(deployer, base, d.core);
+        for (uint256 i; i < 9; ++i) {
+            assertEq(stepGas[i], 0, "the launch step sends only the launch");
+        }
+        assertGt(stepGas[9], 0, "the launch is sent");
+        assertEq(_fingerprint(e), want, "state equals the one shot deploy");
+        postflightAs(base, e.core, deployer);
+        _clean();
+        // the deferred rows no longer hold once the coin exists
+        postflightDeferred(base, e.core, deployer);
+        (string memory list,) = _failed();
+        assertTrue(bytes(list).length != 0, "the deferred postflight fails after the launch");
+    }
+
+    // the launch step refuses a missing step before the launch, another config, and a coin that has code
+    // promise: the launch step refuses a missing step, another config and a launched coin
+    function test_launchStepRefusals() public {
+        _sendLibrary();
+        vm.prank(deployer);
+        address core = _newCore(base, deployer);
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "controller"));
+        this.launchOnlyExt(deployer, base, core);
+
+        Deployed memory d = this.deferExt(deployer, base);
+        LaunchConfig memory other = base;
+        other.rateStart = base.rateStart + 1;
+        vm.expectRevert(abi.encodeWithSelector(CoreMismatch.selector, coreAddress(other, deployer), core));
+        this.launchOnlyExt(deployer, other, d.core);
+
+        this.launchOnlyExt(deployer, base, d.core);
+        vm.expectRevert(abi.encodeWithSelector(AlreadyLaunched.selector));
+        this.launchOnlyExt(deployer, base, d.core);
+    }
+
     function requireDeployerExt(address want, address got) external pure {
         _requireDeployer(want, got);
     }
