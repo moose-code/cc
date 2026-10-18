@@ -4,7 +4,7 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
-Web docs branch (2026-10-18, decisions 174 and 175): `codex/contract-docs-ui` starts at latest fetched `origin/main` `a6099d2`. It adds a static `/docs` guide, searchable contract reference and complete generated interface catalog. The landing page and navigation use the owner's requested direct copy. Contract bytecode and the frozen release candidate are unchanged. Focused verification passed: `npm run check:docs`, `npx tsc --noEmit`, and the local `/docs` route renders the revised copy. Next for this branch: review the docs changes; the release acceptance row below stays pending.
+Web docs branch (2026-10-18, decisions 174 to 176): `codex/contract-docs-ui` starts at latest fetched `origin/main` `a6099d2`. It adds a static `/docs` guide, searchable contract reference and complete generated interface catalog. The Docs link is in the site footer; overview card squares are unlettered, and the lifecycle guide omits operator-key risk copy. Contract bytecode and the frozen release candidate are unchanged. Focused verification passed: `npm run check:docs`, `npx tsc --noEmit`, and local `/`, `/docs`, and `/docs/guides/lifecycle` routes render the requested navigation and copy. Next for this branch: review the docs changes; the release acceptance row below stays pending.
 
 Baton (2026-10-18): candidate 85dbc51 is frozen pending owner acceptance (suite, deep, e2e, rehearsal and delta review rows in section 4). Next: owner acceptance; the deploy-morning rate pull (rateStart placeholder 0.0049); `DRY_RUN=1 script/deploy.sh mainnet`; then the `DEFER_LAUNCH=1` deploy and `LAUNCH_ONLY` per docs/RUNBOOK.md.
 

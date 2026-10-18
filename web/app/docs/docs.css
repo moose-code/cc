@@ -94,10 +94,10 @@
 .docs-quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 35px 0 42px; border: 1px solid var(--divider); background: var(--divider); }
 .docs-quick-card { display: flex; flex-direction: column; align-items: flex-start; min-height: 188px; padding: 20px; background: var(--surface); }
 .docs-quick-card:hover { background: var(--paper); text-decoration: none; }
-.docs-quick-icon { display: grid; place-items: center; width: 29px; height: 29px; margin-bottom: 16px; background: var(--c); color: #111; font-size: 13px; font-weight: 600; }
-.docs-quick-icon-1 { background: var(--m); color: #fff; }
+.docs-quick-icon { width: 29px; height: 29px; margin-bottom: 16px; background: var(--c); }
+.docs-quick-icon-1 { background: var(--m); }
 .docs-quick-icon-2 { background: var(--y); }
-.docs-quick-icon-3 { background: var(--ink); color: var(--on-ink); }
+.docs-quick-icon-3 { background: var(--ink); }
 .docs-quick-card strong { font-size: 13px; }
 .docs-quick-card > span:not(.docs-quick-icon) { margin: 7px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .docs-quick-card b { margin-top: auto; color: var(--c); font-size: 10px; }

@@ -14,7 +14,6 @@ import { CCLogo } from "./CCLogo";
 const NAV = [
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
-  { href: "/docs", label: "docs" },
 ];
 
 export function Header() {

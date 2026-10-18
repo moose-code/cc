@@ -134,7 +134,7 @@ export const docPages: DocPage[] = [
   {
     slug: "guides/lifecycle",
     group: "Guides",
-    title: "Lifecycle and trust",
+    title: "Lifecycle",
     eyebrow: "Guide / operating model",
     summary: "Contract behavior during launch, balance activation, locks, and migration.",
     sections: [
@@ -153,7 +153,6 @@ export const docPages: DocPage[] = [
         points: [
           "The owner can change economic settings immediately, pause sales, select a controller and module, manage adapters, and nominate a successor.",
           "Controller, balance module, adapter, and successor locks are one-way. Read their onchain flags rather than assuming they have been applied.",
-          "A contract integration should treat the owner key as a trust dependency and monitor settings, module, and migration events.",
         ],
       },
       {

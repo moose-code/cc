@@ -30,7 +30,7 @@ export function DocsPage({ page }: { page: DocPage }) {
           <div className="docs-quick-grid">
             {docPages.filter((item) => item.group === "Contracts").map((item, i) => (
               <Link href={docHref(item)} key={item.slug} className="docs-quick-card">
-                <span className={`docs-quick-icon docs-quick-icon-${i}`}>{["C", "V", "B", "A"][i]}</span>
+                <span className={`docs-quick-icon docs-quick-icon-${i}`} aria-hidden="true" />
                 <strong>{item.title}</strong>
                 <span>{item.summary}</span>
                 <b>View reference →</b>
