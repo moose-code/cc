@@ -22,6 +22,14 @@ OWNER = launch.OWNER
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_skip_clean_reuses_build_while_default_cleans(self):
+        # promise: repeated previews can stay warm while the normal deployment still starts with forge clean.
+        with patch.object(launch, "run") as invoked, redirect_stdout(io.StringIO()):
+            launch.prepare_build(True)
+            invoked.assert_not_called()
+            launch.prepare_build(False)
+            invoked.assert_called_once_with(["forge", "clean"])
+
     def test_fee_ceiling_covers_the_observed_forge_fee_drift(self):
         # promise: a small base-fee move after preview does not reject a signed transaction before review.
         self.assertGreaterEqual(launch.fee_ceiling(122_000_000), 272_363_873)

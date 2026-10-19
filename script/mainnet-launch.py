@@ -89,6 +89,14 @@ def fee_ceiling(gas_price):
     return max(gas_price * 4, 500_000_000)
 
 
+def prepare_build(skip_clean):
+    if skip_clean:
+        print("Using the warm Foundry build; the deployment path still checks and compiles it.", flush=True)
+    else:
+        print("Cleaning Foundry output and compiling the exact deployment path...", flush=True)
+        run(["forge", "clean"])
+
+
 def print_launch_config(path):
     config = json.loads(path.read_text())
     print(f"\nExact launch settings ({path}):", flush=True)
@@ -340,7 +348,8 @@ class GateHandler(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preview", action="store_true", help="clean, simulate, and price without signing or sending")
+    parser.add_argument("--preview", action="store_true", help="simulate and price without signing or sending")
+    parser.add_argument("--skip-clean", action="store_true", help="reuse warm Foundry artifacts; the deploy path still builds")
     parser.add_argument("--local-rehearsal", action="store_true", help="use a loopback chain-id-1 fork and rehearsal signer")
     parser.add_argument("--resume-core", help="Core address from an interrupted deployment")
     parser.add_argument("--from-block", type=int, help="start block printed by the interrupted deployment")
@@ -411,8 +420,7 @@ def main():
         env.pop("LAUNCH_ONLY", None)
         env["DEFER_LAUNCH"] = "1"
     manifest = ROOT / f"broadcast/{'Resume' if args.resume_core or args.launch_only else 'Deploy'}.s.sol/1/dry-run/run-latest.json"
-    print("Cleaning Foundry output and compiling the exact deployment path...", flush=True)
-    run(["forge", "clean"])
+    prepare_build(args.skip_clean)
     if args.record_only:
         backup = Path(env["CONFIG_LOCK_BACKUP"])
         if not backup.is_file():
