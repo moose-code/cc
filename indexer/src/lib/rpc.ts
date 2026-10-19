@@ -1,7 +1,10 @@
 import { loadBalance, rateLimit } from "ponder";
 import { fallback, http, type Transport } from "viem";
 
-export type EndpointStats = { requests: number; errors: number; lastError: string | null; rps: number | null };
+export type EndpointStats = {
+  requests: number; errors: number; lastError: string | null; rps: number | null;
+  queued: number; active: number; lastStarted: number | null; lastSettled: number | null;
+};
 
 const KEY = "__ccRpcStats";
 type G = typeof globalThis & { [KEY]?: Map<string, EndpointStats> };
@@ -15,7 +18,7 @@ export function rpcStats(): Map<string, EndpointStats> {
 function entry(host: string, rps: number | null): EndpointStats {
   const m = rpcStats();
   let e = m.get(host);
-  if (!e) m.set(host, (e = { requests: 0, errors: 0, lastError: null, rps }));
+  if (!e) m.set(host, (e = { requests: 0, errors: 0, lastError: null, rps, queued: 0, active: 0, lastStarted: null, lastSettled: null }));
   return e;
 }
 
@@ -32,19 +35,33 @@ const REVERT = /execution reverted|revert/i;
  *    through to an endpoint that serves archive state.
  * 3. Requests and errors are counted per host and each failure is logged.
  */
-export function guardedHttp(url: string, rps: number | null = null): Transport {
+export function guardedHttp(url: string, rps: number | null = null, timeoutMs = 20_000): Transport {
   const host = new URL(url).host;
-  const inner = http(url, { timeout: 20_000, retryCount: 0 });
+  const inner = http(url, { timeout: timeoutMs, retryCount: 0 });
   return (params) => {
     const t = inner(params);
     return {
       ...t,
       request: (async (args: { method?: string }) => {
         const stats = entry(host, rps);
+        stats.queued = Math.max(0, stats.queued - 1);
         stats.requests++;
+        stats.active++;
+        stats.lastStarted = Date.now();
+        const controller = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
         let res: unknown;
         try {
-          res = await t.request(args as Parameters<typeof t.request>[0]);
+          // Reject independently of abort handling so an uncooperative request cannot hold a limiter slot.
+          res = await Promise.race([
+            t.request(args as Parameters<typeof t.request>[0], { signal: controller.signal }),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => {
+                reject(new Error(`request deadline exceeded (${timeoutMs} ms)`));
+                controller.abort();
+              }, timeoutMs);
+            }),
+          ]);
         } catch (e) {
           const full = `${(e as Error).message ?? e} ${(e as { details?: string }).details ?? ""}`;
           if (REVERT.test(full)) throw e;
@@ -53,6 +70,10 @@ export function guardedHttp(url: string, rps: number | null = null): Transport {
           stats.lastError = `${args?.method}: ${msg}`;
           console.warn(`[rpc] ${host} failed ${args?.method}: ${msg}`);
           throw new Error(`${host}: ${msg}`);
+        } finally {
+          clearTimeout(timer);
+          stats.active--;
+          stats.lastSettled = Date.now();
         }
         if (args?.method === "eth_getLogs") {
           const bad = !Array.isArray(res)
@@ -78,15 +99,23 @@ export function guardedHttp(url: string, rps: number | null = null): Transport {
 export type Endpoint = { url: string; rps: number };
 
 /** Round robin across public endpoints; each request tries the other publics before the optional reserve. */
-export function fallbackTransport(endpoints: Endpoint[], reserve?: Endpoint): Transport {
+export function fallbackTransport(endpoints: Endpoint[], reserve?: Endpoint, timeoutMs = 20_000): Transport {
   if (endpoints.length === 0) throw new Error("At least one public RPC endpoint is required");
   let shared: ReturnType<Transport> | undefined;
   return (params) => {
     if (shared) return shared;
     // Constructors and fallback requests share one limiter per endpoint and one round-robin cursor.
     const limited = [...endpoints, ...(reserve ? [reserve] : [])].map((e): Transport => {
-      const transport = rateLimit(guardedHttp(e.url, e.rps), { requestsPerSecond: e.rps, browser: false })({ ...params, retryCount: 0 });
-      return () => transport;
+      const stats = entry(new URL(e.url).host, e.rps);
+      const transport = rateLimit(guardedHttp(e.url, e.rps, timeoutMs), { requestsPerSecond: e.rps, browser: false })({ ...params, retryCount: 0 });
+      const observed = {
+        ...transport,
+        request: ((...args: Parameters<typeof transport.request>) => {
+          stats.queued++;
+          return transport.request(...args);
+        }) as typeof transport.request,
+      };
+      return () => observed;
     });
     const publics = limited.slice(0, endpoints.length);
     const reserveTransport = limited.slice(endpoints.length);

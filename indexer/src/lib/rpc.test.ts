@@ -1,7 +1,7 @@
 // promise: healthy public requests share endpoint budgets and round-robin state across constructors without using reserve RPC.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fallbackTransport } from "./rpc.ts";
+import { fallbackTransport, rpcStats } from "./rpc.ts";
 
 function response(id: number, result: unknown) {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), {
@@ -87,4 +87,41 @@ test("RPC reserve is the final attempt after all public endpoints fail", async (
   ], { url: "https://reserve.invalid", rps: 100 })({});
   assert.equal(await transport.request({ method: "eth_blockNumber" }), "0x1");
   assert.deepEqual(hosts, ["primary.invalid", "secondary.invalid", "reserve.invalid"]);
+});
+
+// promise: a physical request that ignores abort cannot hold a limiter slot or prevent fallback and queued work from settling.
+test("RPC deadline releases an uncooperative fetch and its queued requests", async (t) => {
+  const hosts: string[] = [];
+  const signals: AbortSignal[] = [];
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    const host = new URL(url).host;
+    hosts.push(host);
+    if (host === "stalled.invalid") {
+      signals.push(init.signal!);
+      markStarted();
+      return new Promise<Response>(() => {});
+    }
+    return response(JSON.parse(String(init.body)).id, "0x1");
+  });
+  const transport = fallbackTransport([
+    { url: "https://stalled.invalid", rps: 4 },
+    { url: "https://healthy.invalid", rps: 4 },
+  ], { url: "https://unused-reserve.invalid", rps: 4 }, 30)({});
+  const pending = Promise.all(Array.from({ length: 3 }, () => transport.request({ method: "eth_blockNumber" })));
+  await started;
+  assert.equal(rpcStats().get("stalled.invalid")?.active, 1);
+  assert.equal(rpcStats().get("stalled.invalid")?.queued, 1);
+  assert.deepEqual(await pending, ["0x1", "0x1", "0x1"]);
+  assert.deepEqual(hosts.filter((h) => h === "stalled.invalid"), ["stalled.invalid", "stalled.invalid"]);
+  assert.equal(hosts.filter((h) => h === "healthy.invalid").length, 3);
+  assert.equal(hosts.filter((h) => h === "unused-reserve.invalid").length, 0);
+  assert.ok(signals.every((signal) => signal.aborted));
+  const stats = rpcStats().get("stalled.invalid")!;
+  assert.equal(stats.requests, 2);
+  assert.equal(stats.errors, 2);
+  assert.equal(stats.queued, 0);
+  assert.equal(stats.active, 0);
+  assert.ok(stats.lastStarted! <= stats.lastSettled!);
 });
