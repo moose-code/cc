@@ -175,24 +175,24 @@ One row per Credits id the CreditStrategy has listed: `id`, `listPrice` (wei, fr
 
 ### 7.1 endpoints
 
-Public endpoints rotate for the initial attempt. A failed attempt tries the remaining publics in this cyclic order before the optional paid reserve. Historical calls require an endpoint that serves the requested state; section 7.5 records the verification criteria.
+Tenderly is always the first attempt. A failed attempt tries the remaining public endpoints in this fixed order before the optional paid reserve. Historical calls require an endpoint that serves the requested state; section 7.5 records the verification criteria.
 
-1. `https://gateway.tenderly.co/public/mainnet`: 8 requests per second
+1. `https://gateway.tenderly.co/public/mainnet`: 4 requests per second, one active request
 2. `https://eth-mainnet.public.blastapi.io`: 8 requests per second
 3. `https://1rpc.io/eth`: 5 requests per second
 4. `https://ethereum-rpc.publicnode.com`: 10 requests per second
 5. `https://eth.drpc.org`: 5 requests per second
 6. `https://rpc.mevblocker.io`: 5 requests per second
 
-`RPC_RPS` overrides these caps in list order. Optional `PONDER_RPC_URL_1` is used only after all six public endpoints fail for a request; it does not participate in the initial rotation. Its cap is `RPC_RPS_RESERVE`, default 10 requests per second.
+`RPC_RPS` overrides these caps in list order. Optional `PONDER_RPC_URL_1` is used only after all six public endpoints fail for a request; it receives no request while any earlier public endpoint serves it. Its cap is `RPC_RPS_RESERVE`, default 10 requests per second.
 
 ### 7.2 transport
 
-`src/lib/rpc.ts` uses Ponder `loadBalance` over cyclic viem fallback chains. One concrete transport and round-robin cursor are cached across client constructors. Each physical endpoint has one shared Ponder `rateLimit` queue, including when concurrent requests reach it through different fallback chains.
+`src/lib/rpc.ts` uses a fixed ordered viem fallback. One concrete transport is cached across client constructors. Each physical endpoint has one shared Ponder `rateLimit` queue, so concurrent constructors cannot reset its quota. Tenderly receives every initial attempt; healthy primary traffic never falls through. At the configured 4 RPS, the Ponder limiter permits one active Tenderly attempt.
 
-HTTP attempts use a 20-second timeout and no automatic retries. The rate limiter, fallback and load balancer also disable retries, so one physical attempt consumes one endpoint request slot. Fallback ranking is disabled.
+HTTP attempts have an independent 20-second rejection deadline, request abort on expiry and no automatic retries. The deadline starts after the rate limiter dequeues the physical attempt, so queued waiting is not charged as an RPC attempt. The rate limiter, fallback and load balancer also disable retries, so one physical attempt consumes one endpoint request slot. Fallback ranking is disabled.
 
-`guardedHttp` rejects malformed `eth_getLogs` results and converts pruned-state and availability errors to errors that allow fallback. Deterministic execution reverts stop immediately without trying another public or the reserve. Request counts, non-revert errors and the latest error per host are available at `/health/rpc`; failures are also logged.
+`guardedHttp` rejects malformed `eth_getLogs` results and converts pruned-state and availability errors to errors that allow fallback. Deterministic execution reverts stop immediately without trying another public or the reserve. Request counts, non-revert errors, queued/active attempts and the last start/settlement times per host are available at `/health/rpc`; failures are also logged.
 
 ### 7.3 chain options
 
@@ -207,7 +207,7 @@ HTTP attempts use a 20-second timeout and no automatic retries. The rate limiter
 
 Traffic depends on historical event density, block fetching, metadata reads and provider failures. Core sources start at the recorded deployment block; collection and strategy histories start earlier at their own configured blocks. Ponder persists its RPC cache in Postgres, but a new schema can still require handler work and uncached reads.
 
-When a Credits Transfer introduces a missing token, the handler reads that block's collection Transfer logs, validates their collection, block hash and topics, and hydrates only the current token's deterministic group of at most 64 unique ids. Existing rows are skipped. Missing facts use three Multicall3 stages: immutable seed/time, immutable score/traits, and event-block tokenURI/owner. The client may split a stage into multiple wire requests. Ordered event handlers still apply ownership and state changes; batching does not advance them to a later block.
+When a Credits Transfer introduces a missing token, the handler reads that block's collection Transfer logs, validates their collection, block hash and topics, and hydrates only the current token's deterministic group of at most 64 unique ids. Existing rows are skipped. Missing facts use three Multicall3 stages: immutable seed/time, immutable score/traits, and event-block tokenURI/owner. Only this bounded peer path sets the Viem subcall-calldata batch size to 16,384 bytes, allowing a full 64-id group to use three wire requests. Other callers retain default splitting. The aggregate ABI request is larger than the summed subcall calldata; actual Fly probes validated 128 decoded score/traits results on two archives and 128 successful URI/owner results on Tenderly, with the URI JSON response about 867 KB. This establishes accepted sampled calls, not a latency or gas guarantee for all history. Ordered event handlers still apply ownership and state changes; batching does not advance them to a later block.
 
 Measure backfill progress from completed handlers and historical checkpoints as well as fetched blocks. Fetch-cache progress alone does not prove that indexed rows have caught up. Backfill duration and sustained throughput remain unproven until measured on the production history; `/ready` must report completion before serving it as caught up.
 
