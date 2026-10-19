@@ -38,7 +38,8 @@ if [ "$(git -C "$DIR" rev-parse HEAD 2>/dev/null || true)" != "$PIN" ]; then
   git -C "$DIR" checkout -q --force FETCH_HEAD
 fi
 [ "$(git -C "$DIR" rev-parse HEAD)" = "$PIN" ] || die "checkout is not at $PIN"
-git -C "$DIR" submodule update -q --init --depth 1 contracts/lib/openzeppelin-contracts contracts/lib/forge-std
+GIT_TERMINAL_PROMPT=0 git -C "$DIR" -c credential.helper= -c credential.helper='!gh auth git-credential' \
+  submodule update -q --init --depth 1 contracts/lib/openzeppelin-contracts contracts/lib/forge-std
 git -C "$DIR" diff --quiet HEAD -- contracts/src contracts/foundry.toml || die "checkout differs from $PIN"
 
 cd "$DIR/contracts"
