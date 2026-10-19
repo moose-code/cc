@@ -635,7 +635,7 @@ export class Core {
     const bucket = Math.floor(now / this.s.bucketSeconds);
     if (bucket !== this.burstTime || this.burstBase === 0 || paid < (this.burstBase * this.s.dropToPct) / 100) { this.burstTime = bucket; this.burstBase = paid; }
     const fall = Math.min((this.s.dropPerCreditPct / 100) * ratio, 1);
-    const r = Math.max(paid * (1 - fall), (this.burstBase * this.s.dropToPct) / 100);
+    const r = Math.max(paid * (1 - fall), (this.burstBase * this.s.dropToPct) / 100, 1e-18); // the Core floors the dropped rate at 1 wei
     this.lastPaidRate = paid;
     this.recordFill(paid, now); // feeds the rejected hourly bound comparison (REVIEW-128-potscaled.md)
     this.peakRate = Math.max(paid, this.peakAt(now)); this.peakTime = now;

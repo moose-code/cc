@@ -63,7 +63,9 @@ export function replayEthFills(scores: bigint[], a: EthReplay): bigint[] {
     const fallNum = a.dropPer100PointsBps * score;
     const dropped = fallNum >= denom ? 0n : (r * (denom - fallNum)) / denom;
     const floor = (start * a.dropFloorBps) / 10000n;
-    const next = dropped > floor ? dropped : floor;
+    // never 0: the Core floors the dropped price state at 1 wei
+    let next = dropped > floor ? dropped : floor;
+    if (next < 1n) next = 1n;
     let cap = (peak * 10000n * a.ceilBps) / 100000000n;
     if (cap > a.rateCap) cap = a.rateCap;
     r = next >= cap ? cap : next;

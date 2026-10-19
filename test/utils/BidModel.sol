@@ -74,7 +74,8 @@ library BidModel {
         uint256 denom = 10_000 * RATE_SCORE;
         uint256 dropped = fallNum >= denom ? 0 : FixedPointMathLib.mulDiv(fillState, denom - fallNum, denom);
         uint256 lo = FixedPointMathLib.max(dropped, minuteStart * s.dropFloorBps / 10_000);
-        return FixedPointMathLib.max(lo, absFloor);
+        // never 0: CoreLib._drop floors the dropped price state at 1 wei (decision 194)
+        return FixedPointMathLib.max(FixedPointMathLib.max(lo, absFloor), 1);
     }
 
     /// @dev the eth bid's room: the pot less the reserve over `1 + buyToArtistBps / 10_000`, so a bid the read shows is
