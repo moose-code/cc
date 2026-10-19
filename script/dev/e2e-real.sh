@@ -325,9 +325,9 @@ say "PHASE 7: value mode"
 if [ -n "$BTOK" ]; then
   # Jack's token reaches holders through the module (A1's balance sell, run after value mode is on) and the funder's
   # launch balance. the funder moves a measured part of supply to the liquidity wallet after opensAt and adds a full-range
-  # position, so the balance pool carries real trading depth. value mode then runs the full pool-move stress: a quote
-  # gated on that depth, an 8 percent spot move, a sell inside the bands, the keeper refresh cadence, and a same-block
-  # round trip that nets at most zero after pool fees. phase 6 already mined past opensAt for the redemption.
+  # position, so the balance pool carries real trading depth. Value mode then checks the depth gate, an 8 percent
+  # spot move, a sell inside the bands, the keeper refresh cadence, and a same-block bid-view and pool-fee probe.
+  # Phase 6 already mined past opensAt for the redemption.
   OUT7L="$(step "phase7ProdLiquidity(address)" "$BTOK")"; echo "$OUT7L" | sed 's/^/    /'
   DEPTH="$(echo "$OUT7L" | grep -m1 'POOL_DEPTH' | awk '{print $2}')"
   MOVED="$(echo "$OUT7L" | grep -m1 'MOVED_TOKENS' | awk '{print $2}')"
@@ -368,9 +368,9 @@ if [ -n "$BTOK" ]; then
   REFRESHES="$(grep -c '"door":"refreshReference"' "$KEEPER_LOG" 2>/dev/null | tr -d '[:space:]')"
   check "the keeper refreshed the reference on cadence" "$(calc "$REFRESHES >= 1")" "$REFRESHES refresh ticks"
   if step "phase7ValueSell()"; then check "a value mode sell pays inside the bands" 1 "see step log"; fi
-  OUT7RT="$(step "phase7RoundTrip(address)" "$BTOK")"; echo "$OUT7RT" | sed 's/^/    /'
-  RT_LOSS="$(echo "$OUT7RT" | grep -m1 'RT_POOL_LOSS' | awk '{print $2}')"
-  check "no profitable same-block round trip (loses the pool fee)" "$([ -n "$RT_LOSS" ] && calc "$RT_LOSS > 0")" "pool loss $RT_LOSS"
+  OUT7SPOT="$(step "phase7SameBlockSpotProbe(address)" "$BTOK")"; echo "$OUT7SPOT" | sed 's/^/    /'
+  SPOT_LOSS="$(echo "$OUT7SPOT" | grep -m1 'SPOT_PROBE_POOL_LOSS' | awk '{print $2}')"
+  check "same-block bid view held fixed while two pool swaps lost value" "$([ -n "$SPOT_LOSS" ] && calc "$SPOT_LOSS > 0")" "pool loss $SPOT_LOSS"
   RATE_ON="$(num "$CORE" 'ethRate()(uint256)')"
   step "phase7ValueOff()" || true
   RATE_OFF="$(num "$CORE" 'ethRate()(uint256)')"

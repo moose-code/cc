@@ -12,12 +12,10 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 import {ValueBase} from "./ValueMode.t.sol";
 
-/// promise: SPEC 4 with value mode off the engine prices exactly as main does. this is a differential guard: it
-/// recomputes the bid, climb, drop, ceiling, credit sale price and statement decay from the launch settings (main's
-/// rules) and asserts the contract matches, so a value mode change cannot leak into the mode off paths. value mode is
-/// off in the default fixture. the climb and ceiling arithmetic mirrors BidRule; the credit and statement curves mirror
-/// CreditSale and Sale
-contract ModeOffDifferentialTest is Fixture {
+/// promise: SPEC 4 with value mode off, bid, drop, ceiling, credit sale price and statement decay match formulas using
+/// the current settings and getters. these checks do not compare against a pinned historical implementation. value mode
+/// is off in the default fixture. the climb and ceiling cases overlap BidRule; the sale cases overlap CreditSale and Sale
+contract ModeOffPricingRulesTest is Fixture {
     uint256 internal constant BPS = 10_000;
 
     function _recoveryEqualsClimb() internal {

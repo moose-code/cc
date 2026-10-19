@@ -655,13 +655,10 @@ contract E2EReal is Scenario {
         console.log("ETH_LEG", ethLeg);
     }
 
-    /// same-block spot round trip around an eth sell on the real balance pool. swaps eth into the balance token to lift
-    /// the spot, reads the eth bid at the raised spot, then swaps back in the same block. `bidOf` is the amount a
-    /// sellForEth pays at that block; it clamps to the prior-block spot sample, so the bid does not move within the
-    /// block and the swap round trip loses the pool fee. net gain is at most zero. mirrors the ColdAudit real-pool
-    /// round-trip check (C01). runs in the local simulation only (no broadcast), reading the deployed pool and its
-    /// liquidity from the node; uses the bid view rather than an executed sell so the check does not depend on the pot.
-    function phase7RoundTrip(address token) external {
+    /// In a local simulation, swaps ETH into the balance token to lift the spot, reads the Credit bid, then swaps
+    /// back in the same block. The bid view must stay fixed and the two pool swaps must lose value before gas. This
+    /// probe does not execute a Credit sale or measure its payout, gas, or full transaction ordering.
+    function phase7SameBlockSpotProbe(address token) external {
         _boot();
         PoolKey memory pool = PoolKey({
             currency0: Currency.wrap(address(0)),
@@ -671,14 +668,14 @@ contract E2EReal is Scenario {
             hooks: IHooks(address(0))
         });
         uint128 depth = IPoolManager(Mainnet.POOL_MANAGER).getLiquidity(pool.toId());
-        require(depth > 0, "phase7rt: no pool liquidity");
+        require(depth > 0, "phase7spot: no pool liquidity");
 
         uint256 id = _creditsOf(A1, 1)[0];
         uint256 bidBefore = core.bidOf(id);
 
         TestSwapRouter router = new TestSwapRouter();
-        // a dedicated EOA stands in for the round-tripper; a script contract cannot use its own ephemeral address
-        address atk = address(uint160(uint256(keccak256("e2e-real.roundtrip"))));
+        // A dedicated EOA holds the simulated swaps because this script's address does not persist on the node.
+        address atk = address(uint160(uint256(keccak256("e2e-real.spot-probe"))));
         vm.deal(atk, 100 ether);
         uint256 ethIn = 0.03 ether;
         uint256 tokBefore = IERC20R(token).balanceOf(atk);
@@ -696,15 +693,11 @@ contract E2EReal is Scenario {
         uint256 recovered = atk.balance - ethBeforeRev;
         uint256 poolLoss = ethIn - recovered;
 
-        require(bidAfter == bidBefore, "phase7rt: same-block spot move changed the eth bid");
-        require(poolLoss > 0, "phase7rt: round trip did not lose the pool fee");
-        // net before gas: the bid an attacker could extract is unchanged (bidAfter - bidBefore == 0) and the swaps lose
-        // poolLoss, so a same-block swap, sell, swap-back nets at most zero
-        int256 net = int256(bidAfter) - int256(bidBefore) - int256(poolLoss);
-        require(net <= 0, "phase7rt: same-block round trip was profitable");
-        console.log("RT_BID", bidBefore);
-        console.log("RT_POOL_LOSS", poolLoss);
-        console.log("RT_DEPTH", uint256(depth));
+        require(bidAfter == bidBefore, "phase7spot: same-block spot move changed the eth bid");
+        require(poolLoss > 0, "phase7spot: two swaps did not lose pool fees");
+        console.log("SPOT_PROBE_BID", bidBefore);
+        console.log("SPOT_PROBE_POOL_LOSS", poolLoss);
+        console.log("SPOT_PROBE_DEPTH", uint256(depth));
     }
 
     receive() external payable {}
