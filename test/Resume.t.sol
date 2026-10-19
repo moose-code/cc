@@ -393,10 +393,33 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         vm.prank(deployer);
         controller.setCredit(changed);
         vm.prank(deployer);
+        controller.setAgeEligibilityOn(true);
+        vm.expectRevert(abi.encodeWithSelector(ChecksFailed.selector, "controller: age eligibility is off at launch"));
+        this.launchOnlyExt(deployer, base, d.core);
+        assertEq(d.coin.code.length, 0, "age eligibility drift stopped launch");
+
+        vm.prank(deployer);
+        controller.setAgeEligibilityOn(false);
+        vm.prank(deployer);
         k.lockAdapters();
         vm.expectRevert(abi.encodeWithSelector(ChecksFailed.selector, "core: no locks, no balance module"));
         this.launchOnlyExt(deployer, base, d.core);
         assertEq(d.coin.code.length, 0, "Core lock stopped launch");
+    }
+
+    // promise: an empty Core retired before launch cannot receive a newly launched coin
+    function test_launchStepRefusesRetiredCoreBeforeCoinExists() public {
+        _sendLibrary();
+        Deployed memory d = this.deferExt(deployer, base);
+        ICore k = ICore(payable(d.core));
+        vm.startPrank(deployer);
+        k.setSuccessor(address(FACTORY));
+        k.migrate(0);
+        vm.stopPrank();
+        assertTrue(k.retired());
+        vm.expectRevert(abi.encodeWithSelector(ChecksFailed.selector, "core: no successor or retirement at launch"));
+        this.launchOnlyExt(deployer, base, d.core);
+        assertEq(d.coin.code.length, 0, "retirement stopped launch");
     }
 
     function requireDeployerExt(address want, address got) external pure {

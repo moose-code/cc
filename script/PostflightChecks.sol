@@ -284,6 +284,11 @@ abstract contract PostflightChecks is PostflightPool {
                 && core.balanceModule() == address(0),
             "launch state"
         );
+        _check(
+            "core: no successor or retirement at launch",
+            core.successor() == address(0) && !core.successorLocked() && !core.retired(),
+            "successor, successor lock, retirement"
+        );
         _warn("warn: no pending owner", core.pendingOwner() == address(0), "an owner handover is offered");
         _postSale(c, ctl);
         _check(
@@ -347,6 +352,13 @@ abstract contract PostflightChecks is PostflightPool {
                 creditSame,
                 "creditSaleOn creditWindow creditSpreadBps creditStartBps"
             );
+        }
+        // The controller constructor leaves age-only redemption eligibility off. An owner switch before launch would
+        // change the signed launch policy even if the other sale settings still matched the config.
+        if (_settingsChanged()) {
+            _warn("warn: age eligibility is off at launch", !k.ageEligibilityOn(), "SETTINGS_CHANGED=1, owner switched it after launch");
+        } else {
+            _check("controller: age eligibility is off at launch", !k.ageEligibilityOn(), "ageEligibilityOn");
         }
         (uint32 rate, uint16 step, uint16 tol, uint32 stale, uint32 minSec, uint128 liq) = k.quote();
         bool quoteSame = rate == c.quote.referenceRateBpsPerHour && step == c.quote.referenceStepBps
