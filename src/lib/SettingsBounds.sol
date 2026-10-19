@@ -40,8 +40,8 @@ library SettingsBounds {
         if (s.buyToArtistBps > 1_000) return "buyToArtistBps";
         // a 10,000 discount pays zero and every balance fill reverts ZeroAmount: the cap keeps the route live
         if (s.balanceDiscountBps > 9_999) return "balanceDiscountBps";
-        // A Credit bought for BALANCE costs the seller payout plus its artist royalty. At the same unit and settings,
-        // that cost cannot exceed the minimum accepted redemption return for its rating.
+        // For Credits composed into a Statement, the seller payouts plus artist royalties cannot exceed the minimum
+        // accepted redemption return for their total score under the same unit and settings.
         if (
             uint256(10_000 - s.balanceDiscountBps) * (10_000 + s.buyToArtistBps)
                 > uint256(10_000 - s.redeemSlippageBps) * 10_000
