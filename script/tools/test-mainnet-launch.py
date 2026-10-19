@@ -62,6 +62,11 @@ class ApprovalTests(unittest.TestCase):
                 gate.send("0xraw")
             self.assertEqual(sent, ["0xraw"])
             self.assertEqual(gate.index, 1)
+            self.assertEqual(gate.send("0xraw"), "0x" + "a" * 64)
+            self.assertEqual(sent, ["0xraw"])
+            self.assertEqual(gate.index, 1)
+            with self.assertRaisesRegex(RuntimeError, "unplanned transaction"):
+                gate.send("0xother")
 
     def test_record_recovery_detects_launched_coin(self):
         # promise: no-send recovery chooses the live-coin postflight after a launch lands.
@@ -76,6 +81,32 @@ class ApprovalTests(unittest.TestCase):
             raise AssertionError(method)
         with patch.object(launch, "rpc", side_effect=fake_rpc):
             self.assertTrue(launch.coin_is_live("read-rpc", "0x" + "a" * 40))
+
+    def test_lost_send_response_reconciles_the_exact_hash(self):
+        # promise: a lost relay response can confirm the same signed transaction without another send.
+        digest = "0x" + "a" * 64
+        sent = []
+
+        def fake_rpc(_url, method, params):
+            if method == "eth_getTransactionCount":
+                return "0x1"
+            if method == "eth_getCode":
+                return "0x6000" if params[0].lower() == self.signed["to"].lower() else "0x"
+            if method == "eth_sendRawTransaction":
+                sent.append(params[0])
+                raise RuntimeError("relay response lost")
+            if method == "eth_getTransactionByHash":
+                self.assertEqual(params, [digest])
+                return {"hash": digest}
+            raise AssertionError(method)
+
+        gate = launch.ApprovalGate("read-rpc", "send-rpc", [self.planned], 100, "0x" + "b" * 40)
+        with patch.object(launch, "rpc", side_effect=fake_rpc), patch.object(launch, "decode", return_value=self.signed), \
+             patch.object(launch, "run", return_value=SimpleNamespace(stdout=digest)), \
+             patch("builtins.input", return_value="SEND 1"):
+            self.assertEqual(gate.send("0xraw"), digest)
+            self.assertEqual(gate.send("0xraw"), digest)
+        self.assertEqual(sent, ["0xraw"])
 
     def test_local_rehearsal_rejects_a_non_loopback_rpc(self):
         # promise: rehearsal mode cannot route a signed transaction to a public or mainnet RPC.
