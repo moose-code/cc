@@ -1,6 +1,6 @@
 # Launch owner review
 
-Prepared on 2026-10-19 for the owner's review before any mainnet deployment. This is a decision list, not a deployment authorization. Executable candidate `a0fa1dc493c796ba63c05dfd06e9368b39b883a0` has a full Foundry suite with 797 passed, 0 failed, 7 skipped, a combined deep campaign with 56 passed, 0 failed, 0 skipped, a mainnet-value in-process rehearsal with preflight 118/118 and postflight 77/77, and a production-wrapper dry run. The exact inputs and limits are in `CANDIDATE-a0fa1dc-2026-10-19.md`; the earlier `9c8bb1a` record is archival.
+Prepared on 2026-10-19 for the owner's review before any mainnet deployment. This is a decision list, not a deployment authorization. Executable revision `9fadc14d1e35010e3d090b7bea3fc578ab047f48` adds the approved launch description and metadata tooling. The preceding `a0fa1dc` candidate has a full Foundry suite with 797 passed, 0 failed, 7 skipped, a combined deep campaign with 56 passed, 0 failed, 0 skipped, a mainnet-value in-process rehearsal with preflight 118/118 and postflight 77/77, and a production-wrapper dry run. The metadata delta passed focused Config and Rehearsal checks; the broad checks were not repeated for the literal change. Exact inputs and limits are in `CANDIDATE-a0fa1dc-2026-10-19.md` and `CANDIDATE-9fadc14-description-2026-10-19.md`; the earlier `9c8bb1a` record is archival.
 
 ## Provisional choices made during repair
 
