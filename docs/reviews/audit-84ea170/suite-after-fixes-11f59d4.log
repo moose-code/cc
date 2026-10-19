@@ -1,0 +1,1947 @@
+Compiling 1 files with Solc 0.8.30
+Solc 0.8.30 finished in 847.99ms
+Compiler run successful!
+
+Ran 14 tests for test/Adapters.t.sol:AdaptersTest
+[PASS] test_core_aBadAnswerRevertsBadQuote() (gas: 5360683)
+[PASS] test_core_adapterThatQuotesAForbiddenTargetReverts() (gas: 1327058)
+[PASS] test_core_addAdapterRefusesAZeroOrForbiddenAdapter() (gas: 65833)
+[PASS] test_core_alreadyOwnedReverts() (gas: 1536611)
+[PASS] test_seaport_acceptsAnAllowlistedRecipientAndRefusesOthers() (gas: 417325)
+[PASS] test_seaport_allowlistIsTheCoreOwners() (gas: 322604)
+[PASS] test_seaport_refusesANonNativeConsideration() (gas: 371006)
+[PASS] test_seaport_refusesAWrongId() (gas: 368868)
+[PASS] test_seaport_refusesAWrongToken() (gas: 368770)
+[PASS] test_seaport_refusesAZeroPrice() (gas: 368929)
+[PASS] test_seaport_refusesTheRestrictedRoutes() (gas: 401752)
+[PASS] test_seaport_valueIsTheSumOfEveryPayoutAndTheCallIsTheOrder() (gas: 374813)
+[PASS] test_strategy_buyThroughTheCore() (gas: 1547620)
+[PASS] test_strategy_refusesACreditThatIsNotForSale() (gas: 32646)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 319.10ms (23.51ms CPU time)
+
+Ran 3 tests for test/Fees.t.sol:BuybackPaymentTest
+[PASS] test_callerIsPaidCountedGasAtTheBaseFeePlusTheFee() (gas: 418831)
+[PASS] test_countedGasIsCappedAtTheBuybackGasConstant() (gas: 3606037)
+[PASS] test_sliceUnderTwiceTheLargestPaymentReverts() (gas: 494123)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 401.55ms (108.79ms CPU time)
+
+Ran 1 test for test/LaunchDayPhase2.t.sol:LaunchDayPhase2Test
+[PASS] test_phase2DayWithProductionModule() (gas: 75233720)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.05s (737.34ms CPU time)
+
+Ran 3 tests for test/Fees.t.sol:BuybackTest
+[PASS] test_buybackBurnsTheCoinBoughtAndBooksTheSkim() (gas: 46143646)
+[PASS] test_buybackDelayAtLaunchValues() (gas: 89111697)
+[PASS] test_sandwichOfTheSliceLoses() (gas: 2853258)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 828.27ms (746.04ms CPU time)
+
+Ran 5 tests for test/Fees.t.sol:FeeFlowTest
+[PASS] test_aDoorBooksTheFeesFirstAndPaysTheQuote() (gas: 1746537)
+[PASS] test_launchSplitPerHundredEthOfVolume() (gas: 1066338)
+[PASS] test_protocolLegGoesToTheProtocolController() (gas: 744384)
+[PASS] test_rateCheckpointsOnFeeReceipt() (gas: 981331)
+[PASS] test_sniperWindowExtraLandsInThePot() (gas: 1649190)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 121.12ms (12.73ms CPU time)
+
+Ran 8 tests for test/Lock.t.sol:LockTest
+[PASS] test_aFailedPostflightStopsTheLock() (gas: 23130600)
+[PASS] test_aRepointedBountyRecipientRefusesTheLockWhateverCoinChangedSays() (gas: 25467593)
+[PASS] test_aSecondRunIsANoOp() (gas: 22345699)
+[PASS] test_aSignerThatIsNotTheCoinAdminIsRefused() (gas: 17043037)
+[PASS] test_dryRunSendsNothing() (gas: 17031804)
+[PASS] test_theBountyRecipientRowIsSoft() (gas: 27177431)
+[PASS] test_theCoinAdminLocksTheRecipients() (gas: 17091854)
+[PASS] test_thePostflightPassesBeforeAndAfterTheLock() (gas: 26789100)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 546.81ms (620.75ms CPU time)
+
+Ran 2 tests for test/LogoCoinRenderer.t.sol:LogoCoinRendererLaunchTest
+[PASS] test_theLaunchNamesTheRendererInTheTokenConfig() (gas: 1312608)
+[PASS] test_theRendererAddressIsAFunctionOfTheConfig() (gas: 84780)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 83.88ms (3.75ms CPU time)
+
+Ran 2 tests for test/LogoCoinRenderer.t.sol:LogoCoinRendererTest
+[PASS] test_deploy_gas() (gas: 5786)
+[PASS] test_image_is_animated_logo() (gas: 1194170)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 5.90ms (5.38ms CPU time)
+
+Ran 1 test for test/Fees.t.sol:ReceiveSettingsTest
+[PASS] testFuzz_receiveNeverRevertsAcrossSettings(uint256,uint96,uint32,uint96,uint256) (runs: 256, μ: 1449019, ~: 1451635)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 707.37ms (612.03ms CPU time)
+
+Ran 4 tests for test/Fees.t.sol:ReceiveTest
+[PASS] test_bookGasAfterTwentyYearsAtTheWorstRate() (gas: 631251)
+[PASS] test_onlyTheHookAndTheEscrowMaySend() (gas: 441870)
+[PASS] test_receiveFitsTheHookStipend() (gas: 17738)
+[PASS] test_swapInsideBuyListingLeavesTheFeeForTheNextBook() (gas: 2121624)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 113.52ms (8.77ms CPU time)
+
+Ran 2 tests for test/Fees.t.sol:RestrictedCoinTest
+[PASS] test_coinFromAListedHolderIsRescuedByTheOwner() (gas: 447787)
+[PASS] test_theLaunchIsRestrictedAndTheCoreIsNotAllowlisted() (gas: 49642)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 91.08ms (566.87µs CPU time)
+
+Ran 1 test for test/Fees.t.sol:UniversalRouterTest
+[PASS] test_buyAndSellThroughTheUniversalRouter() (gas: 1711030)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 99.83ms (3.78ms CPU time)
+
+Ran 12 tests for test/Adopt.t.sol:AdoptTest
+[PASS] test_FUZZ_theBasisIsThePriceStateScaledByScore(uint256,uint8) (runs: 256, μ: 1758569, ~: 1528886)
+[PASS] test_OK_aCreditSentStraightToTheCoreIsAdoptedAtThePriceState() (gas: 907643)
+[PASS] test_OK_aPageOfAdoptedCreditsComposesIntoAStatementWorthTheirBases() (gas: 33973156)
+[PASS] test_OK_adoptBooksTheFeesFirst() (gas: 1086822)
+[PASS] test_OK_adoptCheckpointsRateWithoutMovingPots() (gas: 3997990)
+[PASS] test_OK_migrateThenAdoptOnTheSuccessorRestoresThePile() (gas: 61457528)
+[PASS] test_REVERT_aBatchWithOneBadIdChangesNothing() (gas: 1091771)
+[PASS] test_REVERT_aCreditTheCoreDoesNotHold() (gas: 431765)
+[PASS] test_REVERT_aMigratedCreditThatComesBackIsNotAdoptedByTheRetiredCore() (gas: 2514030)
+[PASS] test_REVERT_adoptInsideAGuardedCall() (gas: 1560086)
+[PASS] test_REVERT_adoptTwiceInOneCallOrTwoCalls() (gas: 1116904)
+[PASS] test_REVERT_emptyAndZero() (gas: 194409)
+Suite result: ok. 12 passed; 0 failed; 0 skipped; finished in 2.73s (2.57s CPU time)
+
+Ran 13 tests for test/ArtistRoyalty.t.sol:ArtistRoyaltyTest
+[PASS] test_adoptRecordsTheRoyaltyInTheCostBasis() (gas: 1121952)
+[PASS] test_batchPushesTheArtistOnce() (gas: 4073014)
+[PASS] test_buyListingKeeperCoveredWithRevertingArtist() (gas: 1666961)
+[PASS] test_buyListingPaysTheRoyaltyOnThePrice() (gas: 1694638)
+[PASS] test_buyListingRefusesWhenTheRoyaltyDoesNotFit() (gas: 291085)
+[PASS] test_clampLeavesRoomForTheRoyalty() (gas: 6057749)
+[PASS] test_hostileArtistNeverBlocksAPurchase() (gas: 2178289)
+[PASS] test_launchValues() (gas: 33302)
+[PASS] test_ledgerCountsTheRoyalty() (gas: 1402197)
+[PASS] test_royaltyIsEditable() (gas: 2065214)
+[PASS] test_sellForEthPaysSellerWholeAndArtistOnTop() (gas: 1297596)
+[PASS] test_zeroArtistRulesAndBound() (gas: 817263)
+[PASS] test_zeroRoyaltyPaysTheBidAlone() (gas: 1357175)
+Suite result: ok. 13 passed; 0 failed; 0 skipped; finished in 203.61ms (91.23ms CPU time)
+
+Ran 6 tests for test/AuditDaylight.t.sol:AuditDaylightTest
+[PASS] test_balanceRateIsPostedWithoutModule() (gas: 2098822)
+[PASS] test_balanceRatePostedThroughUnitFailure() (gas: 2363640)
+[PASS] test_dirtyBoolControllerReadsFalse() (gas: 47739822)
+[PASS] test_lockControllerRevertsWithoutController() (gas: 147962)
+[PASS] test_setControllerRejectsContractWithoutProbe() (gas: 131770)
+[PASS] test_setControllerRejectsEoa() (gas: 40586)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 318.23ms (229.80ms CPU time)
+
+Ran 3 tests for test/audit/AuditFindings.t.sol:AuditFindingsTest
+[PASS] test_pauseDoesNotAddIdleLooseningSteps() (gas: 1203733)
+[PASS] test_rateNeverReachesZeroAndClimbsBack() (gas: 1852134)
+[PASS] test_setRateRestatesTheFloorRate() (gas: 1318865)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 113.47ms (11.39ms CPU time)
+
+Ran 5 tests for test/audit/AuditFindings.t.sol:AuditValueFallbackTest
+[PASS] test_liveCrashLowersTheEthBidAtOnce() (gas: 1697837)
+[PASS] test_livePumpDoesNotRaiseTheEthBid() (gas: 1676611)
+[PASS] test_liveSpotMovesTheAskOnlyUp() (gas: 1011608)
+[PASS] test_liveSpotNeverRaisesTheBalancePayout() (gas: 1466329)
+[PASS] test_quoteOutageHaltsTheEthBidAndTheDoorsRefuse() (gas: 2361995)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 93.03ms (15.39ms CPU time)
+
+Ran 4 tests for test/BalanceCustody.t.sol:BalanceCustodyTest
+[PASS] test_bidOff_accumulates() (gas: 46577785)
+[PASS] test_redeem_moduleHoldingShortRevertsBadModule() (gas: 46202771)
+[PASS] test_sellForBalance_availableBelowBatchRevertsPotTooSmall() (gas: 1212219)
+[PASS] test_sellForBalance_payUnderpaysRevertsBadModule() (gas: 656635)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 521.87ms (438.42ms CPU time)
+
+Ran 1 test for test/BalanceFlat.t.sol:BalanceFlatNoModuleTest
+[PASS] test_noModule() (gas: 393261)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 73.76ms (1.42ms CPU time)
+
+Ran 11 tests for test/BalanceFlat.t.sol:BalanceFlatTest
+[PASS] test_batchBoundedByAvailable() (gas: 2199193)
+[PASS] test_discountIsEditableAndBounded() (gas: 2267952)
+[PASS] test_failingUnitReadsZeroPayout() (gas: 429316)
+[PASS] test_fillPaysSellerAndArtistFromTheModule() (gas: 797415)
+[PASS] test_hostileArtistDoesNotBlockTheSale() (gas: 834366)
+[PASS] test_noClimbNoDrop() (gas: 2350282)
+[PASS] test_postedRateAndPayout() (gas: 562991)
+[PASS] test_routesAreIndependent() (gas: 1762912)
+[PASS] test_switchesAndModuleSetLeaveThePostedRate() (gas: 1223693)
+[PASS] test_tinyAvailableRefuses() (gas: 956346)
+[PASS] test_viewZeroAndFillRefusedWhenTheModuleCannotPayBoth() (gas: 1354574)
+Suite result: ok. 11 passed; 0 failed; 0 skipped; finished in 127.81ms (50.30ms CPU time)
+
+Ran 16 tests for test/BalanceTokenReplacement.t.sol:BalanceTokenReplacementTest
+[PASS] test_handlerFreshTokenReplacementMode() (gas: 48921548)
+[PASS] test_handlerRejectsForbiddenToken() (gas: 48125564)
+[PASS] test_heldStatementRedeemsIntoReplacementModule() (gas: 46342581)
+[PASS] test_oldModuleRejectedAsBuyListingTarget() (gas: 532588)
+[PASS] test_oldPoolIgnoredUntilMatchingTokenSelected() (gas: 46565328)
+[PASS] test_oldTargetsStayForbiddenAfterReplacement() (gas: 401141)
+[PASS] test_ownerAndModuleLockStillApply() (gas: 114966)
+[PASS] test_replaceThenLockFreezesTheToken() (gas: 1881409)
+[PASS] test_replacementMidBucketThenSell() (gas: 1398031)
+[PASS] test_replacementPreservesSeparateModuleCustody() (gas: 358716)
+[PASS] test_replacementValidityAndAdapterFlags() (gas: 1995551)
+[PASS] test_replacementWhileBidOnLeavesTheInstance() (gas: 867812)
+[PASS] test_replacementWithSixDecimalToken() (gas: 3143654)
+[PASS] test_sellerCanPinThePaymentToken() (gas: 907167)
+[PASS] test_setBalancePoolKeyFollowsTheToken() (gas: 669985)
+[PASS] test_unpinnedOverloadsAfterReplacement() (gas: 1331048)
+Suite result: ok. 16 passed; 0 failed; 0 skipped; finished in 553.54ms (470.90ms CPU time)
+
+Ran 7 tests for test/BalanceValueFloor.t.sol:BalanceValueFloorTest
+[PASS] test_creditFloorIgnoresThePoolKey() (gas: 4023458)
+[PASS] test_keyUnsetGivesTheRateTerm() (gas: 47729595)
+[PASS] test_poolKeyDoesNotMoveValueOrReference() (gas: 48328206)
+[PASS] test_poolKeyIgnoresTheUnitAndOverflow() (gas: 48344120)
+[PASS] test_setterIsOwnerOnly() (gas: 2068228)
+[PASS] test_setterRejectsPairsWithoutTheTokenAndNativeEth() (gas: 2109492)
+[PASS] test_uninitializedPoolRejected() (gas: 2083277)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 670.04ms (583.30ms CPU time)
+
+Ran 31 tests for test/BidRule.t.sol:BidRuleTest
+[PASS] test_aFillResetsTheLoosening() (gas: 1600158)
+[PASS] test_anchorLoosensSixPercentPerTenIdleMinutesAtLaunch() (gas: 1163690)
+[PASS] test_bookStartsClimbWithoutRetroactiveRise() (gas: 498234)
+[PASS] test_booked100PointThresholdIncludesRoyaltyAndReserve() (gas: 720108)
+[PASS] test_bookedPotClimbsWhilePendingFeesWait() (gas: 2173028)
+[PASS] test_boundsRevertOnEveryOutOfRangeValue() (gas: 625870)
+[PASS] test_buyListingIsOneFillAndTheAnchorIsTheBidRate() (gas: 1438208)
+[PASS] test_ceilingHoldsAt110PercentOfTheAnchor() (gas: 1134228)
+[PASS] test_ceilingLooseningScalesWithPotPages() (gas: 3161021)
+[PASS] test_clampHoldsAtThePotWhenItAffordsLessThanOneCredit() (gas: 521972)
+[PASS] test_climbUnscaledByPotPages() (gas: 2681283)
+[PASS] test_dropReachesTheBucketFloor() (gas: 6330266)
+[PASS] test_fillAfterIdleTimeUsesTheClimbedRateAsTheAnchorAndPeak() (gas: 1416499)
+[PASS] test_fullPotLoosensAtTheCapOverFourHours() (gas: 1008208)
+[PASS] test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() (gas: 2929805)
+[PASS] test_highRateMaximumRoyaltyFundingEdge() (gas: 531549)
+[PASS] test_loosenedCeilingNeverPassesTheRateCap() (gas: 867065)
+[PASS] test_minimumRateFundingEdge() (gas: 531289)
+[PASS] test_modelRestartsClearedDropAnchor() (gas: 3412)
+[PASS] test_oneFillDropsTheLaunchDrop() (gas: 854042)
+[PASS] test_payableDoorExcludesItsOwnValueFromPendingIncome() (gas: 143852)
+[PASS] test_pendingFeesDoNotStartEmptyClock() (gas: 557984)
+[PASS] test_pumpInSniperWindowIsUnprofitable() (gas: 10618798)
+[PASS] test_pumpViaFundIsUnprofitable() (gas: 10321743)
+[PASS] test_pumpViaSwapIsUnprofitable() (gas: 10638343)
+[PASS] test_readIsMonotoneInThePot() (gas: 5729154)
+[PASS] test_repeatedEmptyAndRefillDoesNotAccrueIdleHours() (gas: 1650479)
+[PASS] test_risingThenFallingListingAsksStayInsideTheBid() (gas: 3836366)
+[PASS] test_setRateRestatesTheRateAndTheAnchorAndKeepsTheFillClock() (gas: 1137579)
+[PASS] test_starvedPotDoesNotRaiseThePriceState() (gas: 1444218)
+[PASS] test_unbookedDripDoesNotScaleTheMultiplierAndLoosening() (gas: 2630654)
+Suite result: ok. 31 passed; 0 failed; 0 skipped; finished in 257.08ms (183.47ms CPU time)
+
+Ran 10 tests for test/Sale.t.sol:SaleAnchorTest
+[PASS] test_anchorDecaysOverEightDaysWithNoBuyerAtLaunchMinCost() (gas: 87206110)
+[PASS] test_anchor_aRevertedBuyDoesNotMoveIt() (gas: 45326698)
+[PASS] test_anchor_aSaleAtTheStartMovesTheAnchorHalfWay() (gas: 45380376)
+[PASS] test_anchor_buyRecordsTheAskNotMsgValue() (gas: 45371696)
+[PASS] test_anchor_decaysWithTime() (gas: 134525)
+[PASS] test_anchor_dustStatementsLeaveTheAnchor() (gas: 189792414)
+[PASS] test_anchor_floorSalesDoNotDragTheAnchor() (gas: 263274781)
+[PASS] test_anchor_neverPassesTheCap() (gas: 446467)
+[PASS] test_anchor_oddGapRoundsMovementDownAndFullMoveReachesSale() (gas: 87740520)
+[PASS] test_anchor_zeroMoveDoesNotRestartDecay() (gas: 45588536)
+Suite result: ok. 10 passed; 0 failed; 0 skipped; finished in 6.16s (6.07s CPU time)
+
+Ran 3 tests for test/Sale.t.sol:SaleBuyTest
+[PASS] test_buy_exactPriceSplitAndOwnership() (gas: 188014862)
+[PASS] test_buy_refundsTheExcess() (gas: 45365783)
+[PASS] test_buy_underpayRevertsAndChangesNothing() (gas: 45384890)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 1.42s (1.30s CPU time)
+
+Ran 6 tests for test/BuildIdentity.t.sol:BuildIdentityTest
+[PASS] test_aSingleChangedByteIsDetected() (gas: 19308839)
+[PASS] test_coreAndCoreLibFitEip170() (gas: 12295)
+[PASS] test_libraryInterfaceSelectorsMatchTheArtifact() (gas: 1277503)
+[PASS] test_pinnedBuildHashesEqualTheArtifacts() (gas: 22550637)
+[PASS] test_testsCompileWithoutViaIr() (gas: 4707529)
+[PASS] test_theFixtureDeploysTheViaIrArtifacts() (gas: 35775214)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 2.14s (2.98s CPU time)
+
+Ran 1 test for test/ReviewMatrix.t.sol:ReviewMatrixStateTest
+[PASS] test_matrix_chainState() (gas: 331515332)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 8.26s (417.82ms CPU time)
+
+Ran 15 tests for test/Flow.t.sol:FlowTest
+[PASS] testFuzz_sale_anySplitIsExact(uint256) (runs: 24, μ: 46188200, ~: 46189319)
+[PASS] testFuzz_settings_roundTrip(uint256) (runs: 256, μ: 402074, ~: 394170)
+[PASS] test_buyback_burnsWhatTheSaleBooked() (gas: 46082318)
+[PASS] test_compose_emitsComposedWithTheSumOfTheBases() (gas: 43924167)
+[PASS] test_constructor_refusesBadInputs() (gas: 576186)
+[PASS] test_redeem_redeemReleasesTheReserveToTheBuyback() (gas: 48266689)
+[PASS] test_setRate_boundsEventAndReset() (gas: 576937)
+[PASS] test_settings_buybackSliceCoversTwiceTheLargestPayment() (gas: 732305)
+[PASS] test_settings_everyBoundEdgeIsAccepted() (gas: 20999644)
+[PASS] test_settings_everyBoundViolationReverts() (gas: 3343591)
+[PASS] test_settings_fieldListLengthEqualsTheStructFieldCount() (gas: 4478)
+[PASS] test_settings_highFloorStillCannotExceedControllerMarkup() (gas: 561009)
+[PASS] test_settings_launchValues() (gas: 61065)
+[PASS] test_settings_maxRateAndClimbStayCappedAfterLongIdle() (gas: 414335)
+[PASS] test_settings_saleCutsKeepANonzeroRemainder() (gas: 487915)
+Suite result: ok. 15 passed; 0 failed; 0 skipped; finished in 6.41s (6.29s CPU time)
+
+Ran 2 tests for test/Sale.t.sol:SaleCurveTest
+[PASS] test_curve_priceOfRefusesWhatIsNotForSale() (gas: 47091164)
+[PASS] test_curve_priceOfStaysAtOrAboveTheFloor() (gas: 47900379)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 607.20ms (534.94ms CPU time)
+
+Ran 8 tests for test/Sale.t.sol:SaleCutsTest
+[PASS] test_cuts_creditSaleSplitsSumToThePayment() (gas: 1873163)
+[PASS] test_cuts_pushReachesAnArtistThatReverts() (gas: 49020262)
+[PASS] test_cuts_setArtistOnlyTheOwner() (gas: 37442)
+[PASS] test_cuts_setArtistRefusesAForbiddenTarget() (gas: 42418)
+[PASS] test_cuts_setArtistZeroRefusedWhileTheCutIsOn() (gas: 447376)
+[PASS] test_cuts_setSettingsRefusesCutWhileArtistZero() (gas: 319953)
+[PASS] test_cuts_statementSaleSplitsSumToThePayment() (gas: 45981026)
+[PASS] test_cuts_zeroBpsSkipsThePush() (gas: 46071849)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 673.38ms (595.58ms CPU time)
+
+Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
+  lastCallGas(): replaced by `lastFrameGas`
+Ran 8 tests for test/CallerPay.t.sol:CallerPayTest
+[PASS] test_bookIsCounted() (gas: 49290894)
+[PASS] test_callerPaymentBounds() (gas: 233178)
+[PASS] test_composePaysCountedGasAtTheBaseFeePlusTheFee() (gas: 42613511)
+[PASS] test_launchSettingsPayCappedGasPlusFee() (gas: 42443383)
+[PASS] test_paidCallerFindsEveryDoorShut() (gas: 43046534)
+[PASS] test_paymentIsCappedAtThePot() (gas: 42807525)
+[PASS] test_worstCaseCountedGasIsUnderTheBound() (gas: 42842774)
+[PASS] test_zeroSettingsPayNothing() (gas: 42563770)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 1.85s (1.75s CPU time)
+
+Ran 3 tests for test/Sale.t.sol:SaleDecayTest
+[PASS] testFuzz_decay_priceNeverRisesWithAge(uint256[8],uint128,uint32,uint32) (runs: 256, μ: 872469, ~: 872406)
+[PASS] test_decay_oneCallReachesAnyValidCombination() (gas: 208904)
+[PASS] test_decay_settingsMoveAnOpenListingAtOnce() (gas: 46489790)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 685.89ms (567.65ms CPU time)
+
+Ran 1 test for test/Sale.t.sol:SaleFloorTest
+[PASS] test_floor_followsTheSettingAtOnce() (gas: 47597904)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 268.42ms (175.08ms CPU time)
+
+Ran 7 tests for test/Formats.t.sol:FormatsTest
+[PASS] test_REVERT_compose_badFormat() (gas: 35986794)
+[PASS] test_REVERT_setHeldFormat_badFormat() (gas: 42759236)
+[PASS] test_REVERT_setHeldFormat_belowMinCc() (gas: 42829491)
+[PASS] test_REVERT_setHeldFormat_soldStatement() (gas: 43065011)
+[PASS] test_compose_defaultFormatFollowsPrevrandaoAndHeadId() (gas: 55284953)
+[PASS] test_compose_givenFormat() (gas: 48853926)
+[PASS] test_setHeldFormat_holderSetsAndReadsBack() (gas: 43293808)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 1.97s (1.89s CPU time)
+
+Ran 1 test for test/Sale.t.sol:SaleLaunchColdTest
+[PASS] test_firstStatementSaleAtLaunchWithoutTheReferencePin() (gas: 46233268)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 321.23ms (221.06ms CPU time)
+
+Ran 1 test for test/Sale.t.sol:SaleLaunchCurveTest
+[PASS] test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() (gas: 46201475)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 307.06ms (207.82ms CPU time)
+
+Ran 8 tests for test/ChosenCompose.t.sol:ChosenComposeTest
+[PASS] test_REVERT_idNotInPile() (gas: 37670825)
+[PASS] test_REVERT_toggleOff() (gas: 36299226)
+[PASS] test_format_eightRevertsZeroToSevenPass() (gas: 87956853)
+[PASS] test_minCcToChoose_belowRevertsAtOrAbovePasses() (gas: 43233228)
+[PASS] test_parity_composeEqualsComposeChosen() (gas: 49129267)
+[PASS] test_record_composerIsTheCaller() (gas: 85287250)
+[PASS] test_record_costSumAndRatingRead() (gas: 43624638)
+[PASS] test_window_insideRevertsWhileSaleOn() (gas: 43098931)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 2.63s (2.55s CPU time)
+
+Ran 1 test for test/ClampDifferential.t.sol:ClampDifferentialTest
+[PASS] test_bookedClimbAndPendingReadLimitsStaySeparate() (gas: 2614912)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 93.46ms (4.72ms CPU time)
+
+Ran 6 tests for test/Sale.t.sol:SaleSellToTest
+[PASS] test_reenter_aBuyerThatRefusesTheRefundCanOnlyPayExactly() (gas: 46333039)
+[PASS] test_reenter_theBuyersRefundCannotReachAnyDoorTwice() (gas: 88825744)
+[PASS] test_sellTo_belowTheHardFloorRevertsAtTheFloorClears() (gas: 47091324)
+[PASS] test_sellTo_booksEverythingItIsPaid() (gas: 47038570)
+[PASS] test_sellTo_onlyTheCurrentController() (gas: 46996959)
+[PASS] test_sellTo_unknownAndSoldRevert() (gas: 48918121)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 1.69s (1.61s CPU time)
+
+Ran 5 tests for test/Sale.t.sol:SaleSettingsTest
+[PASS] test_settings_boundsOfEverySetter() (gas: 46273613)
+[PASS] test_settings_constructorBounds() (gas: 10415)
+[PASS] test_settings_eventsAndValues() (gas: 238073)
+[PASS] test_settings_launchValues() (gas: 173035)
+[PASS] test_settings_onlyTheCoreOwner() (gas: 488570)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 281.65ms (155.92ms CPU time)
+
+Ran 2 tests for test/SaleFloorStart.t.sol:SaleFloorStartTest
+[PASS] test_setSaleRefusesStartBelowFloor() (gas: 362108)
+[PASS] test_setSettingsRefusesFloorAboveStart() (gas: 156256)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 103.30ms (2.35ms CPU time)
+
+Ran 1 test for test/ScriptLint.t.sol:ScriptLintTest
+[PASS] test_scriptsDoNotUseAddressThis() (gas: 514799)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.62ms (1.07ms CPU time)
+
+Ran 1 test for test/Seaport.t.sol:SeaportCallerPayTest
+[PASS] test_breakEvenGapAtTwoGweiIsTheMeasuredGasCost() (gas: 2412839)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 92.30ms (15.36ms CPU time)
+
+Ran 7 tests for test/CoinRenderer.t.sol:CoinRendererTest
+[PASS] test_aFullPageMatchesTheLiveStatementArt() (gas: 18583926)
+[PASS] test_aPileOver80IsSampledPerBlock() (gas: 224164216)
+[PASS] test_aPileUnder80IsDrawnWholeInPileOrder() (gas: 52962424)
+[PASS] test_anEmptyPileIsABlankPage() (gas: 531426)
+[PASS] test_contractURICarriesTheCoinFieldsAndTheImage() (gas: 627762)
+[PASS] test_gasOfAFullPage() (gas: 65196003)
+[PASS] test_setCoreIsOwnerOnlyAndOnce() (gas: 134500)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 1.10s (1.02s CPU time)
+
+Ran 20 tests for test/ColdAudit.t.sol:ColdAuditTest
+[PASS] test_balanceTokenSentToCoreRemainsOutsideModule() (gas: 2169156)
+[PASS] test_coldModuleSetRejectsRevertingAvailableWithoutBookingIncome() (gas: 2544301)
+[PASS] test_coldOwnerRateSettingsControllerAndPauseBooking() (gas: 798798)
+[PASS] test_coldViewMatrixFirstBook() (gas: 4944986)
+[PASS] test_creditPriceEqualsFirstBuyChargeAtDueRefresh() (gas: 5403038)
+[PASS] test_firstRedeemIntoFreshEmptyModule() (gas: 48018834)
+[PASS] test_jitLiquidityCannotOpenQuoteInOneBlock() (gas: 4914611)
+[PASS] test_modeOffZeroStaleSkipsReferenceAndStillSellsCredit() (gas: 5490421)
+[PASS] test_realPoolLowUnitSaleValueRoundsUpToOneWei() (gas: 3998423)
+[PASS] test_realPoolMovedSpotRejectsStaleSeed() (gas: 3943405)
+[PASS] test_realPoolQuoteOutageRefusesBalanceFillAndLeavesPileUnchanged() (gas: 4294628)
+[PASS] test_realPoolSameBlockSpotRoundTripAroundCreditBuy() (gas: 5996694)
+[PASS] test_realPoolSameBlockSpotRoundTripAroundEthSell() (gas: 5594744)
+[PASS] test_realPoolSpotSpikeAndEveryBlockReferenceWalk() (gas: 14729396)
+[PASS] test_refreshAfterLatchBooksNewHookIncome() (gas: 4396005)
+[PASS] test_refreshReferenceBooksPendingIncomeAndPays() (gas: 4343822)
+[PASS] test_rescueTokenRecoversStrayErc20AndRefusesBalanceToken() (gas: 3060299)
+[PASS] test_statementPriceEqualsFirstBuyChargeAtDueRefresh() (gas: 57007426)
+[PASS] test_thinModuleBalanceBidReadsZero() (gas: 2729360)
+[PASS] test_valueModeRejectsDisabledSpendCap() (gas: 3909122)
+Suite result: ok. 20 passed; 0 failed; 0 skipped; finished in 471.44ms (386.83ms CPU time)
+
+Ran 3 tests for test/ColdAudit.t.sol:ColdLaunchMatrixTest
+[PASS] test_launchValuesColdViewsEqualFirstBook() (gas: 5836809)
+[PASS] test_midIdleRealTradesGrowMultiplierOnlyAfterBook() (gas: 1042998)
+[PASS] test_zeroTradeColdBookDoesNotStartBid() (gas: 1972398)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 92.75ms (13.44ms CPU time)
+
+Ran 18 tests for test/Migrate.t.sol:MigrateTest
+[PASS] test_GAS_migrateOneSixtyCredits() (gas: 71196207)
+[PASS] test_OK_aPartialBatchLeavesThePileMigratableAndComposeIsRefused() (gas: 39528068)
+[PASS] test_OK_aRetiredCoreStillBooksFeesAndSkims() (gas: 1323499)
+[PASS] test_OK_aSuccessorThatCallsBackIsRefused() (gas: 894740)
+[PASS] test_OK_aSuccessorWithoutFundTakesAPlainSend() (gas: 215008152)
+[PASS] test_OK_aZeroBatchMovesOnlyThePots() (gas: 214528942)
+[PASS] test_OK_buybackAfterAMigrationBurnsTheRetainedBuybackPot() (gas: 43112459)
+[PASS] test_OK_everyHeldStatementStaysAsItWas() (gas: 215117719)
+[PASS] test_OK_migrateHasNoBalanceTokenLeg() (gas: 214977274)
+[PASS] test_OK_potsAndCreditsMove() (gas: 215388642)
+[PASS] test_OK_retiredIsOneWayAndLogsOnce() (gas: 760864)
+[PASS] test_OK_setSuccessorTakesACodeAddressOrZero() (gas: 167125)
+[PASS] test_OK_theLockClosesSetSuccessorAndKeepsMigrate() (gas: 746379)
+[PASS] test_OK_theOldEngineSellsOutItsStatementsAndASecondMigrateMovesTheProceeds() (gas: 216319033)
+[PASS] test_REVERT_aSuccessorThatRefusesEthLeavesEverythingInPlace() (gas: 215731943)
+[PASS] test_REVERT_migrateNeedsASuccessor() (gas: 43301)
+[PASS] test_REVERT_onlyTheOwner() (gas: 185407)
+[PASS] test_REVERT_theSuccessorIsNotPartOfTheEngine() (gas: 2261667)
+Suite result: ok. 18 passed; 0 failed; 0 skipped; finished in 12.85s (12.77s CPU time)
+
+Ran 5 tests for test/ModeOffDifferential.t.sol:ModeOffBalanceRouteTest
+[PASS] test_balanceBidOffClosesTheRoute() (gas: 3715813)
+[PASS] test_documentedHazard_modeOffBalanceBidOpensRoundTripWhenSpotLeads() (gas: 4821468)
+[PASS] test_referenceWarmsUpWhileModeIsOff() (gas: 337670)
+[PASS] test_valueModeClosesTheRoundTripWhenSpotLeads() (gas: 5624986)
+[PASS] test_valueModeClosesTheRoundTripWhenSpotLeads_cap30000() (gas: 5627808)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 140.93ms (35.67ms CPU time)
+
+Ran 6 tests for test/ModeOffDifferential.t.sol:ModeOffDifferentialTest
+[PASS] test_bidIsPerPoint() (gas: 942775)
+[PASS] test_climbCeilingAndLoosening() (gas: 1473645)
+[PASS] test_creditSaleStartIsOverTheFloor() (gas: 1585359)
+[PASS] test_dropIsTheLaunchDrop() (gas: 1161329)
+[PASS] test_poolKeyChangesNoPriceWhileModeIsOff() (gas: 97188190)
+[PASS] test_statementDecay() (gas: 45861111)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 588.09ms (501.77ms CPU time)
+
+Ran 7 tests for test/OnePile.t.sol:OnePileTest
+[PASS] test_compose_oneKindFromMixedCredits() (gas: 39616070)
+[PASS] test_sellForBalance_costIsScoreTimesPointRateWithoutAPoolKey() (gas: 3252960)
+[PASS] test_sellForBalance_costUnaffectedByAPushedUpPool() (gas: 3450633)
+[PASS] test_sellForBalance_usesFixedBasisNotTheController() (gas: 3190414)
+[PASS] test_setter_chosenComposeOn() (gas: 135666)
+[PASS] test_setter_creditCostToPotBps() (gas: 171306)
+[PASS] test_setter_minCcToChoose() (gas: 138077)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 236.67ms (139.18ms CPU time)
+
+Ran 6 tests for test/OwnerPowers.t.sol:OwnerFormerQueueTest
+[PASS] test_adapter_forbiddenAddressesAreRefused() (gas: 896462)
+[PASS] test_controller_takesEffectInTheSameBlock() (gas: 974533)
+[PASS] test_controller_zeroRevertsAndStrangerRevertsAndASecondSetWorks() (gas: 790417)
+[PASS] test_module_replaceChangesTheTokenAndReadsTheNewUnit() (gas: 2932987)
+[PASS] test_module_validityRulesAreIntact() (gas: 5386928)
+[PASS] test_queue_noQueueNoDelayNoCancelNoFreezeNoImmutableOwner() (gas: 214854)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 75.46ms (3.28ms CPU time)
+
+Ran 6 tests for test/OwnerPowers.t.sol:OwnerHandoverTest
+[PASS] test_handover_noOwnerDoorMovesAnAsset() (gas: 49715228)
+[PASS] test_handover_ownerCannotBeZeroedAndThereIsNoRenounce() (gas: 104922)
+[PASS] test_handover_theOldOwnerLosesEveryPowerAndTheNewOneHasEvery() (gas: 6068616)
+[PASS] test_handover_twoStepsAndOnlyThePendingOwnerAccepts() (gas: 1854917)
+[PASS] test_handover_zeroAddressAcceptWhileNothingPendingReverts() (gas: 46717)
+[PASS] test_handover_zeroClearsPendingAndANewNameReplacesIt() (gas: 268749)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 267.93ms (177.12ms CPU time)
+
+Ran 4 tests for test/OwnerPowers.t.sol:OwnerLocksTest
+[PASS] test_lockAdapters_blocksAddButNotRemoveAndKeepsTheOldOnes() (gas: 2197904)
+[PASS] test_lockBalanceModule_revertsWhileUnset() (gas: 265789)
+[PASS] test_lockController_blocksOnlyTheControllerSetterForever() (gas: 1754867)
+[PASS] test_locks_areIndependentAndOneWayAndRepeatable() (gas: 3998809)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 72.97ms (3.64ms CPU time)
+
+Ran 32 tests for test/Config.t.sol:ConfigTest
+[PASS] test_FIXED_postflightComparesTheCoreAndControllerRuntime() (gas: 45664455)
+[PASS] test_FIXED_postflightReadsTheCoinImageAndDescription() (gas: 78176694)
+[PASS] test_FIXED_postflightReadsTheRenderer() (gas: 81365885)
+[PASS] test_buildConfigNamesTheRenderer() (gas: 271440)
+[PASS] test_deployRefusesPlaceholders() (gas: 370212)
+[PASS] test_feeSplitDerivation() (gas: 7622)
+[PASS] test_hashCoversSettingsAndStack() (gas: 1512916)
+[PASS] test_jsonEqualsDefaultConfig() (gas: 182556)
+[PASS] test_jsonParsesImageAndDescription() (gas: 126188)
+[PASS] test_namedListingsAreHeldAndPriced() (gas: 50925)
+[PASS] test_postflightAfterTheOwnerChangedTheSettings() (gas: 29047096)
+[PASS] test_postflightCatchesEveryMismatch() (gas: 62179078)
+[PASS] test_postflightChecksTheAdapters() (gas: 102745100)
+[PASS] test_postflightPassesOnTheFixture() (gas: 27242260)
+[PASS] test_postflightReadsBackEverySettingFirstHalf() (gas: 374196298)
+[PASS] test_postflightReadsBackEverySettingSecondHalf() (gas: 399910262)
+[PASS] test_preflightEnabledStack() (gas: 71637068)
+[PASS] test_preflightImageAndDescription() (gas: 273267728)
+[PASS] test_preflightPasses() (gas: 23992358)
+[PASS] test_preflightPinsAntiSniperSchedule() (gas: 48599200)
+[PASS] test_preflightPinsTheLiveCodeHashes() (gas: 476416742)
+[PASS] test_preflightPinsTheOwnerDelegation() (gas: 145306391)
+[PASS] test_preflightPredictedRendererIsEmpty() (gas: 45484196)
+[PASS] test_preflightRateBoundsRejectZeroAndAcceptTypedExtrema() (gas: 23654376)
+[PASS] test_preflightRateCapIsThreeTimesRateStart() (gas: 75256520)
+[PASS] test_preflightSeaportRecipients() (gas: 281286572)
+[PASS] test_preflightSimulatesTheLaunchAndLeavesNoTrace() (gas: 24226852)
+[PASS] test_preflightSniperSecondsMatchTheCoreSetting() (gas: 45001112)
+[PASS] test_preflightTheFactoryMustBeDeprecatedAndOwnedByTheDeployer() (gas: 68987088)
+[PASS] test_settingsBoundsEveryFieldBothEdges() (gas: 868256)
+[PASS] test_settingsRowsAndGuard() (gas: 48917911)
+[PASS] test_warnOwnerIsTheCreator() (gas: 104538906)
+Suite result: ok. 32 passed; 0 failed; 0 skipped; finished in 2.27s (2.17s CPU time)
+
+Ran 3 tests for test/CoreLayout.t.sol:CoreLayoutTest
+[PASS] test_OK_balanceInstanceSitsAfterTheAnchor() (gas: 32894)
+[PASS] test_OK_pilesCreditsAndStatementsSitWhereTheMirrorSays() (gas: 88785443)
+[PASS] test_OK_scalarFieldsSitWhereTheMirrorSays() (gas: 5265378)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 514.46ms (439.56ms CPU time)
+
+Ran 13 tests for test/GasCap.t.sol:GasCapTest
+[PASS] test_gas_book_forcesThePayeeShare() (gas: 482651)
+[PASS] test_gas_buyCredit_creditSalePushesTheCuts() (gas: 2095483)
+[PASS] test_gas_buyListing_creditStrategy_incomeLoaded() (gas: 1846587)
+[PASS] test_gas_buyListing_seaport_basicWithFee() (gas: 1658226)
+[PASS] test_gas_buy_statementSalePushesTheCuts() (gas: 45867324)
+[PASS] test_gas_buyback_afterAStatementSale() (gas: 46056008)
+[PASS] test_gas_compose_ethLane_firstCold() (gas: 42426778)
+[PASS] test_gas_readCaps_nextPage() (gas: 36231214)
+[PASS] test_gas_redeemStatement_ethLane() (gas: 48193564)
+[PASS] test_gas_sellForBalance_batch() (gas: 366511235)
+[PASS] test_gas_sellForEth_batch_launchSettings() (gas: 279837394)
+[PASS] test_gas_swapCredit() (gas: 2259981)
+[PASS] test_modeOffPrePacket86CreditEthBatchGasRegression() (gas: 55122893)
+Suite result: ok. 13 passed; 0 failed; 0 skipped; finished in 6.81s (6.65s CPU time)
+
+Ran 8 tests for test/CoreUnit.t.sol:CoreComposedTest
+[PASS] test_compose_movesNoEthOut() (gas: 51156313)
+[PASS] test_compose_statementIdCostBasisAndPiles() (gas: 45592762)
+[PASS] test_redeem_ethLaneStaysInTheModule() (gas: 45225768)
+[PASS] test_redeem_guards() (gas: 45358535)
+[PASS] test_redeem_unitIsReadLive() (gas: 45856085)
+[PASS] test_xBid_guards() (gas: 46082385)
+[PASS] test_xBid_paysScoreTimesUnit() (gas: 46191792)
+[PASS] test_xFees_moduleHoldsTheBalanceToken() (gas: 45248863)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 1.49s (1.41s CPU time)
+
+Ran 6 tests for test/Seaport.t.sol:SeaportTest
+[PASS] testFuzz_selfDealingNeverBeatsTheSellDoor(uint256,uint256,uint256) (runs: 64, μ: 1492579, ~: 1496745)
+[PASS] test_basic_additionalRecipient() (gas: 1467772)
+[PASS] test_basic_capAndPaymentAtScoreNot100Points() (gas: 1044005)
+[PASS] test_basic_singleConsiderationToSeller() (gas: 1381346)
+[PASS] test_basic_tipToTheCallerIsRefused() (gas: 659602)
+[PASS] test_fail_badSignature() (gas: 2036894)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 5.57s (5.49s CPU time)
+
+Ran 8 tests for test/SetSettings.t.sol:SetSettingsTest
+[PASS] test_combinedFloorAndMarkupUpdatesBothDirections() (gas: 6072894)
+[PASS] test_controllerPreviewRestoresStateAndKeepsChangePlanned() (gas: 331870)
+[PASS] test_dryRunSendsNothingAndTheCalldataWorks() (gas: 1930521)
+[PASS] test_leavesTheOtherFieldsAtTheirLiveValue() (gas: 856836)
+[PASS] test_newFieldsAndTypedWidths() (gas: 1865322)
+[PASS] test_oneVariableChangesOneField() (gas: 601552)
+[PASS] test_runRefusesOutOfBounds() (gas: 581601)
+[PASS] test_unknownFieldAndTooWideValue() (gas: 521319)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 109.37ms (21.26ms CPU time)
+
+Ran 28 tests for test/CoreUnit.t.sol:CoreUnitTest
+[PASS] test_balanceDoorsClosedAtLaunch() (gas: 241262)
+[PASS] test_bookCountsHookEth_fundAddsTheRest() (gas: 771081)
+[PASS] test_buyListing_aRefundFromTheTargetRevertsTheBuy() (gas: 1421935)
+[PASS] test_buyListing_aboveCeilingReverts() (gas: 375708)
+[PASS] test_buyListing_adapterAndTargetGuards() (gas: 1400449)
+[PASS] test_buyListing_capAndPaymentAtScoreNot100Points() (gas: 1447479)
+[PASS] test_buyListing_countedGasCoversFirstCappedBucket() (gas: 2731791)
+[PASS] test_buyListing_failedCallRevertsOnlyThatBuy() (gas: 2473597)
+[PASS] test_buyListing_hostileTargetThatKeepsEthReverts() (gas: 376626)
+[PASS] test_buyListing_paymentIsCappedAtTheGap() (gas: 3989009)
+[PASS] test_buyListing_paysCountedGasAtTheBaseFeePlusTheFee() (gas: 2565882)
+[PASS] test_buyListing_potCheck() (gas: 2014354)
+[PASS] test_buyListing_probeModes() (gas: 11426806)
+[PASS] test_buyback_guards() (gas: 199937)
+[PASS] test_compose_controllerCannotNameBadPages() (gas: 8130904)
+[PASS] test_compose_notReady() (gas: 23646687)
+[PASS] test_compose_priceOfRevertingControllerLogsZero() (gas: 39912336)
+[PASS] test_compose_pullsFromTheMiddleAndKeepsTheListIntact() (gas: 34965158)
+[PASS] test_constructorAndSetControllerRejectZero() (gas: 1529441)
+[PASS] test_constructorRequiresCodeAtTheStack() (gas: 937916)
+[PASS] test_onERC721Received_senders() (gas: 28122)
+[PASS] test_owner_onlyOwner() (gas: 220559)
+[PASS] test_rateStartBounds() (gas: 699928)
+[PASS] test_sellForEth_guards() (gas: 1304733)
+[PASS] test_sellForEth_minOut() (gas: 1367962)
+[PASS] test_statementDoorsRefuseAnUnknownStatement() (gas: 196931)
+[PASS] test_tinyPotSellsItsWeiAndBuysNothing() (gas: 1495819)
+[PASS] test_unlockCallback_onlyPoolManager() (gas: 33384)
+Suite result: ok. 28 passed; 0 failed; 0 skipped; finished in 547.01ms (469.04ms CPU time)
+
+Ran 18 tests for test/CreditSale.t.sol:CreditSaleTest
+[PASS] test_buy_balanceTokenCreditSellsAtItsRecordedCost() (gas: 3941719)
+[PASS] test_buy_coreFloorFollowsSaleFloorBps() (gas: 2396608)
+[PASS] test_buy_coreHardFloorHoldsAgainstAControllerBelowCost() (gas: 1776062)
+[PASS] test_buy_proceedsSplitAtDefault() (gas: 1878450)
+[PASS] test_buy_underpayReverts() (gas: 1608884)
+[PASS] test_compose_waitsForTheWindowWhenSaleOn() (gas: 43307828)
+[PASS] test_floor_followsTheLiveCap() (gas: 2284772)
+[PASS] test_floor_usesValueOfNotTheFlatFloorRate() (gas: 1839029)
+[PASS] test_h1_buyCreditsPricesEachAfterThePreviousSale() (gas: 2489637)
+[PASS] test_h1_buyThenSellBackIsUnprofitable() (gas: 3026045)
+[PASS] test_noProfit_buyThenSellBackNeverBeatsTheBid() (gas: 24088623)
+[PASS] test_pause_blocksBuy() (gas: 1696029)
+[PASS] test_price_neverUnderTheCoreFloor() (gas: 1992282)
+[PASS] test_price_revertsWhenNotInPile() (gas: 111467)
+[PASS] test_price_startMidFloorAfter() (gas: 1924324)
+[PASS] test_reentrancy_buyerCannotReenter() (gas: 2645467)
+[PASS] test_setters_boundsAndEventsAndOwner() (gas: 1061800)
+[PASS] test_toggle_offBlocksBuyCredit() (gas: 1260259)
+Suite result: ok. 18 passed; 0 failed; 0 skipped; finished in 293.35ms (212.48ms CPU time)
+
+Ran 14 tests for test/CreditSwap.t.sol:CreditSwapTest
+[PASS] test_composeUsesSwappedInCredit() (gas: 42769247)
+[PASS] test_feeAtTheLaunchValueOfTenThousandCc() (gas: 2179273)
+[PASS] test_feeBurned() (gas: 2163494)
+[PASS] test_feeZeroBurnsNothing() (gas: 1759747)
+[PASS] test_notInPileReverts() (gas: 1603107)
+[PASS] test_notOwnerReverts() (gas: 1472683)
+[PASS] test_pausedReverts() (gas: 1524655)
+[PASS] test_pileCreditAsInIdReverts() (gas: 1709135)
+[PASS] test_retiredReverts() (gas: 2253291)
+[PASS] test_scoreRule_equalAllowed() (gas: 1566081)
+[PASS] test_scoreRule_higherAllowed() (gas: 1566103)
+[PASS] test_scoreRule_lowerReverts() (gas: 1486646)
+[PASS] test_slotInheritance() (gas: 1633885)
+[PASS] test_zeroInIdReverts() (gas: 1227350)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 260.57ms (171.62ms CPU time)
+
+Ran 1 test for test/FeeShare.t.sol:FeeShareBuybackTest
+[PASS] test_editableTimerAndOneWayLatch() (gas: 1097522)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 83.59ms (2.11ms CPU time)
+
+Ran 2 tests for test/SettingsTuple.t.sol:SettingsTupleTest
+[PASS] test_namesAndBoolsFollowTheAbi() (gas: 6367794)
+[PASS] test_tupleIsTheAbiStruct() (gas: 5717746)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 892.29ms (891.72ms CPU time)
+
+Ran 4 tests for test/FeeShare.t.sol:FeeShareTest
+[PASS] test_book_countsForcedEthAsIncome() (gas: 387352)
+[PASS] test_change_takesEffectOnTheNextFeeAndNeverRewritesTheBooks() (gas: 2578124)
+[PASS] test_forcedEthAsTheOnlyIncomeDoesNotClimbBeforeBookAndASellPaysTheQuote() (gas: 1110363)
+[PASS] test_split_atZeroHalfAndAllOnExactBuys() (gas: 2038864)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 154.58ms (9.36ms CPU time)
+
+Ran 9 tests for test/FeeShare.t.sol:PayeeShareTest
+[PASS] test_aBookWithoutIncomeDoesNotTurnTheShareOn() (gas: 506694)
+[PASS] test_aFailingPayeeStillReceivesThroughTheForcedPush() (gas: 5035480)
+[PASS] test_bookPushesThePayeeItsShare() (gas: 993047)
+[PASS] test_ownerReplacesThePayeeAndTheShare() (gas: 1063509)
+[PASS] test_payeeLatchesOnADoorAndThatBookSharesNothing() (gas: 1361298)
+[PASS] test_setSettingsBooksUnbookedIncomeUnderTheOldShare() (gas: 633297)
+[PASS] test_thePushGivesThePayeeNoReentry() (gas: 1189515)
+[PASS] test_theShareBoundIsOneMillionPpm() (gas: 1492998)
+[PASS] test_theShareStartsAfterTheWindowFromTheFactoryRecord() (gas: 1799698)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 102.16ms (23.59ms CPU time)
+
+Ran 17 tests for test/SpendCap.t.sol:SpendCapTest
+[PASS] test_balancePurchasesAreExcluded() (gas: 2619746)
+[PASS] test_batchFirstCreditPassesSecondReverts() (gas: 1585586)
+[PASS] test_batchIsAtomicForBothOverloads() (gas: 1765887)
+[PASS] test_bypassWithNewInflowsStillCounts() (gas: 1662907)
+[PASS] test_directThenKeeperSharesBudget() (gas: 1570788)
+[PASS] test_durationEditAfterExpirySnapshotsFresh() (gas: 1831385)
+[PASS] test_exactBudgetAndNextBucket() (gas: 1873331)
+[PASS] test_failedVenueRollsBackWithoutOpeningBudget() (gas: 770696)
+[PASS] test_firstPurchaseOfABucketPassesASubCreditBudget() (gas: 2013642)
+[PASS] test_keeperAndDirectShareBudget() (gas: 1433519)
+[PASS] test_minOutFailureRollsBackBudget() (gas: 1064359)
+[PASS] test_pendingFeesAreBookedBeforeSnapshot() (gas: 1322150)
+[PASS] test_settingsAndRateEditsPreserveUsedBudget() (gas: 2101611)
+[PASS] test_snapshotFixedAndPotScaling() (gas: 2008737)
+[PASS] test_spendCapBounds() (gas: 506744)
+[PASS] test_spendStateReadsTheLiveBucket() (gas: 1708918)
+[PASS] test_zeroBucketAndZeroRoundedBudget() (gas: 1327301)
+Suite result: ok. 17 passed; 0 failed; 0 skipped; finished in 286.84ms (177.06ms CPU time)
+
+Ran 21 tests for test/StatementBalanceModule.t.sol:StatementBalanceModuleTest
+[PASS] test_accrualEqualsShortfallForEachFailureShape() (gas: 654924)
+[PASS] test_availableClosedUnlessRetiredTotalEqualsLaunchRetirement() (gas: 228718)
+[PASS] test_availableRequiresBothGates() (gas: 278111)
+[PASS] test_boundSuccessorReceivesNothingBeforeCoreRetires() (gas: 408638)
+[PASS] test_claimReentrancyPaysOnce() (gas: 422902)
+[PASS] test_constructorPinsConfiguration() (gas: 18448)
+[PASS] test_constructorRejectsMissingCode() (gas: 5985)
+[PASS] test_constructorRejectsWrongSourceUnitOrDecimals() (gas: 42723)
+[PASS] test_failedPaymentAccruesOwed() (gas: 407353)
+[PASS] test_hostileSuccessorModuleOnOtherTokenKeepsReserve() (gas: 1240793)
+[PASS] test_migrationGateFailurePreservesReserve() (gas: 616809)
+[PASS] test_migrationLeavesOwedInTheModule() (gas: 694728)
+[PASS] test_migrationRejectsInvalidModuleBinding() (gas: 1327051)
+[PASS] test_migrationRejectsInvalidSuccessor() (gas: 395943)
+[PASS] test_migrationRequiresRetiredCore() (gas: 424322)
+[PASS] test_migrationTransfersExactHoldingAndCanRepeat() (gas: 768693)
+[PASS] test_onlyCoreMayRedeemOrPay() (gas: 56231)
+[PASS] test_payRespectsLiveAvailable() (gas: 507256)
+[PASS] test_redeemCreditsRatingAndConsumesApproval() (gas: 216431)
+[PASS] test_redeemRevertsBelowRating() (gas: 199010)
+[PASS] test_reentrantTokenCallbackCannotMoveMoreThanTheHolding() (gas: 785430)
+Suite result: ok. 21 passed; 0 failed; 0 skipped; finished in 7.10ms (6.01ms CPU time)
+
+Ran 8 tests for test/UpstreamBalance.t.sol:UpstreamBalanceTest
+[PASS] test_boundedPayAccruesAndClaimSettles() (gas: 65660767)
+[PASS] test_directPayWarmAndColdMeasure() (gas: 65071427)
+[PASS] test_exactOpeningRedeemsAndRecyclesIntoCredits() (gas: 122059069)
+[PASS] test_oneCreditColdArtistRoyaltyIsPaidDirectly() (gas: 90032070)
+[PASS] test_redemptionClosedBeforeOpening() (gas: 65962233)
+[PASS] test_registrationFailureRollsBackCustody() (gas: 46315026)
+[PASS] test_retirementMigratesReserveAndLaterRedemption() (gas: 111881151)
+[PASS] test_retirementRequiredEvenAfterOpening() (gas: 46448435)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 3.29s (3.18s CPU time)
+
+Ran 5 tests for test/V2Port.t.sol:V2PortFeeTest
+[PASS] test_collectEscrowWithNothingOwedReverts() (gas: 75553)
+[PASS] test_escrowCreditOfTheCoreIsCollectedIntoThePot() (gas: 485191)
+[PASS] test_partialFillRefundsToTheHookDataAddress() (gas: 333634)
+[PASS] test_partialFillWithoutRefundAddressReverts() (gas: 165966)
+[PASS] test_strangerEscrowClaimLandsAsIncomeForTheNextBook() (gas: 783192)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 99.15ms (4.86ms CPU time)
+
+Ran 3 tests for test/V2Port.t.sol:V2PortMigrationTest
+[PASS] test_newCoreWithoutAllowlistBuysBack() (gas: 1642034)
+[PASS] test_refusingRecipientNeverBlocksSwaps() (gas: 2527410)
+[PASS] test_repointMovesTheFeesAndTheOldCoreKeepsWorking() (gas: 43492347)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 261.06ms (174.13ms CPU time)
+
+Ran 3 tests for test/V2Port.t.sol:V2PortRestrictionTest
+[PASS] test_aWalletCannotSendCoinToTheCore() (gas: 110018)
+[PASS] test_buybackConsumesTheWholeAllowance() (gas: 45935244)
+[PASS] test_unrestrictedTransferToTheCoreIsInert() (gas: 45612653)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 419.11ms (342.40ms CPU time)
+
+Ran 3 tests for test/V2Port.t.sol:V2PortSkimTest
+[PASS] test_lockFreezesLowerBaselineSkim() (gas: 91121)
+[PASS] test_lowerBaselineSkimLowersTheEngineFee() (gas: 560992)
+[PASS] test_protocolLegLandsAtTheController() (gas: 310300)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 84.63ms (1.63ms CPU time)
+
+Ran 3 tests for test/V2Stack.t.sol:V2StackTest
+[PASS] test_launchRestrictedCoinWithEmptyRecipient() (gas: 3554728)
+[PASS] test_liveStackPassesCheck() (gas: 339435)
+[PASS] test_writingRecipientIsCreditedInEscrowAndClaims() (gas: 3613918)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 82.68ms (17.19ms CPU time)
+
+Ran 23 tests for test/ValueMode.t.sol:ValueModeTest
+[PASS] test_balanceCapBoundedByValueRateWhenSpotLeads() (gas: 4703601)
+[PASS] test_balanceCapIgnoresEthPotClamp() (gas: 5782827)
+[PASS] test_balanceCapIgnoresPartialPotClamp() (gas: 5825776)
+[PASS] test_balanceCapUnchangedWithPotRoom() (gas: 6010874)
+[PASS] test_balanceFillRefusesWhileTheReferenceIsUnusable() (gas: 5341519)
+[PASS] test_balancePayoutIsThePostedRateOutsideValueMode() (gas: 58562)
+[PASS] test_balanceRoundTripLosesWhenSpotLeadsReference() (gas: 5419719)
+[PASS] test_ethFillsDropTheInstanceAndBalanceFillsDoNot() (gas: 2368248)
+[PASS] test_hostileQuoteIsBounded() (gas: 2080996)
+[PASS] test_launchValues() (gas: 27785)
+[PASS] test_onlyTheSwitchResets() (gas: 1362354)
+[PASS] test_pSellHelperMatchesTheController() (gas: 4077515)
+[PASS] test_pauseFreezesSharedBidAndResumesEarnedClimb() (gas: 923961)
+[PASS] test_pauseInValueMode() (gas: 1591620)
+[PASS] test_roundTripsLoseTheSpread() (gas: 25828219)
+[PASS] test_saleDoorsRefreshTheReference() (gas: 2017687)
+[PASS] test_sellForEthGasInValueMode() (gas: 1839202)
+[PASS] test_staleQuoteHaltsTheEthPurchaseDoors() (gas: 47156767)
+[PASS] test_statementPricesOffTheProtectedFloor() (gas: 46178293)
+[PASS] test_statementQuoteCoversHistoricalCostFloor() (gas: 46695091)
+[PASS] test_switchOffResetsEthInstanceToTheSharedRate() (gas: 1048332)
+[PASS] test_switchResetsTheSharedInstanceAndPricesTheBid() (gas: 1485920)
+[PASS] test_valueFloorClosesTheRoundTrip() (gas: 2295161)
+Suite result: ok. 23 passed; 0 failed; 0 skipped; finished in 686.15ms (577.50ms CPU time)
+
+Ran 8 tests for test/ValueMode.t.sol:ValueRealPoolTest
+[PASS] test_jitLiquidityCannotPassMinLiquidity() (gas: 384379)
+[PASS] test_loopClosureRoundTripAtNonzeroBand() (gas: 3238362)
+[PASS] test_realPoolDownMoveStaleQuoteClosesWithinFiveRefreshes() (gas: 1261375)
+[PASS] test_realPoolUpMoveStaleQuoteClosesWithinFiveRefreshes() (gas: 1273507)
+[PASS] test_referenceWalksAtTheMaxRateForAnHour() (gas: 22613287)
+[PASS] test_singleBlockManipulationStaysInsideTheBand() (gas: 3569229)
+[PASS] test_tenXSpotSpikeStaysUnderTheRateCapAndPot() (gas: 1224986)
+[PASS] test_zeroToleranceUsesSampledSpotAndTwoPercentRefreshStep() (gas: 2355343)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 132.76ms (39.53ms CPU time)
+
+Ran 13 tests for test/ValueMode.t.sol:ValueReferenceTest
+[PASS] test_longIdleGainsOneStep() (gas: 310806)
+[PASS] test_paidRefreshPreservesEarnedClimbBeforePotFalls() (gas: 662321)
+[PASS] test_poolKeySeedAllowsNormalDriftWithZeroTradingTolerance() (gas: 646586)
+[PASS] test_poolKeySeedRevertsOnManipulation() (gas: 271841)
+[PASS] test_protectedPricesAtSpotAboveAndBelow() (gas: 863292)
+[PASS] test_referenceStartsAtTheSpot() (gas: 16494)
+[PASS] test_refreshGatedByReferenceMinSeconds() (gas: 431823)
+[PASS] test_refreshReferenceMovesAtMostTheRate() (gas: 411640)
+[PASS] test_resettingTheSameKeyReseedsTheReference() (gas: 724076)
+[PASS] test_setQuoteBounds() (gas: 281864)
+[PASS] test_slowRateStillTracksUnderFrequentCalls() (gas: 18480390)
+[PASS] test_spamGainsNothingBeyondTheRate() (gas: 15125526)
+[PASS] test_unusableStates() (gas: 601621)
+Suite result: ok. 13 passed; 0 failed; 0 skipped; finished in 125.50ms (38.35ms CPU time)
+
+Ran 6 tests for test/ViewEqualsStored.t.sol:ViewEqualsStoredTest
+[PASS] test_balanceBidEqualsFill_tokensArriveThenWarp() (gas: 2753730)
+[PASS] test_ethBidEqualsFill_freshDeployOneSell() (gas: 906359)
+[PASS] test_ethBidEqualsFill_freshLaunchOnlyUnbookedIncome() (gas: 874294)
+[PASS] test_ethBidEqualsFill_unbookedIncomeThenWarp() (gas: 971329)
+[PASS] test_spendBudgetDivergenceNumbers() (gas: 1063614)
+[PASS] test_spendBudgetQuotedEqualsEnforced_withUnbookedIncome() (gas: 1055675)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 86.26ms (13.94ms CPU time)
+
+Ran 7 tests for test/PerPointExact.t.sol:PerPointExactTest
+[PASS] test_adopt_oneWeiFloorWhenTheScaledPriceRoundsToZero() (gas: 790908)
+[PASS] test_batchOfThree_eachPayoutAndRateAfterInCallOrder() (gas: 3168744)
+[PASS] test_bucketFloor_reachedInFewerFillsAtRatioAboveOne() (gas: 47756842)
+[PASS] test_drop_scalesTheFallAtRatioTwoAndRatioHalf() (gas: 2066250)
+[PASS] test_rounding_buyAtTheFloorIsAboveTheSellForEthPayout() (gas: 1670322)
+[PASS] test_rounding_creditSaleFloorValueRoundsDown() (gas: 558442)
+[PASS] test_rounding_payoutAndCostBasisRoundDown() (gas: 1356373)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 162.48ms (86.67ms CPU time)
+
+Ran 1 test for test/audit/PostflightInputs.t.sol:PostflightInputsTest
+[PASS] test_FIXED_A02_verifyInputsDoNotChangeAfterSettingsOrControllerChange() (gas: 4536032)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 82.81ms (9.74ms CPU time)
+
+Ran 5 tests for test/PostflightSlots.t.sol:PostflightSlotsTest
+[PASS] test_deployAndResumeRefuseEveryChangeFlag() (gas: 36645)
+[FAIL: assertion failed: 22 != 23] test_oneDivergentControllerSiteFailsPostflight() (block: 26222700) (gas: 1936322)
+[PASS] test_oneDivergentImmutableSiteFailsPostflight() (gas: 357409588)
+[PASS] test_oneForeignLibrarySiteFailsPostflight() (gas: 148413165)
+[PASS] test_theScriptsCallTheGuards() (gas: 2571110)
+Suite result: FAILED. 4 passed; 1 failed; 0 skipped; finished in 557.12ms (478.49ms CPU time)
+
+Ran 6 tests for test/RatingReference.t.sol:RatingReferenceTest
+[PASS] test_coreHardFloorBoundsAtCost() (gas: 46111660)
+[PASS] test_pointRateAndValueOf() (gas: 343147)
+[PASS] test_pointsPerPage_boundsAreEnforced() (gas: 470865)
+[PASS] test_referenceMovesWithTheFloorRate() (gas: 46352817)
+[PASS] test_reference_isMaxOfCostAndRateTerm() (gas: 46087095)
+[PASS] test_sameRatingSameReference_acrossLineages() (gas: 74576158)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 1.06s (966.86ms CPU time)
+
+Ran 7 tests for test/Recovery.t.sol:RecoveryTest
+[PASS] testFuzz_priceStateMonotoneBetweenFills(uint256,uint256) (runs: 40, μ: 46380199, ~: 37530981)
+[PASS] test_launchGapIs1000() (gas: 59203)
+[PASS] test_oneMinuteDumpRecovers() (gas: 61958181)
+[PASS] test_recoveryAndPeakHalvingAtLaunchDrop() (gas: 35500056)
+[PASS] test_setRateRestatesThePeak() (gas: 17217826)
+[PASS] test_setSettingsChangingHalfLifeCheckpointsThePeak() (gas: 258783)
+[PASS] test_threeMinuteDumpRecovers() (gas: 193149857)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 3.94s (3.87s CPU time)
+
+Ran 9 tests for test/Redeem.t.sol:RedeemRepayTest
+[PASS] test_pay_ethLaneGasCountIsCappedExactly() (gas: 53216294)
+[PASS] test_pay_launchSettingsPayCappedGasPlusFee() (gas: 53056015)
+[PASS] test_pay_neverAboveTheBoundWithAGasBurningModule() (gas: 577367920)
+[PASS] test_pay_zeroPotPaysZeroAndDoesNotRevert() (gas: 49362739)
+[PASS] test_pay_zeroSettingsPayZero() (gas: 53181670)
+[PASS] test_reenter_aHostileModuleCannotUseAnyDoorMidRedeem() (gas: 491334140)
+[PASS] test_reenter_theRepaidCallerFindsEveryDoorShut() (gas: 91143726)
+[PASS] test_releaseRedeemBurnCapsAtReserveAndRefusesEmpty() (gas: 737895)
+[PASS] test_releaseRedeemBurnMovesExactlyAndHoldsSolvency() (gas: 747785)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 5.98s (5.89s CPU time)
+
+Ran 11 tests for test/Redeem.t.sol:RedeemTimingTest
+[PASS] test_eligibility_byAgeAtTheBoundary() (gas: 48052802)
+[PASS] test_eligibility_readsNoPrice() (gas: 48385454)
+[PASS] test_eligibility_startAtParIsEligibleAtOnce() (gas: 47803670)
+[PASS] test_eligibility_switchOffIsCurveOnIsAge() (gas: 47953655)
+[PASS] test_timing_anUnderpayingModuleRevertsEverything() (gas: 49381021)
+[PASS] test_timing_atFloorColdFitsTheCoreReadBudget() (gas: 48156229)
+[PASS] test_timing_eligibilityFrozenDuringPause() (gas: 48468595)
+[PASS] test_timing_noModuleNotHeldAndUnknown() (gas: 47654473)
+[PASS] test_timing_offWhenRedeemOnIsFalse() (gas: 48498643)
+[PASS] test_timing_redemptionNeedsTheController() (gas: 48285949)
+[PASS] test_timing_revertsUntilAtCostThenWorks() (gas: 48496381)
+Suite result: ok. 11 passed; 0 failed; 0 skipped; finished in 1.68s (1.60s CPU time)
+
+Ran 1 test for test/Rehearsal.t.sol:RehearsalTest
+[SKIP] test_rehearsal() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; finished in 2.18ms (218.45µs CPU time)
+
+Ran 8 tests for test/Rescue.t.sol:RescueTest
+[PASS] test_OK_aForeignErc721Leaves() (gas: 264078)
+[PASS] test_REVERT_aCreditInAPileStays() (gas: 2138889)
+[PASS] test_REVERT_aCreditSentStraightToTheCoreStays() (gas: 365910)
+[PASS] test_REVERT_aHeldStatementStays() (gas: 45595245)
+[PASS] test_REVERT_aMigratedCreditIsNotRescuableOnTheSuccessor() (gas: 2659473)
+[PASS] test_REVERT_aTokenTheCoreDoesNotHold() (gas: 84706)
+[PASS] test_REVERT_notTheOwner() (gas: 377681)
+[PASS] test_REVERT_theZeroDestination() (gas: 341899)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 296.60ms (212.76ms CPU time)
+
+Ran 9 tests for test/Reserve.t.sol:ReserveTest
+[PASS] test_adoptReserveRiseKeepsEarnedClimb() (gas: 108095953)
+[PASS] test_buyListingRespectsTheRoom() (gas: 1559917)
+[PASS] test_composeReserveDropDoesNotGrantEmptyHours() (gas: 115123291)
+[PASS] test_creditSaleReserveDropDoesNotGrantEmptyHours() (gas: 108490169)
+[PASS] test_ethRateNeverAboveThePayable() (gas: 920528)
+[PASS] test_formulaFollowsTheQueue() (gas: 46061996)
+[PASS] test_processingPaysFromTheWholePot() (gas: 42266517)
+[PASS] test_sellForEthKeepsTheReserve() (gas: 1665249)
+[PASS] test_spendAboveTheRoomReverts() (gas: 695652)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 1.25s (1.17s CPU time)
+
+Ran 9 tests for test/Resume.t.sol:ResumeTest
+[PASS] test_deferredDeployThenLaunchEqualsOneShot() (gas: 91008098)
+[PASS] test_launchStepRefusals() (gas: 53507562)
+[PASS] test_launchStepRefusesAChangedFactory() (gas: 33921492)
+[PASS] test_launchStepRefusesHalfWiredDeploys() (gas: 65965215)
+[PASS] test_resumeBindsTheCoreOfACreatedRenderer() (gas: 49974140)
+[PASS] test_resumeFinishesADeployStoppedAfterTheCore() (gas: 50059041)
+[PASS] test_resumeRefusesWhatItCannotFinish() (gas: 37431686)
+[PASS] test_resumeSendsOnlyTheLaunchWhenTheRestIsOnChain() (gas: 51235597)
+[PASS] test_signerGuards() (gas: 287053)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 480.25ms (397.34ms CPU time)
+
+Ran 9 tests for test/ReturnLock.t.sol:ReturnLockTest
+[PASS] test_buyListingRefusedWhenTheBuyerOffersTheListing() (gas: 2335011)
+[PASS] test_launchLockIsSixHours() (gas: 25285)
+[PASS] test_lockFollowsTheLiveSetting() (gas: 2755470)
+[PASS] test_neverSoldCreditPasses() (gas: 1128955)
+[PASS] test_secondaryHolderIsLockedToo() (gas: 3046721)
+[PASS] test_sellForBalanceRefusedInsideTheLock() (gas: 4251947)
+[PASS] test_sellForEthRefusedUntilTheLockEnds() (gas: 2998013)
+[PASS] test_swapCreditRefusedInsideTheLock() (gas: 2648330)
+[PASS] test_zeroLockIsNoLock() (gas: 2644152)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 141.91ms (44.13ms CPU time)
+
+Ran 8 tests for test/ReviewDeploy.t.sol:ReviewDeployTest
+[PASS] test_aCoreWithoutAControllerRefusesItsControllerDoors() (gas: 12451214)
+[PASS] test_configHashIsTheSignOffValue() (gas: 47886284)
+[PASS] test_coreCoinIsPredictedOrRecorded() (gas: 312389)
+[PASS] test_coreRejectsAStackWithoutCode() (gas: 121634)
+[PASS] test_jsonNumbersAreRejected() (gas: 2147124)
+[PASS] test_postflightReadsThePositionBack() (gas: 72098598)
+[PASS] test_postflightReadsTheSniperParamsBack() (gas: 104709521)
+[PASS] test_preflightLibraryRow() (gas: 78102594)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 429.57ms (329.97ms CPU time)
+
+Ran 2 tests for test/ReviewDeploy.t.sol:ReviewFundedTest
+[PASS] testFuzz_fundedRuleAndClamp(uint256,uint256[10]) (runs: 400, μ: 2824034, ~: 2825113)
+[PASS] test_rateStartBounds() (gas: 105359)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 2.79s (2.70s CPU time)
+
+Ran 3 tests for test/ReviewMatrix.t.sol:ReviewMatrixConfigTest
+[PASS] test_matrix_launch() (gas: 436244965)
+[PASS] test_matrix_ratePeople() (gas: 138613323)
+[PASS] test_matrix_stack() (gas: 125444374)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 594.17ms (515.71ms CPU time)
+
+Ran 1 test for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1Deep
+[SKIP: skipped] setUp() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; finished in 2.31ms (0.00ns CPU time)
+
+Ran 3 tests for test/Pause.t.sol:PauseClockTest
+[PASS] testFuzz_ageIsWallTimeMinusPausedTime(uint256) (runs: 48, μ: 117920437, ~: 136623893)
+[PASS] test_ageAtSeed17050() (gas: 139061537)
+[PASS] test_gas_ageReadIsConstantAfterManyPauses() (gas: 70700433)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 32.48s (32.41s CPU time)
+
+Ran 14 tests for test/Pause.t.sol:PauseTest
+[PASS] testFuzz_priceIsFrozenAndResumesAtTheSameAge(uint32) (runs: 256, μ: 45750664, ~: 45751714)
+[PASS] test_allIntakeAndBuybackDoorsStopWhilePaused() (gas: 3683106)
+[PASS] test_anchorDecaysWhilePaused() (gas: 45391192)
+[PASS] test_bidClockFreezesAcrossPauseAndResumes() (gas: 700231)
+[PASS] test_buy_revertsWhilePausedAndWorksAfterResume() (gas: 45830266)
+[PASS] test_compose_stopsWhilePausedAndResumesWithTheSameAge() (gas: 87614868)
+[PASS] test_creditWindowRunsInWallTimeWhilePaused() (gas: 167699)
+[PASS] test_halfLifeEditDuringPausePreservesBid() (gas: 691726)
+[PASS] test_launchValueIsUnpaused() (gas: 26261)
+[PASS] test_rateResetAndSecondPauseDoNotLoseEarnedBid() (gas: 753576)
+[PASS] test_redemptionAndFeeIntakeRemainLiveWhilePaused() (gas: 48396405)
+[PASS] test_sellDoors_pausedRevertsAfterTheControllerCheck() (gas: 299616)
+[PASS] test_setPaused_eventAndNoOpRepeats() (gas: 285202)
+[PASS] test_setPaused_onlyTheLiveOwner() (gas: 245859)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 30.99s (30.90s CPU time)
+
+Ran 4 tests for test/PerPoint.t.sol:PerPointTest
+[PASS] test_aRicherCreditIsBidMore() (gas: 2906262)
+[PASS] test_adoptBasisScalesByScore() (gas: 1096374)
+[PASS] test_bidOfScalesTheRateByScoreOver100Points() (gas: 1723680)
+[PASS] test_sellForEthPaysThePerCreditBidAndScalesTheDrop() (gas: 1385762)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 82.66ms (9.83ms CPU time)
+
+Ran 8 tests for test/invariant/Invariants.t.sol:InvariantsPhase1
+[PASS]
+InvariantsPhase1 invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsPhase1 invariants (runs: 24, calls: 1920, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | book               | 178   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buy                | 115   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 97    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoinNoBook      | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredit          | 103   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredits         | 63    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 43    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeChosen      | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 49    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | creditSettings     | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 54    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 54    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 49    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 59    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 62    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 54    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 49    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 118   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setHeldFormat      | 58    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 52    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 41    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 61    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 102   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14379362)
+[PASS] test_composeChosenComposesAPage() (gas: 14011321)
+[PASS] test_everyActionSucceeds() (gas: 115064437)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 3814591)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9416681)
+[PASS] test_storageLayoutMatchesTheHandlerSlots() (gas: 24687)
+[PASS] test_theBidCheckFindsASeller() (gas: 850171)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 164.62s (162.90s CPU time)
+
+Ran 1 test for test/invariant/Invariants.t.sol:InvariantsPhase1Deep
+[SKIP: skipped] setUp() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; finished in 7.29ms (0.00ns CPU time)
+
+Ran 9 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2
+[PASS]
+InvariantsSalePhase2 invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsSalePhase2 invariants (runs: 16, calls: 1280, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 22    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | book               | 68    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buy                | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoinNoBook      | 19    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredit          | 41    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredits         | 25    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 14    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 25    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeChosen      | 20    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 28    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 23    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | creditSettings     | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 22    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | handover           | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | hostileOwner       | 26    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 18    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 25    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | lockDoor           | 39    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 48    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 27    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerSell          | 24    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | pause              | 20    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 27    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | redeemStatement    | 21    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 36    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 44    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 18    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | saleSettings       | 20    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 27    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForBalance     | 32    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 47    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setHeldFormat      | 23    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 61    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 59    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 40    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 20    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 49    | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055800)
+[PASS] test_composeChosenComposesAPage() (gas: 12094329)
+[PASS] test_everyActionSucceeds() (gas: 122830800)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 3823854)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9425991)
+[PASS] test_saleActionsEverySucceed() (gas: 33053884)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 5274015)
+[PASS] test_theBidCheckFindsASeller() (gas: 850171)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 141.95s (140.34s CPU time)
+
+Ran 1 test for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2Deep
+[SKIP: skipped] setUp() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; finished in 2.04ms (0.00ns CPU time)
+
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileController
+[PASS]
+InvariantsHostileController invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsHostileController invariants (runs: 24, calls: 1920, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 41    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | book               | 132   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buy                | 93    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 71    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoinNoBook      | 45    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredit          | 95    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredits         | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 48    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 61    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeChosen      | 53    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 45    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | creditSettings     | 41    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 42    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 47    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | redeemStatement    | 57    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 56    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 42    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 44    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForBalance     | 47    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 99    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setHeldFormat      | 52    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 62    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 53    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 105   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15027479)
+[PASS] test_composeChosenComposesAPage() (gas: 12362051)
+[PASS] test_everyActionSucceeds() (gas: 126442635)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 3823876)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9402765)
+[PASS] test_theBidCheckFindsASeller() (gas: 850171)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 210.46s (208.70s CPU time)
+
+Ran 1 test for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileControllerDeep
+[SKIP: skipped] setUp() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; finished in 2.00ms (0.00ns CPU time)
+
+Ran 2 tests for test/invariant/InvariantsValue.t.sol:InvariantsValue
+[PASS]
+InvariantsValue invariants:
+[PASS] invariant_v01_ethOnlyLeavesAsThePayment
+[PASS] invariant_v02_noCreditAboveTheRead
+[PASS] invariant_v03_noStatementBelowTheHardFloor
+[PASS] invariant_v07_noSpendAboveTheRoom
+[PASS] invariant_v16_theBidNeverCloses
+[PASS] invariant_v19_readBounds
+[PASS] invariant_v20_roundTripsLoseTheSpread
+ InvariantsValue invariants (runs: 32, calls: 2048, reverts: 0)
+
+╭--------------+------------------+-------+---------+----------╮
+| Contract     | Selector         | Calls | Reverts | Discards |
++==============================================================+
+| ValueHandler | buyCredit        | 308   | 0       | 0        |
+|--------------+------------------+-------+---------+----------|
+| ValueHandler | buyStatement     | 307   | 0       | 0        |
+|--------------+------------------+-------+---------+----------|
+| ValueHandler | moveSpot         | 290   | 0       | 0        |
+|--------------+------------------+-------+---------+----------|
+| ValueHandler | refreshReference | 263   | 0       | 0        |
+|--------------+------------------+-------+---------+----------|
+| ValueHandler | sellBalance      | 300   | 0       | 0        |
+|--------------+------------------+-------+---------+----------|
+| ValueHandler | sellEth          | 302   | 0       | 0        |
+|--------------+------------------+-------+---------+----------|
+| ValueHandler | warp             | 278   | 0       | 0        |
+╰--------------+------------------+-------+---------+----------╯
+
+[PASS] test_handlerExercisesTheRoutes() (gas: 14612469)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 205.20s (204.99s CPU time)
+
+Ran 5 tests for test/Launch.t.sol:LaunchTest
+[PASS] test_firstFillDoesNotClimbOnUnbookedHookIncome() (gas: 1205296)
+[PASS] test_launchReadBack() (gas: 89205)
+[PASS] test_predictedCoinEqualsDeployed() (gas: 421842)
+[PASS] test_referralWithTheCapAtZeroDoesNotRevert() (gas: 258800)
+[PASS] test_theAntiSniperSkimStartsHighAndFallsToTheBaseline() (gas: 509705)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 119.29ms (8.79ms CPU time)
+
+Ran 1 test for test/LaunchDay.t.sol:LaunchDayBuyersTest
+[PASS] test_sevenDaysWithBuyers() (gas: 97693478)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 4.85s (4.75s CPU time)
+
+Ran 4 tests for test/LaunchDay.t.sol:LaunchDayTest
+[PASS] test_equalAskAtCappedBidRemainsIdleForTheKeeper() (gas: 10679114)
+[PASS] test_firstComposeFromKeeperBoughtRealSeaportPage() (gas: 113303028)
+[PASS] test_launchDayKeeperIsTheOnlyEngineCaller() (gas: 225161605)
+[PASS] test_unbookedIncomeWaitsForBookBeforeBidClimbs() (gas: 28486149)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 2.13s (2.03s CPU time)
+
+Ran 1 test for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileOwnerDeep
+[SKIP: skipped] setUp() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; finished in 1.90ms (0.00ns CPU time)
+
+Ran 9 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2Hostile
+[PASS]
+InvariantsSalePhase2Hostile invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsSalePhase2Hostile invariants (runs: 16, calls: 1280, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 16    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | book               | 61    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buy                | 37    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoinNoBook      | 25    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredit          | 45    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredits         | 15    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 13    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 14    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeChosen      | 17    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 21    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 23    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | creditSettings     | 67    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 19    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | handover           | 28    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | hostileOwner       | 13    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 18    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 24    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | lockDoor           | 23    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 83    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 17    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 52    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerSell          | 26    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | pause              | 21    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 20    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | redeemStatement    | 23    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 62    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 59    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 19    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | saleSettings       | 16    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 20    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForBalance     | 28    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setHeldFormat      | 20    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 69    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 49    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 73    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 19    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 44    | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15027500)
+[PASS] test_composeChosenComposesAPage() (gas: 12362029)
+[PASS] test_everyActionSucceeds() (gas: 126442635)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 3823854)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9402765)
+[PASS] test_saleActionsEverySucceed() (gas: 32979008)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 5276815)
+[PASS] test_theBidCheckFindsASeller() (gas: 850171)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 136.98s (135.55s CPU time)
+
+Ran 1 test for test/invariant/InvariantsPhase2.t.sol:InvariantsPhase2Deep
+[SKIP: skipped] setUp() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; finished in 3.74ms (0.00ns CPU time)
+
+Ran 8 tests for test/invariant/Invariants.t.sol:InvariantsPhase1Window
+[PASS]
+InvariantsPhase1Window invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsPhase1Window invariants (runs: 24, calls: 1920, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | book               | 178   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buy                | 115   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 97    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoinNoBook      | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredit          | 103   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredits         | 63    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 43    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeChosen      | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 49    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | creditSettings     | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 54    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 54    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 49    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 59    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 62    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 54    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 49    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 118   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setHeldFormat      | 58    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 52    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 41    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 61    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 102   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14325772)
+[PASS] test_composeChosenComposesAPage() (gas: 13832424)
+[PASS] test_everyActionSucceeds() (gas: 215232217)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 3772219)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9440006)
+[PASS] test_startsInsideTheSniperWindow() (gas: 12918)
+[PASS] test_theBidCheckFindsASeller() (gas: 817205)
+Suite result: ok. 8 passed; 0 failed; 0 skipped; finished in 162.60s (163.76s CPU time)
+
+Ran 1 test for test/invariant/Invariants.t.sol:InvariantsPhase1WindowDeep
+[SKIP: skipped] setUp() (gas: 0)
+Suite result: ok. 0 passed; 0 failed; 1 skipped; finished in 2.01ms (0.00ns CPU time)
+
+Ran 9 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1
+[PASS]
+InvariantsSalePhase1 invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsSalePhase1 invariants (runs: 16, calls: 1280, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 30    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | book               | 97    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buy                | 68    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 41    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoinNoBook      | 21    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredit          | 69    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredits         | 32    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 37    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 29    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeChosen      | 29    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 30    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | creditSettings     | 21    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 33    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | handover           | 29    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | hostileOwner       | 22    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 28    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | lockDoor           | 23    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 36    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 32    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerSell          | 39    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | pause              | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 33    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 28    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 32    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | saleSettings       | 29    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 67    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setHeldFormat      | 27    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 28    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 27    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 25    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 34    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 64    | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14379383)
+[PASS] test_composeChosenComposesAPage() (gas: 14011299)
+[PASS] test_everyActionSucceeds() (gas: 115064436)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 3814569)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9416681)
+[PASS] test_saleActionsEverySucceed() (gas: 31924299)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 4758465)
+[PASS] test_theBidCheckFindsASeller() (gas: 850171)
+Suite result: ok. 9 passed; 0 failed; 0 skipped; finished in 108.86s (108.77s CPU time)
+
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileOwner
+[PASS]
+InvariantsHostileOwner invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsHostileOwner invariants (runs: 24, calls: 1920, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 21    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | book               | 73    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buy                | 61    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 62    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoinNoBook      | 36    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredit          | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredits         | 19    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 22    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 31    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeChosen      | 25    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 24    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 23    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | creditSettings     | 152   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 21    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 19    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 30    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 133   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 25    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 150   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 21    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | redeemStatement    | 30    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 136   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 134   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 14    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 32    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForBalance     | 22    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 52    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setHeldFormat      | 17    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 158   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 135   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 133   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 24    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 39    | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055779)
+[PASS] test_composeChosenComposesAPage() (gas: 12094351)
+[PASS] test_everyActionSucceeds() (gas: 122830777)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 3823876)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9425991)
+[PASS] test_theBidCheckFindsASeller() (gas: 850171)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 206.61s (206.72s CPU time)
+
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsPhase2
+[PASS]
+InvariantsPhase2 invariants:
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsPhase2 invariants (runs: 24, calls: 1920, reverts: 0)
+
+╭----------+--------------------+-------+---------+----------╮
+| Contract | Selector           | Calls | Reverts | Discards |
++============================================================+
+| Handler  | adopt              | 41    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | book               | 132   | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buy                | 93    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoin            | 71    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCoinNoBook      | 45    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredit          | 95    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyCredits         | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | buyback            | 48    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | compose            | 61    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | composeChosen      | 53    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSeed     | 45    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | controllerSwap     | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | creditSettings     | 41    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | donate             | 46    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingHostile     | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | listingStrategy    | 42    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | migrate            | 50    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | moduleMode         | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | ownerMisc          | 47    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | probeController    | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | redeemStatement    | 57    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | replaceModule      | 56    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | rescueNft          | 35    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | roll               | 42    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellCoin           | 44    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForBalance     | 47    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | sellForEth         | 99    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setHeldFormat      | 52    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setRate            | 51    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettings        | 62    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | setSettingsInvalid | 55    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | walletMove         | 53    | 0       | 0        |
+|----------+--------------------+-------+---------+----------|
+| Handler  | warp               | 105   | 0       | 0        |
+╰----------+--------------------+-------+---------+----------╯
+
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055779)
+[PASS] test_composeChosenComposesAPage() (gas: 12094351)
+[PASS] test_everyActionSucceeds() (gas: 122830777)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 3823876)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9425991)
+[PASS] test_theBidCheckFindsASeller() (gas: 850171)
+Suite result: ok. 7 passed; 0 failed; 0 skipped; finished in 201.64s (201.52s CPU time)
+
+Ran 115 test suites in 496.78s (1715.61s CPU time): 776 tests passed, 1 failed, 8 skipped (785 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/PostflightSlots.t.sol:PostflightSlotsTest
+[FAIL: assertion failed: 22 != 23] test_oneDivergentControllerSiteFailsPostflight() (block: 26222700) (gas: 1936322)
+
+Encountered a total of 1 failing tests, 776 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+exit 1
