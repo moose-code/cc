@@ -11,4 +11,4 @@ COPY deployments/1.json ./deployments/1.json
 ENV NODE_ENV=production
 # Arming requires an explicitly approved image change, even if the Fly environment changes.
 ENTRYPOINT ["env", "DRY_RUN=1"]
-CMD ["npm", "start", "--workspace", "keeper"]
+CMD ["sh", "-c", "umask 077; if [ -n \"${KEYSTORE:-}\" ]; then chmod 600 \"$KEYSTORE\" \"$KEYSTORE_PASSWORD_FILE\" || exit; fi; exec npm start --workspace keeper"]
