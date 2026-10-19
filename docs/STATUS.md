@@ -1,5 +1,7 @@
 # status
 
+2026-10-19 deployment wrapper repair: `6991f2d` passes upstream JSON-RPC errors from read-only Forge capability probes without an approval-gate alarm; signed-send checks are unchanged. Focused Python tests passed 9/9, a local HTTP check passed unsupported probes and blocked an unapproved send, and the clean-build mainnet preview on Tenderly passed with 11 planned deferred transactions, config hash `0xcebbae505498fb17468764f1a7d861e2758b064c00d70105a76819ef568f6a03`, and no sends. `src/`, `script/config/mainnet.json` and `foundry.toml` are unchanged since the accepted deferred-Core candidate; the freeze table candidate now names this wrapper commit while retaining the scoped prior suite, deep, rehearsal and owner acceptance evidence. Mainnet broadcast and production verification remain unproven.
+
 the baton for whoever directs this project next. read it first, then docs/SPEC.md. the authority order is AGENTS.md.
 
 ## 1. where we are
@@ -113,7 +115,7 @@ These entries predate the current candidate. Use section 1 and `docs/reviews/LAU
 
 | gate | commit | result |
 |---|---|---|
-| candidate | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
+| candidate | 6991f2d | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
 | suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
 | deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
 | e2e waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
