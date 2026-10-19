@@ -95,7 +95,7 @@ PoolManager swap sources are planned for phase 2 and are absent from the current
 | statement facts | `Composed` | Core `ratingOf(sid)` at the event block; Statements `tokenURI`; again after each `HeldFormatSet` |
 | credit sale split | `CreditSold` | `creditCostToPotBps` from the indexed setting in force at that block (the `CreditCostToPotBpsSet` history plus the deploy read); no call needed |
 
-Historical `eth_call` needs archive state. The RPC list in section 7 puts archive-capable endpoints first.
+Historical `eth_call` needs an endpoint that serves the requested state. The transport in section 7 falls through public endpoints on unavailable historical state.
 
 ## 6. schema
 
@@ -175,32 +175,24 @@ One row per Credits id the CreditStrategy has listed: `id`, `listPrice` (wei, fr
 
 ### 7.1 endpoints
 
-Ordered list. The first three serve archive state, which section 5.2 needs for historical calls.
+Public endpoints rotate for the initial attempt. A failed attempt tries the remaining publics in this cyclic order before the optional paid reserve. Historical calls require an endpoint that serves the requested state; section 7.5 records the verification criteria.
 
-1. `https://gateway.tenderly.co/public/mainnet` (Tenderly public gateway; archive; owner's preferred endpoint)
-2. `https://eth-mainnet.public.blastapi.io` (archive)
-3. `https://1rpc.io/eth` (archive)
-4. `https://ethereum-rpc.publicnode.com` (recent state, logs)
-5. `https://eth.drpc.org` (logs, head)
-6. `https://rpc.mevblocker.io` (head)
-7. optional paid endpoint from `PONDER_RPC_URL_1`, appended last as a reserve; it is used only when every public endpoint fails
+1. `https://gateway.tenderly.co/public/mainnet`: 8 requests per second
+2. `https://eth-mainnet.public.blastapi.io`: 8 requests per second
+3. `https://1rpc.io/eth`: 5 requests per second
+4. `https://ethereum-rpc.publicnode.com`: 10 requests per second
+5. `https://eth.drpc.org`: 5 requests per second
+6. `https://rpc.mevblocker.io`: 5 requests per second
+
+`RPC_RPS` overrides these caps in list order. Optional `PONDER_RPC_URL_1` is used only after all six public endpoints fail for a request; it does not participate in the initial rotation. Its cap is `RPC_RPS_RESERVE`, default 10 requests per second.
 
 ### 7.2 transport
 
-```ts
-// each endpoint: own rate cap, malformed-response guard, short timeout
-const endpoint = (url: string, rps: number) =>
-  rateLimit(guardedHttp(url), { requestsPerSecond: rps, browser: false });
+`src/lib/rpc.ts` uses Ponder `loadBalance` over cyclic viem fallback chains. One concrete transport and round-robin cursor are cached across client constructors. Each physical endpoint has one shared Ponder `rateLimit` queue, including when concurrent requests reach it through different fallback chains.
 
-rpc: fallback(
-  [endpoint(TENDERLY, 8), endpoint(BLAST, 8), endpoint(ONERPC, 5), endpoint(PUBLICNODE, 10), endpoint(DRPC, 5), endpoint(MEVBLOCKER, 5)],
-  { rank: false, retryCount: 0 },
-)
-```
+HTTP attempts use a 20-second timeout and no automatic retries. The rate limiter, fallback and load balancer also disable retries, so one physical attempt consumes one endpoint request slot. Fallback ranking is disabled.
 
-`guardedHttp` is the artcoins wrapper (`artcoins-v2-site/indexer/ponder.config.ts:118-148`): `http(url, { timeout: 20_000, retryCount: 2 })` that throws on a malformed `eth_getLogs` response, so the fallback moves on. Extend it to throw on archive errors (`missing trie node`, `header not found`) so a pruned endpoint hands a historical call to the next one.
-
-Rate caps start at the values above and are tuned by measurement (7.5). Tenderly publishes 10 units per second for its free account plan and documents no limit for the public gateway, so 8 requests per second is the starting cap.
+`guardedHttp` rejects malformed `eth_getLogs` results and converts pruned-state and availability errors to errors that allow fallback. Deterministic execution reverts stop immediately without trying another public or the reserve. Request counts, non-revert errors and the latest error per host are available at `/health/rpc`; failures are also logged.
 
 ### 7.3 chain options
 
@@ -213,9 +205,11 @@ Rate caps start at the values above and are tuned by measurement (7.5). Tenderly
 
 ### 7.4 budget
 
-Steady state, per 12 s block: one `eth_getBlockByNumber`, one `eth_getLogs` per log source (8 sources), plus one multicall on blocks with engine events. About 0.8 requests per second, under 10 % of the combined caps.
+Traffic depends on historical event density, block fetching, metadata reads and provider failures. Core sources start at the recorded deployment block; collection and strategy histories start earlier at their own configured blocks. Ponder persists its RPC cache in Postgres, but a new schema can still require handler work and uncached reads.
 
-Backfill: the engine's history starts at its deploy block, so its sources cost about one request per 5000 blocks per source. The two collection sources start at their deploy blocks; at 5000 blocks per request a year of history is about 530 requests per source. Credit facts cost two to four calls per credit, once, batched through Multicall3. Interval snapshots cost one call per 300 blocks. A first backfill finishes in minutes at the caps; every later reindex reads from the RPC cache.
+When a Credits Transfer introduces a missing token, the handler reads that block's collection Transfer logs, validates their collection, block hash and topics, and hydrates only the current token's deterministic group of at most 64 unique ids. Existing rows are skipped. Missing facts use three Multicall3 stages: immutable seed/time, immutable score/traits, and event-block tokenURI/owner. The client may split a stage into multiple wire requests. Ordered event handlers still apply ownership and state changes; batching does not advance them to a later block.
+
+Measure backfill progress from completed handlers and historical checkpoints as well as fetched blocks. Fetch-cache progress alone does not prove that indexed rows have caught up. Backfill duration and sustained throughput remain unproven until measured on the production history; `/ready` must report completion before serving it as caught up.
 
 ### 7.5 verification before launch
 
