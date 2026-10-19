@@ -23,7 +23,6 @@ const SCENARIOS = [
   { id: 'sc-credit', label: 'credit sale window on', set: { creditSaleOn: true } },
   { id: 'sc-credit24', label: 'credit sale window 24 hours, composer picks the richest', set: { creditSaleOn: true, creditWindowHours: 24, chosenComposeOn: true, composeChoice: 'richest' } },
   { id: 'sc-credit-day', label: 'credit sale window on from day 10', set: { chgOn: true, chgDay: 10, chgKey: 'creditSaleOn', chgValue: 1 } },
-  { id: 'sc-ref', label: 'refScore 350 points', set: { refScore: 3500000 } },
   { id: 'sc-noimp', label: 'engine never moves the market', set: { impactElast: 0 } },
 ];
 function applyScenario(sc) { state = Object.assign({}, BASE_STATE, sc.set); syncControls(); run(); }

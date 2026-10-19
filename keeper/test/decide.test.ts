@@ -69,6 +69,10 @@ function state(over: Partial<State> = {}): State {
     referenceTime: 0n,
     referenceMaxStale: 0n,
     referenceMinSeconds: 600n,
+    // a pool that reads and a quote whose move clears one bps at the cadence (100 * 600 / 3600 = 16 bps)
+    spot: parseEther("0.5"),
+    referenceRateBpsPerHour: 100n,
+    referenceStepBps: 1_000n,
     ...over,
   };
 }
@@ -262,6 +266,32 @@ test("refreshReference: due referenceMinSeconds after the last sample, never bef
   assert.match(reason(unpaid, "refreshReference"), /unprofitable/);
   const high = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("4"), p, new Map());
   assert.match(reason(high, "refreshReference"), /above the door ceiling/);
+});
+
+// promise: the keeper never sends a refresh the controller answers false to, which the Core door runs unpaid: no pool
+// spot (the pool key unset, on another token or uninitialized), a zero rate or step, or a move that floors to zero at the
+// elapsed time (rate 5 bps per hour at the 600 s cadence moves 5 * 600 / 3600 = 0 bps until 720 s)
+test("refreshReference: no spot, a zero rate or step, or a move that floors to zero is skipped, not sent unpaid", () => {
+  const p = policy();
+  const base = { referencePrice: 49n * 10n ** 16n, referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n, timestamp: 4_600n };
+  assert.deepEqual(doorsOf(decide(state(base), [], gas("1"), p, new Map())), ["refreshReference"], "the usable quote refreshes");
+  const noSpot = decide(state({ ...base, spot: 0n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(noSpot), []);
+  assert.match(reason(noSpot, "refreshReference"), /no spot: .* unpaid/);
+  const noStep = decide(state({ ...base, referenceStepBps: 0n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(noStep), []);
+  assert.match(reason(noStep, "refreshReference"), /referenceStepBps 0 .* never moves/);
+  const noRate = decide(state({ ...base, referenceRateBpsPerHour: 0n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(noRate), []);
+  assert.match(reason(noRate, "refreshReference"), /referenceRateBpsPerHour 0: the reference never moves/);
+  // rate 5: 5 * 600 / 3600 floors to 0 at 600 s, the first bps clears at 720 s
+  const slow = decide(state({ ...base, referenceRateBpsPerHour: 5n }), [], gas("1"), p, new Map());
+  assert.deepEqual(doorsOf(slow), []);
+  assert.match(reason(slow, "refreshReference"), /moves 0 bps at 600 s elapsed \(5 bps per hour\), first move at 4720/);
+  assert.equal(refreshReferenceDue(state({ ...base, referenceRateBpsPerHour: 5n, timestamp: 4_719n })).ok, false);
+  assert.equal(refreshReferenceDue(state({ ...base, referenceRateBpsPerHour: 5n, timestamp: 4_720n })).ok, true);
+  // a sample taken in the keeper's own block: elapsed 0, move 0 (the controller's once per block guard is private)
+  assert.equal(refreshReferenceDue(state({ ...base, referenceTime: 4_600n, referenceMinSeconds: 0n })).ok, false);
 });
 
 // promise: a refresh with only unbooked hook income is projected as paid from the pot share, matching the Core's

@@ -1,7 +1,7 @@
 // The executor: one call at a time. Each decided call is simulated (eth_estimateGas from the keeper, which runs the
-// call) at the latest block, rechecked against the profit rule at the measured gas, checked against the day's budget,
-// then signed and sent through the private relays in order, and its receipt is awaited before anything else is sent.
-// A dry run stops after the recheck and logs the call it would send.
+// call) at the latest block with the fee fields the transaction will carry, rechecked against the profit rule at the
+// measured gas, checked against the day's budget, then signed and sent through the private relays in order, and its
+// receipt is awaited before anything else is sent. A dry run stops after the recheck and logs the call it would send.
 
 import {
   createPublicClient,
@@ -65,11 +65,15 @@ export class Executor {
     if (this.breaker.paused(c.door)) return { kind: "skipped", reason: `door paused by the breaker until ${new Date(this.breaker.pausedUntil(c.door)!).toISOString()}` };
     const to = c.target === "controller" ? s.controller : this.cfg.record.core;
     const data = this.data(c);
+    const pol = this.policy.doors[c.door];
+    // the fee fields of the transaction, also given to the simulation: without them the node simulates at
+    // tx.gasprice 0, which a hostile offerer contract can read to pass the simulation and revert when included
+    const fees = { maxFeePerGas: pol.maxBaseFee + pol.tip, maxPriorityFeePerGas: pol.tip };
 
     // simulation: the node runs the call from the keeper at the latest block
     let gasUsed: bigint;
     try {
-      gasUsed = await this.client.estimateGas({ account: this.signer.address, to, data });
+      gasUsed = await this.client.estimateGas({ account: this.signer.address, to, data, ...fees });
     } catch (e) {
       // the purchase budget refills with the next bucket: a wait, not a listing fault
       if (revertName(e) === "SpendCapReached") return { kind: "skipped", reason: "SpendCapReached: waiting for the next bucket" };
@@ -98,13 +102,11 @@ export class Executor {
       return { kind: "skipped", reason: "daily budget exhausted" };
     }
 
-    const pol = this.policy.doors[c.door];
     const tx = {
       to,
       data,
       gas: (gasUsed * GAS_BUFFER_BPS + 9_999n) / 10_000n,
-      maxFeePerGas: pol.maxBaseFee + pol.tip,
-      maxPriorityFeePerGas: pol.tip,
+      ...fees,
     };
     const before = await this.client.getBalance({ address: this.signer.address });
     let hash: Hex;

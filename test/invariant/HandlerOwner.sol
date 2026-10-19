@@ -79,6 +79,17 @@ abstract contract HandlerOwner is HandlerBase {
         s.balanceBidCapBps = uint32(_f(_r(seed, 46), 10_000, 30_000, c.balanceBidCapBps));
         s.idleStepSeconds = uint32(_f(_r(seed, 47), 1, 3600, c.idleStepSeconds));
         s.sniperSeconds = uint32(_f(_r(seed, 48), 0, 3600, c.sniperSeconds));
+        // the launch mechanisms of decisions 155, 163 and 164: the artist royalty, the balance discount, the return
+        // lock and the reserve, over their bounds (the Core bounds the first two; a day and an ether are the operating
+        // ranges of the other two). without them the first setSettings of a run writes all four to zero for the rest
+        // of the campaign
+        s.buyToArtistBps = uint16(_f(_r(seed, 49), 0, 1_000, c.buyToArtistBps));
+        s.balanceDiscountBps = uint16(_f(_r(seed, 50), 0, 9_999, c.balanceDiscountBps));
+        s.returnLockSeconds = uint32(_f(_r(seed, 51), 0, 1 days, c.returnLockSeconds));
+        s.reserveWei = uint64(_f(_r(seed, 52), 0, 1 ether, c.reserveWei));
+        // the value switch stays as set: the handler's bid model (test/utils/BidModel.sol) prices mode off only, so a
+        // fuzzed switch would flag the model, not the Core. the value mode suites set it themselves
+        s.valueModeOn = c.valueModeOn;
         _corner(s, corner);
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
@@ -93,7 +104,7 @@ abstract contract HandlerOwner is HandlerBase {
     /// the extreme corners the brief names, forced on top of the random settings
     function _corner(Settings memory s, uint256 k) internal pure {
         // forge-lint: disable-start(unsafe-typecast)
-        k = k % 20;
+        k = k % 21;
         if (k == 1) {
             s.rateCap = uint64(RATE_START_MAX_WEI);
         } else if (k == 2) {
@@ -155,6 +166,13 @@ abstract contract HandlerOwner is HandlerBase {
             // the whole fee stream to the redeem burn reserve and the full per redemption release
             s.feeToRedeemBurnBps = 10_000;
             s.redeemBurnBps = 10_000;
+        } else if (k == 20) {
+            // the launch values of the four launch mechanisms (Mainnet.defaultSettings), so every campaign also runs
+            // the configuration that ships
+            s.buyToArtistBps = 250;
+            s.balanceDiscountBps = 1_000;
+            s.returnLockSeconds = 21_600;
+            s.reserveWei = 0.1 ether;
         }
         // forge-lint: disable-end(unsafe-typecast)
     }
@@ -287,6 +305,10 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.bucketSeconds < 1) return "bucketSeconds";
         if (s.balanceBidCapBps < 10_000) return "balanceBidCapBps";
         if (s.idleStepSeconds < 1) return "idleStepSeconds";
+        if (s.buyToArtistBps > 1_000) return "buyToArtistBps";
+        // a 10,000 discount pays zero on every balance fill
+        if (s.balanceDiscountBps > 9_999) return "balanceDiscountBps";
+        // returnLockSeconds, reserveWei and valueModeOn are unbounded in the Core
         return bytes32(0);
     }
 

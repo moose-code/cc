@@ -18,7 +18,7 @@ The browser source is `page.ui1.js` through `page.ui4.js`, `page.body.html`, and
 
 ## Spend cap and timing
 
-At launch, `spendCapBps` is 100 and `bucketSeconds` is 60: ETH purchases, including listing keeper payment, share 1% of the opening buying pot per fixed bucket. The snapshot begins with the first successful purchase and excludes separate reserves. New deposits do not increase an active bucket's snapshot. The first purchase of a bucket always passes whatever its cost, and later purchases need spent plus cost at or below the budget. Exact equality is accepted. A failed purchase or ETH batch restores its previous state.
+At launch, `spendCapBps` is 10,000 (decision 146: the cap is not enforced) and `bucketSeconds` is 60. Under a cap, ETH purchases, including listing keeper payment, share that share of the opening buying pot per fixed bucket. The snapshot begins with the first successful purchase and excludes separate reserves. New deposits do not increase an active bucket's snapshot. The first purchase of a bucket always passes whatever its cost, and later purchases need spent plus cost at or below the budget. Exact equality is accepted. A failed purchase or ETH batch restores its previous state.
 
 10,000 bps bypasses enforcement while purchases continue to count. Cap edits retain used spending and reprice against the original snapshot. Duration edits retain active spending and both bid instances' active drop floors; expired floors restart on the next fill. Balance purchases are outside this ETH budget.
 

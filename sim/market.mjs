@@ -9,15 +9,17 @@ const DATA = new URL('./data/', import.meta.url).pathname;
 const OUT = new URL('./out/', import.meta.url).pathname;
 const rd = (f) => JSON.parse(fs.readFileSync(DATA + f, 'utf8'));
 
-// ---- the real board (market model 1). score of an id = bidOf / ethRate * (refScore / 1e4), the inverse of the per-credit bid
-const REFSCORE = 4330000;
+// ---- the real board (market model 1). score of an id in points = bidOf / ethRate * (REF_PTS / 1e4), the inverse of the
+// per-credit bid at the time of the board read, when the reference credit was 433 points (4,330,000 score units; the
+// rate was wei per such a credit, decision 145 made it wei per 100 points). the live state below is in the same units
+const REF_PTS = 4330000;
 const BOARD_RAW = rd('board_raw.json').listings;
 const READS = rd('reads_board.json');
 const STRAT_READS = rd('strategy_reads.json');
 const SUMMARY = rd('summary.json');
 const ER = READS.ethRate; // 0.0169 eth, the rate the scores were read at
 const scoreOf = new Map();
-READS.ids.forEach((id, i) => scoreOf.set(String(id), (READS.bid[i] / ER) * (REFSCORE / 1e4)));
+READS.ids.forEach((id, i) => scoreOf.set(String(id), (READS.bid[i] / ER) * (REF_PTS / 1e4)));
 // the census deciles fill the score of a listing with no on-chain read (4 percent of the board)
 const CEN = Object.values(SUMMARY.score_distribution_points.all_credits_ever_minted_122154_full_census.deciles);
 const censusScore = (rng) => CEN[Math.min(CEN.length - 1, Math.floor(rng() * CEN.length))];
@@ -39,7 +41,7 @@ function buildBoard(rng) {
   for (const id of Object.keys(STRAT_READS.price)) {
     const b = STRAT_READS.bid[id];
     if (!b) continue;
-    const pts = (b / ER) * (REFSCORE / 1e4), ask = Number(STRAT_READS.price[id]) / 1e18;
+    const pts = (b / ER) * (REF_PTS / 1e4), ask = Number(STRAT_READS.price[id]) / 1e18;
     if (!(pts > 0) || !(ask > 0)) continue;
     strat.push({ ask, pts, need: ask / sr(pts) });
   }
@@ -70,8 +72,8 @@ const sr = (pts) => (pts * 1e4) / RATE_SCORE; // score over 100 points: the rate
 export function runMarket(o) {
   const rng = mulberry32(o.seed);
   const p = Object.assign({}, DEFAULTS, {
-    // RATE0 is the live rate per reference credit; the rate is wei per 100 points
-    rateStart: (RATE0 * RATE_SCORE) / REFSCORE, rateCap: (3 * RATE0 * RATE_SCORE) / REFSCORE, days: 30, stepSec: 60,
+    // RATE0 is the live rate per reference credit of REF_PTS; the rate is wei per 100 points
+    rateStart: (RATE0 * RATE_SCORE) / REF_PTS, rateCap: (3 * RATE0 * RATE_SCORE) / REF_PTS, days: 30, stepSec: 60,
     climbPerMin: o.climbPerMin, recoveryClimbPerMin: o.recoveryClimbPerMin ?? DEFAULTS.recoveryClimbPerMin, idleLoosenPct: o.idleLoosenPct,
     multiplierCap: o.multiplierCap, hourlyBound: o.hourlyBound,
   });
@@ -272,7 +274,8 @@ export function runSpendCapStudy() {
       let filled = 0;
       for (;;) {
         const bid = core.ethRate(t + offset) / W;
-        const index = inventory.findIndex((score) => bid * score * 1e4 / core.s.refScore >= askAt(t));
+        // the per point rule (decision 145): a credit of `pts` points is paid the rate times pts * 1e4 / RATE_SCORE
+        const index = inventory.findIndex((pts) => bid * pts * 1e4 / RATE_SCORE >= askAt(t));
         if (index < 0) { if (!filled) unmarketableBlocks++; break; }
         const paid = core.sellForEth(t + offset, inventory[index]);
         if (!(paid > 0)) { budgetStallBlocks++; break; }

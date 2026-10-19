@@ -75,8 +75,10 @@ export interface State {
   atFloor: bigint[];
   // the value switch: the controller, the Core's valueModeOn, whether the controller's value quote is unusable now
   // (in value mode the eth bid then reads 0 and buyListing reverts NoQuote, so the sweep is skipped), the
-  // controller's reference sample time (0 before the pool key), the reference staleness bound (0 is never usable) and
-  // the least seconds between two refreshes
+  // controller's reference sample time (0 before the pool key), the reference staleness bound (0 is never usable),
+  // the least seconds between two refreshes, the pool spot the refresh moves the reference toward (0 when the
+  // controller's spotPrice() is not ok: no pool key, a pool key on another token, an uninitialized pool) and the
+  // rate and step of a refresh in bps
   controller: Address;
   valueModeOn: boolean;
   noQuote: boolean;
@@ -84,6 +86,9 @@ export interface State {
   referenceTime: bigint;
   referenceMaxStale: bigint;
   referenceMinSeconds: bigint;
+  spot: bigint;
+  referenceRateBpsPerHour: bigint;
+  referenceStepBps: bigint;
 }
 
 export interface Listing {
@@ -226,16 +231,31 @@ export function observe(seen: ReadonlyMap<string, bigint>, sweepable: string[], 
   return next;
 }
 
-// whether a reference refresh is due: the controller holds a reference (the pool key is set), the reference can be
-// usable (referenceMaxStale nonzero), and referenceMinSeconds has passed since the last sample. the contract gates the
-// refresh at referenceMinSeconds, so a call before then does nothing. referenceMinSeconds is the cadence that produces a
-// full step (step / rate), so one call per cadence both tracks the market and keeps the reference fresh
+// whether a reference refresh runs: every condition of ControllerV1.refreshReference the keeper can read at its block.
+// the Core door pays only when the controller returns true, and the controller returns false (the door then costs the
+// keeper its gas and pays nothing) when the pool key is not set (referencePrice 0), referenceMaxStale is 0,
+// referenceMinSeconds has not passed since the last sample, the pool spot does not read (no pool key, a pool key on
+// another token, an uninitialized pool, a spot of 0), or the move `rate * elapsed / 1 hour`, clamped to the step,
+// floors to 0 bps. the elapsed time is taken at the keeper's block: the transaction lands later, so a move that is
+// nonzero here is nonzero on chain. the controller's once per block guard (lastRefreshBlock, private) is not readable;
+// a refresh in the keeper's block leaves elapsed 0 and move 0, so this gate covers it, and a later block is a new block.
+// referenceMinSeconds is the cadence that produces a full step (step / rate), so one call per cadence both tracks the
+// market and keeps the reference fresh
 export function refreshReferenceDue(s: State): { ok: boolean; reason: string } {
   if (s.referencePrice === 0n) return { ok: false, reason: "no reference: the balance pool key is not set" };
   if (s.referenceMaxStale === 0n) return { ok: false, reason: "referenceMaxStale is 0, the reference is never usable" };
   const due = s.referenceTime + s.referenceMinSeconds;
   if (s.timestamp < due) return { ok: false, reason: `reference sampled at ${s.referenceTime}, next refresh at ${due}` };
-  return { ok: true, reason: "referenceMinSeconds since the last sample" };
+  if (s.spot === 0n) return { ok: false, reason: "no spot: the controller reads no pool price for the balance token, a refresh would run unpaid" };
+  if (s.referenceStepBps === 0n || s.referenceRateBpsPerHour === 0n) return { ok: false, reason: `referenceStepBps ${s.referenceStepBps} and referenceRateBpsPerHour ${s.referenceRateBpsPerHour}: the reference never moves, a refresh would run unpaid` };
+  const elapsed = s.timestamp - s.referenceTime;
+  const move = (s.referenceRateBpsPerHour * elapsed) / 3_600n;
+  if (move === 0n) {
+    // the first second at which rate * elapsed reaches one bps
+    const at = s.referenceTime + (3_600n + s.referenceRateBpsPerHour - 1n) / s.referenceRateBpsPerHour;
+    return { ok: false, reason: `the reference moves 0 bps at ${elapsed} s elapsed (${s.referenceRateBpsPerHour} bps per hour), first move at ${at}` };
+  }
+  return { ok: true, reason: "referenceMinSeconds since the last sample, a spot reads and the move is at least one bps" };
 }
 
 // every call the keeper would make at this state, in priority order: buyListing (best gap first), buyback, compose,

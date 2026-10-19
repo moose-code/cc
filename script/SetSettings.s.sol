@@ -44,9 +44,6 @@ contract SetSettings is Script {
     /// @dev the signer is not the Core owner
     error NotOwner(address owner, address signer);
 
-    string internal constant TUPLE =
-        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool)";
-
     struct ControllerChanges {
         Sale sale;
         CreditSale credit;
@@ -68,7 +65,13 @@ contract SetSettings is Script {
         console.logBytes(abi.encodeCall(ICoreOwner.setSettings, (next)));
         console.log(
             string.concat(
-                "cast send ", vm.toString(address(core)), " \"setSettings(", TUPLE, ")\" \"", _tuple(next), "\""
+                "cast send ",
+                vm.toString(address(core)),
+                " \"setSettings(",
+                SettingsFields.TUPLE,
+                ")\" \"",
+                _tuple(next),
+                "\""
             )
         );
         if (!settingsChanged) console.log("the settings are unchanged, setSettings is not needed");
@@ -312,13 +315,13 @@ contract SetSettings is Script {
         }
     }
 
-    /// @dev the struct as the tuple literal `cast send` takes
+    /// @dev the struct as the tuple literal `cast send` takes: every bool as true or false, the rest as decimals
     function _tuple(Settings memory s) internal pure returns (string memory out) {
         out = "(";
         for (uint256 i; i < SettingsFields.N; ++i) {
             uint256 v = SettingsFields.get(s, i);
             out = string.concat(
-                out, i == 0 ? "" : ",", i == 11 || i == 12 ? (v == 1 ? "true" : "false") : vm.toString(v)
+                out, i == 0 ? "" : ",", SettingsFields.isBool(i) ? (v == 1 ? "true" : "false") : vm.toString(v)
             );
         }
         out = string.concat(out, ")");

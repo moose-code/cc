@@ -18,6 +18,9 @@ import { log, safeError } from "./log.ts";
 
 // a listing whose simulation reverted waits this long before it is tried again
 const LISTING_COOLDOWN_SEC = 300;
+// a listing whose transaction reverted on chain waits this long: its simulation passed, so the offerer (or the bid)
+// differs between the simulated block and the inclusion block, and the next simulation would pass again
+const REVERTED_LISTING_COOLDOWN_SEC = 3_600;
 // the head is polled this often; a tick runs per new block, or per TICK_MS while the head holds
 const HEAD_POLL_MS = 4_000;
 // the same skip reason of a door is logged again after this long
@@ -51,6 +54,16 @@ function makeSigner(cfg: Config): Signer {
   }
   if (s.kind === "impersonate") return { address: s.address, impersonate: true };
   return { address: s.address };
+}
+
+// the cooldown a listing earns from the outcome of its sweep: a failed simulation or send cools it for
+// LISTING_COOLDOWN_SEC, an on chain revert for REVERTED_LISTING_COOLDOWN_SEC, anything else none. without the second
+// rule a listing that simulates clean and reverts when included is sent again every tick until the breaker trips, and
+// blocks every other sweep in between (one transaction per tick)
+export function listingCooldownSec(outcome: Outcome): number | undefined {
+  if (outcome.kind === "failed") return LISTING_COOLDOWN_SEC;
+  if (outcome.kind === "sent" && outcome.status === "reverted") return REVERTED_LISTING_COOLDOWN_SEC;
+  return undefined;
 }
 
 export interface TickResult {
@@ -117,7 +130,8 @@ export class Keeper {
       const outcome = await this.exec.run(c, state, listing);
       outcomes.push({ door: c.door, key: c.key, outcome });
       if (outcome.kind === "failed" || outcome.kind === "skipped") log("info", "not sent", { block: state.blockNumber, door: c.door, key: c.key, reason: outcome.reason });
-      if (outcome.kind === "failed" && listing) this.sources.coolDown(`${listing.venue}:${listing.id}`, LISTING_COOLDOWN_SEC);
+      const cooldown = listingCooldownSec(outcome);
+      if (cooldown !== undefined && listing) this.sources.coolDown(`${listing.venue}:${listing.id}`, cooldown);
       // one transaction per tick: the next decision reads the state after it
       if (outcome.kind === "sent") {
         if (c.door === "book") this.lastBookAt = state.timestamp;

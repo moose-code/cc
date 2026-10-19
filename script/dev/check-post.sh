@@ -69,7 +69,8 @@ check "the token runtime hash equals the pinned hash (immutables masked)" \
   "$([ "$(lc "$GOT_HASH")" = "$(lc "$WANT_HASH")" ] && echo 1 || echo 0)" "got $GOT_HASH"
 
 # 3. redeem and balance bid are on (settings struct, redeemOn and balanceBidOn, tuple indices 11 and 12)
-SIG='settings()((uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool))'
+# the 39 field Settings tuple of src/interfaces/Interfaces.sol (script/SettingsFields.sol TUPLE, pinned by test/SettingsTuple.t.sol)
+SIG='settings()((uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool,uint16,uint16))'
 SETTINGS_JSON="$(cast call "$CORE" "$SIG" --json --rpc-url "$RPC")"
 REDEEM_ON="$(echo "$SETTINGS_JSON" | jq -r '.[0][11]' 2>/dev/null)"
 BALBID_ON="$(echo "$SETTINGS_JSON" | jq -r '.[0][12]' 2>/dev/null)"

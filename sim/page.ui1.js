@@ -23,7 +23,6 @@ const CHG = {
   creditSaleOn: { label: 'creditSaleOn (the credit sale window)', unit: '0 off, 1 on. on at launch', to: 1 },
   creditSpreadBps: { label: 'creditSpreadBps (sale spread over the bid\'s hard cap: the floor is (10000 + this) of balanceBidCapBps over the larger of cost and valueOf(score))', unit: 'bps, 0 to 65535. launch 200', to: 1000 },
   creditStartBps: { label: 'creditStartBps (credit sale start price over the floor)', unit: 'bps, 10000 to uint32 max. launch 15000', to: 20000 },
-  refScore: { label: 'refScore (per-credit score of the statement price reference)', unit: 'ten-thousandths of a point, 1 to 4294967295. launch 4330000, 433 points', to: 3500000 },
 };
 for (const [k, unit, to] of [
   ['spendCapBps', 'bps, 1 to 10000; 10000 bypasses enforcement', 10000],
@@ -75,7 +74,6 @@ const GROUPS = [
     { k: 'pauseDays', t: 'range', label: 'for how many days', min: 1, max: 60, step: 1, fmt: (v) => v + 'd', hint: 'a buy reverts while paused, the price clock stops, composing, the bid, redemptions and buybacks run on' },
   ] },
   { title: 'statement price reference and chosen composition', open: false, ctl: [
-    { k: 'refScore', t: 'range', label: 'refScore, per-credit score of the reference', min: 1000000, max: 8000000, step: 100000, fmt: (v) => fmtN(v / 1e4) + ' points', hint: 'a statement references its cost, scaled by its rating over 80 times this score when richer. the curve, its floor and the anchor are fractions of the reference. launch 433 points (4,330,000, ten-thousandths of a point)' },
     { k: 'chosenComposeOn', t: 'check', label: 'chosen composition open (chosenComposeOn)', hint: 'a caller names the 80 credits and the format of a statement (composeChosen). off at launch' },
     { k: 'composeChoice', t: 'select', label: 'what the composer names while it is open', opts: [['oldest', 'the 80 oldest, as compose() does'], ['richest', 'the 80 highest scoring credits past their window']] },
   ] },
@@ -140,7 +138,6 @@ const WIDE_UNITS = {
   startCapBps: 'markupBps to 4294967295 bps.', decayHours: '1 to 65535 hours.',
   saleFloorBps: '0 to 65535 bps, at most markupBps.',
   anchorHalfLifeDays: '1 second to 4294967295 seconds, entered in days.', anchorMinCost: '0 to uint128 max wei, entered in ETH. Number precision applies.',
-  refScore: '1 to 4294967295 stored score units. 10000 units equal one point.',
   creditWindowHours: '1 to 4294967295 seconds, entered in hours.', creditSpreadBps: '0 to 65535 bps.', creditStartBps: '10000 to 4294967295 bps.',
   dropPerCreditPct: '0.01 to 100 percent, equivalent to 1 to 10000 bps.', dropToPct: '0 to 100 percent. The floor applies to each bucket opening bid.',
   climbPerMin: '0.01 to 655.35 percent per minute.', ceilPct: '100 to 655.35 percent of the ceiling anchor.',
@@ -237,7 +234,7 @@ function toParams(s) {
     stepSec: s.stepSec,
     rateCap: s.rateCap, // the Core refuses a deploy with rateStart above rateCap
     creditSaleOn: !!s.creditSaleOn, creditWindow: Math.round(s.creditWindowHours * 3600), creditSpreadBps: s.creditSpreadBps, creditStartBps: s.creditStartBps, creditCostToPotBps: s.creditCostToPotBps, creditBuyersPerDay: s.creditBuyersPerDay, creditWtpMult: s.creditWtpMult,
-    refScore: Math.round(s.refScore), chosenComposeOn: !!s.chosenComposeOn, composeChoice: s.composeChoice, balancePoolMult: s.balancePoolMult,
+    chosenComposeOn: !!s.chosenComposeOn, composeChoice: s.composeChoice, balancePoolMult: s.balancePoolMult,
     balanceDay: s.balanceOn ? s.balanceDay : null, balanceDayMode: +s.balanceDayMode, xpPerPoint: s.xpPerPoint, balancePoolSet: !!s.balancePoolSet, balanceBidMarginBps: s.balanceBidMarginBps, redeemSlippageBps: s.redeemSlippageBps, redeemBurnBps: s.redeemBurnBps,
     spendCapBps: s.spendCapBps, bucketSeconds: s.bucketSeconds, balanceBidCapBps: s.balanceBidCapBps,
     idleStepSeconds: s.idleStepSeconds, sniperSeconds: s.sniperSeconds, climbMultiplierCapBps: s.climbMultiplierCapBps,

@@ -136,6 +136,10 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     referenceTime: BigInt(snap.value.referenceTime ?? 0),
     referenceMaxStale: BigInt(snap.value.quote?.referenceMaxStale ?? 0),
     referenceMinSeconds: BigInt(snap.value.quote?.referenceMinSeconds ?? 0),
+    // tolerant reads of the snapshot: a controller without them reads 0, which gates the refresh door
+    spot: snap.value.spot ?? 0n,
+    referenceRateBpsPerHour: BigInt(snap.value.quote?.referenceRateBpsPerHour ?? 0),
+    referenceStepBps: BigInt(snap.value.quote?.referenceStepBps ?? 0),
   };
   return { state, snap };
 }

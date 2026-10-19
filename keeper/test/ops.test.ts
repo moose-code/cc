@@ -12,7 +12,7 @@ import { Breaker, Ledger } from "../src/ledger.ts";
 import { decryptKeystore } from "../src/keystore.ts";
 import { insideRepo, loadConfig, OWNER, type Deployment } from "../src/config.ts";
 import { encodeBasicOrder } from "../src/listings.ts";
-import { startChecks } from "../src/main.ts";
+import { listingCooldownSec, startChecks } from "../src/main.ts";
 import { safeError, setSink } from "../src/log.ts";
 import { alert } from "../src/alert.ts";
 
@@ -43,6 +43,18 @@ test("budget: a send fits while its cost is at most the net loss left today; pay
   assert.match(readFileSync(join(dir, "ledger-2026-10-16.json"), "utf8"), /"txs":3/);
   now = Date.parse("2026-10-17T00:00:01Z");
   assert.equal(l.remaining(), parseEther("0.01"));
+});
+
+// promise: a listing whose sweep reverted on chain is cooled down like one whose simulation failed, and for longer, so
+// one hostile listing cannot make the keeper send a reverting transaction every tick and block every other sweep
+test("cooldown: a failed simulation and an on chain revert cool the listing down, a success and a dry run do not", () => {
+  const failed = listingCooldownSec({ kind: "failed", reason: "simulation reverted: AboveBid" });
+  const reverted = listingCooldownSec({ kind: "sent", hash: "0x01", status: "reverted", spent: 1n, received: 0n });
+  assert.equal(failed, 300);
+  assert.ok(reverted !== undefined && reverted > failed, "an on chain revert cools for longer than a failed simulation");
+  assert.equal(listingCooldownSec({ kind: "sent", hash: "0x02", status: "success", spent: 1n, received: 2n }), undefined);
+  assert.equal(listingCooldownSec({ kind: "dry", gas: 1n }), undefined);
+  assert.equal(listingCooldownSec({ kind: "skipped", reason: "daily budget exhausted" }), undefined);
 });
 
 test("breaker: the threshold-th consecutive failure pauses the door; a success resets the count", () => {

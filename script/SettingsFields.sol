@@ -9,6 +9,16 @@ import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI} from "../src/interface
 library SettingsFields {
     uint256 internal constant N = 39;
 
+    /// @dev the struct as a solidity tuple type, the signature `cast` takes for `setSettings` and `settings()`.
+    /// test/SettingsTuple.t.sol pins it, field by field, against the ICore abi
+    string internal constant TUPLE =
+        "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool,uint16,uint16)";
+
+    /// @dev whether field i is a bool (redeemOn, balanceBidOn, valueModeOn); the tuple literal prints those as true or false
+    function isBool(uint256 i) internal pure returns (bool) {
+        return i == 11 || i == 12 || i == 36;
+    }
+
     /// @dev field i of the settings struct, in declaration order
     function get(Settings memory s, uint256 i) internal pure returns (uint256) {
         uint256[39] memory f = [

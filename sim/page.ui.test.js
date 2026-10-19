@@ -27,7 +27,10 @@ for (const [key, value] of Object.entries(changed)) {
   assert.equal(probe.params()[key], value, key);
   assert.ok(probe.CHG[key], 'owner schedule exposes ' + key);
 }
-for (const group of probe.GROUPS) for (const control of group.ctl) if (['refScore', 'dropPerCreditPct', 'rateCap', 'creditStartBps', 'balanceBidMarginBps'].includes(control.k)) assert.equal(control.t, 'number', control.k);
+for (const group of probe.GROUPS) for (const control of group.ctl) if (['dropPerCreditPct', 'rateCap', 'creditStartBps', 'balanceBidMarginBps'].includes(control.k)) assert.equal(control.t, 'number', control.k);
+// promise: the page carries no control for refScore, a setting decision 145 removed
+for (const group of probe.GROUPS) for (const control of group.ctl) assert.notEqual(control.k, 'refScore');
+assert.equal('refScore' in probe.params(), false);
 assert.equal(ids.has('c-royaltyBps'), false);
 probe.state.bucketSeconds = 0; assert.throws(() => probe.params(), /bucketSeconds/); probe.state.bucketSeconds = 60;
 probe.state.recoveryClimbPerMin = 0.01; assert.throws(() => probe.params(), /recoveryClimbPerMin/); probe.state.recoveryClimbPerMin = engine.DEFAULTS.recoveryClimbPerMin;
