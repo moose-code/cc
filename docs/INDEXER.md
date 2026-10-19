@@ -6,7 +6,7 @@ This document is the data contract between the chain, the indexer and the web ap
 
 ## 1. goals
 
-1. The web reads history, lists, counts and slow-moving state from one indexed database. The browser keeps direct chain reads only for values that change every block or every second (section 4).
+1. The web reads history, lists, counts and slow-moving state from one indexed database. The browser keeps live chain reads through the website API for values that change every block or every second (section 4).
 2. Every event from every engine contract is stored, including events no page uses today, so a new page is a new query and a full reindex is rare.
 3. The indexer runs on free public RPC endpoints, led by Tenderly's public gateway, inside a fixed request budget, with automatic failover.
 4. One deploy path for local, testnet and mainnet, driven by the deployment record (`deployments/<chainId>.json`).
@@ -175,7 +175,7 @@ One row per Credits id the CreditStrategy has listed: `id`, `listPrice` (wei, fr
 
 ### 7.1 endpoints
 
-Tenderly is always the first attempt. A failed attempt tries the remaining public endpoints in this fixed order before the optional paid reserve. Historical calls require an endpoint that serves the requested state; section 7.5 records the verification criteria.
+Tenderly is always the first attempt. When `RPC_FAST_FALLBACK_URL` is set to an operator-authorized Alchemy mainnet endpoint, it is the first fallback, capped at four physical requests per second. The remaining public endpoints keep this fixed order before the optional paid reserve. Historical calls require an endpoint that serves the requested state; section 7.5 records the verification criteria.
 
 1. `https://gateway.tenderly.co/public/mainnet`: 4 requests per second, one active request
 2. `https://eth-mainnet.public.blastapi.io`: 8 requests per second
@@ -184,15 +184,15 @@ Tenderly is always the first attempt. A failed attempt tries the remaining publi
 5. `https://eth.drpc.org`: 5 requests per second
 6. `https://rpc.mevblocker.io`: 5 requests per second
 
-`RPC_RPS` overrides these caps in list order. Optional `PONDER_RPC_URL_1` is used only after all six public endpoints fail for a request; it receives no request while any earlier public endpoint serves it. Its cap is `RPC_RPS_RESERVE`, default 10 requests per second.
+`RPC_RPS` overrides these public caps in list order. The Alchemy URL stays in the Fly secret store; `RPC_RPS_FAST_FALLBACK` may lower its cap from four. Optional `PONDER_RPC_URL_1` is used only after all six public endpoints fail for a request; it receives no request while any earlier public endpoint serves it. Its cap is `RPC_RPS_RESERVE`, default 10 requests per second.
 
 ### 7.2 transport
 
 `src/lib/rpc.ts` uses a fixed ordered viem fallback. One concrete transport is cached across client constructors. Each physical endpoint has one shared Ponder `rateLimit` queue, so concurrent constructors cannot reset its quota. Tenderly receives every initial attempt; healthy primary traffic never falls through. At the configured 4 RPS, the Ponder limiter permits one active Tenderly attempt.
 
-HTTP attempts have an independent 20-second rejection deadline, request abort on expiry and no automatic retries. The deadline starts after the rate limiter dequeues the physical attempt, so queued waiting is not charged as an RPC attempt. The rate limiter, fallback and load balancer also disable retries, so one physical attempt consumes one endpoint request slot. Fallback ranking is disabled.
+HTTP attempts have an independent 20-second rejection deadline, request abort on expiry and no automatic retries. The deadline starts after the rate limiter dequeues the physical attempt, so queued waiting is not charged as an RPC attempt. The rate limiter and fallback also disable retries, so one physical attempt consumes one endpoint request slot. Fallback ranking is disabled.
 
-`guardedHttp` rejects malformed `eth_getLogs` results and converts pruned-state and availability errors to errors that allow fallback. Deterministic execution reverts stop immediately without trying another public or the reserve. Request counts, non-revert errors, queued/active attempts and the last start/settlement times per host are available at `/health/rpc`; failures are also logged.
+`guardedHttp` rejects malformed `eth_getLogs` results and converts pruned-state and availability errors to errors that allow fallback. Deterministic execution reverts stop immediately without trying another public or the reserve. The final config transport rebuilds errors without the original credential-bearing URL or cause before Ponder can log them. Request counts, non-revert errors, queued/active attempts and the last start/settlement times per host are available at `/health/rpc`; failures are also logged.
 
 ### 7.3 chain options
 
