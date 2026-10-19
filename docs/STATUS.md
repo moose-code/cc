@@ -1,5 +1,7 @@
 # status
 
+2026-10-19 deployment terminal update: `0e78f34` keeps the existing deferred-Core deployment and signed transaction gate while showing the exact config, concise 11-step gas summary, one terminal keystore password prompt, each transaction's plain-English effect and cost ceiling, and a checked receipt before the next prompt. Successful Forge logs are hidden; failure diagnostics remain visible. Focused Python checks passed 13/13, shell syntax and diff checks passed. A no-send Tenderly mainnet preview passed with 11 planned transactions, 25,871,671 summed dry-run gas limits, 38,807,503 maximum accepted gas limits and config hash `0xcebbae505498fb17468764f1a7d861e2758b064c00d70105a76819ef568f6a03`; it requested no password and sent no transaction. The final wrapper-only signer-check restriction was verified by focused checks after that preview. Mainnet broadcast and production verification remain unproven.
+
 2026-10-19 deployment wrapper repair: `6991f2d` passes upstream JSON-RPC errors from read-only Forge capability probes without an approval-gate alarm; signed-send checks are unchanged. Focused Python tests passed 9/9, a local HTTP check passed unsupported probes and blocked an unapproved send, and the clean-build mainnet preview on Tenderly passed with 11 planned deferred transactions, config hash `0xcebbae505498fb17468764f1a7d861e2758b064c00d70105a76819ef568f6a03`, and no sends. `src/`, `script/config/mainnet.json` and `foundry.toml` are unchanged since the accepted deferred-Core candidate; the freeze table candidate now names this wrapper commit while retaining the scoped prior suite, deep, rehearsal and owner acceptance evidence. Mainnet broadcast and production verification remain unproven.
 
 the baton for whoever directs this project next. read it first, then docs/SPEC.md. the authority order is AGENTS.md.
@@ -115,7 +117,7 @@ These entries predate the current candidate. Use section 1 and `docs/reviews/LAU
 
 | gate | commit | result |
 |---|---|---|
-| candidate | 6991f2d | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
+| candidate | 0e78f34 | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
 | suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
 | deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
 | e2e waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
