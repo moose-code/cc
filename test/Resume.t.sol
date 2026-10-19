@@ -422,6 +422,17 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         assertEq(d.coin.code.length, 0, "retirement stopped launch");
     }
 
+    // promise: a pending owner cannot take control after the signed owner launches the coin
+    function test_launchStepRefusesPendingOwnerBeforeCoinExists() public {
+        _sendLibrary();
+        Deployed memory d = this.deferExt(deployer, base);
+        vm.prank(deployer);
+        ICore(payable(d.core)).transferOwnership(makeAddr("pending owner"));
+        vm.expectRevert(abi.encodeWithSelector(ChecksFailed.selector, "deferred: no pending owner"));
+        this.launchOnlyExt(deployer, base, d.core);
+        assertEq(d.coin.code.length, 0, "pending handover stopped launch");
+    }
+
     function requireDeployerExt(address want, address got) external pure {
         _requireDeployer(want, got);
     }

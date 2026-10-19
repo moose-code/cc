@@ -63,6 +63,7 @@ abstract contract PostflightChecks is PostflightPool {
         if (core_.code.length == 0) return;
         ICore core = ICore(payable(core_));
         _postCore(c, core);
+        _check("deferred: no pending owner", core.pendingOwner() == address(0), "owner handover must be cleared before launch");
         address coin = core.COIN();
         _noCode("deferred: coin has no code", coin);
         (bool okr, bool recorded) = _bool(c.stack.factory, abi.encodeCall(IArtCoinsFactoryV2.isCoin, (coin)));
