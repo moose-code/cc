@@ -10,7 +10,9 @@ import {NewProd} from "./NewProd.sol";
 /// @notice Internal script of `script/deploy.sh RESUME=state`. The wrapper verifies the original signed config lock
 /// before invoking this script. reverts while SETTINGS_CHANGED or COIN_CHANGED is set. run it as the same deployer as the
 /// original run. CORE must be the Core address of this config and deployer. sends the contracts that have no code at
-/// their address, the owner calls and the launch that are not on chain yet. LAUNCH_ONLY=1 first requires every step before the launch on chain (`NotDeferred`). reverts when the coin is launched already. then runs postflight. the runbook is docs/RUNBOOK.md section 6
+/// their address and the missing owner calls. It checks the complete deferred state before launching the coin.
+/// LAUNCH_ONLY=1 first requires every step before the launch on chain (`NotDeferred`). It reverts when the coin is
+/// launched already. The runbook is docs/RUNBOOK.md section 6.
 contract Resume is Script, SystemResumer, NewProd {
     error ConfigLockMismatch();
 
@@ -36,11 +38,24 @@ contract Resume is Script, SystemResumer, NewProd {
         if (vm.envOr("LAUNCH_ONLY", uint256(0)) == 1) launchOnlyChecks(deployer, c, core, vm.envAddress("RECORD_TOKEN_DEPLOYER"));
         bool deferred = vm.envOr("DEFER_LAUNCH", uint256(0)) == 1;
         vm.startBroadcast();
-        Deployed memory d = deferred ? resumeSendUntilLaunch(deployer, c) : resumeSend(deployer, c);
+        Deployed memory d = resumeSendUntilLaunch(deployer, c);
         vm.stopBroadcast();
-        if (deferred) resumeDeferredPostflight(deployer, c, d);
-        else resumePostflight(deployer, c, d);
+        // A partial recovery first completes missing prelaunch steps. Check their resulting state before sending the
+        // irreversible factory launch, including controller settings and Core locks changed after the deferred run.
+        this.prelaunchGate(c, d.core, deployer);
+        if (!deferred) {
+            vm.startBroadcast();
+            _launch(c, d.coin, d.core);
+            vm.stopBroadcast();
+        }
+        // deploy.sh runs the postlaunch readback in a separate Postflight script after receipts are on chain.
         console.log("coin", d.coin);
         console.log("renderer", d.renderer);
+    }
+
+    /// @notice Checks the completed prelaunch state in a separate call so artifact reads from resumeChecks are released.
+    function prelaunchGate(LaunchConfig memory c, address core, address deployer) external {
+        postflightDeferred(c, core, deployer);
+        _require();
     }
 }

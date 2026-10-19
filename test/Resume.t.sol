@@ -5,11 +5,13 @@ import {ProdDeployer} from "./utils/ProdDeployer.sol";
 import {V2Stack} from "./utils/V2Stack.sol";
 import {Test} from "forge-std/Test.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {IArtCoinsFactoryV2, IArtCoinsTokenV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {SystemResumer} from "../script/SystemResumer.sol";
 import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
+import {CreditSale} from "../src/interfaces/Interfaces.sol";
 
 /// @notice `script/SystemResumer.sol` on the pinned fork with the live v2 stack. the deployer is the factory owner and
 /// the config owner. both libraries go through the deterministic deployer, so the tests send them there by hand
@@ -67,9 +69,12 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         resumeChecks(who, c, core);
         if (coreAbsent) vm.resumeGasMetering();
         vm.startPrank(who);
-        Deployed memory d = resumeSend(who, c);
+        Deployed memory d = resumeSendUntilLaunch(who, c);
         vm.stopPrank();
-        resumePostflight(who, c, d);
+        this.prelaunchGateExt(who, c, d);
+        vm.startPrank(who);
+        _launch(c, d.coin, d.core);
+        vm.stopPrank();
     }
 
     function _assertLaunched(address core) internal {
@@ -215,7 +220,11 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     {
         this.guardsExt(who, c, core, recordedDeployer);
         vm.startPrank(who);
-        d = resumeSend(who, c);
+        d = resumeSendUntilLaunch(who, c);
+        vm.stopPrank();
+        this.prelaunchGateExt(who, c, d);
+        vm.startPrank(who);
+        _launch(c, d.coin, d.core);
         vm.stopPrank();
     }
 
@@ -226,6 +235,10 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     function guardsExt(address who, LaunchConfig memory c, address core, address recordedDeployer) external {
         resumeChecks(who, c, core);
         launchOnlyChecks(who, c, core, recordedDeployer);
+    }
+
+    function prelaunchGateExt(address who, LaunchConfig memory c, Deployed memory d) external {
+        resumeDeferredPostflight(who, c, d);
     }
 
     /// @dev addresses, runtime code hashes and the first storage words of the system contracts and the coin
@@ -356,6 +369,34 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         // the preflight rows of the launch step refuse the same factory too
         vm.expectRevert();
         this.launchOnlyWith(deployer, base, d.core, recorded);
+    }
+
+    // promise: a deferred launch checks live controller and Core state before sending the factory launch
+    function test_launchStepRefusesChangedControllerOrCoreBeforeCoinExists() public {
+        _sendLibrary();
+        Deployed memory d = this.deferExt(deployer, base);
+        ICore k = ICore(payable(d.core));
+        IControllerV1 controller = IControllerV1(k.controller());
+        CreditSale memory changed = CreditSale({
+            saleOn: base.credit.saleOn,
+            window: base.credit.window + 1,
+            spreadBps: base.credit.spreadBps,
+            startBps: base.credit.startBps
+        });
+        vm.prank(deployer);
+        controller.setCredit(changed);
+        vm.expectRevert(abi.encodeWithSelector(ChecksFailed.selector, "controller: credit sale settings equal the config"));
+        this.launchOnlyExt(deployer, base, d.core);
+        assertEq(d.coin.code.length, 0, "controller drift stopped launch");
+
+        changed.window = base.credit.window;
+        vm.prank(deployer);
+        controller.setCredit(changed);
+        vm.prank(deployer);
+        k.lockAdapters();
+        vm.expectRevert(abi.encodeWithSelector(ChecksFailed.selector, "core: no locks, no balance module"));
+        this.launchOnlyExt(deployer, base, d.core);
+        assertEq(d.coin.code.length, 0, "Core lock stopped launch");
     }
 
     function requireDeployerExt(address want, address got) external pure {
