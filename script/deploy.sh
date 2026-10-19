@@ -287,14 +287,13 @@ if [ "$LAUNCH_ONLY" = 1 ]; then
 fi
 
 if [ "$GIT_GUARD" = 1 ]; then
-  # forge build rewrites foundry.lock and lib/solady (docs/RUNBOOK.md section 0)
-  git checkout -- foundry.lock 2>/dev/null || true
-  git submodule update -- lib/solady >/dev/null 2>&1 || true
   DIRTY="$(git status --porcelain)"
   if [ -n "$DIRTY" ]; then gitguard "the git tree is not clean: $(printf '%s' "$DIRTY" | head -3 | tr '\n' ';')"; fi
   BRANCH="$(git rev-parse --abbrev-ref HEAD)"
   if [ "$BRANCH" != main ]; then gitguard "the branch is $BRANCH, not main"; fi
-  if ! script/tools/check-freeze.sh >"$T/freeze.log" 2>&1; then
+  FREEZE_STAGE=coin
+  if [ "$DEFER_LAUNCH" = 1 ] && [ "$LAUNCH_ONLY" = 0 ]; then FREEZE_STAGE=core; fi
+  if ! script/tools/check-freeze.sh "$FREEZE_STAGE" >"$T/freeze.log" 2>&1; then
     gitguard "the freeze table is not ok: $(grep -E '^fail' "$T/freeze.log" | head -3 | tr '\n' ';')"
   fi
 fi

@@ -113,17 +113,25 @@ These entries predate the current candidate. Use section 1 and `docs/reviews/LAU
 
 ## 4. the freeze table
 
-`script/tools/check-freeze.sh` reads the one table below, the lines between this heading and the next heading of any level. the candidate row must equal `git rev-parse HEAD` (or an ancestor with only docs/ changed since), and when the candidate is frozen each gate row needs a commit and a result file that exists. the acceptance row holds `pending` until the owner signs off, and the script exits 1 with one pending line until then. The 2026-10-19 owner acceptance is scoped to deferred Core only. The e2e and final review rows are explicit waivers, not completed checks; the separate coin launch remains gated.
+`script/tools/check-freeze.sh <core|coin|services>` checks recorded evidence for one release step; no argument means coin launch. Rows name their stage and outcome explicitly. Missing, pending or failed requirements block that step. Core-only owner waivers remain waivers and grant no coin-launch or service approval. Evidence revisions must exist, and result files and this table must be committed and unchanged. The candidate must be HEAD or an ancestor with only docs/guidance changes since it.
 
-| gate | commit | result |
-|---|---|---|
-| candidate | 0e78f34 | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
-| suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
-| deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
-| e2e waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
-| rehearsal | b6f60f5 | docs/reviews/SIGNED-REHEARSAL-b6f60f5-2026-10-19.md |
-| final review waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
-| owner acceptance for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
+Re-pin the candidate after executable input changes, verify the affected delta and update affected rows; retain other evidence at its actual revision with its stated limitations. This checker validates records, not test coverage or approval authenticity. Existing reports and owner choices below are preserved. The currently pinned candidate is not advanced by this process migration, so executable changes since it still require reconciliation before deployment.
+
+| gate | commit | result | stage | outcome |
+|---|---|---|---|---|
+| candidate | 0e78f34 | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | all | pass |
+| suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md | core,coin | pass |
+| deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md | core,coin | pass |
+| e2e waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | waived |
+| rehearsal | b6f60f5 | docs/reviews/SIGNED-REHEARSAL-b6f60f5-2026-10-19.md | core,coin | pass |
+| final review waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | waived |
+| owner acceptance for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | pass |
+| e2e | pending | pending | coin | pending |
+| review | pending | pending | coin | pending |
+| acceptance | pending | pending | coin | pending |
+| services | pending | pending | coin,services | pending |
+| review | pending | pending | services | pending |
+| acceptance | pending | pending | services | pending |
 
 ### history (outside the gate)
 
@@ -161,7 +169,7 @@ the first run's two failures were fixed at the root at eab58c7 (`9fb6c65`): the 
 |---|---|
 | naming | "balance", never "exit", in code, comments, tests and docs (decision 102) |
 | tests | pinned mainnet fork against the live v2 stack (block 26,208,025; stack hashes pinned at 26,205,064). Most stateful BALANCE tests use standins; `UpstreamBalance` and `LaunchDayPhase2` deploy Jack's pinned token artifact. `StatementBalanceModule` has focused tests. Every kept test carries a `// promise:` line |
-| toolchain | foundry 1.8.1 (isolate on), solc 0.8.30. forge 1.8.1 rewrites foundry.lock and bumps lib/solady on build: `git checkout foundry.lock; git submodule update -- lib/solady` before committing. a fresh worktree needs the nested uniswap submodules: `git -C lib/v4-periphery submodule update --init lib/v4-core lib/permit2`, or an rsync of them from a checkout that has them |
+| toolchain | foundry 1.8.1 (isolate on), solc 0.8.30. Inspect any foundry.lock/submodule drift after a build; do not automatically restore files or reset existing work. a fresh worktree needs the nested uniswap submodules: `git -C lib/v4-periphery submodule update --init lib/v4-core lib/permit2`, or an rsync of them from a checkout that has them |
 | fork env | `set -a; source <a .env with MAINNET_RPC_URL and FORK_BLOCK>; set +a` before fork tests; this repo tracks only .env.example |
 | timings | clean build 3 to 4 minutes, a test file change seconds, a src/Core.sol change about 40 seconds. a test file about 10 to 60 seconds. a Deep suite 10 to 15 minutes |
 | verification | during an edit run the smallest test that covers it (`--match-path`). the full suite, the deep invariants and the rehearsal belong to the frozen candidate, marked `CANDIDATE_RUN=1`; the hook in .claude/settings.json refuses a whole suite run without it |

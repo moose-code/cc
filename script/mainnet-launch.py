@@ -472,8 +472,9 @@ def main():
     if run(["git", "status", "--porcelain"], capture=True).stdout.strip():
         raise RuntimeError("broadcast requires a clean checkout")
     if not args.local_rehearsal:
-        run(["script/tools/check-freeze.sh"], capture=True)
-        print("Release gate passed for deferred Core deployment.", flush=True)
+        stage = "coin" if args.launch_only else "core"
+        run(["script/tools/check-freeze.sh", stage], capture=True)
+        print(f"Release gate passed for {stage} deployment.", flush=True)
     if input("Type the full config hash to approve this exact dry run: ").lower() != hashes[0].lower():
         raise RuntimeError("config hash was not confirmed")
     if input("Type START to begin individual transaction confirmations: ") != "START":

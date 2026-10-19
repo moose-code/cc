@@ -2,6 +2,8 @@
 
 the launch, the owner commands after it, and what to do when something stops half way. the rules are docs/SPEC.md. every number here comes from the code, the config or the latest rehearsal record (docs/reviews/REHEARSAL-<candidate>.md, named by the freeze table in docs/STATUS.md). the owner sends every mainnet transaction; the owner address is an EIP 7702 delegated account, so every multi transaction broadcast uses `--slow`.
 
+Release checks are scoped: `script/tools/check-freeze.sh core` for deferred Core, `coin` for coin launch (the default), and `services` for service activation. Existing Core-only waivers do not clear later stages. A runtime delta requires a candidate update and affected verification/review, not automatic repetition of unchanged suites. Keep each report's actual revision, outcome and limitations. The gate checks committed records and does not itself prove their coverage. Mainnet signer, config, decoded confirmation, receipt, recovery and postflight checks remain mandatory.
+
 ## 0. what you need
 
 | item | note |
@@ -12,7 +14,7 @@ the launch, the owner commands after it, and what to do when something stops hal
 | read rpc | an archive capable mainnet rpc in `MAINNET_RPC_URL`, for every command that does not send |
 | private rpc | `PRIVATE_RPC`, a relay that does not publish to the public mempool and serves `eth_getCode`, `eth_getStorageAt` and `eth_call` (https://rpc.mevblocker.io did when tested) |
 | etherscan key | a rotated `ETHERSCAN_API_KEY` from the shell for verification; never put it in the config or command line |
-| the toolchain | foundry 1.8.1, solc 0.8.30. `forge build` rewrites foundry.lock and lib/solady: `git checkout foundry.lock; git submodule update -- lib/solady` before any commit or gate |
+| the toolchain | foundry 1.8.1, solc 0.8.30. inspect foundry.lock and submodule drift after compilation; resolve unexpected changes explicitly instead of automatically restoring files. Gates still require a clean tree |
 
 ## 1. the launch, commands in order
 
