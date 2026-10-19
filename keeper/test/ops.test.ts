@@ -3,12 +3,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCipheriv, randomBytes, scryptSync } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { concat, decodeAbiParameters, keccak256, parseEther, type Address } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { Breaker, Ledger } from "../src/ledger.ts";
+import { Breaker, Ledger, PendingStore } from "../src/ledger.ts";
 import { decryptKeystore } from "../src/keystore.ts";
 import { insideRepo, loadConfig, OWNER, type Deployment } from "../src/config.ts";
 import { encodeBasicOrder } from "../src/listings.ts";
@@ -43,6 +43,26 @@ test("budget: a send fits while its cost is at most the net loss left today; pay
   assert.match(readFileSync(join(dir, "ledger-2026-10-16.json"), "utf8"), /"txs":3/);
   now = Date.parse("2026-10-17T00:00:01Z");
   assert.equal(l.remaining(), parseEther("0.01"));
+});
+
+// promise: a damaged existing ledger cannot reset the keeper's daily loss budget
+test("budget: malformed existing ledger fails closed on restart", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-ledger-corrupt-"));
+  writeFileSync(join(dir, "ledger-2026-10-16.json"), '{"spent":"bad"}\n');
+  assert.throws(() => new Ledger(dir, 1n, () => Date.parse("2026-10-16T10:00:00Z")), /invalid keeper ledger/);
+});
+
+// promise: damage after startup cannot be overwritten by the next receipt or interpreted as fresh budget
+test("budget: damaged live ledger and pending transaction files fail closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-state-corrupt-"));
+  const now = Date.parse("2026-10-16T10:00:00Z");
+  const ledger = new Ledger(dir, 1n, () => now);
+  ledger.record(1n, 0n, "0x01");
+  writeFileSync(join(dir, "ledger-2026-10-16.json"), "broken");
+  assert.throws(() => ledger.remaining(), SyntaxError);
+  assert.throws(() => ledger.record(1n, 0n, "0x02"), SyntaxError);
+  writeFileSync(join(dir, "pending.json"), "broken");
+  assert.throws(() => new PendingStore(dir), SyntaxError);
 });
 
 test("breaker: the threshold-th consecutive failure pauses the door; a success resets the count", () => {

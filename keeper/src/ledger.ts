@@ -3,8 +3,9 @@
 // when its own gross cost fits the remaining budget, as if it were not paid. The ledger is a JSON file per day under
 // STATE_DIR; it holds amounts and hashes only.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { Door } from "./config.ts";
 
 export interface Day {
@@ -12,9 +13,30 @@ export interface Day {
   spent: bigint;
   received: bigint;
   txs: number;
+  last?: string;
 }
 
 export const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+function atomicJson(path: string, value: unknown) {
+  const temp = `${path}.${randomUUID()}.tmp`;
+  try {
+    const fd = openSync(temp, "wx", 0o600);
+    try { writeFileSync(fd, JSON.stringify(value) + "\n"); fsyncSync(fd); }
+    finally { closeSync(fd); }
+    renameSync(temp, path);
+    const dir = openSync(dirname(path), "r");
+    try { fsyncSync(dir); }
+    finally { closeSync(dir); }
+  } catch (e) {
+    try { unlinkSync(temp); } catch {}
+    throw e;
+  }
+}
+
+function missing(e: unknown) {
+  return (e as NodeJS.ErrnoException).code === "ENOENT";
+}
 
 export class Ledger {
   private d: Day;
@@ -38,18 +60,26 @@ export class Ledger {
 
   private load(day: string): Day {
     const p = this.path(day);
-    try {
-      if (p) {
-        const j = JSON.parse(readFileSync(p, "utf8"));
-        return { day, spent: BigInt(j.spent), received: BigInt(j.received), txs: Number(j.txs) };
-      }
-    } catch {}
-    return { day, spent: 0n, received: 0n, txs: 0 };
+    if (!p) return { day, spent: 0n, received: 0n, txs: 0 };
+    let raw: string;
+    try { raw = readFileSync(p, "utf8"); }
+    catch (e) {
+      if (missing(e)) return { day, spent: 0n, received: 0n, txs: 0 };
+      throw e;
+    }
+    const j = JSON.parse(raw);
+    if (j?.day !== day || typeof j.spent !== "string" || !/^\d+$/.test(j.spent) ||
+        typeof j.received !== "string" || !/^\d+$/.test(j.received) ||
+        !Number.isSafeInteger(j.txs) || j.txs < 0 ||
+        (j.last !== undefined && (typeof j.last !== "string" || !/^0x[0-9a-fA-F]+$/.test(j.last)))) {
+      throw new Error(`invalid keeper ledger: ${p}`);
+    }
+    return { day, spent: BigInt(j.spent), received: BigInt(j.received), txs: j.txs, last: j.last };
   }
 
   private today(): Day {
     const day = utcDay(this.now());
-    if (this.d.day !== day) this.d = this.load(day);
+    if (this.dir || this.d.day !== day) this.d = this.load(day);
     return this.d;
   }
 
@@ -64,20 +94,69 @@ export class Ledger {
     return cost <= this.remaining();
   }
 
-  record(spent: bigint, received: bigint, hash: string) {
-    const d = this.today();
-    d.spent += spent;
-    d.received += received;
-    d.txs += 1;
+  record(spent: bigint, received: bigint, hash: string, day = utcDay(this.now())) {
+    if (spent < 0n || received < 0n) throw new Error("negative keeper ledger entry");
+    const d = day === utcDay(this.now()) ? this.today() : this.load(day);
+    if (d.last === hash) return;
+    const next = { ...d, spent: d.spent + spent, received: d.received + received, txs: d.txs + 1, last: hash };
     const p = this.path(d.day);
     if (p) {
       mkdirSync(this.dir!, { recursive: true });
-      writeFileSync(p, JSON.stringify({ day: d.day, spent: d.spent.toString(), received: d.received.toString(), txs: d.txs, last: hash }) + "\n");
+      atomicJson(p, { ...next, spent: next.spent.toString(), received: next.received.toString() });
     }
+    if (day === this.d.day) this.d = next;
   }
 
   snapshot(): Day {
     return { ...this.today() };
+  }
+}
+
+export interface PendingTx {
+  hash: `0x${string}`;
+  nonce: number;
+  chainId: number;
+  address: `0x${string}`;
+  door: Door;
+  before: bigint;
+  ledgerDay?: string;
+}
+
+// A signed transaction remains unresolved until a receipt is accounted, even if a relay request or receipt poll fails.
+// Only one keeper process may use a signer and state directory; this file is not a cross-process lock.
+export class PendingStore {
+  private path?: string;
+  current?: PendingTx;
+  get() { return this.current; }
+  constructor(dir?: string) {
+    this.path = dir ? join(dir, "pending.json") : undefined;
+    if (!this.path) return;
+    let raw: string;
+    try { raw = readFileSync(this.path, "utf8"); }
+    catch (e) { if (missing(e)) return; throw e; }
+    const j = JSON.parse(raw);
+    if (!/^0x[0-9a-fA-F]{64}$/.test(j?.hash) || !Number.isSafeInteger(j.nonce) || j.nonce < 0 ||
+        !Number.isSafeInteger(j.chainId) || j.chainId <= 0 || !/^0x[0-9a-fA-F]{40}$/.test(j.address) ||
+        typeof j.door !== "string" || !/^\d+$/.test(j.before) ||
+        (j.ledgerDay !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(j.ledgerDay))) {
+      throw new Error(`invalid keeper pending transaction: ${this.path}`);
+    }
+    this.current = { ...j, before: BigInt(j.before) };
+  }
+
+  save(tx: PendingTx) {
+    if (this.current && this.current.hash !== tx.hash) throw new Error("keeper transaction still unresolved");
+    // Keep the in-memory gate closed even if durable persistence fails partway through.
+    this.current = tx;
+    if (this.path) {
+      mkdirSync(dirname(this.path), { recursive: true });
+      atomicJson(this.path, { ...tx, before: tx.before.toString() });
+    }
+  }
+
+  clear() {
+    if (this.path) unlinkSync(this.path);
+    this.current = undefined;
   }
 }
 

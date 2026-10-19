@@ -8,6 +8,7 @@ import {
   createPublicClient,
   encodeFunctionData,
   http,
+  keccak256,
   type Address,
   type Hex,
   type PrivateKeyAccount,
@@ -17,7 +18,7 @@ import { controllerAbi, coreAbi } from "@cc/engine/abis";
 import { revertName, txError } from "@cc/engine/errors";
 import type { Config } from "./config.ts";
 import { recheck, type Intended, type Listing, type Policy, type State } from "./decide.ts";
-import type { Breaker, Ledger } from "./ledger.ts";
+import { utcDay, type Breaker, type Ledger, type PendingStore, type PendingTx } from "./ledger.ts";
 import { alert } from "./alert.ts";
 import { log, txUrl } from "./log.ts";
 
@@ -25,12 +26,15 @@ export type Signer = { address: Address; account?: PrivateKeyAccount; impersonat
 
 export type Outcome =
   | { kind: "sent"; hash: Hex; status: "success" | "reverted"; spent: bigint; received: bigint }
+  | { kind: "reconciled"; hash: Hex; status: "success" | "reverted"; spent: bigint; received: bigint }
   | { kind: "dry"; gas: bigint }
   | { kind: "skipped"; reason: string }
-  | { kind: "failed"; reason: string };
+  | { kind: "failed"; reason: string; listingFault?: boolean };
 
 // gas limit = measured gas * 1.25, as web/lib/tx.ts sends
 const GAS_BUFFER_BPS = 12_500n;
+// These decoded buyListing failures depend on this order's parameters or Seaport fulfillment.
+const ORDER_FAULTS = new Set(["WrongToken", "WrongId", "WrongAmount", "NotNative", "ZeroPrice", "RestrictedOrder", "RecipientNotAllowed", "NoCredit", "AlreadyOwned"]);
 
 export class Executor {
   private client: PublicClient;
@@ -39,6 +43,7 @@ export class Executor {
   private signer: Signer;
   private ledger: Ledger;
   private breaker: Breaker;
+  private pending: PendingStore;
   constructor(
     client: PublicClient,
     cfg: Config,
@@ -46,6 +51,7 @@ export class Executor {
     signer: Signer,
     ledger: Ledger,
     breaker: Breaker,
+    pending: PendingStore,
   ) {
     this.client = client;
     this.cfg = cfg;
@@ -53,6 +59,7 @@ export class Executor {
     this.signer = signer;
     this.ledger = ledger;
     this.breaker = breaker;
+    this.pending = pending;
   }
 
   private data(c: Intended): Hex {
@@ -60,8 +67,11 @@ export class Executor {
     return encodeFunctionData({ abi, functionName: c.functionName as any, args: c.args as any });
   }
 
+  hasPending() { return !!this.pending.current; }
+
   // runs one decided call: returns what happened. never sends while another transaction of the keeper is pending
   async run(c: Intended, s: State, listing?: Listing): Promise<Outcome> {
+    if (this.pending.current) return { kind: "skipped", reason: `transaction ${this.pending.current.hash} still unresolved` };
     const chainId = this.cfg.record.chainId;
     if (this.breaker.paused(c.door)) return { kind: "skipped", reason: `door paused by the breaker until ${new Date(this.breaker.pausedUntil(c.door)!).toISOString()}` };
     const to = c.target === "controller" ? s.controller : this.cfg.record.core;
@@ -85,7 +95,10 @@ export class Executor {
     } catch (e) {
       // the purchase budget refills with the next bucket: a wait, not a listing fault
       if (revertName(e) === "SpendCapReached") return { kind: "skipped", reason: "SpendCapReached: waiting for the next bucket" };
-      return { kind: "failed", reason: `simulation reverted: ${revertName(e) ?? txError(e)}` };
+      const name = revertName(e);
+      // Only a decoded order fault can suppress this listing. Transport and fee failures remain retryable.
+      const listingFault = c.door === "buyListing" && !!name && ORDER_FAULTS.has(name);
+      return { kind: "failed", reason: `simulation reverted: ${name ?? txError(e)}`, listingFault };
     }
 
     try {
@@ -125,8 +138,10 @@ export class Executor {
     const before = await this.client.getBalance({ address: this.signer.address });
     let hash: Hex;
     try {
-      hash = await this.send(tx, chainId);
+      hash = await this.send(tx, chainId, c.door, before);
     } catch (e) {
+      const unresolved = this.pending.get();
+      if (unresolved) void alert(this.cfg.alertWebhook, "pending", "keeper transaction acceptance is uncertain; later sends are blocked until its receipt is accounted", { hash: unresolved.hash, nonce: unresolved.nonce, door: c.door });
       const tripped = this.breaker.fail(c.door);
       if (tripped) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated send failures`, { error: txError(e) });
       return { kind: "failed", reason: `send failed: ${txError(e)}` };
@@ -135,11 +150,30 @@ export class Executor {
 
     const receipt = await this.waitReceipt(hash);
     if (!receipt) {
-      // a private relay drops a transaction it will not include; the nonce stays free, so the next send replaces it
+      void alert(this.cfg.alertWebhook, "pending", "keeper transaction has no receipt yet; later sends are blocked until its receipt is accounted", { hash, nonce: this.pending.get()?.nonce, door: c.door });
       const tripped = this.breaker.fail(c.door);
       if (tripped) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused: receipts never came`, { hash, url: txUrl(hash, chainId) });
       return { kind: "failed", reason: `no receipt within ${this.cfg.receiptTimeoutSec} s` };
     }
+    return this.accountReceipt(this.pending.current!, receipt, "sent");
+  }
+
+  // A missing receipt is unresolved. In particular, a timed-out relay request can have accepted the raw transaction.
+  async reconcile(): Promise<Outcome | undefined> {
+    const tx = this.pending.current;
+    if (!tx) return undefined;
+    if (tx.chainId !== this.cfg.record.chainId || tx.address.toLowerCase() !== this.signer.address.toLowerCase()) {
+      return { kind: "failed", reason: "pending transaction belongs to another chain or signer" };
+    }
+    let receipt;
+    try { receipt = await this.client.getTransactionReceipt({ hash: tx.hash }); }
+    catch { return { kind: "skipped", reason: `transaction ${tx.hash} still unresolved` }; }
+    if (!receipt) return { kind: "skipped", reason: `transaction ${tx.hash} still unresolved` };
+    return this.accountReceipt(tx, receipt, "reconciled");
+  }
+
+  private async accountReceipt(tx: PendingTx, receipt: Awaited<ReturnType<PublicClient["getTransactionReceipt"]>>, kind: "sent" | "reconciled"): Promise<Outcome> {
+    const { hash, door, before, chainId } = tx;
     const spent = receipt.gasUsed * receipt.effectiveGasPrice;
     let after: bigint | undefined;
     let balanceError: string | undefined;
@@ -150,46 +184,65 @@ export class Executor {
     }
     // A failed historical balance read cannot erase confirmed gas spend. Count no refund without evidence.
     const received = after !== undefined && after + spent > before ? after + spent - before : 0n;
-    this.ledger.record(spent, received, hash);
-    const fields = { door: c.door, hash, url: txUrl(hash, chainId), block: receipt.blockNumber, gasUsed: receipt.gasUsed, spent, received, net: received - spent };
-    const paidDoor = c.door === "buyListing" || c.door === "buyback" || c.door === "compose" || c.door === "redeemStatement" || c.door === "refreshReference";
+    const fields = { door, hash, url: txUrl(hash, chainId), block: receipt.blockNumber, gasUsed: receipt.gasUsed, spent, received, net: received - spent };
+    try {
+      if (!tx.ledgerDay) { tx = { ...tx, ledgerDay: utcDay(Date.now()) }; this.pending.save(tx); }
+      this.ledger.record(spent, received, hash, tx.ledgerDay);
+      this.pending.clear();
+    } catch (e) {
+      log("error", "receipt accounting failed", { ...fields, error: txError(e) });
+      if (this.breaker.fail(door)) void alert(this.cfg.alertWebhook, `breaker:${door}`, `${door} paused after receipt accounting failed`, fields);
+      return { kind: "failed", reason: `receipt accounting failed: ${txError(e)}` };
+    }
+    const paidDoor = door === "buyListing" || door === "buyback" || door === "compose" || door === "redeemStatement" || door === "refreshReference";
     if (balanceError) {
       log("error", "receipt balance read failed", { ...fields, error: balanceError });
-      if (this.breaker.fail(c.door)) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after confirmed receipt could not be accounted`, fields);
+      if (this.breaker.fail(door)) void alert(this.cfg.alertWebhook, `breaker:${door}`, `${door} paused after confirmed receipt could not be accounted`, fields);
     } else if (receipt.status === "success" && (!paidDoor || received >= spent + this.policy.margin)) {
-      this.breaker.ok(c.door);
+      this.breaker.ok(door);
       log("info", "confirmed", fields);
     } else if (receipt.status === "success") {
       log("error", "paid door underpaid", fields);
-      if (this.breaker.fail(c.door)) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated underpaid receipts`, fields);
+      if (this.breaker.fail(door)) void alert(this.cfg.alertWebhook, `breaker:${door}`, `${door} paused after repeated underpaid receipts`, fields);
     } else {
       log("error", "reverted on chain", fields);
-      if (this.breaker.fail(c.door)) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated on chain reverts`, fields);
+      if (this.breaker.fail(door)) void alert(this.cfg.alertWebhook, `breaker:${door}`, `${door} paused after repeated on chain reverts`, fields);
     }
     if (after !== undefined && after < this.cfg.lowBalance) void alert(this.cfg.alertWebhook, "balance", "keeper balance low, top up", { balance: after, address: this.signer.address });
-    return { kind: "sent", hash, status: receipt.status, spent, received };
+    return { kind, hash, status: receipt.status, spent, received };
   }
 
   // a signed transaction goes to each relay in order until one accepts it; without relays (a local node) to the read
-  // node. an impersonated account sends unsigned through eth_sendTransaction on a local node
-  private async send(tx: { to: Address; data: Hex; gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }, chainId: number): Promise<Hex> {
+  // node. An impersonated account sends unsigned through eth_sendTransaction on a local node; its hash cannot be
+  // persisted before the RPC accepts it, so a lost local response requires manual nonce reconciliation.
+  private async send(tx: { to: Address; data: Hex; gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }, chainId: number, door: Intended["door"], before: bigint): Promise<Hex> {
     const hex = (v: bigint) => `0x${v.toString(16)}`;
     if (this.signer.impersonate) {
-      return (await this.client.request({
+      const nonce = await this.client.getTransactionCount({ address: this.signer.address, blockTag: "pending" });
+      const hash = (await this.client.request({
         method: "eth_sendTransaction" as any,
         params: [{ from: this.signer.address, to: tx.to, data: tx.data, gas: hex(tx.gas), maxFeePerGas: hex(tx.maxFeePerGas), maxPriorityFeePerGas: hex(tx.maxPriorityFeePerGas) }] as any,
       })) as Hex;
+      this.pending.save({ hash, nonce, chainId, address: this.signer.address, door, before });
+      return hash;
     }
     const account = this.signer.account!;
     const nonce = await this.client.getTransactionCount({ address: account.address, blockTag: "pending" });
     const raw = await account.signTransaction({ type: "eip1559", chainId, nonce, ...tx });
+    const expected = keccak256(raw);
+    this.pending.save({ hash: expected, nonce, chainId, address: account.address, door, before });
     const relays = this.cfg.relayUrls;
-    if (relays.length === 0) return (await this.client.request({ method: "eth_sendRawTransaction", params: [raw] })) as Hex;
+    if (relays.length === 0) {
+      const hash = (await this.client.request({ method: "eth_sendRawTransaction", params: [raw] })) as Hex;
+      if (hash.toLowerCase() !== expected.toLowerCase()) throw new Error("RPC returned a different transaction hash");
+      return hash;
+    }
     let last: unknown;
     for (const url of relays) {
       try {
         const relay = createPublicClient({ transport: http(url, { timeout: 15_000, retryCount: 0 }) });
         const hash = (await relay.request({ method: "eth_sendRawTransaction", params: [raw] })) as Hex;
+        if (hash.toLowerCase() !== expected.toLowerCase()) throw new Error("relay returned a different transaction hash");
         if (url !== relays[0]) log("warn", "relay fallback took the transaction", { relay: new URL(url).host });
         return hash;
       } catch (e) {

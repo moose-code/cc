@@ -196,7 +196,6 @@ export async function fetchListings(o) {
     try {
       return await fulfillment(c.hash);
     } catch (e) {
-      if (signal.aborted) throw e;
       dropped["fulfillment request failed"] = (dropped["fulfillment request failed"] ?? 0) + 1;
       return null;
     }
@@ -210,7 +209,6 @@ export async function fetchListings(o) {
     try {
       orders.push({ id: c.id, price: c.price, hash: c.hash, params: basicParams(p) });
     } catch (e) {
-      if (signal.aborted) throw e;
       dropped["malformed fulfillment"] = (dropped["malformed fulfillment"] ?? 0) + 1;
     }
   }

@@ -10,13 +10,13 @@ import { describe, loadConfig, OWNER, type Config } from "./config.ts";
 import { readClient, readFixed, readState, type Fixed } from "./chain.ts";
 import { decide, type Intended, type Listing, type Policy, type Skip } from "./decide.ts";
 import { Executor, type Outcome, type Signer } from "./exec.ts";
-import { Breaker, Ledger } from "./ledger.ts";
+import { Breaker, Ledger, PendingStore } from "./ledger.ts";
 import { Sources } from "./listings.ts";
 import { readKeystore } from "./keystore.ts";
 import { alert } from "./alert.ts";
 import { log, safeError } from "./log.ts";
 
-// a listing whose simulation reverted waits this long before it is tried again
+// A decoded order-specific simulation failure suppresses that listing for this long.
 const LISTING_COOLDOWN_SEC = 300;
 // the head is polled this often; a tick runs per new block, or per TICK_MS while the head holds
 const HEAD_POLL_MS = 4_000;
@@ -90,6 +90,11 @@ export class Keeper {
     const read = await readState(this.client, this.cfg.record.core, this.fixed);
     const { snap } = read;
     const state = { ...read.state, lastBookAt: this.lastBookAt };
+    const pending = await this.exec.reconcile();
+    if (pending) {
+      log("info", "pending transaction", { block: state.blockNumber, outcome: pending });
+      return { block: state.blockNumber, calls: [], skips: [], outcomes: [{ door: "pending", key: "pending", outcome: pending }] };
+    }
     const listings: Listing[] = this.cfg.doorsOn.has("buyListing") && !state.retired && !state.paused ? await this.sources.candidates(snap, state.blockNumber) : [];
     const d = decide(state, listings, { baseFee: state.baseFee }, this.policy, this.seen);
     this.seen = d.seen;
@@ -116,13 +121,13 @@ export class Keeper {
       const outcome = await this.exec.run(c, state, listing);
       outcomes.push({ door: c.door, key: c.key, outcome });
       if (outcome.kind === "failed" || outcome.kind === "skipped") log("info", "not sent", { block: state.blockNumber, door: c.door, key: c.key, reason: outcome.reason });
-      if ((outcome.kind === "failed" || (outcome.kind === "sent" && outcome.status === "reverted")) && listing) {
+      if (outcome.kind === "failed" && outcome.listingFault && listing) {
         this.sources.coolDown(`${listing.venue}:${listing.id}`, LISTING_COOLDOWN_SEC);
         this.seen.delete(c.key);
       }
       // one transaction per tick: the next decision reads the state after it
-      if (outcome.kind === "sent") {
-        if (c.door === "book") this.lastBookAt = state.timestamp;
+      if (outcome.kind === "sent" || (outcome.kind === "failed" && this.exec.hasPending())) {
+        if (outcome.kind === "sent" && c.door === "book") this.lastBookAt = state.timestamp;
         break;
       }
     }
@@ -147,9 +152,10 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
   const signer = makeSigner(cfg);
   await startChecks(client, cfg, fixed, signer);
   const ledger = new Ledger(cfg.stateDir, cfg.dailyBudget);
+  const pending = new PendingStore(cfg.stateDir);
   const breaker = new Breaker(cfg.breakerThreshold, cfg.breakerPauseSec);
   const policy: Policy = { doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec };
-  const keeper = new Keeper(client, cfg, fixed, new Sources(client, cfg), new Executor(client, cfg, policy, signer, ledger, breaker), policy);
+  const keeper = new Keeper(client, cfg, fixed, new Sources(client, cfg), new Executor(client, cfg, policy, signer, ledger, breaker, pending), policy);
   return { cfg, client, keeper };
 }
 
