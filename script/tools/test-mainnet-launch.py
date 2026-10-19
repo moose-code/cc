@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Focused no-network checks for the mainnet transaction approval boundary."""
 
+from contextlib import redirect_stdout
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +22,19 @@ OWNER = launch.OWNER
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_launch_config_display_uses_the_selected_file(self):
+        # promise: the operator sees every value from the selected launch config before approval.
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "launch.json"
+            expected = {"owner": OWNER, "rateStart": "4650000000000000", "stack": {"poolFee": 8388608}}
+            path.write_text(json.dumps(expected))
+            output = io.StringIO()
+            with redirect_stdout(output):
+                launch.print_launch_config(path)
+            self.assertIn(str(path), output.getvalue())
+            displayed = output.getvalue().split("\n", 2)[2]
+            self.assertEqual(json.loads(displayed), expected)
+
     def setUp(self):
         self.planned = {
             "transactionType": "CREATE2", "contractName": "CoreLib",

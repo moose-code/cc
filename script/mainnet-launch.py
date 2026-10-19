@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parent.parent
+MAIN_REPO = Path("/Users/dd/CascadeProjects/cc/cc")
 OWNER = "0xcb43078c32423f5348cab5885911c3b5fae217f9"
 
 
@@ -41,6 +42,12 @@ def redact(output):
 
 def number(value):
     return int(value, 0) if isinstance(value, str) and value.startswith("0x") else int(value or 0)
+
+
+def print_launch_config(path):
+    config = json.loads(path.read_text())
+    print(f"\nLaunch config ({path}):", flush=True)
+    print(json.dumps(config, indent=2, sort_keys=True), flush=True)
 
 
 def rpc(url, method, params):
@@ -266,6 +273,7 @@ def main():
         parser.error("use paired --resume-core/--from-block; --record-only cannot combine with --preview or --launch-only")
     if args.local_rehearsal and args.record_only:
         parser.error("record-only recovery uses the mainnet profile; local rehearsal tests signed deployment and launch")
+    invoked_from = Path.cwd().resolve()
     os.chdir(ROOT)
     if args.local_rehearsal:
         needed = ("RPC_URL", "KEYSTORE_ACCOUNT", "REHEARSAL_DEPLOYER", "LAUNCH_CONFIG",
@@ -276,6 +284,17 @@ def main():
     missing = [name for name in needed if not os.environ.get(name)]
     if missing:
         parser.error("set " + ", ".join(missing) + " in the shell; keep secrets out of files and commands")
+    if not args.local_rehearsal:
+        if ROOT.resolve() != MAIN_REPO.resolve() or invoked_from != ROOT.resolve():
+            parser.error(f"run from the primary repository directory {MAIN_REPO}")
+        if run(["git", "branch", "--show-current"], capture=True).stdout.strip() != "main":
+            parser.error("mainnet preview, recovery and broadcast require the main branch")
+    config_path = Path(os.environ.get("LAUNCH_CONFIG") or "script/config/mainnet.json")
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
+    config_path = config_path.resolve()
+    if not config_path.is_file():
+        parser.error(f"launch config is missing: {config_path}")
     if args.local_rehearsal:
         parsed = urlsplit(os.environ["RPC_URL"])
         if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port
@@ -300,7 +319,8 @@ def main():
         parser.error("unset PASSWORD_FILE; Foundry will prompt for the keystore password in this terminal")
     if not sys.stdin.isatty() and not args.preview:
         parser.error("broadcast requires an interactive terminal for individual approvals")
-    env = dict(os.environ, TERMINAL_KEYSTORE="1", PASSWORD_FILE="", DRY_RUN="1")
+    env = dict(os.environ, TERMINAL_KEYSTORE="1", PASSWORD_FILE="", DRY_RUN="1",
+               LAUNCH_CONFIG=str(config_path))
     if args.local_rehearsal:
         env.update(CHAIN_ID="1", REHEARSAL_SKIP_GIT="1")
     if args.resume_core:
@@ -322,6 +342,7 @@ def main():
         locked_hash = json.loads(backup.read_text())["configHash"]
         if not re.fullmatch(r"0x[0-9a-fA-F]{64}", locked_hash):
             raise RuntimeError("durable config lock has no valid config hash")
+        print_launch_config(config_path)
         print("No transaction will be sent. This checks the completed deferred Core, writes its record and verifies contracts.")
         print(f"Original config hash: {locked_hash}")
         if input("Type RECORD to continue without a broadcast: ") != "RECORD":
@@ -355,6 +376,7 @@ def main():
     for index, item in enumerate(transactions, 1):
         tx = item["transaction"]
         print(f"{index:2}. {item.get('contractName') or 'Artcoin V2 factory'} {item.get('function') or 'CREATE2 deploy'}: gas limit {number(tx['gas']):,}, value {number(tx.get('value'))} wei")
+    print_launch_config(config_path)
     print(f"Config hash for review: {hashes[0]}")
     if args.preview:
         print("Preview complete. No password was requested and no transaction was sent.")

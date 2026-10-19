@@ -169,7 +169,7 @@ fi
 if [ "$VERIFY" = 1 ] && [ -z "${ETHERSCAN_API_KEY:-}" ]; then late "ETHERSCAN_API_KEY is empty in the shell"; fi
 
 # ---- config and signer --------------------------------------------------------------------------------------------
-[ -f "$LAUNCH_CONFIG" ] || die "no $LAUNCH_CONFIG. docs/RUNBOOK.md step 1: cp script/config/mainnet.json script/config/local.json, then fill the launch values"
+[ -f "$LAUNCH_CONFIG" ] || die "no $LAUNCH_CONFIG. Set LAUNCH_CONFIG to the reviewed launch JSON (docs/RUNBOOK.md step 1)"
 CFG_OWNER="$(jq -r .owner "$LAUNCH_CONFIG")"
 FACTORY="$(jq -r .stack.factory "$LAUNCH_CONFIG")"
 
