@@ -12,6 +12,7 @@ import threading
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -93,12 +94,13 @@ def check_transaction(tx, expected, owner, nonce, fee_cap):
 
 
 class ApprovalGate:
-    def __init__(self, read_url, send_url, transactions, fee_cap, expected_coin):
+    def __init__(self, read_url, send_url, transactions, fee_cap, expected_coin, owner=OWNER):
         self.read_url = read_url
         self.send_url = send_url
         self.transactions = transactions
         self.fee_cap = fee_cap
         self.expected_coin = expected_coin
+        self.owner = owner.lower()
         self.index = 0
         self.previous_hash = None
         self.lock = threading.Lock()
@@ -109,8 +111,8 @@ class ApprovalGate:
                 raise RuntimeError("unplanned transaction after the dry-run manifest")
             planned = self.transactions[self.index]
             tx = decode(raw)
-            nonce = number(rpc(self.read_url, "eth_getTransactionCount", [OWNER, "pending"]))
-            signed_fee = check_transaction(tx, planned, OWNER, nonce, self.fee_cap)
+            nonce = number(rpc(self.read_url, "eth_getTransactionCount", [self.owner, "pending"]))
+            signed_fee = check_transaction(tx, planned, self.owner, nonce, self.fee_cap)
             if self.previous_hash:
                 receipt = rpc(self.read_url, "eth_getTransactionReceipt", [self.previous_hash])
                 if not receipt or number(receipt["status"]) != 1:
@@ -129,12 +131,12 @@ class ApprovalGate:
                 raise RuntimeError(f"call target {target} has no code")
             if (planned.get("function") or "").startswith("deployToken"):
                 factory_owner = rpc(self.read_url, "eth_call", [{"to": target, "data": "0x8da5cb5b"}, "latest"])
-                if "0x" + factory_owner[-40:].lower() != OWNER:
+                if "0x" + factory_owner[-40:].lower() != self.owner:
                     raise RuntimeError("factory owner changed before coin launch")
             label = planned.get("contractName") or "Artcoin V2 factory"
             function = planned.get("function") or ("CREATE2 deploy" if created else "contract call")
             print(f"\nTransaction {self.index + 1}/{len(self.transactions)}: {label} {function}", flush=True)
-            print(f"Chain 1; signer {OWNER}; nonce {nonce}; target {target}; value {number(tx['value'])} wei", flush=True)
+            print(f"Chain 1; signer {self.owner}; nonce {nonce}; target {target}; value {number(tx['value'])} wei", flush=True)
             print(f"Target code: {len(code[2:]) // 2} bytes; predicted creation: {created or 'none'}", flush=True)
             print(f"Gas limit {number(tx['gas']):,}; max fee {signed_fee / 1e9:.3f} gwei; calldata {len(tx['input'][2:]) // 2:,} bytes", flush=True)
             consequences = {
@@ -240,6 +242,7 @@ class GateHandler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--preview", action="store_true", help="clean, simulate, and price without signing or sending")
+    parser.add_argument("--local-rehearsal", action="store_true", help="use a loopback chain-id-1 fork and rehearsal signer")
     parser.add_argument("--resume-core", help="Core address from an interrupted deployment")
     parser.add_argument("--from-block", type=int, help="start block printed by the interrupted deployment")
     parser.add_argument("--launch-only", action="store_true", help="launch the coin from a deferred deployment record")
@@ -247,17 +250,45 @@ def main():
     args = parser.parse_args()
     if bool(args.resume_core) != (args.from_block is not None) or (args.launch_only and args.resume_core) or (args.record_only and (args.launch_only or args.preview or not args.resume_core)):
         parser.error("use paired --resume-core/--from-block; --record-only cannot combine with --preview or --launch-only")
+    if args.local_rehearsal and args.record_only:
+        parser.error("record-only recovery uses the mainnet profile; local rehearsal tests signed deployment and launch")
     os.chdir(ROOT)
-    needed = ("RPC_URL", "KEYSTORE_ACCOUNT") if args.preview else (
-        "RPC_URL", "PRIVATE_RPC", "KEYSTORE_ACCOUNT", "CONFIG_LOCK_BACKUP", "ETHERSCAN_API_KEY")
+    if args.local_rehearsal:
+        needed = ("RPC_URL", "KEYSTORE_ACCOUNT", "REHEARSAL_DEPLOYER", "LAUNCH_CONFIG",
+                  "RECORD_FILE", "CONFIG_LOCK_DIR", "CONFIG_LOCK_BACKUP")
+    else:
+        needed = ("RPC_URL", "KEYSTORE_ACCOUNT") if args.preview else (
+            "RPC_URL", "PRIVATE_RPC", "KEYSTORE_ACCOUNT", "CONFIG_LOCK_BACKUP", "ETHERSCAN_API_KEY")
     missing = [name for name in needed if not os.environ.get(name)]
     if missing:
         parser.error("set " + ", ".join(missing) + " in the shell; keep secrets out of files and commands")
+    if args.local_rehearsal:
+        parsed = urlsplit(os.environ["RPC_URL"])
+        if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port
+                or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment):
+            parser.error("local rehearsal requires a plain loopback HTTP RPC URL with an explicit port")
+        owner = os.environ["REHEARSAL_DEPLOYER"].lower()
+        if not re.fullmatch(r"0x[0-9a-f]{40}", owner) or owner == OWNER:
+            parser.error("REHEARSAL_DEPLOYER must be a distinct test signer address")
+        for name in ("RECORD_FILE", "CONFIG_LOCK_BACKUP"):
+            supplied = Path(os.environ[name])
+            path = supplied.resolve()
+            if not supplied.is_absolute() or path == ROOT or ROOT in path.parents:
+                parser.error(f"{name} must be an absolute path outside the repository")
+        lock_dir = Path(os.environ["CONFIG_LOCK_DIR"])
+        if not lock_dir.is_absolute() or ROOT / "broadcast" not in lock_dir.resolve().parents:
+            parser.error("CONFIG_LOCK_DIR must be an absolute path under this checkout's broadcast directory")
+        env_name = "rehearsal"
+    else:
+        owner = OWNER
+        env_name = "mainnet"
     if os.environ.get("PASSWORD_FILE"):
         parser.error("unset PASSWORD_FILE; Foundry will prompt for the keystore password in this terminal")
     if not sys.stdin.isatty() and not args.preview:
         parser.error("broadcast requires an interactive terminal for individual approvals")
     env = dict(os.environ, TERMINAL_KEYSTORE="1", PASSWORD_FILE="", DRY_RUN="1")
+    if args.local_rehearsal:
+        env.update(CHAIN_ID="1", REHEARSAL_SKIP_GIT="1")
     if args.resume_core:
         env.update(RESUME="record" if args.record_only else "state", CORE=args.resume_core,
                    FROM_BLOCK=str(args.from_block), DEFER_LAUNCH="1")
@@ -283,11 +314,11 @@ def main():
             raise RuntimeError("record recovery was not approved")
         deferred = not coin_is_live(env["RPC_URL"], args.resume_core)
         print(f"Recovery state: coin {'unlaunched' if deferred else 'launched'}; postflight will check this state.")
-        run(["script/deploy.sh", "mainnet"], env=dict(env, DRY_RUN="0", CONFIG_HASH=locked_hash,
+        run(["script/deploy.sh", env_name], env=dict(env, DRY_RUN="0", CONFIG_HASH=locked_hash,
                                                    DEFER_LAUNCH="1" if deferred else "0"))
         return
     previous_manifest_time = manifest.stat().st_mtime_ns if manifest.exists() else 0
-    preview = run(["script/deploy.sh", "mainnet"], env=env, capture=True)
+    preview = run(["script/deploy.sh", env_name], env=env, capture=True)
     print(redact(preview.stdout), flush=True)
     hashes = re.findall(r"deploy\.sh: CONFIG_HASH=(0x[0-9a-fA-F]{64})", preview.stdout)
     if len(hashes) != 1 or not manifest.is_file() or manifest.stat().st_mtime_ns <= previous_manifest_time:
@@ -303,7 +334,7 @@ def main():
     gas_price = number(run(["cast", "gas-price", "--rpc-url", env["RPC_URL"]], capture=True).stdout.strip())
     fee_cap = gas_price * 2
     value = sum(number(item["transaction"].get("value")) for item in transactions)
-    balance = number(run(["cast", "balance", OWNER, "--rpc-url", env["RPC_URL"]], capture=True).stdout.strip().split()[0])
+    balance = number(run(["cast", "balance", owner, "--rpc-url", env["RPC_URL"]], capture=True).stdout.strip().split()[0])
     print(f"\n{len(transactions)} planned transactions; summed dry-run gas limits {gas_limit:,}; maximum accepted signed limits {gas_ceiling:,}.")
     print(f"Current gas price {gas_price / 1e9:.3f} gwei; approved per-gas ceiling {fee_cap / 1e9:.3f} gwei.")
     print(f"Maximum accepted gas cost at that ceiling: {gas_ceiling * fee_cap / 1e18:.6f} ETH; transaction value {value / 1e18:.6f} ETH; signer balance {balance / 1e18:.6f} ETH.")
@@ -316,26 +347,31 @@ def main():
         return
     if balance < gas_ceiling * fee_cap + value:
         raise RuntimeError("signer ETH balance is below the displayed worst-case gas plus transaction value")
-    if number(run(["cast", "chain-id", "--rpc-url", env["PRIVATE_RPC"]], capture=True).stdout.strip()) != 1:
-        raise RuntimeError("private relay is not Ethereum chain ID 1")
+    send_url = env["RPC_URL"] if args.local_rehearsal else env["PRIVATE_RPC"]
+    if number(run(["cast", "chain-id", "--rpc-url", send_url], capture=True).stdout.strip()) != 1:
+        raise RuntimeError("broadcast endpoint is not Ethereum chain ID 1")
     if run(["git", "branch", "--show-current"], capture=True).stdout.strip() != "main":
         raise RuntimeError("broadcast requires the main branch")
     if run(["git", "status", "--porcelain"], capture=True).stdout.strip():
         raise RuntimeError("broadcast requires a clean checkout")
-    run(["script/tools/check-freeze.sh"])
+    if not args.local_rehearsal:
+        run(["script/tools/check-freeze.sh"])
     if input("Type the full config hash to approve this exact dry run: ").lower() != hashes[0].lower():
         raise RuntimeError("config hash was not confirmed")
     if input("Type START to begin individual transaction confirmations: ") != "START":
         raise RuntimeError("broadcast was not approved")
-    gate = ApprovalGate(env["RPC_URL"], env["PRIVATE_RPC"], transactions, fee_cap, coin_rows[0])
+    gate = ApprovalGate(env["RPC_URL"], send_url, transactions, fee_cap, coin_rows[0], owner)
     GateHandler.gate = gate
     server = ThreadingHTTPServer(("127.0.0.1", 0), GateHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        live_env = dict(env, DRY_RUN="0", CONFIG_HASH=hashes[0],
-                        PRIVATE_RPC=f"http://127.0.0.1:{server.server_port}")
-        run(["script/deploy.sh", "mainnet"], env=live_env)
+        gate_url = f"http://127.0.0.1:{server.server_port}"
+        live_env = dict(env, DRY_RUN="0", CONFIG_HASH=hashes[0])
+        if args.local_rehearsal:
+            live_env["RECORD_RPC_URL"] = env["RPC_URL"]
+        live_env["RPC_URL" if args.local_rehearsal else "PRIVATE_RPC"] = gate_url
+        run(["script/deploy.sh", env_name], env=live_env)
         if gate.index != len(transactions):
             raise RuntimeError(f"deploy returned after only {gate.index}/{len(transactions)} approved sends")
         last_receipt = rpc(gate.read_url, "eth_getTransactionReceipt", [gate.previous_hash])
@@ -343,7 +379,10 @@ def main():
             raise RuntimeError("final receipt is missing or failed")
         gate.check_previous_state(transactions[-1])
         print(f"Final receipt {gate.previous_hash}: status 1, gas used {number(last_receipt['gasUsed']):,}; expected state confirmed.")
-        print("All approved sends, postflight, deployment record and Etherscan verification completed.")
+        if args.local_rehearsal:
+            print("All approved local sends, postflight and rehearsal record completed; Etherscan verification is mainnet only.")
+        else:
+            print("All approved sends, postflight, deployment record and Etherscan verification completed.")
     finally:
         server.shutdown()
         server.server_close()

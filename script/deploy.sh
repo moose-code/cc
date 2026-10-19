@@ -79,6 +79,7 @@ KEYSTORE_SHELL="${KEYSTORE_ACCOUNT:-}"
 PASSWORD_SHELL="${PASSWORD_FILE:-}"
 TERMINAL_KEYSTORE="${TERMINAL_KEYSTORE:-0}"
 RECORD_SHELL="${RECORD_FILE:-}"
+RECORD_RPC_SHELL="${RECORD_RPC_URL:-}"
 LOCK_DIR_SHELL="${CONFIG_LOCK_DIR:-}"
 REH_DEPLOYER="${REHEARSAL_DEPLOYER:-}"
 REH_SKIP_GIT="${REHEARSAL_SKIP_GIT:-}"
@@ -104,6 +105,10 @@ if [ -n "$CHAIN_OVERRIDE" ]; then
   CHAIN_ID="$CHAIN_OVERRIDE"
 fi
 if [ -n "$LOCK_DIR_SHELL" ] && [ "$NODE" != anvil ]; then die "CONFIG_LOCK_DIR applies to anvil only"; fi
+if [ -n "$RECORD_RPC_SHELL" ] && [ "$NODE" != anvil ]; then die "RECORD_RPC_URL applies to anvil only"; fi
+if [ -n "$RECORD_RPC_SHELL" ]; then
+  [[ "$RECORD_RPC_SHELL" =~ ^http://127[.]0[.]0[.]1:[0-9]+$ ]] || die "RECORD_RPC_URL must be a loopback anvil RPC with a numeric port"
+fi
 if [ -n "$LOCK_DIR_SHELL" ]; then
   case "$LOCK_DIR_SHELL" in "$ROOT"/*) ;; *) die "CONFIG_LOCK_DIR must be inside the repository for Forge to read it" ;; esac
 fi
@@ -148,6 +153,9 @@ if [ "$NODE" = anvil ]; then
   esac
 fi
 [ "$(cast chain-id --rpc-url "$RPC_URL")" = "$CHAIN_ID" ] || die "the rpc at $RPC_HOST is not chain $CHAIN_ID"
+if [ -n "$RECORD_RPC_SHELL" ]; then
+  [ "$(cast chain-id --rpc-url "$RECORD_RPC_SHELL")" = "$CHAIN_ID" ] || die "RECORD_RPC_URL is not chain $CHAIN_ID"
+fi
 
 SEND_RPC="$RPC_URL"
 if [ -n "${SEND_RPC_VAR:-}" ]; then
@@ -321,7 +329,7 @@ export CONFIG_HASH
 LOCK_DIR="${LOCK_DIR_SHELL:-broadcast/config-locks}"
 LOCK="$LOCK_DIR/${CHAIN_ID}-$(lc "$DEPLOYER").json"
 BACKUP="${CONFIG_LOCK_BACKUP:-}"
-if [ "$NODE" = live ] && { [ "$DRY_RUN" = 0 ] || [ -n "$RESUME" ] || [ "$LAUNCH_ONLY" = 1 ]; }; then
+if { [ "$NODE" = live ] || [ -n "$BACKUP" ]; } && { [ "$DRY_RUN" = 0 ] || [ -n "$RESUME" ] || [ "$LAUNCH_ONLY" = 1 ]; }; then
   [ -n "$BACKUP" ] || late "CONFIG_LOCK_BACKUP must name a durable path outside this repository"
   if [ -n "$BACKUP" ]; then
     case "$BACKUP" in /*) ;; *) die "CONFIG_LOCK_BACKUP must be an absolute path" ;; esac
@@ -375,7 +383,7 @@ else
     '{chainId:$chainId,scriptChainId:1,deployer:$deployer,configHash:$configHash}' >"$LOCK") \
     || die "could not create $LOCK without replacing an existing lock"
 fi
-if [ "$NODE" = live ]; then
+if [ -n "$BACKUP" ]; then
   if [ -e "$BACKUP" ]; then
     cmp -s "$LOCK" "$BACKUP" || die "the durable config lock backup differs from $LOCK"
   else
@@ -461,7 +469,7 @@ if [ "$LAUNCH_ONLY" = 1 ]; then TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER"
 else TOKEN_DEPLOYER="$(cast call "$FACTORY" 'tokenDeployer()(address)' --rpc-url "$RPC_URL")"; fi
 
 # the rpc url of a live record stays out of the file (a url can carry a key)
-if [ "$NODE" = anvil ]; then RECORD_RPC="$RPC_URL"; else RECORD_RPC=""; fi
+if [ "$NODE" = anvil ]; then RECORD_RPC="${RECORD_RPC_SHELL:-$RPC_URL}"; else RECORD_RPC=""; fi
 mkdir -p "$(dirname "$RECORD")"
 TMPREC="$(mktemp "$(dirname "$RECORD")/.record.XXXXXX")"
 printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC" --argjson deployBlock "$lo" --arg launchBlock "$LAUNCH_BLOCK" --arg tokenDeployer "$TOKEN_DEPLOYER" '. as $r | {
