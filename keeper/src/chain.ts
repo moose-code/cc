@@ -136,6 +136,9 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     referenceTime: BigInt(snap.value.referenceTime ?? 0),
     referenceMaxStale: BigInt(snap.value.quote?.referenceMaxStale ?? 0),
     referenceMinSeconds: BigInt(snap.value.quote?.referenceMinSeconds ?? 0),
+    referenceRateBpsPerHour: BigInt(snap.value.quote?.referenceRateBpsPerHour ?? 0),
+    referenceStepBps: BigInt(snap.value.quote?.referenceStepBps ?? 0),
+    spot: snap.value.spot ?? 0n,
   };
   return { state, snap };
 }

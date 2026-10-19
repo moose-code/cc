@@ -308,7 +308,7 @@ The record carries chain id 1, so the evm.now links of this node point at chain 
 
 ## 8. the keeper
 
-`keeper/` is the owner keeper of decisions 136 to 139: one node process that calls every keeper door from its own hot wallet, never the owner key (decision 57). it reads the state once per block (the shared `readSnapshot` of `packages/engine` plus the keeper's reads, pinned to one block), decides with pure functions (`keeper/src/decide.ts`), simulates each call with `eth_estimateGas` from the keeper, rechecks the profit rule at the measured gas, and sends one transaction at a time through the private relays, waiting for its receipt before the next. a paid door goes only when the Core pays at least its own gas at the worst base fee plus its tip plus `MARGIN_ETH`; every skip is logged with its reason.
+`keeper/` is the owner keeper of decisions 136 to 139: one node process that calls every keeper door from its own hot wallet, never the owner key (decision 57). it reads the state once per block (the shared `readSnapshot` of `packages/engine` plus the keeper's reads, pinned to one block), decides with pure functions (`keeper/src/decide.ts`), simulates each call at `pending` with the keeper's fee fields, rechecks the profit rule at the measured gas and pending base fee, and sends one transaction at a time through the private relays, waiting for its receipt before the next. a paid door goes only when the projected Core payment covers its gas plus `MARGIN_ETH`; an underpaid receipt counts toward that door's breaker. every skip is logged with its reason.
 
 | priority | door | when |
 |---|---|---|
@@ -316,9 +316,9 @@ The record carries chain id 1, so the evm.now links of this node point at chain 
 | 2 | `buyback()` | `ethToBuyback` above 0, `lastBuybackBlock + buybackDelay` reached, the slice at least `2 * maxPay` and the scaled fee covering the tip |
 | 3 | `compose()` | `nextPage()` ready; paid 3 gwei plus 0.0003 eth (decision 138), so it waits above about 3 gwei |
 | 4 | `collectEscrow()` | the fee escrow holds more for the Core than the gas of the claim |
-| 5 | `book()` | `launchedAt + settings.sniperSeconds` passed, `payeeOn` false, income pending: the book that latches the payee share |
+| 5 | `book()` | after `launchedAt + settings.sniperSeconds`, the first book with income latches the payee share; once latched, a book follows pending income above `BOOK_MIN_ETH` after `BOOK_MIN_SEC` |
 | 6 | `redeemStatement(sid)` | `atFloor(sid)`; logged only while no balance module is set (it reverts `NoBalanceModule`) |
-| 7 | `refreshReference()` on the controller | the pool key is set, `referenceMaxStale` is nonzero and `referenceMinSeconds` has passed since the last sample (`referenceTime`); unpaid, about 60,000 gas. the pool-time cadence is `referenceStepBps / referenceRateBpsPerHour` (200 / 1,200 = 600 s), so one refresh per cadence moves one full step and keeps the reference both tracking and fresh. with an unusable reference the Core and keeper keep using the last good eth bid for listings; controller sale doors still revert `NoQuote` |
+| 7 | `refreshReference()` on the Core | the reference is set, `referenceMaxStale` is nonzero, the pool spot reads nonzero, `referenceMinSeconds` has passed and `rate * elapsed / 3600` is at least 1 bps; the Core pays only when the controller updates the reference. at the intended 1,200-bps hourly rate, 200-bps step and 600-second cadence, each refresh can move one full step. with an unusable reference the Core keeps the last good eth bid for listings; controller sale doors still revert `NoQuote` |
 
 ### environment
 
@@ -331,7 +331,7 @@ every value is an environment variable; nothing secret is written to a file by t
 | `RELAY_URLS` | MEV Blocker, then Flashbots Protect (decision 139) | private relays for `eth_sendRawTransaction`, tried in order. a live chain refuses to start without one |
 | `KEYSTORE`, `KEYSTORE_PASSWORD_FILE` | | the keeper's v3 keystore (`cast wallet new <dir>`) and a file holding its password, both mounted secrets. decrypted in memory |
 | `DRY_RUN=1` with `KEEPER_ADDRESS` | | simulate and log `dry run: would send` for each call, send nothing; no key needed |
-| `MAX_BASEFEE_GWEI_<DOOR>`, `MAX_PRIORITY_GWEI_<DOOR>` | 5 for `BUY_LISTING` and `BUYBACK`, 3 for the rest; tip 0.05, 0.02 for `COMPOSE` | per door ceiling and tip (`MAX_BASEFEE_GWEI` and `MAX_PRIORITY_GWEI` set all). a transaction's `maxFeePerGas` is the ceiling plus the tip, so it never lands above the ceiling |
+| `MAX_BASEFEE_GWEI_<DOOR>`, `MAX_PRIORITY_GWEI_<DOOR>` | 5 for `BUY_LISTING` and `BUYBACK`, 3 for the rest; tip 0.05, 0.02 for `COMPOSE` | per door ceiling and tip (`MAX_BASEFEE_GWEI` and `MAX_PRIORITY_GWEI` set all). the keeper refuses to send while the pending base fee exceeds the ceiling; its signed `maxFeePerGas` is ceiling plus tip, so a later base fee rise can still consume some tip |
 | `MARGIN_ETH` | 0.00005 | what a paid door must clear above its own cost |
 | `DAILY_BUDGET_ETH` | 0.2 | the net eth (gas spent minus Core payments) the wallet may lose per UTC day; a send whose gross cost does not fit waits |
 | `LISTING_DELAY_SEC` | 120 | decision 137 |
@@ -340,10 +340,10 @@ every value is an environment variable; nothing secret is written to a file by t
 | `STRATEGY_IDS` | `Credits.tokensOf(strategy)` | the CreditStrategy ids to watch, or `off`; refreshed every `STRATEGY_REFRESH_SEC` (600). The default set is kept by delta from the Credits Transfer logs of the strategy (state file `STATE_DIR/strategy-inventory.json`), with a rolling re-read of 300 prices per refresh and a full read once a day |
 | `STRATEGY_FULL_READ` | | `1` reads the whole strategy inventory on every refresh (first start, or a node without log queries) |
 | `INDEXER_URL` | | indexer origin (https or local); seeds the strategy inventory on the first start from `strategy_listing` instead of `tokensOf` |
-| `OPENSEA_API_KEY` | | enables the Seaport source (`packages/engine/src/opensea.mjs`), refreshed every `OPENSEA_REFRESH_SEC` (300); `SEAPORT_ORDERS=<file>` reads the same shape from a file instead |
+| `OPENSEA_API_KEY` | | enables the Seaport source (`packages/engine/src/opensea.mjs`), refreshed every `OPENSEA_REFRESH_SEC` (300); the fetch aborts after 30 seconds and keeps cached orders on failure. `SEAPORT_ORDERS=<file>` reads the same shape from a file instead |
 | `ALERT_WEBHOOK_URL` | | JSON POST `{source, key, text, ...}` for alerts (decision 139) |
 | `LOW_BALANCE_ETH` | 0.05 | alert under this wallet balance |
-| `BREAKER_THRESHOLD`, `BREAKER_PAUSE_SEC` | 3, 3600 | consecutive failures of a door (an on chain revert, a send no relay took, a receipt that never came) that pause it, and for how long |
+| `BREAKER_THRESHOLD`, `BREAKER_PAUSE_SEC` | 3, 3600 | consecutive failures of a door (an on chain revert, an underpaid successful receipt, a send no relay took, or a receipt that never came) that pause it, and for how long |
 | `DOORS` | all | a comma list to run only some doors |
 | `STATE_DIR` | `keeper/.state` | the daily ledger files (amounts and hashes only) |
 | `RPC_TIMEOUT_MS` | 20000 | per request read timeout; a local fork with a cold upstream needs 120000 |
@@ -369,13 +369,13 @@ each line is one JSON object. `skip` names a door and why it waits; `dry run: wo
 
 ### funding and top up
 
-the keeper spends gas and is repaid by the Core on the paid doors; `book`, `collectEscrow` and `observe` are unpaid. hold about 0.1 eth (a compose needs about 9 million gas of headroom, 0.045 eth at 5 gwei, repaid in the same transaction). the `balance` alert fires under `LOW_BALANCE_ETH`; top up with a plain send from any account. the ledger (`STATE_DIR/ledger-<day>.json`) shows the day's spend, receipts and count.
+the keeper spends gas and is repaid by the Core on the paid doors; `book` and `collectEscrow` are unpaid. hold about 0.1 eth (a compose needs about 9 million gas of headroom, 0.045 eth at 5 gwei, repaid in the same transaction). the `balance` alert fires under `LOW_BALANCE_ETH`; top up with a plain send from any account. the ledger (`STATE_DIR/ledger-<day>.json`) shows the day's spend, receipts and count.
 
 ### alerts
 
 | key | meaning | action |
 |---|---|---|
-| `breaker:<door>` | the door failed `BREAKER_THRESHOLD` times in a row and is paused | read the `reverted on chain` or `send failed` lines; a revert after a passing simulation is a lost race or a relay problem |
+| `breaker:<door>` | the door failed `BREAKER_THRESHOLD` times in a row and is paused | read the `reverted on chain`, `paid door underpaid` or `send failed` lines; a reverted listing waits five minutes and must pass its observation delay again |
 | `budget` | the day's net loss reached `DAILY_BUDGET_ETH` | read the ledger; raise the budget or wait for the UTC day |
 | `balance` | the wallet is under `LOW_BALANCE_ETH` | top up |
 | `tick` | five ticks in a row failed to read the chain | check the rpcs |

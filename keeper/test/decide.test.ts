@@ -69,6 +69,9 @@ function state(over: Partial<State> = {}): State {
     referenceTime: 0n,
     referenceMaxStale: 0n,
     referenceMinSeconds: 600n,
+    referenceRateBpsPerHour: 100n,
+    referenceStepBps: 100n,
+    spot: parseEther("0.49"),
     ...over,
   };
 }
@@ -245,6 +248,7 @@ test("refreshReference: due referenceMinSeconds after the last sample, never bef
   const base = { referencePrice: 49n * 10n ** 16n, referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n };
   assert.match(refreshReferenceDue(state({ ...base, referencePrice: 0n })).reason, /pool key is not set/);
   assert.match(refreshReferenceDue(state({ ...base, referenceMaxStale: 0n })).reason, /never usable/);
+  assert.match(refreshReferenceDue(state({ ...base, spot: 0n })).reason, /spot is unavailable/);
   const early = decide(state({ ...base, timestamp: 4_000n + 599n }), [], gas("1"), p, new Map());
   assert.deepEqual(doorsOf(early), []);
   assert.match(reason(early, "refreshReference"), /next refresh at 4600/);
@@ -258,6 +262,17 @@ test("refreshReference: due referenceMinSeconds after the last sample, never bef
   assert.match(reason(unpaid, "refreshReference"), /unprofitable/);
   const high = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("4"), p, new Map());
   assert.match(reason(high, "refreshReference"), /above the door ceiling/);
+});
+
+// promise: a failed spot or integer move of zero cannot earn the Core's refresh payment, so the keeper spends no gas on it
+test("refreshReference: unavailable spot and sub-bps move do not send an unpaid call", () => {
+  const base = { referencePrice: parseEther("0.49"), referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n };
+  const missing = decide(state({ ...base, timestamp: 4_600n, spot: 0n }), [], gas("1"), policy(), new Map());
+  assert.match(reason(missing, "refreshReference"), /spot is unavailable/);
+  const rounded = decide(state({ ...base, timestamp: 4_600n, referenceRateBpsPerHour: 1n }), [], gas("1"), policy(), new Map());
+  assert.match(reason(rounded, "refreshReference"), /rounds to zero/);
+  const due = decide(state({ ...base, timestamp: 7_600n, referenceRateBpsPerHour: 1n }), [], gas("1"), policy(), new Map());
+  assert.deepEqual(doorsOf(due), ["refreshReference"]);
 });
 
 // promise: a refresh with only unbooked hook income is projected as paid from the pot share, matching the Core's

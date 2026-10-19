@@ -194,31 +194,38 @@ export class Sources {
         orders = r.orders;
         log("info", "opensea listings fetched", { fetched: r.fetched, fit: r.fit, signed: r.orders.length, dropped: r.dropped });
       }
+      if (!Array.isArray(orders)) throw new Error("orders is not an array");
     } catch (e) {
       log("warn", "opensea fetch failed, keeping the cached orders", { error: safeError(e) });
       return;
     }
-    // the order status read needs the hash; an order without one cannot be checked and is not watched
-    orders = orders.filter((x) => {
-      if (!x.hash) {
-        log("warn", "seaport order has no hash, skipped", { id: String(x.id), offerer: x.params.offerer });
-        return false;
+    // A malformed cached or API order must not block the other signed orders or the rest of the tick.
+    const watched: Watched[] = [];
+    for (const x of orders) {
+      try {
+        if (!x.hash) {
+          log("warn", "seaport order has no hash, skipped", { id: String(x.id), offerer: x.params.offerer });
+          continue;
+        }
+        if (!/^0x[0-9a-fA-F]{64}$/.test(x.hash)) throw new Error("invalid order hash");
+        if (BigInt(x.price) <= 0n) {
+          log("warn", "seaport order has no positive price, skipped", { id: String(x.id) });
+          continue;
+        }
+        watched.push({
+          venue: "seaport",
+          adapter: this.cfg.record.seaportAdapter,
+          id: BigInt(x.id),
+          price: BigInt(x.price),
+          params: encodeBasicOrder(x.params),
+          hash: x.hash as Hex,
+          offerer: getAddress(x.params.offerer),
+        });
+      } catch {
+        log("warn", "malformed seaport order skipped", { id: String(x?.id ?? "unknown") });
       }
-      if (BigInt(x.price) <= 0n) {
-        log("warn", "seaport order has no positive price, skipped", { id: String(x.id) });
-        return false;
-      }
-      return true;
-    });
-    this.seaport = orders.map((x) => ({
-      venue: "seaport" as const,
-      adapter: this.cfg.record.seaportAdapter,
-      id: BigInt(x.id),
-      price: BigInt(x.price),
-      params: encodeBasicOrder(x.params),
-      hash: x.hash as Hex | undefined,
-      offerer: getAddress(x.params.offerer),
-    }));
+    }
+    this.seaport = watched;
     await this.scoresOf(this.seaport.map((w) => w.id));
   }
 

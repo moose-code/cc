@@ -116,7 +116,10 @@ export class Keeper {
       const outcome = await this.exec.run(c, state, listing);
       outcomes.push({ door: c.door, key: c.key, outcome });
       if (outcome.kind === "failed" || outcome.kind === "skipped") log("info", "not sent", { block: state.blockNumber, door: c.door, key: c.key, reason: outcome.reason });
-      if (outcome.kind === "failed" && listing) this.sources.coolDown(`${listing.venue}:${listing.id}`, LISTING_COOLDOWN_SEC);
+      if ((outcome.kind === "failed" || (outcome.kind === "sent" && outcome.status === "reverted")) && listing) {
+        this.sources.coolDown(`${listing.venue}:${listing.id}`, LISTING_COOLDOWN_SEC);
+        this.seen.delete(c.key);
+      }
       // one transaction per tick: the next decision reads the state after it
       if (outcome.kind === "sent") {
         if (c.door === "book") this.lastBookAt = state.timestamp;

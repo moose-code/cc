@@ -14,6 +14,8 @@
 // every number of an order is a decimal string. params carries the fields of BasicOrderParameters, built the way
 // test/Seaport.t.sol _basicData builds them. `hash` is the Seaport order hash OpenSea reports.
 
+import { setTimeout as delay } from "node:timers/promises";
+
 export const CREDITS = "0x97630aa70ab14ed9883b41dafccbc11349723043";
 export const SEAPORT_16 = "0x0000000000000068f116a894984e2db1123eb395";
 export const OPENSEA_FEE = "0x0000a26b00c1f0df003000390027140000faa719";
@@ -41,6 +43,7 @@ const word = (id) => BigInt(id).toString(16).padStart(64, "0");
  * @param {string} [o.fulfiller] fulfiller address sent to fulfillment_data
  * @param {string[]} [o.allowedRecipients] allowlist without an rpc, default the OpenSea fee collector
  * @param {number} [o.horizon] seconds past the head block an order may start at and still be kept, default 86400
+ * @param {number} [o.timeoutMs] maximum time for the whole refresh, default 30000
  * @param {(n: number) => Promise<void>} [o.sleep]
  */
 export async function fetchListings(o) {
@@ -48,12 +51,13 @@ export async function fetchListings(o) {
   const maxPages = o.pages ?? 3;
   const sign = o.sign ?? 40;
   const fulfiller = o.fulfiller ?? "0x1111111111111111111111111111111111111111";
-  const sleep = o.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const signal = AbortSignal.timeout(o.timeoutMs ?? 30_000);
+  const sleep = o.sleep ?? ((ms) => delay(ms, undefined, { signal }));
   const envAllowed = (o.allowedRecipients ?? [OPENSEA_FEE]).map((a) => a.toLowerCase());
   const headers = { "x-api-key": key, accept: "application/json" };
 
   async function rpcCall(body) {
-    const r = await fetch(rpc, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(rpc, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
     return r.json();
   }
   async function batch(calls) {
@@ -75,7 +79,7 @@ export async function fetchListings(o) {
 
   async function get(url) {
     for (let attempt = 0; attempt < 4; ++attempt) {
-      const res = await fetch(url, { headers });
+      const res = await fetch(url, { headers, signal });
       if (res.status === 429) {
         await sleep(1500 * (attempt + 1));
         continue;
@@ -133,6 +137,7 @@ export async function fetchListings(o) {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify({ listing: { hash, chain: "ethereum", protocol_address: SEAPORT_16 }, fulfiller: { address: fulfiller } }),
+        signal,
       });
       if (res.status !== 429) break;
       await sleep(1000 * (attempt + 1));
@@ -152,7 +157,14 @@ export async function fetchListings(o) {
     const body = await page(slug, cursor);
     for (const l of body.listings ?? []) {
       ++fetched;
-      const r = await convert(l);
+      let r;
+      try {
+        r = await convert(l);
+      } catch (e) {
+        if (signal.aborted) throw e;
+        dropped["malformed listing"] = (dropped["malformed listing"] ?? 0) + 1;
+        continue;
+      }
       if (typeof r === "string") dropped[r] = (dropped[r] ?? 0) + 1;
       else cands.push(r);
     }
@@ -178,14 +190,27 @@ export async function fetchListings(o) {
   const orders = [];
   const top = cands.slice(0, sign);
   const fetchedParams = [];
-  for (let i = 0; i < top.length; i += 8) fetchedParams.push(...(await Promise.all(top.slice(i, i + 8).map((c) => fulfillment(c.hash)))));
+  for (let i = 0; i < top.length; i += 8) fetchedParams.push(...(await Promise.all(top.slice(i, i + 8).map(async (c) => {
+    try {
+      return await fulfillment(c.hash);
+    } catch (e) {
+      if (signal.aborted) throw e;
+      dropped["fulfillment request failed"] = (dropped["fulfillment request failed"] ?? 0) + 1;
+      return null;
+    }
+  }))));
   for (const [i, c] of top.entries()) {
     const p = fetchedParams[i];
     if (!p) {
       dropped["no basic fulfillment data"] = (dropped["no basic fulfillment data"] ?? 0) + 1;
       continue;
     }
-    orders.push({ id: c.id, price: c.price, hash: c.hash, params: basicParams(p) });
+    try {
+      orders.push({ id: c.id, price: c.price, hash: c.hash, params: basicParams(p) });
+    } catch (e) {
+      if (signal.aborted) throw e;
+      dropped["malformed fulfillment"] = (dropped["malformed fulfillment"] ?? 0) + 1;
+    }
   }
   return { fetched, fit: cands.length, notHeld, orders, dropped };
 }

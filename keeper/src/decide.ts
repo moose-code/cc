@@ -75,8 +75,8 @@ export interface State {
   atFloor: bigint[];
   // the value switch (decision 148): the controller, the Core's valueModeOn, whether the controller's value quote is
   // unusable now (informational: the eth bid falls back to the last good rate, decision 159, so it never halts a door), the
-  // controller's reference sample time (0 before the pool key), the reference staleness bound (0 is never usable) and
-  // the least seconds between two refreshes
+  // controller reference, quote controls, and the spot read at the pinned block. A refresh pays only when the controller
+  // sees a nonzero spot and a nonzero integer move at inclusion
   controller: Address;
   valueModeOn: boolean;
   noQuote: boolean;
@@ -84,6 +84,9 @@ export interface State {
   referenceTime: bigint;
   referenceMaxStale: bigint;
   referenceMinSeconds: bigint;
+  referenceRateBpsPerHour: bigint;
+  referenceStepBps: bigint;
+  spot: bigint;
 }
 
 export interface Listing {
@@ -228,18 +231,21 @@ export function observe(seen: ReadonlyMap<string, bigint>, sweepable: string[], 
 
 // whether a reference refresh is due: the controller holds a reference (the pool key is set), the reference can be
 // usable (referenceMaxStale nonzero), and referenceMinSeconds has passed since the last sample. the contract gates the
-// refresh at referenceMinSeconds, so a call before then does nothing. referenceMinSeconds is the cadence that produces a
-// full step (step / rate), so one call per cadence both tracks the market and keeps the reference fresh
+// refresh at referenceMinSeconds, so a call before then does nothing. A low rate can take several cadences before
+// integer division gives a nonzero move; the controller leaves referenceTime unchanged while it waits
 export function refreshReferenceDue(s: State): { ok: boolean; reason: string } {
   if (s.referencePrice === 0n) return { ok: false, reason: "no reference: the balance pool key is not set" };
   if (s.referenceMaxStale === 0n) return { ok: false, reason: "referenceMaxStale is 0, the reference is never usable" };
+  if (s.spot === 0n) return { ok: false, reason: "pool spot is unavailable" };
   const due = s.referenceTime + s.referenceMinSeconds;
   if (s.timestamp < due) return { ok: false, reason: `reference sampled at ${s.referenceTime}, next refresh at ${due}` };
+  const move = (s.referenceRateBpsPerHour * (s.timestamp - s.referenceTime)) / 3_600n;
+  if (move === 0n || s.referenceStepBps === 0n) return { ok: false, reason: "reference move rounds to zero" };
   return { ok: true, reason: "referenceMinSeconds since the last sample" };
 }
 
 // every call the keeper would make at this state, in priority order: buyListing (best gap first), buyback, compose,
-// collectEscrow, book, redeemStatement, observe. returns the updated staleness map
+// collectEscrow, book, redeemStatement, refreshReference. returns the updated listing observation map
 export function decide(
   s: State,
   listings: Listing[],

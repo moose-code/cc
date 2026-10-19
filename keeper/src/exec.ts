@@ -1,6 +1,7 @@
 // The executor: one call at a time. Each decided call is simulated (eth_estimateGas from the keeper, which runs the
-// call) at the latest block, rechecked against the profit rule at the measured gas, checked against the day's budget,
-// then signed and sent through the private relays in order, and its receipt is awaited before anything else is sent.
+// call) at the pending block with the transaction's fee fields, rechecked against the profit rule at measured gas, and
+// checked against the day's budget. It is then signed and sent through private relays in order. The receipt is awaited
+// before anything else is sent.
 // A dry run stops after the recheck and logs the call it would send.
 
 import {
@@ -65,18 +66,35 @@ export class Executor {
     if (this.breaker.paused(c.door)) return { kind: "skipped", reason: `door paused by the breaker until ${new Date(this.breaker.pausedUntil(c.door)!).toISOString()}` };
     const to = c.target === "controller" ? s.controller : this.cfg.record.core;
     const data = this.data(c);
+    const pol = this.policy.doors[c.door];
+    const fee = { maxFeePerGas: pol.maxBaseFee + pol.tip, maxPriorityFeePerGas: pol.tip };
 
-    // simulation: the node runs the call from the keeper at the latest block
+    // A fee above the refundable ceiling makes a paid call loss-making and the signed transaction may not land.
+    let pendingBaseFee: bigint;
+    try {
+      pendingBaseFee = (await this.client.getBlock({ blockTag: "pending" })).baseFeePerGas ?? s.baseFee;
+    } catch (e) {
+      return { kind: "failed", reason: `pending block read failed: ${txError(e)}` };
+    }
+    if (pendingBaseFee > pol.maxBaseFee) return { kind: "skipped", reason: `pending base fee ${pendingBaseFee} above the door ceiling ${pol.maxBaseFee}` };
+
+    // Simulate the fee-bearing call at pending, where gasprice-dependent offerers see the transaction's actual terms.
     let gasUsed: bigint;
     try {
-      gasUsed = await this.client.estimateGas({ account: this.signer.address, to, data });
+      gasUsed = await this.client.estimateGas({ account: this.signer.address, to, data, blockTag: "pending", ...fee });
     } catch (e) {
       // the purchase budget refills with the next bucket: a wait, not a listing fault
       if (revertName(e) === "SpendCapReached") return { kind: "skipped", reason: "SpendCapReached: waiting for the next bucket" };
       return { kind: "failed", reason: `simulation reverted: ${revertName(e) ?? txError(e)}` };
     }
 
-    const gasNow = { baseFee: (await this.client.getBlock()).baseFeePerGas ?? s.baseFee };
+    try {
+      pendingBaseFee = (await this.client.getBlock({ blockTag: "pending" })).baseFeePerGas ?? pendingBaseFee;
+    } catch (e) {
+      return { kind: "failed", reason: `pending block recheck failed: ${txError(e)}` };
+    }
+    if (pendingBaseFee > pol.maxBaseFee) return { kind: "skipped", reason: `pending base fee ${pendingBaseFee} above the door ceiling ${pol.maxBaseFee}` };
+    const gasNow = { baseFee: pendingBaseFee };
     const r = recheck(c, s, listing, gasUsed, gasNow, this.policy);
     if (!r.ok) return { kind: "skipped", reason: `after simulation: payment ${r.payment} under cost ${r.cost} plus margin at ${gasUsed} gas` };
 
@@ -98,13 +116,11 @@ export class Executor {
       return { kind: "skipped", reason: "daily budget exhausted" };
     }
 
-    const pol = this.policy.doors[c.door];
     const tx = {
       to,
       data,
       gas: (gasUsed * GAS_BUFFER_BPS + 9_999n) / 10_000n,
-      maxFeePerGas: pol.maxBaseFee + pol.tip,
-      maxPriorityFeePerGas: pol.tip,
+      ...fee,
     };
     const before = await this.client.getBalance({ address: this.signer.address });
     let hash: Hex;
@@ -130,9 +146,13 @@ export class Executor {
     const received = after + spent > before ? after + spent - before : 0n;
     this.ledger.record(spent, received, hash);
     const fields = { door: c.door, hash, url: txUrl(hash, chainId), block: receipt.blockNumber, gasUsed: receipt.gasUsed, spent, received, net: received - spent };
-    if (receipt.status === "success") {
+    const paidDoor = c.door === "buyListing" || c.door === "buyback" || c.door === "compose" || c.door === "redeemStatement" || c.door === "refreshReference";
+    if (receipt.status === "success" && (!paidDoor || received >= spent + this.policy.margin)) {
       this.breaker.ok(c.door);
       log("info", "confirmed", fields);
+    } else if (receipt.status === "success") {
+      log("error", "paid door underpaid", fields);
+      if (this.breaker.fail(c.door)) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated underpaid receipts`, fields);
     } else {
       log("error", "reverted on chain", fields);
       if (this.breaker.fail(c.door)) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated on chain reverts`, fields);
