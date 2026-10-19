@@ -24,12 +24,19 @@ if git('cat-file', '-e', 'HEAD:docs/STATUS.md').returncode or git('diff', '--qui
     sys.exit('fail evidence table: docs/STATUS.md must be tracked and unchanged from HEAD')
 text = Path('docs/STATUS.md').read_text()
 section = re.search(r'^## 4\.[^\n]*\n(.*?)(?=^#|\Z)', text, re.M | re.S)
+rows = [[cell.strip() for cell in line.strip('|').split('|')]
+        for line in section[1].splitlines() if line.startswith('|')] if section else []
+candidate = next((row[1] for row in rows if len(row) == 5 and row[0] == 'candidate'
+                  and ('all' in row[3].split(',') or stage in row[3].split(','))), '')
+
+def same_inputs(before, after):
+    delta = git('diff', '--name-only', before, after)
+    return delta.returncode == 0 and all(p.startswith('docs/') or p in {'AGENTS.md', 'CLAUDE.md'}
+                                        for p in delta.stdout.splitlines())
+
 seen = set()
 failures = []
-for line in section[1].splitlines() if section else []:
-    if not line.startswith('|'):
-        continue
-    cells = [cell.strip() for cell in line.strip('|').split('|')]
+for cells in rows:
     if cells[0] == 'gate' or cells[0].startswith('---'):
         continue
     if len(cells) != 5:
@@ -67,12 +74,10 @@ for line in section[1].splitlines() if section else []:
         if gate == 'candidate':
             if git('merge-base', '--is-ancestor', commit, 'HEAD').returncode:
                 raise ValueError('candidate is not an ancestor of HEAD')
-            delta = git('diff', '--name-only', commit, 'HEAD')
-            if delta.returncode:
-                raise ValueError('cannot compare candidate inputs')
-            changed = delta.stdout.splitlines()
-            if any(not (p.startswith('docs/') or p in {'AGENTS.md', 'CLAUDE.md'}) for p in changed):
+            if not same_inputs(commit, 'HEAD'):
                 raise ValueError('executable inputs changed: re-pin candidate and verify the affected delta; retain unaffected evidence')
+        if gate in {'review', 'acceptance'} and not same_inputs(commit, candidate):
+            raise ValueError('review/approval inputs differ from candidate; record the affected delta review and applicable owner approval')
         print(f'{"waived" if outcome == "waived" else "ok"} {stage}: {label} {commit} {result}')
     except ValueError as error:
         failures.append(f'{label}: {error}')

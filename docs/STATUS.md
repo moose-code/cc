@@ -115,7 +115,7 @@ These entries predate the current candidate. Use section 1 and `docs/reviews/LAU
 
 `script/tools/check-freeze.sh <core|coin|services>` checks recorded evidence for one release step; no argument means coin launch. Rows name their stage and outcome explicitly. Missing, pending or failed requirements block that step. Core-only owner waivers remain waivers and grant no coin-launch or service approval. Evidence revisions must exist, and result files and this table must be committed and unchanged. The candidate must be HEAD or an ancestor with only docs/guidance changes since it.
 
-Re-pin the candidate after executable input changes, verify the affected delta and update affected rows; retain other evidence at its actual revision with its stated limitations. This checker validates records, not test coverage or approval authenticity. Existing reports and owner choices below are preserved. The currently pinned candidate is not advanced by this process migration, so executable changes since it still require reconciliation before deployment.
+Re-pin the candidate after executable input changes, verify the affected delta and update affected rows; retain other evidence at its actual revision with its stated limitations. Review and owner-acceptance revisions must have the candidate's executable inputs; repinning alone cannot carry old approval across runtime changes. This checker validates records, not test coverage or approval authenticity. Existing reports and owner choices below are preserved. The currently pinned candidate is not advanced by this process migration, so executable changes since it still require reconciliation before deployment.
 
 | gate | commit | result | stage | outcome |
 |---|---|---|---|---|

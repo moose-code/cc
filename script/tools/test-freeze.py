@@ -100,6 +100,15 @@ class FreezeTests(unittest.TestCase):
         self.assertNotEqual(self.check('core').returncode, 0)
         self.rows[0][1] = self.git('rev-parse', 'HEAD')
         self.write_status()
+        self.assertNotEqual(self.check('core').returncode, 0)
+        # A newly recorded delta review and scoped approval are needed; broad suite rows stay unchanged.
+        (self.root / 'docs/proof.md').write_text('New delta review and owner approval for the changed fixture input.\n')
+        self.git('add', '--', 'docs/proof.md')
+        self.git('commit', '-qm', 'record fixture delta review and approval')
+        for row in self.rows:
+            if row[0].startswith(('final review', 'owner acceptance')):
+                row[1] = self.rows[0][1]
+        self.write_status()
         result = self.check('core')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('suite ' + self.pin, result.stdout)
