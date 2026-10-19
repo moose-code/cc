@@ -6,6 +6,8 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 2026-10-19 signed rehearsal update: commit `b6f60f5` fixes a real `Resume.s.sol` Forge self-call failure found after the signed local deployment was interrupted. A focused build, independent source review and partial-fork script simulation passed. The production wrapper then recovered the deferred Core and launched the coin on isolated chain-id-1 Anvil at fork block 26,208,025. All 14 local receipts (including two local factory-owner setup calls) succeeded. The 12 production-path transactions used 21,321,799 gas. The same `deployments/rehearsal.json` records Core block 26,208,030 and launch block 26,208,039; read-only postflight passed 78/78. A true no-send keeper tick read that record and made the expected zero-pot decision. Full evidence and the impersonated, pre-funded, mocked and unproven boundaries are in `docs/reviews/SIGNED-REHEARSAL-b6f60f5-2026-10-19.md`. Production factory-owner signing, hosted indexer/website/alerts, keeper funding, final market signoff, mainnet record and mainnet deployment remain open. No mainnet broadcast, push or merge occurred.
 
+2026-10-19 same-record follow-up: test-only commit `0ddf07e` passes 1/1 on the signed launch-block fork with real pool/hook swaps, fee booking and one CreditStrategy acquisition at a modeled 5-gwei base fee; see the signed rehearsal report. The test uses a funded trader, test router, impersonated calls and a static listing across a 24-hour time jump. It is an opt-in focused result, not the complete end-to-end gate or production keeper acceptance.
+
 2026-10-19 metadata update (decision 210): executable commit `9fadc14` puts the owner's selected website text in the launch config and carries it into the preview and signer rehearsal. The rendered preview has the exact text and six animated SVG elements. Focused Config passed 34/34, and the in-process chain-id-1 rehearsal passed 1/1 with preflight 116 ok and 2 warnings, postflight 77/77, and 21,676,127 simulated gas across 12 transactions. The exact updated config hash and addresses are in `docs/reviews/CANDIDATE-9fadc14-description-2026-10-19.md`. No production contract behavior changed; the broad and deep checks at `a0fa1dc` were not repeated for this metadata delta. Signed local deployment and recovery are now recorded in the update above. The checkout still has no mainnet deployment record; external keeper and indexer hosting are unconfirmed. No production service was started or funded.
 
 2026-10-19 operator update (decision 209): a dedicated, unfunded mainnet keeper keystore and saved password now exist outside the repository; public address `0x6b9411DD51DF1E41015cD8293C1BBC3E881a4aee`. Foundry and the keeper's own decryptor both recovered this address, and the pinned fork showed no code or ETH at it. The owner reports that the website is live. The Fly CLI has no access token here.
@@ -111,7 +113,7 @@ These entries predate the current candidate. Use section 1 and `docs/reviews/LAU
 
 | gate | commit | result |
 |---|---|---|
-| candidate | b6f60f5 | docs/reviews/SIGNED-REHEARSAL-b6f60f5-2026-10-19.md |
+| candidate | 0ddf07e | docs/reviews/SIGNED-REHEARSAL-b6f60f5-2026-10-19.md |
 | suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
 | deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
 | e2e | pending | signed same-record local chain-id-1 lifecycle not run |

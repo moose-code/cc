@@ -4,6 +4,8 @@ Prepared on 2026-10-19 for the owner's review before any mainnet deployment. Thi
 
 Signed local addendum: `b6f60f5` repairs a Forge-only recovery script self-call. The production wrapper then completed an interrupted deferred deploy, launch and same-record postflight on isolated chain-id-1 Anvil. All 14 local receipts succeeded and the fresh read-only postflight passed 78/78. The keeper made a no-send idle decision from this record. Exact setup, gas, addresses and limits are in `SIGNED-REHEARSAL-b6f60f5-2026-10-19.md`. Production signing and hosted services remain unproven.
 
+A focused test-only follow-up at `0ddf07e` passes real pool/hook swaps, fee booking and one strategy acquisition against the signed launch-block state. It uses funded and impersonated test callers, a test swap router and a listing held static across a 24-hour time jump. It does not close the complete end-to-end or production-service gates.
+
 ## Provisional choices made during repair
 
 | choice | recommendation implemented for local review | consequence to accept before launch |
@@ -48,4 +50,4 @@ The owner already chose the phase-two 203/100-bps spread/tolerance, same-token i
 
 ## Release result
 
-The broad suite, deep invariants, in-process mainnet-value rehearsal, signed local deploy/launch and interrupted recovery passed on the scoped revisions above. The signed record has receipt gas and a no-send keeper startup check. Real swaps and order execution on that same signed chain state, production service checks and owner acceptance remain open. A green local test suite does not close the service and launch-input gates above.
+The broad suite, deep invariants, in-process mainnet-value rehearsal, signed local deploy/launch and interrupted recovery passed on the scoped revisions above. The signed record has receipt gas, a no-send keeper startup check, and a focused in-process swap/fee/strategy-acquisition test. The complete end-to-end lifecycle, production service checks and owner acceptance remain open. A green local test suite does not close the service and launch-input gates above.

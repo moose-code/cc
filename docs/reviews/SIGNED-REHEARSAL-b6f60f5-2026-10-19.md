@@ -46,6 +46,12 @@ All transactions below have receipt status `1`, value 0 ETH, and were broadcast 
 | LogoCoinRenderer | `0x07e24be2A69E26F74a2a7883C3d966c908099707` | 4,464 | `0xa8a40e195aa27b1cd92ffc9ac985c5afdac9a89535df57f704f70cc780edb170` |
 | CC coin | `0xc56406D5bC8dF6131442690d617190dA42D6bE61` | 8,745 | `0x613c12e144c38518d7aabd2760f1147d583f80bb9d7b44f5658548411c04428f` |
 
+## Focused same-record follow-up
+
+Test-only commit `0ddf07e` adds an opt-in in-process fork test at the exact signed launch block. `SIGNED_RECORD_REHEARSAL=1 forge test --match-path test/SignedRecordLifecycle.t.sol -vv` exited 0 with **1 passed, 0 failed, 0 skipped**; `forge build` exited 0. With the opt-in unset, the focused file exited 0 with **0 passed, 0 failed, 1 skipped**. The test made real v4 pool-manager and hook swaps through a test router, booked **0.153633245079471893 ETH** of fee income, then bought pinned CreditStrategy listing #35,377 for **0.036 ETH** after the ETH bid rose to **0.09143598645 ETH**. Core spent **0.04045273 ETH** including royalty and caller payment; the caller received **0.00355273 ETH**. At a modeled 5-gwei base fee, this exceeded **551,839 measured test-call gas** times that base fee.
+
+The trader was test-funded 5 ETH; Foundry impersonated callers and advanced time 31 minutes and then 24 hours. The listing was held static through that time jump, which does not prove a seller would keep it active in production. The test router used the real pool and hook, not the production Universal Router. No Anvil transaction or real keeper send occurred. This focused test covers swaps, fee booking and one acquisition on the signed record, not direct sales, pages, BALANCE, redemption, buybacks or the full end-to-end lifecycle.
+
 ## Limits and launch gate
 
 The keeper read this same record in true `DRY_RUN=1` mode at block 26,208,039 and exited 0. It saw chain ID 1, the recorded Core and adapters, a 0 ETH pot, a 0.1 ETH reserve, zero listing candidates and an unfunded dedicated keeper wallet. All doors were enabled; its decisions sent nothing. It logged a reserve alert, but no webhook was configured or called. This proves startup and the idle decision only, not profitable execution or delivery of an alert.
