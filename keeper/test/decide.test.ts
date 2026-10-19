@@ -21,6 +21,7 @@ import {
   type State,
 } from "../src/decide.ts";
 import { DOORS, type Door } from "../src/config.ts";
+import { candidatesOrEmpty } from "../src/main.ts";
 
 const CORE = "0x00000000000000000000000000000000000000c0" as Address;
 const SEAPORT_ADAPTER = "0x00000000000000000000000000000000000000a1" as Address;
@@ -85,6 +86,15 @@ function policy(over: Partial<{ [d in Door]: { maxBaseFee: bigint; tip: bigint }
 const gas = (g: string) => ({ baseFee: parseGwei(g) });
 const doorsOf = (r: ReturnType<typeof decide>) => r.calls.map((c) => c.door);
 const reason = (r: ReturnType<typeof decide>, d: Door) => r.skips.filter((s) => s.door === d).map((s) => s.reason).join(" | ");
+
+// promise: a listing-source failure cannot suppress a profitable independent buyback decision
+test("listing discovery failure leaves other keeper doors available", async () => {
+  const listings = await candidatesOrEmpty({ candidates: async () => { throw new Error("listing rpc unavailable"); } }, {} as any, 1_000n);
+  assert.deepEqual(listings, []);
+  const d = decide(state({ ethToBuyback: parseEther("1") }), listings, gas("1"), policy(), new Map());
+  assert.ok(d.calls.some((c) => c.door === "buyback"));
+  assert.ok(d.calls.every((c) => c.door !== "buyListing"));
+});
 
 // ------------------------------------------------------------------ buyback
 

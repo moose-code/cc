@@ -17,6 +17,7 @@ const PAGE = 100; // OpenSea's maximum page size
 const MAX_LISTINGS = 200; // the cheapest listings kept per cache window; sent as `max` for the listings page caption
 const MAX_PAGES = 5; // upstream GET limit even when every returned order is ineligible
 const LISTINGS_TIMEOUT_MS = 10_000; // one deadline for the full paged snapshot
+const FULFILL_TIMEOUT_MS = 10_000; // release a fulfillment slot when OpenSea stalls
 const CACHE_MS = 20_000;
 const FULFILL_CACHE_MS = 10_000;
 const MAX_FULFILL_INFLIGHT = 4; // concurrent OpenSea fulfillment POSTs across all clients
@@ -123,7 +124,7 @@ async function build(): Promise<Out> {
 async function fulfill(orderHash: string): Promise<Fulfill> {
   try {
     const body = { listing: { hash: orderHash, chain: "ethereum", protocol_address: SEAPORT_1_6 }, fulfiller: { address: core } };
-    const f = (await os("/listings/fulfillment_data", { method: "POST", body: JSON.stringify(body) })).fulfillment_data?.transaction;
+    const f = (await os("/listings/fulfillment_data", { method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(FULFILL_TIMEOUT_MS) })).fulfillment_data?.transaction;
     const p = f?.input_data?.parameters;
     if (!p || !String(f.function).startsWith("fulfillBasicOrder_efficient_6GL6yc") || lc(f.to) !== SEAPORT_1_6) return { skipped: "not a fulfillBasicOrder call" };
     if (lc(p.offerToken) !== lc(credits) || p.offerAmount !== "1") return { skipped: "not one credit" };

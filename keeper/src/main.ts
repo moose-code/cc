@@ -60,6 +60,16 @@ export interface TickResult {
   outcomes: { door: string; key: string; outcome: Outcome }[];
 }
 
+// Listing RPC failures suppress sweeps for this tick but leave independent Core doors available.
+export async function candidatesOrEmpty(sources: Pick<Sources, "candidates">, snap: Parameters<Sources["candidates"]>[0], blockNumber: bigint, webhook?: string): Promise<Listing[]> {
+  try {
+    return await sources.candidates(snap, blockNumber);
+  } catch (e) {
+    void alert(webhook, "listings", "listing discovery failed; non-listing doors remain active", { block: blockNumber, error: safeError(e) });
+    return [];
+  }
+}
+
 export class Keeper {
   private seen = new Map<string, bigint>();
   private lastBookAt = 0n;
@@ -95,7 +105,9 @@ export class Keeper {
       log("info", "pending transaction", { block: state.blockNumber, outcome: pending });
       return { block: state.blockNumber, calls: [], skips: [], outcomes: [{ door: "pending", key: "pending", outcome: pending }] };
     }
-    const listings: Listing[] = this.cfg.doorsOn.has("buyListing") && !state.retired && !state.paused ? await this.sources.candidates(snap, state.blockNumber) : [];
+    const listings: Listing[] = this.cfg.doorsOn.has("buyListing") && !state.retired && !state.paused
+      ? await candidatesOrEmpty(this.sources, snap, state.blockNumber, this.cfg.alertWebhook)
+      : [];
     const d = decide(state, listings, { baseFee: state.baseFee }, this.policy, this.seen);
     this.seen = d.seen;
     const now = Date.now();

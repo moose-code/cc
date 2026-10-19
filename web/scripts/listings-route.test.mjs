@@ -35,9 +35,14 @@ const MANY = 250; // more listings than the cap; the route keeps the cheapest 20
 const ALL = Array.from({ length: MANY }, (_, i) => h(5000 + i));
 let posts = 0;
 let listingGets = 0;
+let hangPosts = false;
 globalThis.fetch = async (url, init) => {
   if (init?.method === "POST") {
     posts++;
+    if (hangPosts) return new Promise((_, reject) => {
+      if (init.signal.aborted) reject(init.signal.reason);
+      else init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    });
     return Response.json({}); // not a fulfillBasicOrder call: the route answers "skipped"
   }
   listingGets++;
@@ -125,5 +130,32 @@ const capped = await GET(new Request("http://x/api/listings"));
 assert.equal(capped.status, 200);
 assert.deepEqual((await capped.json()).listings, []);
 assert.equal(listingGets, 5);
+
+// promise: four stalled fulfillment POSTs occupy the slots only until their deadline, then a fresh order proceeds.
+clock += 60_000;
+globalThis.INVALID_PAGE_MODE = false;
+await GET(new Request("http://x/api/listings"));
+const realTimeout = AbortSignal.timeout;
+AbortSignal.timeout = (ms) => realTimeout(Math.min(ms, 50));
+hangPosts = true;
+try {
+  const stalled = Array.from({ length: 4 }, (_, i) => call(ALL[30 + i], `40.0.0.${i + 1}`));
+  await new Promise((resolve) => setImmediate(resolve));
+  const saturated = await call(ALL[34], "40.0.0.5");
+  assert.equal(saturated.status, 503, "all four fulfillment slots are occupied");
+  let guard;
+  const settled = await Promise.race([
+    Promise.all(stalled),
+    new Promise((_, reject) => { guard = setTimeout(() => reject(new Error("fulfillment slots did not time out")), 1_000); }),
+  ]).finally(() => clearTimeout(guard));
+  for (const response of settled) {
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { skipped: "fulfillment data failed" });
+  }
+} finally {
+  hangPosts = false;
+  AbortSignal.timeout = realTimeout;
+}
+assert.equal((await call(ALL[35], "40.0.0.6")).status, 200, "a new order can use a released slot");
 
 console.log("listings-route test ok");
