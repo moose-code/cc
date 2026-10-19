@@ -15,6 +15,7 @@ Prepared on 2026-10-19 for the owner's review before any mainnet deployment. Thi
 | Pool postflight | Require the live factory protocol recipient to equal the configured hook recipient and the initial v4 pool LP fee to be zero. | A factory recipient change or unexpected fee halts launch postflight until reconciled. |
 | Historical master fixture | Keep it as historical test material, but use the deployed live v2 stack and pinned chain-id-1 block for launch gates. | Master-fixture evidence does not prove the live-stack path. |
 | Interrupted deployment | Recompute missing transactions from the original signed config and live state. Do not replay Forge's saved transactions. A stopped deferred run stays deferred. | Preserve the nonsecret config lock and its separate durable backup. If either is inconsistent with the partial chain state, halt and review before any further transaction. |
+| ETH bid near the reserve | Keep `bidOf` as the seller's indicative payout, and require callers to check payout plus the on-top artist royalty against pot room. The keeper already checks total listing cost and simulates before sending. | A positive `bidOf` can still be unfillable when the room covers the seller but not the royalty. This is a liveness and display edge, not an ETH solvency breach. A firm executable quote would require a separately reviewed pricing/interface change. |
 
 ## Phase-two pricing change required
 
