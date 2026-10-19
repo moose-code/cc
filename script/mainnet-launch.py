@@ -50,7 +50,7 @@ def print_launch_config(path):
     print(json.dumps(config, indent=2, sort_keys=True), flush=True)
 
 
-def rpc(url, method, params):
+def rpc(url, method, params, *, preserve_response=False):
     payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     request = urllib.request.Request(url, payload, {"Content-Type": "application/json",
                                                 "User-Agent": "cc-mainnet-launch/1.0"})
@@ -59,9 +59,9 @@ def rpc(url, method, params):
             data = json.load(response)
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"RPC {method} transport failed") from error
-    if "error" in data:
+    if "error" in data and not preserve_response:
         raise RuntimeError(f"RPC {method} failed: {redact(data['error'].get('message', 'unknown error'))}")
-    return data["result"]
+    return data if preserve_response else data["result"]
 
 
 def coin_is_live(read_url, core):
@@ -257,7 +257,9 @@ class GateHandler(BaseHTTPRequestHandler):
         elif method.startswith("eth_send") or method.startswith("personal_"):
             raise RuntimeError(f"unapproved signing method {method}")
         else:
-            result = rpc(self.gate.read_url, method, request.get("params", []))
+            upstream = rpc(self.gate.read_url, method, request.get("params", []), preserve_response=True)
+            key = "error" if "error" in upstream else "result"
+            return {"jsonrpc": "2.0", "id": request.get("id"), key: upstream[key]}
         return {"jsonrpc": "2.0", "id": request.get("id"), "result": result}
 
 

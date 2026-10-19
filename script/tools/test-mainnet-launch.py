@@ -28,6 +28,19 @@ class ApprovalTests(unittest.TestCase):
             self.assertEqual(launch.rpc("https://rpc.mevblocker.io/fullprivacy", "eth_chainId", []), "0x1")
         self.assertEqual(opened.call_args.args[0].get_header("User-agent"), "cc-mainnet-launch/1.0")
 
+    def test_optional_rpc_probe_returns_upstream_method_not_found(self):
+        # promise: unsupported Forge probes keep the upstream JSON-RPC error without stopping the approval gate.
+        response = b'{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}'
+        handler = launch.GateHandler.__new__(launch.GateHandler)
+        handler.gate = SimpleNamespace(read_url="https://read-rpc.example")
+        with patch.object(launch.urllib.request, "urlopen", side_effect=lambda *_a, **_kw: io.BytesIO(response)):
+            self.assertEqual(handler.forward({"jsonrpc": "2.0", "id": 42,
+                                              "method": "anvil_nodeInfo", "params": []}),
+                             {"jsonrpc": "2.0", "id": 42,
+                              "error": {"code": -32601, "message": "method not found"}})
+            with self.assertRaisesRegex(RuntimeError, "method not found"):
+                launch.rpc("https://read-rpc.example", "eth_chainId", [])
+
     def test_launch_config_display_uses_the_selected_file(self):
         # promise: the operator sees every value from the selected launch config before approval.
         with TemporaryDirectory() as temp:
