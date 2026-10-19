@@ -44,6 +44,34 @@ test("executor: a pending base fee above the door ceiling skips before simulatio
   assert.equal(simulated, false);
 });
 
+// promise: daily budget covers the signed gas limit at maxFeePerGas, even when the pending estimate is cheaper
+test("executor: budget refuses one wei below maximum authorized gas and accepts the exact bound", async () => {
+  const gasUsed = 60_000n;
+  const gasLimit = 75_000n;
+  const maxSpend = gasLimit * (cfg.doors.refreshReference.maxBaseFee + cfg.doors.refreshReference.tip);
+  let sends = 0;
+  let balanceReads = 0;
+  const before = parseEther("1");
+  const client: any = {
+    getBlock: async () => ({ baseFeePerGas: parseGwei("1") }),
+    estimateGas: async () => gasUsed,
+    getBalance: async ({ blockNumber }: { blockNumber?: bigint }) => { balanceReads++; return blockNumber ? before - gasUsed * parseGwei("1") : before; },
+    getTransactionCount: async () => 0,
+    request: async () => { sends++; return "0x" + "55".repeat(32); },
+    getTransactionReceipt: async () => ({ status: "success", gasUsed, effectiveGasPrice: parseGwei("1"), blockNumber: 2n }),
+  };
+  const belowCfg = { ...cfg, dailyBudget: maxSpend - 1n };
+  const below = new Executor(client, belowCfg, policy, { address: keeper, impersonate: true }, new Ledger(undefined, belowCfg.dailyBudget), new Breaker(2, 60), new PendingStore());
+  assert.deepEqual(await below.run(call, state), { kind: "skipped", reason: "daily budget exhausted" });
+  assert.equal(sends, 0);
+  assert.equal(balanceReads, 0);
+  const exactCfg = { ...cfg, dailyBudget: maxSpend };
+  const exact = new Executor(client, exactCfg, policy, { address: keeper, impersonate: true }, new Ledger(undefined, exactCfg.dailyBudget), new Breaker(2, 60), new PendingStore());
+  assert.equal((await exact.run(call, state)).kind, "sent");
+  assert.equal(sends, 1);
+  assert.equal(maxSpend, 228_750_000_000_000n);
+});
+
 // promise: only a decoded order fault may suppress a listing; an RPC failure leaves it retryable
 test("executor: listing faults exclude transport and estimate failures", async () => {
   const listingCall: Intended = { ...call, door: "buyListing", functionName: "buyListing", args: [rec.seaportAdapter, 42n, "0x"], key: "buyListing:42" };

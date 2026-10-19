@@ -124,17 +124,18 @@ export class Executor {
       return { kind: "dry", gas: gasUsed };
     }
 
-    if (!this.ledger.allows(r.cost)) {
-      void alert(this.cfg.alertWebhook, "budget", "daily budget exhausted, paid doors wait for the next UTC day", { remaining: this.ledger.remaining(), cost: r.cost });
-      return { kind: "skipped", reason: "daily budget exhausted" };
-    }
-
     const tx = {
       to,
       data,
       gas: (gasUsed * GAS_BUFFER_BPS + 9_999n) / 10_000n,
       ...fee,
     };
+    // Reserve the whole gas limit at the signed fee ceiling; the receipt records only what was actually spent.
+    const maxSpend = tx.gas * tx.maxFeePerGas;
+    if (!this.ledger.allows(maxSpend)) {
+      void alert(this.cfg.alertWebhook, "budget", "daily budget exhausted, paid doors wait for the next UTC day", { remaining: this.ledger.remaining(), cost: maxSpend });
+      return { kind: "skipped", reason: "daily budget exhausted" };
+    }
     const before = await this.client.getBalance({ address: this.signer.address });
     let hash: Hex;
     try {
