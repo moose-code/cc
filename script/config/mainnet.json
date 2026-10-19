@@ -14,7 +14,7 @@
   "name": "CC",
   "symbol": "CC",
   "image": "",
-  "description": "",
+  "description": "$CC trades fill the pot. the pot buys Credits, priced by rating. every 80 become a statement, which sells to refill the pot.",
   "salt": "0x56d96069d0c85d21b8d789da2cd39ba97ceec51143707e32ecb8343eb4258a9c",
   "rateStart": 4650000000000000,
   "settings": {

@@ -19,7 +19,7 @@ FORK_URL="${FORK_URL:-https://gateway.tenderly.co/public/mainnet}"
 RPC="http://127.0.0.1:$PORT"
 REAL_OWNER=0xCB43078C32423F5348Cab5885911C3B5faE217F9
 DELEGATION=0xef0100612373d7003d694220f7800eeaf8e3924c0951d3
-BASE_CONFIG=script/config/rehearsal.json
+BASE_CONFIG=script/config/mainnet.json
 CONFIG=script/config/rehearse-signer.local.json   # gitignored; forge reads files under the repository only
 die() { echo "rehearse-signer: $*" >&2; exit 1; }
 [ "$PORT" = 8618 ] || [ -n "${ALLOW_PORT:-}" ] || die "PORT is 8618 (ALLOW_PORT=1 to change)"
@@ -65,7 +65,7 @@ rpc() { cast rpc "$@" --rpc-url "$RPC" >/dev/null; }
 
 # ---- setup: the signer takes the owner's place on the fork ------------------------------------------------------
 FACTORY="$(jq -r .stack.factory "$BASE_CONFIG")"
-jq --arg s "$SIGNER" '.owner = $s | .creator = $s | .image = "" | .description = ""' "$BASE_CONFIG" >"$CONFIG"
+jq --arg s "$SIGNER" '.owner = $s | .creator = $s' "$BASE_CONFIG" >"$CONFIG"
 rpc anvil_setBalance "$SIGNER" 0x21e19e0c9bab2400000
 rpc anvil_setCode "$SIGNER" "$DELEGATION"
 rpc anvil_setBalance "$REAL_OWNER" 0x21e19e0c9bab2400000

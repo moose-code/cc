@@ -26,6 +26,9 @@ import {StandinRenderer} from "./standins/StandinRenderer.sol";
 
 /// @notice the config file, the placeholder guard, the preflight and the postflight on the pinned fork
 contract ConfigTest is Fixture {
+    string internal constant LAUNCH_DESCRIPTION =
+        "$CC trades fill the pot. the pot buys Credits, priced by rating. every 80 become a statement, which sells to refill the pot.";
+
     /// @dev SETTINGS_CHANGED of the operator, a flag here so parallel tests never share an environment variable
     bool internal changedFlag;
 
@@ -84,6 +87,7 @@ contract ConfigTest is Fixture {
         assertEq(f.artist, 0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a, "the launch artist address (decision 123)");
         assertEq(f.name, "CC");
         assertEq(f.symbol, "CC");
+        assertEq(f.description, LAUNCH_DESCRIPTION, "launch coin description");
         assertEq(f.salt, keccak256("CC"));
         assertEq(f.rateStart, 4_650_000_000_000_000);
         assertEq(f.supply, 1_000_000_000e18);
@@ -693,7 +697,7 @@ contract ConfigTest is Fixture {
     function test_jsonParsesImageAndDescription() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         j = vm.replace(j, '"image": ""', '"image": "ipfs://cid/cc.png"');
-        j = vm.replace(j, '"description": ""', '"description": "the CC coin"');
+        j = vm.replace(j, string.concat('"description": "', LAUNCH_DESCRIPTION, '"'), '"description": "the CC coin"');
         LaunchConfig memory c = parseConfig(j);
         assertEq(c.image, "ipfs://cid/cc.png");
         assertEq(c.description, "the CC coin");

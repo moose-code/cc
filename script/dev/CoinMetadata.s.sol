@@ -6,8 +6,14 @@ import {LogoCoinRenderer} from "../../src/LogoCoinRenderer.sol";
 import {ICoinRenderer} from "../../src/interfaces/ICoinRenderer.sol";
 import {IArtCoinsTokenV2} from "../../src/interfaces/ArtCoinsV2.sol";
 
-/// The empty-config coin fields used when no deployed coin is supplied.
+/// Launch coin fields used when no deployed coin is supplied.
 contract DemoCoin {
+    string private _description;
+
+    constructor(string memory description_) {
+        _description = description_;
+    }
+
     function name() external pure returns (string memory) {
         return "CC";
     }
@@ -16,19 +22,20 @@ contract DemoCoin {
         return "CC";
     }
 
-    function description() external pure returns (string memory) {
-        return "";
+    function description() external view returns (string memory) {
+        return _description;
     }
 }
 
-/// Prints metadata through the live coin's renderer, or the launch LogoCoinRenderer with the current empty fields.
+/// Prints metadata through the live coin's renderer, or the launch LogoCoinRenderer with the configured description.
 /// script/tools/coin-metadata.sh decodes the URI into files and a viewer.
 contract CoinMetadata is Script {
     function run() external {
         address coin = vm.envOr("COIN", address(0));
         ICoinRenderer renderer;
         if (coin == address(0)) {
-            coin = address(new DemoCoin());
+            string memory config = vm.readFile(vm.envOr("LAUNCH_CONFIG", string("script/config/mainnet.json")));
+            coin = address(new DemoCoin(vm.parseJsonString(config, ".description")));
             renderer = new LogoCoinRenderer(address(uint160(uint256(keccak256("coin-metadata.owner")))));
         } else {
             renderer = ICoinRenderer(IArtCoinsTokenV2(coin).metadataRenderer());

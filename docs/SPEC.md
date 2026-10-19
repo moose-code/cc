@@ -12,7 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
-| behavior | The launch token config names `LogoCoinRenderer`, whose onchain animated SVG supplies the coin metadata image; a blank config image does not disable it. Preview tooling reads that renderer or the live coin's selected renderer | 160, 202 |
+| behavior | The launch token config names `LogoCoinRenderer`, whose onchain animated SVG supplies the coin metadata image; a blank config image does not disable it. The coin description is the exact website copy selected for launch, read from the coin by either renderer, and editable by the coin admin until `renounceAdmin`. Preview tooling reads the configured description or the live coin's selected renderer | 54, 160, 202, 210 |
 | launch input | Provisionally set the opening ETH bid to 0.00465 ETH per 100 Credit points and its hard cap to 0.01395 ETH per 100 points (3x). This follows a recent completed-sale check and owner review, but the complete trailing 24-hour sale median and executable listings require a deployment-day refresh before mainnet signoff | 200, 201, 203 |
 | review directive | A retired empty Core before coin launch is abandonable under a new reviewed config and salt. Classify it as gas and address recovery work, not participant asset loss or a launch security blocker; prioritize practical launched-system risks | 199 |
 | verification directive | Continue this candidate's fork checks within public RPC limits. A provider rate limit or timeout leaves the affected gate unproven; repeat only affected checks when a reliable archive endpoint is available | 198 |
