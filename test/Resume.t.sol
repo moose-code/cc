@@ -62,7 +62,9 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
 
     function resume(address who, LaunchConfig memory c, address core) external {
         // as in the script: the checks run outside the broadcast, the postflight after it
+        vm.pauseGasMetering();
         resumeChecks(who, c, core);
+        vm.resumeGasMetering();
         vm.startPrank(who);
         Deployed memory d = resumeSend(who, c);
         vm.stopPrank();
@@ -127,13 +129,32 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         _assertLaunched(core);
     }
 
-    // a resume needs a Core of this config and deployer that exists and has no coin yet
-    // promise: a resume needs a Core of this config and deployer that exists and has no coin yet
+    // promise: state recovery creates the Core when an earlier run stopped after the libraries
+    function test_resumeAfterLibrariesCreatesCoreAndLaunches() public {
+        _sendLibrary();
+        address core = coreAddress(base, deployer);
+        this.resume(deployer, base, core);
+        _assertLaunched(core);
+    }
+
+    // promise: recovering a stopped deferred run does not launch the coin
+    function test_resumeDeferredAfterLibrariesKeepsCoinUnlaunched() public {
+        _sendLibrary();
+        address core = coreAddress(base, deployer);
+        vm.pauseGasMetering();
+        resumeChecks(deployer, base, core);
+        vm.resumeGasMetering();
+        vm.startPrank(deployer);
+        Deployed memory d = resumeSendUntilLaunch(deployer, base);
+        vm.stopPrank();
+        resumeDeferredPostflight(deployer, base, d);
+        assertEq(d.core, core);
+        assertEq(d.coin.code.length, 0);
+    }
+
+    // promise: a resume needs the predicted Core of this config and no launched coin
     function test_resumeRefusesWhatItCannotFinish() public {
         _sendLibrary();
-        vm.expectRevert(abi.encodeWithSelector(NotStarted.selector));
-        this.resume(deployer, base, coreAddress(base, deployer));
-
         vm.prank(deployer);
         address core = _newCore(base, deployer);
         LaunchConfig memory other = base;
@@ -144,6 +165,30 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
         this.resume(deployer, base, core);
         vm.expectRevert(abi.encodeWithSelector(AlreadyLaunched.selector));
         this.resume(deployer, base, core);
+    }
+
+    // promise: a deferred launch refuses a Core with changed control or payout before any launch transaction
+    function test_resumeRefusesChangedCoreOwnerOrPayee() public {
+        _sendLibrary();
+        Deployed memory d = this.deferExt(deployer, base);
+        address other = makeAddr("changed owner");
+        vm.prank(deployer);
+        ICore(payable(d.core)).transferOwnership(other);
+        vm.prank(other);
+        ICore(payable(d.core)).acceptOwnership();
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "core owner"));
+        this.resume(deployer, base, d.core);
+        assertEq(d.coin.code.length, 0);
+
+        vm.prank(other);
+        ICore(payable(d.core)).transferOwnership(deployer);
+        vm.prank(deployer);
+        ICore(payable(d.core)).acceptOwnership();
+        vm.prank(deployer);
+        ICore(payable(d.core)).setPayee(other);
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "core payee"));
+        this.resume(deployer, base, d.core);
+        assertEq(d.coin.code.length, 0);
     }
 
     function oneShotExt(address who, LaunchConfig memory c) external returns (Deployed memory d) {

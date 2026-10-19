@@ -10,20 +10,7 @@ import {Settings} from "../src/interfaces/Interfaces.sol";
 import {SystemResumer} from "../script/SystemResumer.sol";
 import {Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
-import {ReplayGuard} from "../script/ReplayGuard.s.sol";
 import {Postflight} from "../script/Postflight.s.sol";
-
-contract ReplayGuardProbe is ReplayGuard {
-    LaunchConfig internal configured;
-
-    function configure(LaunchConfig memory c) external {
-        configured = c;
-    }
-
-    function _config() internal view override returns (LaunchConfig memory) {
-        return configured;
-    }
-}
 
 contract PostflightRecordProbe is Postflight {
     function decode(LaunchConfig memory c, address core, string memory j) external view returns (uint256, bytes32) {
@@ -103,28 +90,23 @@ contract PrelaunchRateTest is Test, SystemResumer, ProdDeployer {
         launchOnlyChecks(deployer, base, core, factory.tokenDeployer());
     }
 
-    // promise: a saved replay after Core creation requires the real signed opening rate before a coin launch
-    function test_replayGuardRequiresRealSignoff() public {
+    // promise: recovery after Core creation requires the signed opening rate before a coin launch
+    function test_resumeRequiresOpeningRateSignoff() public {
         Deployed memory d = _defer();
         ICore k = ICore(payable(d.core));
         uint256 rate = 20_000_000_000_000_000;
         vm.prank(deployer);
         k.setOpeningRate(rate);
-        ReplayGuardProbe guard = new ReplayGuardProbe();
-        guard.configure(base);
-        vm.setEnv("CORE", vm.toString(d.core));
-        vm.setEnv("DEPLOYER", vm.toString(deployer));
-        vm.setEnv("CONFIG_HASH", vm.toString(configHash(base)));
-        vm.setEnv("PRELAUNCH_RATE", vm.toString(rate));
-        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(bytes32(0)));
+        approvedRate = rate;
+        signoffGood = false;
         vm.expectPartialRevert(PrelaunchRateSignoff.selector);
-        guard.run();
-        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(_openingRateHash(base, rate)));
-        guard.run();
+        this.guardsExt(d.core);
+        signoffGood = true;
+        this.guardsExt(d.core);
         vm.prank(deployer);
         k.setRate(rate - 1);
         vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "opening price state"));
-        guard.run();
+        this.guardsExt(d.core);
         assertEq(d.coin.code.length, 0, "a failed guard never launches the coin");
     }
 

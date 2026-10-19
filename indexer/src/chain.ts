@@ -109,8 +109,8 @@ async function snapshotBlock(ctx: Ctx, block: { number: bigint; timestamp: bigin
     ethPot: need<bigint>(0),
     ethToBuyback: need<bigint>(1),
     ethRedeemBurn: need<bigint>(2),
-    // The Core normally returns its last good ETH bid when the value quote is unusable. A failed read records 0
-    // without stopping snapshots of the remaining state.
+    // An unusable value quote reads as a zero ETH bid. A failed RPC read also records zero without stopping
+    // snapshots of the remaining state; call success and quote status are distinct at this boundary.
     ethRate: r[3].status === "success" ? (r[3].result as bigint) : 0n,
     floorRate: need<bigint>(4),
     balanceRate: need<bigint>(5),

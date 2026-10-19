@@ -13,23 +13,26 @@ import {SystemDeployer, Deployed} from "./SystemDeployer.sol";
 abstract contract SystemResumer is SystemDeployer {
     /// @notice the Core at `got` is not the Core `coreAddress(c, deployer)` of this config and deployer
     error CoreMismatch(address want, address got);
-    /// @notice the Core of this config and deployer has no code: run `Deploy`
-    error NotStarted();
     /// @notice the coin is launched already: nothing to resume
     error AlreadyLaunched();
 
     /// @notice everything the resume checks before it sends: that `core_` is the Core of this config and deployer, that
-    /// it exists and has no coin yet, and the preflight rows that still apply. reverts on any failure. the script runs it
+    /// it has no coin yet if it exists, and the preflight rows that still apply. reverts on any failure. the script runs it
     /// outside the broadcast
     function resumeChecks(address deployer, LaunchConfig memory c, address core_) internal {
         _requireConfig(c);
         address want = coreAddress(c, deployer);
         if (core_ != want) revert CoreMismatch(want, core_);
-        if (want.code.length == 0) revert NotStarted();
-        ICore core = ICore(payable(want));
-        if (core.COIN().code.length != 0) revert AlreadyLaunched();
-        _prelaunchPriceChecks(c, core);
-        preflightResume(c, deployer);
+        bool started = want.code.length != 0;
+        if (started) {
+            ICore core = ICore(payable(want));
+            if (core.COIN().code.length != 0) revert AlreadyLaunched();
+            _prelaunchPriceChecks(c, core);
+            if (core.owner() != c.owner) revert NotDeferred("core owner");
+            if (core.payee() != c.payee) revert NotDeferred("core payee");
+        }
+        if (started) preflightResume(c, deployer);
+        else preflight(c, deployer);
         _require();
     }
 
@@ -100,9 +103,19 @@ abstract contract SystemResumer is SystemDeployer {
         d = deploySystem(deployer, c);
     }
 
+    /// @notice completes missing prelaunch steps without creating the coin
+    function resumeSendUntilLaunch(address deployer, LaunchConfig memory c) internal returns (Deployed memory d) {
+        d = deploySystemUntilLaunch(deployer, c);
+    }
+
     /// @notice the postflight of a resumed deploy, reverting on any failed row
     function resumePostflight(address deployer, LaunchConfig memory c, Deployed memory d) internal {
         postflightAs(c, d.core, deployer);
+        _require();
+    }
+
+    function resumeDeferredPostflight(address deployer, LaunchConfig memory c, Deployed memory d) internal {
+        postflightDeferred(c, d.core, deployer);
         _require();
     }
 }

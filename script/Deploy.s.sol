@@ -6,8 +6,8 @@ import {LaunchConfig} from "./LaunchConfig.sol";
 import {SystemDeployer, Deployed} from "./SystemDeployer.sol";
 import {NewProd} from "./NewProd.sol";
 
-/// @notice `CONFIG_HASH=0x... DEPLOYER=0x... forge script script/Deploy.s.sol --rpc-url $PRIVATE_RPC --broadcast --slow
-/// --private-key $KEY` (or `--account` or `--ledger`). the signer must be the v2 factory owner and the config owner, it
+/// @notice Internal script of `script/deploy.sh`. The wrapper signs the config and records its recovery lock before
+/// broadcast. The signer must be the v2 factory owner and the config owner, it
 /// comes from the flags only, DEPLOYER only has to agree with it. reads script/config/mainnet.json, or the file named by
 /// LAUNCH_CONFIG. refuses to run while owner, creator, name, symbol or salt is unset, while SETTINGS_CHANGED or
 /// COIN_CHANGED is set, unless CONFIG_HASH is the hash that preflight printed for this config, and unless the signer is
