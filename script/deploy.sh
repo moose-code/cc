@@ -58,6 +58,17 @@ case "$DEFER_LAUNCH$LAUNCH_ONLY" in 00|01|10) ;; *) die "DEFER_LAUNCH and LAUNCH
 [ "$DEFER_LAUNCH" = 0 ] || [ "$RESUME" != state ] || die "DEFER_LAUNCH and RESUME=state do not combine: RESUME=state sends the launch"
 [ "$LAUNCH_ONLY" = 0 ] || [ -z "$RESUME" ] || die "LAUNCH_ONLY and RESUME do not combine: LAUNCH_ONLY reads the Core from the record"
 export DEFER_LAUNCH
+PRELAUNCH_RATE="${PRELAUNCH_RATE:-0}"
+PRELAUNCH_RATE_HASH="${PRELAUNCH_RATE_HASH:-}"
+[[ "$PRELAUNCH_RATE" =~ ^[0-9]+$ ]] || die "PRELAUNCH_RATE must be an unsigned wei amount per 100 points"
+if [ "$PRELAUNCH_RATE" != 0 ]; then
+  case "$LAUNCH_ONLY:$RESUME" in 1:*|0:state|0:record) ;; *) die "PRELAUNCH_RATE applies only to LAUNCH_ONLY or launch recovery" ;; esac
+  [[ "$PRELAUNCH_RATE_HASH" =~ ^0x[0-9a-fA-F]{64}$ ]] || die "PRELAUNCH_RATE_HASH must sign the config, opening rate and 3x cap"
+elif [ -n "$PRELAUNCH_RATE_HASH" ]; then
+  die "PRELAUNCH_RATE_HASH requires PRELAUNCH_RATE"
+fi
+export PRELAUNCH_RATE
+if [ -n "$PRELAUNCH_RATE_HASH" ]; then export PRELAUNCH_RATE_HASH; else unset PRELAUNCH_RATE_HASH; fi
 
 # the shell may override the read rpc, the launch config and (anvil only) the chain id of a local node
 RPC_OVERRIDE="${RPC_URL:-}"

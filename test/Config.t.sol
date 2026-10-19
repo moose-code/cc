@@ -699,14 +699,13 @@ contract ConfigTest is Fixture {
         assertEq(c.description, "the CC coin");
     }
 
-    // the readbacks name the row of the field a config changes, and the Core address row catches any change of the config
-    // promise: the readbacks name the row of the field a config changes, and the Core address row catches any change of the config
+    // promise: the readbacks name the affected rows, and the Core address still binds the constructor config
     function test_postflightCatchesEveryMismatch() public {
         string memory id = "core: address is the CREATE2 address of the config and the deployer";
         LaunchConfig memory c = lc;
         c.rateStart = lc.rateStart + 1;
         postflightAs(c, address(core), owner);
-        assertEq(_failedNames(), id);
+        assertEq(_failedNames(), string.concat("core: opening rate equals the approved value, ", id));
 
         c = lc;
         c.owner = creator;
@@ -859,7 +858,7 @@ contract ConfigTest is Fixture {
             uint256 v = SettingsFields.get(c.settings, i);
             SettingsFields.set(c.settings, i, v == 0 ? 1 : v - 1);
             postflightAs(c, address(core), address(0));
-            assertEq(_failedNames(), "core: settings equal the config", "a settings field slipped the readback");
+            assertEq(_failedNames(), "core: settings equal the approved launch values", "a settings field slipped the readback");
         }
     }
 
@@ -870,7 +869,7 @@ contract ConfigTest is Fixture {
         s.saleFloorBps = 8_000;
         _setSettings(s);
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "core: settings equal the config");
+        assertEq(_failedNames(), "core: settings equal the approved launch values");
         changedFlag = true;
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");

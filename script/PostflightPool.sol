@@ -103,7 +103,11 @@ abstract contract PostflightPool is PostflightV2 {
         );
         address fa = c.stack.factory;
         (bool ok, address live) = _addr(fa, abi.encodeCall(IArtCoinsFactoryV2.protocolRecipient, ()));
-        _warn("warn: protocol recipient equals the factory protocol recipient", ok && live == k.protocolRecipient, vm.toString(live));
+        _check(
+            "hook: protocol recipient equals the factory protocol recipient",
+            ok && live != address(0) && live == k.protocolRecipient,
+            string.concat("hook ", vm.toString(k.protocolRecipient), " factory ", vm.toString(live))
+        );
     }
 
     /// @dev the frozen anti sniper schedule: start, end (the baseline), window, start time
@@ -172,8 +176,10 @@ abstract contract PostflightPool is PostflightV2 {
     /// @dev the pool in the pool manager: initialised, and while nothing was bought (the pool manager still holds the whole
     /// supply bar the locker dust) the price is exactly the start price. the coin is currency1, so the tick is mirrored
     function _postState(LaunchConfig memory c, address coin_, bytes32 poolId) private {
-        (uint160 sqrtPrice, int24 tick,,) = StateLibrary.getSlot0(IPoolManager(c.stack.poolManager), PoolId.wrap(poolId));
+        (uint160 sqrtPrice, int24 tick,, uint24 lpFee) =
+            StateLibrary.getSlot0(IPoolManager(c.stack.poolManager), PoolId.wrap(poolId));
         _check("pool: initialized", sqrtPrice != 0, vm.toString(uint256(sqrtPrice)));
+        _check("pool: lp fee is zero", lpFee == 0, vm.toString(uint256(lpFee)));
         bool untouched = IArtCoinsTokenV2(coin_).balanceOf(c.stack.poolManager) + LOCKER_DUST_MAX >= c.supply;
         _check(
             "pool: start tick equals the config while nothing was bought",

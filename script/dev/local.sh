@@ -15,7 +15,8 @@ cd "$ROOT"
 PHASE="${PHASE:-post}"
 PORT="${PORT:-8545}"
 RPC="http://127.0.0.1:$PORT"
-FORK_BLOCK="${FORK_BLOCK:-26158000}"
+if [ "${STACK:-live}" = master ]; then DEFAULT_FORK_BLOCK=26158000; else DEFAULT_FORK_BLOCK=26208025; fi
+FORK_BLOCK="${FORK_BLOCK:-$DEFAULT_FORK_BLOCK}"
 CACHE_DIR="script/dev/.cache"
 PID_FILE="$CACHE_DIR/anvil-$PORT.pid"                   # the script/dev/anvil.sh wrapper
 ANVIL_PID_FILE="$CACHE_DIR/anvil-$PORT.listener.pid"    # the anvil process that owns PORT
