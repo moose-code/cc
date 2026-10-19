@@ -405,7 +405,8 @@ export class Core {
     this.redeemBurnMoved = 0; // cumulative eth moved from the reserve to the buyback pot by redemptions
     this.ethPot = 0; this.ethToBuyback = 0; this.ethRedeemBurn = 0; this.balancePot = 0; // balancePot is the balance module's holding, the eth value of the token it can pay (available())
     this.unbooked = 0; // fee income the hook pushed that no _book has folded into the pots yet (decision 147). the climb clamp counts its pot share; 0 while booking every step
-    this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0; this.funded = false;
+    this.rateAtCheckpoint = p.rateStart; this.checkpointTime = t0; this.lastFillTime = t0;
+    this.climbRestartTime = t0; this.funded = false;
     this.checkpointMult = 1; // decision 128: the climb multiplier m from the last checkpoint. 1 with multiplierCap 1
     this.fillBuckets = []; // the rejected hourly bound comparison (REVIEW-128-potscaled.md) reads these: [minute, max fill rate] for the past hour, ascending
     this.xpLive = 0; this.moduleSet = false; // the balance module is set by setBalanceModule. xpLive is the unitPerPoint it reports now
@@ -424,7 +425,8 @@ export class Core {
   }
   // the remembered peak now: peakRate halved over the time since peakTime (CoreLib.drop, Halving.halve)
   peakAt(now) {
-    return this.peakRate * Math.pow(0.5, (now - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
+    const growthNow = this.paused ? this.pausedSince : now;
+    return this.peakRate * Math.pow(0.5, Math.max(0, growthNow - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
   }
   // the pot share of the fee income the hook pushed that no _book has folded yet (decision 147): the payee share while
   // latched, then the redeem burn reserve share of the rest, the remainder is the pot share the next book adds. 0 while
@@ -440,6 +442,9 @@ export class Core {
   clamp() {
     // over 1 + buyToArtistBps / 10000, so a bid at the clamp is payable with its artist royalty (decision 163)
     return Math.min((Math.max(0, this.ethPot + this.pendingPot() - this.reserve()) * W) / (1 + this.s.buyToArtistBps / BPS), this.s.rateCap);
+  }
+  bookedBidRoom() {
+    return Math.max(0, this.ethPot - this.reserve()) * W / (1 + this.s.buyToArtistBps / BPS);
   }
   // Core.receive: fee income the hook pushed, left unbooked. the climb clamp counts its pot share until a book folds it
   accrue(amount) {
@@ -471,10 +476,13 @@ export class Core {
   // the ceiling in rate terms: ceilPct of the anchor, the anchor loosened while idle. the anchor is max(last rate paid, peak now)
   stepCeil(now) {
     const s = this.s, p = this.p;
+    const growthNow = this.paused ? this.pausedSince : now;
+    const underfunded = this.bookedBidRoom() < this.lastPaidRate;
+    const anchorTime = underfunded ? growthNow : Math.max(this.lastFillTime, this.climbRestartTime);
     // idleLoosenPct: the anchor grows linearly, by that percent of the anchor for every full idleStepSeconds since the last fill (CoreLib.climb).
     // decision 128: the loosening scales with the checkpoint multiplier m
-    const loosen = 1 + ((s.idleLoosenPct / 100) * this.bidMult()) * Math.floor((now - this.lastFillTime) / s.idleStepSeconds);
-    const anchor = Math.max(this.lastPaidRate, this.peakAt(now));
+    const loosen = 1 + ((s.idleLoosenPct / 100) * this.bidMult()) * Math.floor(Math.max(0, growthNow - anchorTime) / s.idleStepSeconds);
+    const anchor = Math.max(this.lastPaidRate, this.peakAt(growthNow));
     return anchor * loosen * (s.ceilPct / 100);
   }
   // the price state: the stored rate climbed per minute toward min(ceiling, rateCap, clamp). Below the recovery level
@@ -483,17 +491,20 @@ export class Core {
   // or rateCap reads as that bound; a stored rate above the clamp holds its value
   priceRate(now) {
     const r = this.rateAtCheckpoint, cap = Math.min(this.s.rateCap, this.stepCeil(now));
+    const growthNow = this.paused ? this.pausedSince : now;
+    const underfunded = this.bookedBidRoom() < this.lastPaidRate;
+    const from = underfunded ? growthNow : this.checkpointTime;
     if (r === 0) return 0;
     if (r >= cap) return cap;
     const target = Math.min(cap, this.clamp());
-    if (r >= target || now <= this.checkpointTime) return r;
+    if (r >= target || growthNow <= from) return r;
     // decision 128: both climb speeds scale with the checkpoint multiplier m (the model-only `multiplierScalesClimb`
     // false leaves the climb at 1x and scales the loosening alone, the "loosening only" variant of the cost table)
     const cm = this.p.multiplierScalesClimb ? this.checkpointMult : 1;
     const fast = (this.s.recoveryClimbPerMin / 100) * cm, slow = (this.s.climbPerMin / 100) * cm;
     const lnFast = Math.log(1 + fast), lnSlow = Math.log(1 + slow);
-    const elapsed = now - this.checkpointTime;
-    const peakT = this.peakRate * Math.pow(0.5, (this.checkpointTime - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
+    const elapsed = growthNow - from;
+    const peakT = this.peakRate * Math.pow(0.5, (from - this.peakTime) / (this.s.peakHalfLifeHours * 3600));
     const levelT = peakT * (1 - this.s.recoveryGapPct / 100);
     const climb = (base, lnRate, sec) => Math.min(base * Math.exp(lnRate * sec / 60), target);
     if (levelT <= r) return climb(r, lnSlow, elapsed);
@@ -551,9 +562,13 @@ export class Core {
   // decays between fills, so the maximum follows the climb and holds against a sale within the block. the statement
   // reference, the credit floor and the cost of a credit bought with the balance token read it
   floorRate(now) { return Math.max(this.priceRate(now), this.peakAt(now)); }
-  checkpoint(now) { this.rateAtCheckpoint = this.priceRate(now); this.checkpointTime = now; this.checkpointMult = this.bidMult(); }
+  checkpoint(now) {
+    this.rateAtCheckpoint = this.priceRate(now);
+    if (this.bookedBidRoom() < this.lastPaidRate) this.climbRestartTime = now;
+    this.checkpointTime = now; this.checkpointMult = this.bidMult();
+  }
   syncFunded() {
-    this.funded = this.ethPot * W >= this.rateAtCheckpoint;
+    this.funded = this.bookedBidRoom() >= this.lastPaidRate;
   }
   // owner: setSettings. validates, checkpoints both rates first, then applies at once. patch.rate is setRate.
   // the patch may also hold `paused` (Core.setPaused: true opens a pause, false closes it), controller settings (markupBps, startCapBps, decayHours, anchorHalfLife, anchorMinCost), the credit settings (CREDIT, royaltyBps included) and anchorBps (setAnchorBps): the controller reads them live.
@@ -601,6 +616,7 @@ export class Core {
       this.rateAtCheckpoint = rate; this.checkpointTime = now;
       // setRate restates the last fill rate and the remembered peak (Core.setRate)
       this.lastPaidRate = rate; this.peakRate = rate; this.peakTime = now;
+      this.climbRestartTime = now;
     }
     this.syncFunded();
     // decisions 122 and 148: the value switch turning on and the bid turning on open the shared instance at the floor, and
@@ -776,9 +792,22 @@ export class Core {
   // Core.setPaused: a pause records its start, a resume adds its length to pausedTotal. a call that repeats the state changes nothing
   setPaused(v, now) {
     if (v === this.paused) return;
-    this.paused = v;
-    if (v) this.pausedSince = now;
-    else { this.pausedTotal += now - this.pausedSince; this.pausedSince = 0; }
+    if (v) {
+      this.checkpoint(now);
+      if (this.s.valueModeOn) { this.balRate = this.balPriceState(now); this.balCheckpointTime = now; }
+      this.paused = true; this.pausedSince = now;
+    } else {
+      const since = this.pausedSince, elapsed = now - since;
+      const shift = (t) => t < since ? t + elapsed : now;
+      this.peakTime = shift(this.peakTime);
+      this.balPeakTime = shift(this.balPeakTime);
+      this.climbRestartTime = shift(this.climbRestartTime);
+      this.lastFillTime = shift(this.lastFillTime);
+      this.balLastFillTime = shift(this.balLastFillTime);
+      this.pausedTotal += elapsed;
+      this.paused = false; this.pausedSince = 0;
+      this.checkpointTime = now; this.balCheckpointTime = now;
+    }
   }
   isPaused() { return this.paused; }
   // Core.pausedNow: the paused seconds from the start to `now`
@@ -921,7 +950,10 @@ export class Core {
   // the balance bid instance (decision 122): rate in bps of par, par = pts * unit (eth value here). the floor is 10000 - balanceBidMarginBps,
   // the cap is balanceBidCapBps, the clamp is the module available (balancePot) as bps of par for a refScore credit. the instance climbs and drops with the shared eth settings
   balFloor() { return BPS - this.s.balanceBidMarginBps; }
-  balPeakAt(now) { return this.balPeakRate * Math.pow(0.5, Math.max(0, now - this.balPeakTime) / (this.s.peakHalfLifeHours * 3600)); }
+  balPeakAt(now) {
+    const growthNow = this.paused ? this.pausedSince : now;
+    return this.balPeakRate * Math.pow(0.5, Math.max(0, growthNow - this.balPeakTime) / (this.s.peakHalfLifeHours * 3600));
+  }
   // the module available as bps of par for a refScore credit (CoreLib._toBps). par of a refScore credit is (refScore/1e4) * unit, eth value; a zero denom reads as no clamp
   balAvailBps() {
     if (this.s.valueModeOn) return this.s.balanceBidCapBps; // value mode: clamped to the cap, not to the funds
@@ -935,14 +967,15 @@ export class Core {
   balanceBidActive() { return this.s.balanceBidOn && this.balanceUsable(); }
   // the balance instance price state climbed to now, cap balanceBidCapBps, clamp the available as bps of par (mirrors CoreLib._climb)
   balPriceState(now) {
+    const growthNow = this.paused ? this.pausedSince : now;
     const r = this.balRate, cap = this._balCeil(now);
     if (r === 0) return 0;
     if (r >= cap) return cap;
     const target = Math.min(cap, this.balAvailBps());
-    if (r >= target || now <= this.balCheckpointTime) return r;
+    if (r >= target || growthNow <= this.balCheckpointTime) return r;
     const fast = this.s.recoveryClimbPerMin / 100, slow = this.s.climbPerMin / 100;
     const lnFast = Math.log(1 + fast), lnSlow = Math.log(1 + slow);
-    const elapsed = now - this.balCheckpointTime;
+    const elapsed = growthNow - this.balCheckpointTime;
     const peakT = this.balPeakRate * Math.pow(0.5, Math.max(0, this.balCheckpointTime - this.balPeakTime) / (this.s.peakHalfLifeHours * 3600));
     const levelT = peakT * (1 - this.s.recoveryGapPct / 100);
     const climb = (base, lnRate, sec) => Math.min(base * Math.exp((lnRate * sec) / 60), target);
@@ -957,10 +990,11 @@ export class Core {
   // the balance ceiling in bps of par: ceilPct of the anchor loosened while idle, at most balanceBidCapBps
   _balCeil(now) {
     const s = this.s, p = this.p;
+    const growthNow = this.paused ? this.pausedSince : now;
     const denom = (RATE_SCORE / 1e4) * this.unit();
     const pages = denom > 0 && this.balLastFillRate > 0 ? (this.balancePot / denom * BPS) * 100 / (this.balLastFillRate * s.pointsPerPage) : 1;
     const multiplier = Math.min(Math.max(pages, 1), this.p.multiplierCap ?? s.climbMultiplierCapBps / BPS);
-    const loosen = 1 + (s.idleLoosenPct / 100) * multiplier * Math.floor((now - this.balLastFillTime) / s.idleStepSeconds);
+    const loosen = 1 + (s.idleLoosenPct / 100) * multiplier * Math.floor(Math.max(0, growthNow - this.balLastFillTime) / s.idleStepSeconds);
     const anchor = Math.max(this.balLastFillRate, this.balPeakAt(now));
     return Math.min(anchor * loosen * (s.ceilPct / 100), s.balanceBidCapBps);
   }
@@ -1217,7 +1251,7 @@ export function simulate(userParams = {}) {
   let lnM = 0, nextSid = 1;
   const T = { // totals
     fees: 0, feesBuyback: 0, saleGross: 0, saleToPot: 0, saleToBuyback: 0, spent: 0, listingPaid: 0,
-    bought: 0, boughtX: 0, pts: 0, cost: 0, mkt: 0, ask: 0, sumM: 0, composed: 0, composedChosen: 0, sold: 0, redeemed: 0,
+    bought: 0, boughtX: 0, pts: 0, cost: 0, mkt: 0, ask: 0, sumM: 0, composed: 0, composedChosen: 0, chosenScoreGain: 0, sold: 0, redeemed: 0,
     saleToArtist: 0, saleToOperator: 0, creditToArtist: 0, creditToOperator: 0, creditSold: 0, creditGross: 0, creditCost: 0, creditToPot: 0, creditToBuyback: 0, creditMiss: 0, creditAge: 0,
     soldPrice: 0, soldCost: 0, soldPts: 0, soldFloor: 0, soldAge: 0, soldAtFloor: 0, buybackSpent: 0, buybackTips: 0, burned: 0,
     listBought: 0, stratBought: 0, xRecv: 0, xSpent: 0, firstFill: -1,
@@ -1375,9 +1409,11 @@ export function simulate(userParams = {}) {
       if (ready < p.PAGE) break;
       let page;
       if (core.cr.chosenComposeOn && p.composeChoice === 'richest') {
+        const oldestScore = pile.slice(0, p.PAGE).reduce((sum, c) => sum + c.pts, 0);
         const order = pile.slice(0, ready).map((c, i) => [c, i]).sort((a, b) => b[0].pts - a[0].pts || a[1] - b[1]).slice(0, p.PAGE);
         const take = new Set(order.map((o) => o[1]));
         page = order.map((o) => o[0]);
+        T.chosenScoreGain += page.reduce((sum, c) => sum + c.pts, 0) - oldestScore;
         for (let i = ready - 1; i >= 0; i--) if (take.has(i)) pile.splice(i, 1);
         T.composedChosen++;
       } else page = pile.splice(0, p.PAGE);
