@@ -22,6 +22,12 @@ OWNER = launch.OWNER
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_rpc_identifies_the_client_to_the_send_relay(self):
+        # promise: the approval gate's RPC client passes relay HTTP filtering before an approved send.
+        with patch.object(launch.urllib.request, "urlopen", return_value=io.BytesIO(b'{"result":"0x1"}')) as opened:
+            self.assertEqual(launch.rpc("https://rpc.mevblocker.io/fullprivacy", "eth_chainId", []), "0x1")
+        self.assertEqual(opened.call_args.args[0].get_header("User-agent"), "cc-mainnet-launch/1.0")
+
     def test_launch_config_display_uses_the_selected_file(self):
         # promise: the operator sees every value from the selected launch config before approval.
         with TemporaryDirectory() as temp:

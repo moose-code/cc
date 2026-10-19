@@ -52,7 +52,8 @@ def print_launch_config(path):
 
 def rpc(url, method, params):
     payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
-    request = urllib.request.Request(url, payload, {"Content-Type": "application/json"})
+    request = urllib.request.Request(url, payload, {"Content-Type": "application/json",
+                                                "User-Agent": "cc-mainnet-launch/1.0"})
     try:
         with urllib.request.urlopen(request, timeout=90) as response:
             data = json.load(response)
