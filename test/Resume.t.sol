@@ -62,9 +62,10 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
 
     function resume(address who, LaunchConfig memory c, address core) external {
         // as in the script: the checks run outside the broadcast, the postflight after it
-        vm.pauseGasMetering();
+        bool coreAbsent = core.code.length == 0;
+        if (coreAbsent) vm.pauseGasMetering();
         resumeChecks(who, c, core);
-        vm.resumeGasMetering();
+        if (coreAbsent) vm.resumeGasMetering();
         vm.startPrank(who);
         Deployed memory d = resumeSend(who, c);
         vm.stopPrank();

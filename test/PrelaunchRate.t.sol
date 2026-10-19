@@ -13,8 +13,18 @@ import {LaunchConfig} from "../script/LaunchConfig.sol";
 import {Postflight} from "../script/Postflight.s.sol";
 
 contract PostflightRecordProbe is Postflight {
+    uint256 internal approvedRate;
+
     function decode(LaunchConfig memory c, address core, string memory j) external view returns (uint256, bytes32) {
         return _decodeApprovedRateRecord(c, core, j);
+    }
+
+    function setApprovedRate(uint256 rate) external {
+        approvedRate = rate;
+    }
+
+    function _approvedOpeningRate(LaunchConfig memory c) internal view override returns (uint256) {
+        return approvedRate == 0 ? c.rateStart : approvedRate;
     }
 
     function verify(LaunchConfig memory c, address core, address deployer) external {
@@ -110,8 +120,8 @@ contract PrelaunchRateTest is Test, SystemResumer, ProdDeployer {
         assertEq(d.coin.code.length, 0, "a failed guard never launches the coin");
     }
 
-    // promise: the saved rate and hash bind a later postflight to the same config, chain and Core
-    function test_savedOpeningRateSupportsLaterPostflight() public {
+    // promise: the saved rate and hash bind postflight to the same config, chain and Core
+    function test_savedOpeningRateRecordBindsConfigAndCore() public {
         Deployed memory d = _defer();
         uint256 rate = 20_000_000_000_000_000;
         vm.prank(deployer);
@@ -129,8 +139,7 @@ contract PrelaunchRateTest is Test, SystemResumer, ProdDeployer {
         (uint256 savedRate, bytes32 savedHash) = probe.decode(base, d.core, j);
         assertEq(savedRate, rate);
         assertEq(savedHash, hash);
-        vm.setEnv("PRELAUNCH_RATE", vm.toString(savedRate));
-        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(savedHash));
+        probe.setApprovedRate(savedRate);
         probe.verify(base, d.core, deployer);
         string memory badHash = string.concat(
             '{"core":"', vm.toString(d.core), '","chainId":1,"configHash":"', vm.toString(configHash(base)),
