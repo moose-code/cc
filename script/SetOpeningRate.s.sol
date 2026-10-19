@@ -16,6 +16,7 @@ contract SetOpeningRate is Script, SystemResumer, NewProd {
     error CoinAlreadyLaunched();
     error WrongSignoff(bytes32 want, bytes32 got);
     error WrongConfigHash(bytes32 want, bytes32 got);
+    error WrongChain(uint256 chainId);
     error WrongReadback();
 
     function run() external {
@@ -34,6 +35,7 @@ contract SetOpeningRate is Script, SystemResumer, NewProd {
         if (configHashGiven != configHash(c)) revert WrongConfigHash(configHash(c), configHashGiven);
         bytes32 given = vm.envOr("PRELAUNCH_RATE_HASH", bytes32(0));
         if (given != hash) revert WrongSignoff(hash, given);
+        if (block.chainid != 1) revert WrongChain(block.chainid);
         ICore core = ICore(payable(vm.envAddress("CORE")));
         if (core.COIN().code.length != 0) revert CoinAlreadyLaunched();
         vm.startBroadcast();
@@ -45,7 +47,10 @@ contract SetOpeningRate is Script, SystemResumer, NewProd {
         vm.startBroadcast();
         core.setOpeningRate(rate);
         vm.stopBroadcast();
-        if (core.RATE_START() != rate || core.settings().rateCap != cap || core.rateAtCheckpoint() != rate) {
+        if (
+            core.RATE_START() != rate || core.settings().rateCap != cap || core.rateAtCheckpoint() != rate
+                || core.ethPrice() != rate
+        ) {
             revert WrongReadback();
         }
     }

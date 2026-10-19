@@ -42,8 +42,12 @@ SIGNER="$(cast wallet new "$HOME/.foundry/keystores" "$KS_NAME" --unsafe-passwor
 [ -n "$SIGNER" ] || die "no keystore address"
 echo "rehearse-signer: throwaway signer $SIGNER (keystore $KS_NAME)"
 
-HEAD="$(cast block-number --rpc-url "$FORK_URL")"
-FORK_BLOCK=$((HEAD - 100))
+FORK_BLOCK="${FORK_BLOCK:-26208025}"
+if [ "$FORK_BLOCK" = head ]; then
+  latest_block="$(cast block-number --rpc-url "$FORK_URL")"
+  FORK_BLOCK=$((latest_block - 100))
+fi
+[[ "$FORK_BLOCK" =~ ^[0-9]+$ ]] || die "FORK_BLOCK must be a block number or head"
 anvil --fork-url "$FORK_URL" --fork-block-number "$FORK_BLOCK" --chain-id 1 --port "$PORT" --retries 10 --timeout 60000 >"$T/anvil.log" 2>&1 &
 ANVIL_PID=$!
 for _ in $(seq 1 60); do cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break; sleep 1; done

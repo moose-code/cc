@@ -6,6 +6,7 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {SetSettings, ICoreOwner} from "../script/SetSettings.s.sol";
+import {LibString} from "solady/utils/LibString.sol";
 
 /// @dev the script with its environment replaced by fields, so parallel tests never share an environment variable
 contract SetSettingsProbe is SetSettings {
@@ -67,6 +68,10 @@ contract SetSettingsProbe is SetSettings {
         return _apply(s);
     }
 
+    function tupleOf(Settings memory s) external pure returns (string memory) {
+        return _tuple(s);
+    }
+
     /// @dev whether `_apply` left the struct it was handed untouched (the before side of the table)
     function leavesTheInputAlone(Settings memory live) external view returns (bool) {
         bytes32 before_ = keccak256(abi.encode(live));
@@ -84,6 +89,19 @@ contract SetSettingsTest is Fixture {
         super.setUp();
         probe = new SetSettingsProbe();
         probe.configure(address(core), "");
+    }
+
+    // promise: the printed cast tuple encodes every Settings boolean as true or false, including valueModeOn
+    function test_printedTupleEncodesValueModeBoolean() public {
+        Settings memory s = core.settings();
+        s.valueModeOn = true;
+        string memory on = probe.tupleOf(s);
+        string memory prefix = string.concat(",", vm.toString(s.returnLockSeconds), ",");
+        string memory suffix = string.concat(",", vm.toString(s.buyToArtistBps), ",");
+        assertTrue(LibString.indexOf(on, string.concat(prefix, "true", suffix)) != type(uint256).max);
+        s.valueModeOn = false;
+        string memory off = probe.tupleOf(s);
+        assertTrue(LibString.indexOf(off, string.concat(prefix, "false", suffix)) != type(uint256).max);
     }
 
     /// @dev how many of the 24 fields differ between two structs, and whether field `i` is among them

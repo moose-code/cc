@@ -20,6 +20,7 @@ jobs:
     env:
       UPSTREAM_RPC_URL: ${{ secrets.FORK_URL || 'https://ethereum-rpc.publicnode.com' }}
       MAINNET_RPC_URL: http://127.0.0.1:8545
+      FORK_BLOCK: "26208025"
       CANDIDATE_RUN: "1"
       REHEARSAL: "1"
       REQUIRE_UPSTREAM_BALANCE: "true"
@@ -37,11 +38,10 @@ jobs:
             out
           key: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-${{ hashFiles('src/**', 'test/**', 'script/**') }}
           restore-keys: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-
-      # the deployed v2 stack (factory 0xC27e182e) is live on mainnet: anvil forks a recent block of it
+      # Pin the deployed v2 stack to the same block as the local lifecycle and review record.
       - name: mainnet fork anvil
         run: |
-          latest=$(cast block-number --rpc-url "$UPSTREAM_RPC_URL")
-          nohup anvil --fork-url "$UPSTREAM_RPC_URL" --fork-block-number $((latest - 100)) --chain-id 31337 --port 8545 \
+          nohup anvil --fork-url "$UPSTREAM_RPC_URL" --fork-block-number "$FORK_BLOCK" --chain-id 31337 --port 8545 \
             --auto-impersonate --retries 10 --timeout 60000 > anvil.log 2>&1 &
           for _ in $(seq 1 60); do cast chain-id --rpc-url "$MAINNET_RPC_URL" >/dev/null 2>&1 && break; sleep 1; done
           cast chain-id --rpc-url "$MAINNET_RPC_URL"
@@ -66,8 +66,8 @@ jobs:
           FOUNDRY_INVARIANT_DEPTH: "200"
         run: forge test --match-contract '.*Deep' -vv --chain-id 1
 
-  # the full launch on a local chain id 1 fork with nothing faked: real deploy, seed, pool swaps, the real keeper binary,
-  # signed Seaport orders and the owner's value mode calls (script/dev/e2e-real.sh, docs/RUNBOOK.md section 7)
+  # Local chain-id-1 lifecycle with forked protocol code, impersonated and funded actors, real pool swaps,
+  # signed Seaport orders and the keeper binary (script/dev/e2e-real.sh, docs/RUNBOOK.md section 7).
   e2e-real:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -85,6 +85,7 @@ jobs:
           --health-retries 5
     env:
       CANDIDATE_RUN: "1"
+      FORK_BLOCK: "26208025"
       FORK_URL: ${{ secrets.FORK_URL || 'https://gateway.tenderly.co/public/mainnet' }}
     steps:
       - uses: actions/checkout@v4
@@ -131,6 +132,7 @@ jobs:
     env:
       FORK_URL: ${{ secrets.FORK_URL || 'https://gateway.tenderly.co/public/mainnet' }}
       CANDIDATE_RUN: "1"
+      FORK_BLOCK: "26208025"
     steps:
       - uses: actions/checkout@v4
         with:

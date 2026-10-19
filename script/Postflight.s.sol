@@ -13,9 +13,12 @@ import {Mainnet} from "../src/interfaces/Interfaces.sol";
 /// until the first trade or the first fill. with DEPLOYER set and every row ok it ends with one `record: {json}` line,
 /// the addresses read back from the chain that script/deploy.sh writes into deployments/<chainId>.json
 contract Postflight is Script, LaunchChecks {
+    error RecordMismatch(bytes32 field);
+
     function run() external {
         LaunchConfig memory c = loadConfig(vm.envOr("LAUNCH_CONFIG", DEFAULT_CONFIG_FILE));
         address core = vm.envAddress("CORE");
+        _useApprovedRateRecord(c, core);
         // DEFER_LAUNCH=1: the system is deployed and the coin is not launched yet (docs/RUNBOOK.md, deferred launch)
         bool deferred = vm.envOr("DEFER_LAUNCH", uint256(0)) == 1;
         if (deferred) postflightDeferred(c, core, _deployerEnv());
@@ -30,9 +33,44 @@ contract Postflight is Script, LaunchChecks {
         if (deployer != address(0)) _printRecord(ICore(payable(core)), c);
     }
 
+    /// A later postflight can recover its opening-rate signoff from the saved deployment record. The hash remains
+    /// bound to this config and the live Core is checked by the normal postflight rows.
+    function _useApprovedRateRecord(LaunchConfig memory c, address core) private {
+        string memory path = vm.envOr("POSTFLIGHT_RECORD", string(""));
+        if (bytes(path).length == 0) return;
+        string memory j = vm.readFile(path);
+        (uint256 rate, bytes32 hash) = _decodeApprovedRateRecord(c, core, j);
+        if (vm.envExists("PRELAUNCH_RATE")) {
+            if (vm.envUint("PRELAUNCH_RATE") != rate) revert RecordMismatch("PRELAUNCH_RATE");
+        } else vm.setEnv("PRELAUNCH_RATE", vm.toString(rate));
+        if (vm.envExists("PRELAUNCH_RATE_HASH")) {
+            if (vm.envBytes32("PRELAUNCH_RATE_HASH") != hash) revert RecordMismatch("PRELAUNCH_RATE_HASH");
+        } else vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(hash));
+    }
+
+    function _decodeApprovedRateRecord(LaunchConfig memory c, address core, string memory j)
+        internal
+        view
+        returns (uint256 rate, bytes32 hash)
+    {
+        if (vm.parseJsonAddress(j, ".core") != core) revert RecordMismatch("core");
+        if (vm.parseJsonUint(j, ".chainId") != block.chainid) revert RecordMismatch("chainId");
+        if (vm.parseJsonBytes32(j, ".configHash") != configHash(c)) revert RecordMismatch("configHash");
+        rate = vm.parseUint(vm.parseJsonString(j, ".openingRate"));
+        hash = vm.parseJsonBytes32(j, ".openingRateHash");
+        if (hash == bytes32(0)) {
+            if (rate != c.rateStart) revert RecordMismatch("openingRate");
+            rate = 0;
+        } else if (hash != _openingRateHash(c, rate)) {
+            revert RecordMismatch("openingRateHash");
+        }
+    }
+
     /// @dev the record fields that come from the chain: the Core, its controller and coin, the CREATE2 adapters and
     /// renderer (each code checked by the rows above), both linked libraries, the stack the Core holds and the Core owner
     function _printRecord(ICore k, LaunchConfig memory c) private view {
+        uint256 openingRate = _approvedOpeningRate(c);
+        bytes32 openingRateHash = vm.envOr("PRELAUNCH_RATE_HASH", bytes32(0));
         string memory contracts = string.concat(
             '"core":"',
             vm.toString(address(k)),
@@ -68,6 +106,12 @@ contract Postflight is Script, LaunchChecks {
             vm.toString(int256(k.TICK_SPACING())),
             ',"owner":"',
             vm.toString(k.owner()),
+            '","configHash":"',
+            vm.toString(configHash(c)),
+            '","openingRate":"',
+            vm.toString(openingRate),
+            '","openingRateHash":"',
+            vm.toString(openingRateHash),
             '"}'
         );
         console.log(string.concat("record: {", contracts, more, stack));

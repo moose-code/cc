@@ -10,8 +10,33 @@ import {Settings} from "../src/interfaces/Interfaces.sol";
 import {SystemResumer} from "../script/SystemResumer.sol";
 import {Deployed} from "../script/SystemDeployer.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
+import {ReplayGuard} from "../script/ReplayGuard.s.sol";
+import {Postflight} from "../script/Postflight.s.sol";
 
-/// Checks the deferred Core's price reset and the exact signed launch path on the live v2 factory fork.
+contract ReplayGuardProbe is ReplayGuard {
+    LaunchConfig internal configured;
+
+    function configure(LaunchConfig memory c) external {
+        configured = c;
+    }
+
+    function _config() internal view override returns (LaunchConfig memory) {
+        return configured;
+    }
+}
+
+contract PostflightRecordProbe is Postflight {
+    function decode(LaunchConfig memory c, address core, string memory j) external view returns (uint256, bytes32) {
+        return _decodeApprovedRateRecord(c, core, j);
+    }
+
+    function verify(LaunchConfig memory c, address core, address deployer) external {
+        postflightAs(c, core, deployer);
+        _require();
+    }
+}
+
+/// Checks the deferred Core's price reset and resume checks on the live v2 factory fork.
 contract PrelaunchRateTest is Test, SystemResumer, ProdDeployer {
     address internal deployer;
     address internal creator;
@@ -76,6 +101,61 @@ contract PrelaunchRateTest is Test, SystemResumer, ProdDeployer {
     function guardsExt(address core) external {
         resumeChecks(deployer, base, core);
         launchOnlyChecks(deployer, base, core, factory.tokenDeployer());
+    }
+
+    // promise: a saved replay after Core creation requires the real signed opening rate before a coin launch
+    function test_replayGuardRequiresRealSignoff() public {
+        Deployed memory d = _defer();
+        ICore k = ICore(payable(d.core));
+        uint256 rate = 20_000_000_000_000_000;
+        vm.prank(deployer);
+        k.setOpeningRate(rate);
+        ReplayGuardProbe guard = new ReplayGuardProbe();
+        guard.configure(base);
+        vm.setEnv("CORE", vm.toString(d.core));
+        vm.setEnv("DEPLOYER", vm.toString(deployer));
+        vm.setEnv("CONFIG_HASH", vm.toString(configHash(base)));
+        vm.setEnv("PRELAUNCH_RATE", vm.toString(rate));
+        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(bytes32(0)));
+        vm.expectPartialRevert(PrelaunchRateSignoff.selector);
+        guard.run();
+        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(_openingRateHash(base, rate)));
+        guard.run();
+        vm.prank(deployer);
+        k.setRate(rate - 1);
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "opening price state"));
+        guard.run();
+        assertEq(d.coin.code.length, 0, "a failed guard never launches the coin");
+    }
+
+    // promise: the saved rate and hash bind a later postflight to the same config, chain and Core
+    function test_savedOpeningRateSupportsLaterPostflight() public {
+        Deployed memory d = _defer();
+        uint256 rate = 20_000_000_000_000_000;
+        vm.prank(deployer);
+        ICore(payable(d.core)).setOpeningRate(rate);
+        _approve(rate);
+        vm.startPrank(deployer);
+        resumeSend(deployer, base);
+        vm.stopPrank();
+        bytes32 hash = _openingRateHash(base, rate);
+        string memory j = string.concat(
+            '{"core":"', vm.toString(d.core), '","chainId":1,"configHash":"', vm.toString(configHash(base)),
+            '","openingRate":"', vm.toString(rate), '","openingRateHash":"', vm.toString(hash), '"}'
+        );
+        PostflightRecordProbe probe = new PostflightRecordProbe();
+        (uint256 savedRate, bytes32 savedHash) = probe.decode(base, d.core, j);
+        assertEq(savedRate, rate);
+        assertEq(savedHash, hash);
+        vm.setEnv("PRELAUNCH_RATE", vm.toString(savedRate));
+        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(savedHash));
+        probe.verify(base, d.core, deployer);
+        string memory badHash = string.concat(
+            '{"core":"', vm.toString(d.core), '","chainId":1,"configHash":"', vm.toString(configHash(base)),
+            '","openingRate":"', vm.toString(rate + 1), '","openingRateHash":"', vm.toString(hash), '"}'
+        );
+        vm.expectRevert(abi.encodeWithSelector(Postflight.RecordMismatch.selector, bytes32("openingRateHash")));
+        probe.decode(base, d.core, badHash);
     }
 
     // promise: an owner reset after an idle day changes the reference, hard cap and live clock, and launch closes it

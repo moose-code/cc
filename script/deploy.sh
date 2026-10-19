@@ -352,6 +352,12 @@ case "$RESUME" in
     if [ "$NONCE" -eq $((FIRST + COUNT)) ]; then
       echo "deploy.sh: every saved transaction has landed"
     else
+      if [ "$(cast code "$CORE" --rpc-url "$RPC_URL")" != 0x ]; then
+        echo "deploy.sh: check the live Core before replaying saved transactions"
+        REPLAY_CHECK="$(CORE="$CORE" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" \
+          forge script script/ReplayGuard.s.sol "${FLAGS[@]}" 2>&1)" \
+          || { printf '%s\n' "$REPLAY_CHECK" | tail -40; die "replay prelaunch guard failed; no saved transaction was sent"; }
+      fi
       run_script "$T/deploy.log" env CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" \
         forge script script/Deploy.s.sol "${BFLAGS[@]}" --resume || { tail -60 "$T/deploy.log"; die "replay failed"; }
     fi
@@ -433,6 +439,7 @@ printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC"
   strategyAdapter: $r.strategyAdapter, renderer: $r.renderer, library: $r.library, opsLibrary: $r.opsLibrary,
   credits: $r.credits, statements: $r.statements, poolManager: $r.poolManager, hook: $r.hook,
   poolFee: $r.poolFee, tickSpacing: $r.tickSpacing,
+  configHash: $r.configHash, openingRate: $r.openingRate, openingRateHash: $r.openingRateHash,
   balanceToken: null, balanceModule: null, balancePool: null, owner: $r.owner,
   coinLive: ($launchBlock != ""), tokenDeployer: $tokenDeployer
 } + (if $launchBlock != "" then {launchBlock: ($launchBlock | tonumber)} else {} end)' >"$TMPREC"
@@ -440,6 +447,7 @@ printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC"
 jq -e '
   def addr: type == "string" and test("^0x[0-9a-fA-F]{40}$") and (ascii_downcase != "0x0000000000000000000000000000000000000000");
   (keys | sort) == (["balanceModule","balancePool","balanceToken","chainId","coinLive","tokenDeployer","controller","coin","core","credits","deployBlock",
+    "configHash","openingRate","openingRateHash",
     "hook","library","opsLibrary","owner","poolFee","poolManager","renderer","rpcUrl","seaportAdapter","statements","strategyAdapter","tickSpacing"]
     + (if .coinLive == true then ["launchBlock"] else [] end) | sort)
   and (.coinLive | type == "boolean")
@@ -449,6 +457,8 @@ jq -e '
   and ([.core, .controller, .coin, .seaportAdapter, .strategyAdapter, .renderer, .library, .opsLibrary, .credits, .statements,
         .poolManager, .hook, .owner, .tokenDeployer] | all(addr))
   and (.poolFee | type == "number") and (.tickSpacing | type == "number")
+  and (.openingRate | type == "string" and test("^[0-9]+$"))
+  and ([.configHash, .openingRateHash] | all(type == "string" and test("^0x[0-9a-fA-F]{64}$")))
   and (.rpcUrl == null or (.rpcUrl | type == "string"))
 ' "$TMPREC" >/dev/null || die "the record failed the shape check; nothing was written"
 [ "$(jq -r .core "$TMPREC" | tr 'A-F' 'a-f')" = "$(lc "$CORE")" ] || die "the record Core differs from the deployed Core"

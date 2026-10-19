@@ -318,7 +318,7 @@ contract SetSettings is Script {
         for (uint256 i; i < SettingsFields.N; ++i) {
             uint256 v = SettingsFields.get(s, i);
             out = string.concat(
-                out, i == 0 ? "" : ",", i == 11 || i == 12 ? (v == 1 ? "true" : "false") : vm.toString(v)
+                out, i == 0 ? "" : ",", i == 11 || i == 12 || i == 36 ? (v == 1 ? "true" : "false") : vm.toString(v)
             );
         }
         out = string.concat(out, ")");
