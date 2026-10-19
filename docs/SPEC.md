@@ -12,6 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| launch operation | Track the chain-id-1 deployment record in Git after deferred Core deployment so services and the later coin launch use the same addresses and start block. A recorded coin address before launch is only a prediction and must have no code | 222 |
 | launch operation | `script/mainnet-launch.py` cleans Foundry artifacts by default and accepts `--skip-clean` for a warm repeat; the deploy path still builds and performs the same checks | 221 |
 | launch operation | The displayed mainnet per-gas acceptance ceiling is the greater of four times the live gas-price sample or 0.5 gwei, to cover Forge's later EIP-1559 cap when base fee moves. Before approvals, the operator sees the resulting maximum gas cost and the script checks signer balance. Each signed fee must remain within that ceiling and each transaction still needs its own `SEND N` approval | 219 |
 | launch operation | The mainnet terminal shows the exact launch config, a concise no-send result and gas ceiling before the keystore password. It requests the password once, explains each transaction in plain English with signer, target, value and gas, requires `SEND N`, then shows a successful receipt and state check before the next step. Successful Forge logs stay hidden; failure diagnostics remain visible | 218 |
