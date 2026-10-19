@@ -46,6 +46,7 @@ contract ArtistRoyaltyTest is Fixture {
     function _setBps(uint16 bps) internal {
         Settings memory s = core.settings();
         s.buyToArtistBps = bps;
+        if (bps == 1_000) s.balanceDiscountBps = 1_100;
         _setSettings(s);
     }
 
@@ -262,6 +263,7 @@ contract ArtistRoyaltyTest is Fixture {
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("buyToArtistBps")));
         core.setSettings(s);
         s.buyToArtistBps = 1_000;
+        s.balanceDiscountBps = 1_100; // cover this royalty and the 200-bps redemption shortfall
         _setSettings(s);
         assertEq(_bps(), 1_000);
     }

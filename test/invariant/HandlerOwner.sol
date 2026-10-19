@@ -84,6 +84,8 @@ abstract contract HandlerOwner is HandlerBase {
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
         s.peakHalfLife = uint32(_f(_r(seed, 32), 600, 604_800, c.peakHalfLife));
         s.recoveryGapBps = uint16(_f(_r(seed, 33), 0, 5_000, c.recoveryGapBps));
+        // The generator sets no purchase royalty, so equality with the redemption shortfall is a valid discount.
+        s.balanceDiscountBps = s.redeemSlippageBps;
         // the slice stays at or above twice the largest buyback payment
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);

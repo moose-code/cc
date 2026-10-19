@@ -358,6 +358,7 @@ contract BidRuleTest is Fixture {
         s.reserveWei = 0.1 ether;
         s.rateCap = type(uint64).max;
         s.buyToArtistBps = artistBps;
+        if (artistBps == 1_000) s.balanceDiscountBps = 1_100;
         _setSettings(s);
         vm.prank(owner);
         core.setRate(rate);

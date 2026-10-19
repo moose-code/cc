@@ -271,9 +271,9 @@ struct Settings {
     /// the artist royalty on every engine purchase, bps of the amount the engine pays for a credit, paid on top in the
     /// same currency: the seller receives the bid whole, the artist `pay * this / 10,000`. 0 to 1,000
     uint16 buyToArtistBps;
-    /// the balance bid's discount to par, bps: the balance route pays `score * unitPerPoint * (10,000 - this) /
-    /// 10,000` per credit before the value-mode cap. 0 to 9,999 keeps the discount below 100 percent; rounding or
-    /// the cap may pay 0
+    /// the BALANCE bid's discount to par, bps: the route pays `score * unitPerPoint * (10,000 - this) / 10,000` per
+    /// Credit before the value-mode cap. SettingsBounds requires the discount to cover the purchase royalty and the
+    /// accepted redemption shortfall. The upper bound of 9,999 keeps the posted bid above zero before rounding
     uint16 balanceDiscountBps;
 }
 

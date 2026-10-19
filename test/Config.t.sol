@@ -757,9 +757,9 @@ contract ConfigTest is Fixture {
 
     // ------------------------------------------------------------------ settings
 
-    /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
-    // promise: the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
-    function test_settingsBoundsEveryFieldBothEdges() public view {
+    /// the preflight and deploy guard use the Core's field bounds; dependent BALANCE bounds have separate cases
+    // promise: each independently viable field edge is accepted and every representable out-of-range edge is refused
+    function test_settingsBoundsFieldsAndViableEdges() public view {
         uint256[39] memory lo = SettingsFields.lo();
         uint256[39] memory hi = SettingsFields.hi();
         bytes32[39] memory names = SettingsFields.names();
@@ -773,6 +773,9 @@ contract ConfigTest is Fixture {
                 if (i == 17 || i == 18) s.buybackSlice = type(uint128).max;
                 if (i == 26) s.saleToOperatorBps = 0;
                 if (i == 27) s.saleToArtistBps = 0;
+                if (i == 13 && edge == 1) continue; // zero redemption proceeds cannot cover a nonzero BALANCE bid
+                if (i == 37 && edge == 1) s.balanceDiscountBps = 1_100;
+                if (i == 38 && edge == 0) (s.buyToArtistBps, s.redeemSlippageBps) = (0, 0);
                 SettingsFields.set(s, i, v);
                 assertEq(SettingsBounds.firstViolation(s), bytes32(0), "inclusive bound accepted");
             }
@@ -790,6 +793,27 @@ contract ConfigTest is Fixture {
             SettingsFields.set(s, i, lo[i] - 1);
             assertEq(SettingsBounds.firstViolation(s), names[i], "below the bound");
         }
+    }
+
+    // promise: a BALANCE purchase cannot cost more with its artist royalty than the smallest accepted redemption
+    function test_balanceDiscountCoversRoyaltyAndRedemptionShortfall() public pure {
+        Settings memory s = Mainnet.defaultSettings();
+        s.balanceDiscountBps = 439;
+        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "439 bps misses 250 royalty and 200 shortfall");
+        s.balanceDiscountBps = 440;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "440 bps covers the launch royalty and shortfall");
+        s.buyToArtistBps = 1_000;
+        s.balanceDiscountBps = 1_090;
+        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "higher royalty raises the discount floor");
+        s.balanceDiscountBps = 1_091;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the exact higher-royalty boundary passes");
+        s.buyToArtistBps = 0;
+        s.redeemSlippageBps = 0;
+        s.balanceDiscountBps = 0;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "zero royalty and shortfall allow par");
+        s.redeemSlippageBps = 10_000;
+        s.balanceDiscountBps = 9_999;
+        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "zero proceeds cannot cover a bid");
     }
 
     /// preflight names the failing settings row, the deploy guard refuses, postflight reads each field back
