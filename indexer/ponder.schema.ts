@@ -43,6 +43,15 @@ export const log = onchainTable(
   }),
 );
 
+/** Facts shared by ordered handlers in one transaction. Ponder rolls this row back with the event that wrote it. */
+export const transactionFact = onchainTable("transaction_fact", (t) => ({
+  id: t.hex().primaryKey(), // transaction hash
+  ethFillPending: t.boolean().notNull().default(false),
+  balanceBuyId: t.bigint(),
+  balanceBuyActivityId: t.text(),
+  coreBurn: t.bigint().notNull().default(0n),
+}));
+
 /**
  * One row per Core. Address and flag columns follow the matching setter event. Values read at the first Core
  * event (constructor values emit no event) are creditCostToPotBps, chosenComposeOn, minCcToChoose, artist,
@@ -139,6 +148,7 @@ export const controller = onchainTable("controller", (t) => ({
   anchorHalfLife: t.bigint(),
   anchorMinCost: t.bigint(),
   saleOn: t.boolean(),
+  ageEligibilityOn: t.boolean(),
   window: t.bigint(),
   spreadBps: t.integer(),
   startBps: t.bigint(),
