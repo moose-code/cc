@@ -133,9 +133,10 @@ async function snapshotBlock(ctx: Ctx, block: { number: bigint; timestamp: bigin
  * Credit rows for `ids`, creating the missing ones. Fixed facts are immutable per id: seed, paid time, score and
  * traits are read once at the latest block (no archive state), in three Multicall3 calls for all missing ids.
  * tokenURI and ownerOf are read at the event block; tokenURI is null when the read reverts (a composed credit is
- * burned). `ownerHint` is the owner known from the event.
+ * burned). `ownerHint` is the owner known from the event. Only bounded peer groups raise the subcall-calldata
+ * batch size; other callers keep Viem's default splitting.
  */
-export async function ensureCredits(ctx: Ctx, ids: readonly bigint[], ownerHint?: Hex | null) {
+export async function ensureCredits(ctx: Ctx, ids: readonly bigint[], ownerHint?: Hex | null, batchSize?: number) {
   const rows = new Map<bigint, typeof credit.$inferSelect>();
   const missing: bigint[] = [];
   for (const id of ids) {
@@ -147,6 +148,7 @@ export async function ensureCredits(ctx: Ctx, ids: readonly bigint[], ownerHint?
   const c = { address: COLLECTIONS.credits, abi: creditsAbi } as const;
   const facts = await ctx.client.multicall({
     ...mc,
+    batchSize,
     cache: "immutable",
     allowFailure: false,
     contracts: missing.flatMap((id) => [
@@ -156,6 +158,7 @@ export async function ensureCredits(ctx: Ctx, ids: readonly bigint[], ownerHint?
   });
   const scored = await ctx.client.multicall({
     ...mc,
+    batchSize,
     cache: "immutable",
     allowFailure: false,
     contracts: missing.flatMap((_, i) => {
@@ -168,6 +171,7 @@ export async function ensureCredits(ctx: Ctx, ids: readonly bigint[], ownerHint?
   });
   const live = await ctx.client.multicall({
     ...mc,
+    batchSize,
     allowFailure: true,
     contracts: missing.flatMap((id) => [
       { ...c, functionName: "tokenURI", args: [id] },

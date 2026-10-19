@@ -550,7 +550,7 @@ ponder.on("Credits:Transfer", async ({ event, context }) => {
       params: [{ address: COLLECTIONS.credits, blockHash: event.block.hash, topics: [CREDIT_TRANSFER_TOPIC] }],
     });
     await hydrateCreditPeers(logs, id, { address: COLLECTIONS.credits, blockHash: event.block.hash },
-      (ids) => ensureCredits(context, ids));
+      (ids) => ensureCredits(context, ids, undefined, 16_384));
   }
   const c = await ensureCredit(context, id, lc(to));
   const patch: Partial<typeof credit.$inferInsert> = { owner: lc(to) };
