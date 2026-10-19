@@ -42,7 +42,8 @@ contract Resume is Script, SystemResumer, NewProd {
         vm.stopBroadcast();
         // A partial recovery first completes missing prelaunch steps. Check their resulting state before sending the
         // irreversible factory launch, including controller settings and Core locks changed after the deferred run.
-        this.prelaunchGate(c, d.core, deployer);
+        postflightDeferred(c, d.core, deployer);
+        _require();
         if (!deferred) {
             vm.startBroadcast();
             _launch(c, d.coin, d.core);
@@ -51,11 +52,5 @@ contract Resume is Script, SystemResumer, NewProd {
         // deploy.sh runs the postlaunch readback in a separate Postflight script after receipts are on chain.
         console.log("coin", d.coin);
         console.log("renderer", d.renderer);
-    }
-
-    /// @notice Checks the completed prelaunch state in a separate call so artifact reads from resumeChecks are released.
-    function prelaunchGate(LaunchConfig memory c, address core, address deployer) external {
-        postflightDeferred(c, core, deployer);
-        _require();
     }
 }
