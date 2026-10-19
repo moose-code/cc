@@ -20,3 +20,7 @@ keeper/.state/
 # editor and OS files
 .DS_Store
 *.swp
+
+web/.netlify/
+
+web/web/.netlify/

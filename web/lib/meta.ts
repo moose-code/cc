@@ -2,8 +2,9 @@
 // chain second (tokenURI only), each under a timeout so a slow source cannot hold a render. Results are cached 60 s.
 import { unstable_cache } from "next/cache";
 import { createClient, count, eq } from "@ponder/client";
-import { createPublicClient, http, type Address } from "viem";
-import { chain, credits, indexerUrl, rpcUrl, statements } from "./config";
+import { createPublicClient, type Address } from "viem";
+import { chain, credits, indexerUrl, statements } from "./config";
+import { serverRpcTransport } from "./server-rpc";
 import { tokenUriAbi } from "./abis";
 import { rating } from "./format";
 import * as schema from "./indexer-schema";
@@ -11,7 +12,7 @@ import * as schema from "./indexer-schema";
 const TIMEOUT_MS = 2500;
 const { credit, statement } = schema;
 const ix = indexerUrl ? createClient(`${indexerUrl}/sql`, { schema }) : undefined;
-const chainClient = createPublicClient({ chain, transport: http(rpcUrl, { timeout: TIMEOUT_MS, retryCount: 0 }) });
+const chainClient = createPublicClient({ chain, transport: serverRpcTransport() });
 
 const timed = <T,>(p: Promise<T>): Promise<T> =>
   Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), TIMEOUT_MS))]);

@@ -3,9 +3,10 @@
 // adapter's checks. The list (no fulfillment data) is cached for CACHE_MS so every browser shares one OpenSea round of
 // requests; `?fulfill=<orderHash>` returns the encoded `params` for Core.buyListing of one order, cached per order.
 
-import { createPublicClient, encodeAbiParameters, getAddress, http, zeroAddress, type Address, type Hex } from "viem";
+import { createPublicClient, encodeAbiParameters, getAddress, zeroAddress, type Address, type Hex } from "viem";
 import { isIP } from "node:net";
-import { core, credits, rpcUrl, seaportAdapter } from "@/lib/config";
+import { core, credits, seaportAdapter } from "@/lib/config";
+import { serverRpcTransport } from "@/lib/server-rpc";
 import { basicOrderParameters, seaportAdapterAbi } from "@/lib/abis";
 
 export const dynamic = "force-dynamic";
@@ -130,7 +131,7 @@ async function fulfill(orderHash: string): Promise<Fulfill> {
     if (lc(p.offerToken) !== lc(credits) || p.offerAmount !== "1") return { skipped: "not one credit" };
     if (lc(p.considerationToken) !== zeroAddress) return { skipped: "not native currency" };
     if (Number(p.basicOrderType) > 1) return { skipped: "restricted order type" };
-    const client = createPublicClient({ transport: http(rpcUrl) });
+    const client = createPublicClient({ transport: serverRpcTransport() });
     let price = BigInt(p.considerationAmount);
     for (const r of p.additionalRecipients as { amount: string; recipient: string }[]) {
       price += BigInt(r.amount);

@@ -22,7 +22,7 @@ const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
 const SHORTLIST = 6;
 const MAX_SCORE_READS = 600;
 const FULFILL_TRIES = 3; // OpenSea fulfillments fetched per query, best estimated margin first
-const CHUNK = 10_000n; // blocks per getLogs call
+const CHUNK = 5_000n; // blocks per getLogs call
 const RESCAN = 12n; // blocks re-read behind the last scanned block (reorg window)
 
 // ---- chain mode: strategy listings from its events ------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { connectorsForWallets, getDefaultConfig } from "@rainbow-me/rainbowkit";
-import { createConfig, createConnector, fallback, http } from "wagmi";
+import { createConfig, createConnector, http } from "wagmi";
 import { injectedWallet } from "@rainbow-me/rainbowkit/wallets";
 import { mock } from "wagmi/connectors";
 import { chain, isLocal, localAccounts, rpcUrl, wcProjectId } from "./config";
@@ -8,12 +8,9 @@ const ICON =
   "data:image/svg+xml;utf8," +
   encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="#111"/><path d="M8 20h16M8 12h16" stroke="#fff" stroke-width="3"/></svg>');
 
-// Mainnet transport: the configured RPC first, then free public endpoints. A request that fails on one endpoint is
-// retried on the next; a failed response is logged so a slide off the primary shows in the console.
-const PUBLIC_RPCS = ["https://gateway.tenderly.co/public/mainnet", "https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com"];
-const endpoint = (url: string) =>
-  http(url, { onFetchResponse: (r) => void (r.ok || console.warn(`rpc ${new URL(url).host} answered ${r.status}`)) });
-const mainnetTransport = fallback([rpcUrl, ...PUBLIC_RPCS.filter((u) => u !== rpcUrl)].map(endpoint));
+// Browser reads share the site's server-side cache and provider budget.
+// Wallet connectors retain signing and transaction submission.
+const mainnetTransport = http("/api/rpc", { retryCount: 1, timeout: 30_000 });
 
 // wagmi's id of the connector used last, in the storage key wagmi writes.
 const recentId = () => {

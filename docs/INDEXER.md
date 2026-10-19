@@ -247,7 +247,9 @@ Every 300 blocks a block handler compares projections with views at the same blo
 
 ## 9. frontend data contract
 
-Source key: **I** indexer table.column, **L** live browser read, **D** derived in the browser from the named inputs. A value marked L today that moves to I is listed with its new source. Every I row has an on-chain fallback that runs in chain mode (section 11, owner decision 133); the tables name the indexer source. Wired in phase 2: the rows below as written.
+Source key: **I** indexer table.column, **L** live chain read through the website `/api/rpc`, **D** derived in the browser from the named inputs. A value marked L today that moves to I is listed with its new source. Every I row has an on-chain fallback that runs in chain mode (section 11, owner decision 133); the tables name the indexer source. Wired in phase 2: the rows below as written.
+
+Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first, bounded queues, physical-request pacing, identical-read deduplication and short caches. Server metadata and listings reads share that dispatcher. Its memory and throttle are per warm Netlify instance; this is not a deployment-wide quota or a guarantee against public-provider outages. Local Anvil reads and wallet signing remain direct.
 
 ### 9.1 shared
 

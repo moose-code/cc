@@ -8,9 +8,10 @@ const addr = (v?: string): Address | undefined =>
 // Every other value selects mainnet.
 export const isLocal = process.env.NEXT_PUBLIC_CHAIN_ID === "31337";
 
-export const rpcUrl =
-  process.env.NEXT_PUBLIC_RPC_URL ||
-  (isLocal ? "http://127.0.0.1:8545" : "https://gateway.tenderly.co/public/mainnet");
+// Only local forks expose their RPC to the browser. Mainnet reads use the API.
+export const rpcUrl = isLocal
+  ? process.env.NEXT_PUBLIC_RPC_URL || "http://127.0.0.1:8545"
+  : "/api/rpc";
 
 // The mock connector sends wallet requests to chain.rpcUrls.default. The injected
 // wallet's "add network" prompt takes id, name, currency and rpc from this definition.

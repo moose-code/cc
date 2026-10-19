@@ -71,7 +71,7 @@ async function modeOf(client: Client, hash: string): Promise<ComposeMode | null>
 // head, in CHUNK block ranges. The state is saved in localStorage so a reload
 // resumes where it stopped.
 const RESCAN = 12n; // blocks re-read behind the last scanned block (reorg window)
-const CHUNK = 10_000n; // blocks per getLogs call
+const CHUNK = 5_000n; // blocks per getLogs call
 const SCAN_KEY = `${SCOPE}:scan:token-history-v2`;
 
 interface ScanState {
