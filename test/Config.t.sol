@@ -95,8 +95,8 @@ contract ConfigTest is Fixture {
         // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 186
         assertEq(f.baselineSkimBps, 690);
         assertEq(f.bountyBps, 9_000);
-        assertEq(f.sniperStartBps, 9_000);
-        assertEq(f.sniperSeconds, 1800);
+        assertEq(f.sniperStartBps, 6_900);
+        assertEq(f.sniperSeconds, 4140);
         assertTrue(f.restricted);
         assertEq(f.allowed.length, 0);
         assertEq(f.settings.payeePpm, 0);
@@ -114,7 +114,7 @@ contract ConfigTest is Fixture {
         assertEq(f.settings.bucketSeconds, 60);
         assertEq(f.settings.balanceBidCapBps, 10_000);
         assertEq(f.settings.idleStepSeconds, 600);
-        assertEq(f.settings.sniperSeconds, 1800);
+        assertEq(f.settings.sniperSeconds, 4140);
         assertEq(f.settings.reserveWei, 0.1 ether);
         assertEq(f.settings.returnLockSeconds, 21_600);
         assertEq(f.credit.spreadBps, 1_000);
@@ -965,21 +965,21 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), row);
     }
 
-    // promise: decision 186 pins the 90 percent anti sniper start and 1800 second window at launch
+    // promise: decision 214 pins the 69 percent anti sniper start and 4140 second window at launch
     function test_preflightPinsAntiSniperSchedule() public {
         address d2 = _funded();
         LaunchConfig memory c = lc;
         c.salt = keccak256("preflight-sniper");
         c.rateStart = c.settings.rateCap / 3;
-        c.sniperStartBps = 8_000;
+        c.sniperStartBps = 6_800;
         preflight(c, d2);
-        assertEq(_failedNames(), "rule: sniper start bps is 9000");
+        assertEq(_failedNames(), "rule: sniper start bps is 6900");
 
-        c.sniperStartBps = 9_000;
+        c.sniperStartBps = 6_900;
         c.sniperSeconds = 3_000;
         c.settings.sniperSeconds = 3_000;
         preflight(c, d2);
-        assertEq(_failedNames(), "rule: sniper seconds is 1800");
+        assertEq(_failedNames(), "rule: sniper seconds is 4140");
     }
 
     /// FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`. the Core and the deploy guard

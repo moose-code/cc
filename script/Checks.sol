@@ -91,8 +91,8 @@ abstract contract LaunchChecks is PostflightChecks {
         0x38d25f5c67998d7e8ca2c117217bfa94f499cf77dfddf8c84a5fda1a2718c829;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
-    uint24 internal constant PIN_SNIPER_START = 9_000;
-    uint32 internal constant PIN_SNIPER_SECONDS = 1_800;
+    uint24 internal constant PIN_SNIPER_START = 6_900;
+    uint32 internal constant PIN_SNIPER_SECONDS = 4_140;
     uint24 internal constant DYNAMIC_FEE_FLAG = 0x800000;
     /// @dev the v2 hook address carries its permission flags in the low 14 bits: beforeInitialize, beforeAddLiquidity,
     /// beforeSwap, afterSwap, beforeSwapReturnDelta, afterSwapReturnDelta (0x28CC, v2 `DeployV2Lib`)
@@ -283,8 +283,8 @@ abstract contract LaunchChecks is PostflightChecks {
     }
 
     function _ruleSniper(LaunchConfig memory c) private {
-        _eq("rule: sniper start bps is 9000", uint256(c.sniperStartBps), PIN_SNIPER_START);
-        _eq("rule: sniper seconds is 1800", uint256(c.sniperSeconds), PIN_SNIPER_SECONDS);
+        _eq("rule: sniper start bps is 6900", uint256(c.sniperStartBps), PIN_SNIPER_START);
+        _eq("rule: sniper seconds is 4140", uint256(c.sniperSeconds), PIN_SNIPER_SECONDS);
         _check(
             "rule: settings.sniperSeconds equals launch.sniperSeconds",
             c.settings.sniperSeconds == c.sniperSeconds,

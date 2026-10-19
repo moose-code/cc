@@ -172,7 +172,7 @@ test("book latch: with the window over and hook income pending, the tick books a
     const potBefore = await read<bigint>(CORE, coreAbi, "ethPot");
     await hookIncome(parseEther("3")); // the skim of a real buy, no fund(): it waits above the pots until a book
     assert.equal(await read<bigint>(CORE, coreAbi, "ethPot"), potBefore, "the hook income waits above the pot until a book");
-    await warp(4000); // past the anti sniper window, so a book latches
+    await warp(4200); // past the anti sniper window, so a book latches
     const k = await keeperFor({ DOORS: "book" });
     const t = await k.tick();
     await assertSent(t, "book");
@@ -251,7 +251,7 @@ test("buyListing: the bid climbs from booked hook income until a strategy listin
     // hook income only (no fund), booked, then the bid climbs toward its cap over the hours
     await clearPayee();
     await hookIncome(price * 40n);
-    await warp(4000);
+    await warp(4200);
     await call(KEEPER, CORE, ownerAbi, "book", []);
     await warp(4 * 3600); // the bid climbs toward the rate cap from the booked income, no setRate
     const ethBid = await read<bigint>(CORE, coreAbi, "bidOf", [id]);

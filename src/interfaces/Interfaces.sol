@@ -429,7 +429,7 @@ library Mainnet {
             bucketSeconds: 60,
             balanceBidCapBps: 10_000,
             idleStepSeconds: 600,
-            sniperSeconds: 1800,
+            sniperSeconds: 4140,
             reserveWei: 0.1 ether,
             returnLockSeconds: 21_600,
             valueModeOn: false,

@@ -131,8 +131,8 @@ abstract contract ConfigReader is CommonBase {
         c.positionUpper = 887_200;
         c.baselineSkimBps = 690;
         c.bountyBps = 9000;
-        c.sniperStartBps = 9_000;
-        c.sniperSeconds = 1800;
+        c.sniperStartBps = 6_900;
+        c.sniperSeconds = 4140;
         c.restricted = true;
         c.seaportRecipients = new address[](1);
         c.seaportRecipients[0] = Mainnet.OPENSEA_FEE_COLLECTOR;

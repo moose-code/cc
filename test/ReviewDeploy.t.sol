@@ -161,7 +161,7 @@ contract ReviewDeployTest is ReviewHarness {
         postflightAs(base, d.core, deployer);
         assertEq(_failedNames(), "");
         (uint24 now_,) = IArtCoinsMevSkimV2(base.mevModule).currentSkimBps(d.poolId);
-        assertEq(now_, 9_000, "readable at the launch block");
+        assertEq(now_, 6_900, "readable at the launch block");
         vm.warp(block.timestamp + 900);
         postflightAs(base, d.core, deployer);
         assertEq(_failedNames(), "");
@@ -243,7 +243,7 @@ contract ReviewDeployTest is ReviewHarness {
             '"bountyBps": 9000',
             '"payeePpm": 0',
             '"baselineSkimBps": 690',
-            '"sniperSeconds": 1800',
+            '"sniperSeconds": 4140',
             '"startTick": -175000',
             '"positionUpper": 887200',
             '"poolFee": 8388608',

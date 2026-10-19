@@ -112,7 +112,7 @@ window() { call "$CTL" 'creditWindow()(uint32)' | awk '{print $1}'; }
 # warps past the credit window, so the credits sold so far are composable
 past_window() { warp $(($(window) + 60)); }
 
-warp 2000   # past the anti sniper window
+warp 4200   # past the anti sniper window
 stage a
 [ -z "$DEV_WALLET" ] || stage dev-wallet   # the dev wallet buys coin through the pool once the sniper window has passed
 stage fill-a

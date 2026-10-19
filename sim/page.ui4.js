@@ -52,7 +52,7 @@ function buildCalibration() {
     ['coin buys against sells', 'day one 819 to 738 eth, net 80 eth moves price 2.5e-8 to 4.4e-7', 'model reproduces 4.48e-7 on day one'],
     ['CreditStrategy inventory', '13,132 credits listed at median 0.036 eth, mean score 371', 'static, cleared through buyListing when the ceiling passes the ask'],
     ['statement sale', 'a buyer takes the statement with the lowest asking price at or under its willingness to pay and does not wait for a lower price. it pays the asking price and gets the statement at once through Core.sellTo, and the anchor moves by anchorMoveBps of the gap toward a qualifying sale', 'src/Core.sol, src/ControllerV1.sol'],
-    ['launch position', 'tick -175000 to 887200, whole supply, 6.9% baseline skim, 6.21% to the Core and 0.69% to the protocol, payeePpm 0, 90% falling to 6.9% over 30 minutes, no lp fee', 'script/config/mainnet.json'],
+    ['launch position', 'tick -175000 to 887200, whole supply, 6.9% baseline skim, 6.21% to the Core and 0.69% to the protocol, payeePpm 0, 69% falling to 6.9% over 69 minutes, no lp fee', 'script/config/mainnet.json'],
   ];
   $('calTbl').innerHTML = '<thead><tr><th>input</th><th>value in the model</th><th>source</th></tr></thead><tbody>' + rows.map((r) => '<tr><td>' + r[0] + '</td><td style="white-space:normal;text-align:left">' + r[1] + '</td><td style="white-space:normal;text-align:left">' + r[2] + '</td></tr>').join('') + '</tbody>';
 }

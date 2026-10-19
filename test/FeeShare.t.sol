@@ -36,7 +36,7 @@ contract PayeeShareTest is FeeBase {
         _setSettings(sp);
         (, uint256 launchedAt) = _launchRecord();
         assertEq(launchedAt, launchTime, "the launch time of the factory record");
-        assertEq(core.settings().sniperSeconds, 1800);
+        assertEq(core.settings().sniperSeconds, 4140);
         assertFalse(core.payeeOn());
 
         // a book inside the window shares nothing and does not turn the share on

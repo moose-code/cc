@@ -128,7 +128,7 @@ GROUPS.splice(2, 0, { title: 'purchase budget and timing', open: true, ctl: [
   { k: 'bucketSeconds', t: 'number', label: 'bucketSeconds', hint: '1 to 4294967295 seconds. Launch 60. Fixed boundaries can admit a budget on either side; active spend and drop floors survive owner edits.' },
   { k: 'balanceBidCapBps', t: 'number', label: 'balanceBidCapBps', hint: '10000 to 4294967295 bps of par. Launch 10000. Balance purchases are outside the ETH spend cap.' },
   { k: 'idleStepSeconds', t: 'number', label: 'idleStepSeconds', hint: '1 to 4294967295 seconds. Launch 600. Ordinary and recovery climb units stay at 60 seconds.' },
-  { k: 'sniperSeconds', t: 'number', label: 'sniperSeconds', hint: '0 to 4294967295 seconds after token launch before the payee latch may activate. Launch 1800.' },
+  { k: 'sniperSeconds', t: 'number', label: 'sniperSeconds', hint: '0 to 4294967295 seconds after token launch before the payee latch may activate. Launch 4140.' },
   { k: 'climbMultiplierCapBps', t: 'number', label: 'climbMultiplierCapBps', hint: '10000 to 65535 bps. Launch 40000. Last-fill pages scale ceiling loosening only.' },
   { k: 'anchorMoveBps', t: 'number', label: 'anchorMoveBps', hint: '0 to 10000 bps of the gap toward a qualifying statement sale. Launch 0: no sale moves the anchor and its clock is preserved.' },
   { k: 'stepSec', t: 'number', label: 'simulation step, seconds', hint: 'Must divide 3600. Default 60. Use 12 for modeled blocks throughout. Steps longer than a bucket skip spending opportunities. Smaller steps take longer.' },

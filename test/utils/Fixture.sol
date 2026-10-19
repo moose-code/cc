@@ -64,7 +64,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// per point rebuild
     uint256 internal constant UNIT = 1e10;
     /// @dev the sniper window of the launch, seconds
-    uint256 internal constant SNIPER_WINDOW = 1800;
+    uint256 internal constant SNIPER_WINDOW = 4140;
     bytes32 internal constant FIXTURE_SALT = keccak256("credits-engine fixture coin");
     /// @dev the fixture coin launches with both metadata fields set, so the launch, the preflight and the postflight
     /// rows run on non empty values

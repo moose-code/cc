@@ -188,7 +188,7 @@ contract FeeFlowTest is FeeBase {
     /// the extra of the anti sniper window all reaches the core, and through it the pot, the payee takes nothing of it
     function test_sniperWindowExtraLandsInThePot() public {
         (uint24 bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
-        assertEq(bps, 9_000);
+        assertEq(bps, 6_900);
         assertFalse(core.payeeOn(), "no payee share in the window");
         Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
         uint256 base = 1 ether * 690 / 10_000;
@@ -198,13 +198,13 @@ contract FeeFlowTest is FeeBase {
         assertEq(f.skimProtocol, base - bountyShare, "the protocol leg does not grow in the window");
         assertEq(f.toPayee, 0);
         assertEq(f.potRise, _toPot(f.bountyRise), "the pot gets the window inflow less the redeem burn share");
-        assertApproxEqAbs(f.potRise, _toPot(0.8931 ether), 0.005 ether);
+        assertApproxEqAbs(f.potRise, _toPot(0.6831 ether), 0.005 ether);
         assertFalse(core.payeeOn());
 
-        // halfway through the window the rate is halfway between 90 and the 6.9 percent baseline
+        // halfway through the window the rate is halfway between 69 and the 6.9 percent baseline
         vm.warp(launchTime + SNIPER_WINDOW / 2);
         (bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
-        assertEq(bps, 9_000 - (9_000 - 690) / 2);
+        assertEq(bps, 6_900 - (6_900 - 690) / 2);
         f = _flow(Kind.BuyExactIn, 1 ether, "");
         assertEq(f.bountyRise, bountyShare + 1 ether * uint256(bps) / 10_000 - base);
         assertEq(f.toPayee, 0);
@@ -575,7 +575,7 @@ contract BuybackTest is FeeBase {
     }
 
     /// @dev puts `eth` into the buyback pot, backed by real eth in the core: the one seam of this file. a statement sale
-    /// needs a full page of credits and the sniper window is 30 minutes, so no real sale can fill the pot inside it
+    /// needs a full page of credits and the sniper window is 69 minutes, so no real sale can fill the pot inside it
     function _forcePot(uint256 eth) internal {
         vm.deal(address(core), address(core).balance + eth);
         uint256 slot = stdstore.target(address(core)).sig("ethToBuyback()").find();
