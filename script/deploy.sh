@@ -189,7 +189,18 @@ if [ "$WALLET" = keystore ]; then
       WALLET_FLAGS+=(--password-file "$PASSWORD_FILE")
     fi
     if [ "$DRY_RUN" = 0 ]; then
-      SIGNER="$(cast wallet address "${WALLET_FLAGS[@]}")"
+      if [ -n "${APPROVAL_GATE:-}" ] && [ "$TERMINAL_KEYSTORE" = 1 ]; then
+        [ "$APPROVAL_GATE" = "$SEND_RPC" ] || die "APPROVAL_GATE is not the transaction RPC"
+        [[ "$SEND_RPC" =~ ^http://127[.]0[.]0[.]1:[0-9]+$ ]] || die "APPROVAL_GATE requires the local signed-transaction gate"
+        PARENT_COMMAND="$(ps -p "$PPID" -o command=)" || die "cannot identify the deployment wrapper"
+        [[ "$PARENT_COMMAND" == *script/mainnet-launch.py* ]] || die "APPROVAL_GATE is reserved for the deployment wrapper"
+        GATE_OWNER="$(cast rpc cc_approvalGateOwner --rpc-url "$SEND_RPC" | tr -d '"')" \
+          || die "the local approval gate did not report its expected owner"
+        [ "$(lc "$GATE_OWNER")" = "$(lc "$DEPLOYER")" ] || die "the local approval gate is for another owner"
+        # The wrapper checks the recovered signer of every signed transaction before forwarding it.
+      else
+        SIGNER="$(cast wallet address "${WALLET_FLAGS[@]}")"
+      fi
     fi
   fi
 else

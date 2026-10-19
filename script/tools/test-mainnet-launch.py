@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Focused no-network checks for the mainnet transaction approval boundary."""
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 import io
 import json
@@ -41,6 +41,14 @@ class ApprovalTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "method not found"):
                 launch.rpc("https://read-rpc.example", "eth_chainId", [])
 
+    def test_local_gate_reports_the_expected_owner_without_unlocking_a_keystore(self):
+        # promise: the shell can check the wrapper's expected owner before its signer-checking send gate.
+        handler = launch.GateHandler.__new__(launch.GateHandler)
+        handler.gate = SimpleNamespace(owner=OWNER)
+        self.assertEqual(handler.forward({"jsonrpc": "2.0", "id": 7,
+                                          "method": "cc_approvalGateOwner", "params": []}),
+                         {"jsonrpc": "2.0", "id": 7, "result": OWNER})
+
     def test_launch_config_display_uses_the_selected_file(self):
         # promise: the operator sees every value from the selected launch config before approval.
         with TemporaryDirectory() as temp:
@@ -51,8 +59,38 @@ class ApprovalTests(unittest.TestCase):
             with redirect_stdout(output):
                 launch.print_launch_config(path)
             self.assertIn(str(path), output.getvalue())
-            displayed = output.getvalue().split("\n", 2)[2]
-            self.assertEqual(json.loads(displayed), expected)
+            for item in (f"owner: \"{OWNER}\"", "rateStart: \"4650000000000000\"",
+                         "stack.poolFee: 8388608"):
+                self.assertIn(item, output.getvalue())
+
+    def test_live_output_shows_password_prompt_without_forge_dump(self):
+        # promise: the operator sees the password and progress prompts while successful Forge logs stay out of the terminal.
+        script = ("import sys; print('deploy.sh: start block 123, signer nonce 4'); "
+                  "print('deploy.sh: preflight'); print('noisy check row'); "
+                  "print('deploy.sh: deploy'); "
+                  "sys.stdout.write('Enter keystore password:'); sys.stdout.flush(); "
+                  "print('deploy.sh: postflight'); "
+                  "print('deploy.sh: wrote deployments/1.json (core 0xabc, deploy block 124)'); "
+                  "print('deploy.sh: verify src/Core.sol:Core at 0xabc'); print('deploy.sh: done')")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            launch.run_live([sys.executable, "-c", script], env={**os.environ, "KEYSTORE_ACCOUNT": "ripe0x"})
+        shown = output.getvalue()
+        self.assertIn("Checking the live chain", shown)
+        self.assertIn("Enter the password for ripe0x", shown)
+        self.assertIn("Checking deployed contracts", shown)
+        self.assertIn("Recovery anchor: start block 123, signer nonce 4", shown)
+        self.assertIn("Deployment record: deployments/1.json", shown)
+        self.assertIn("Verifying src/Core.sol:Core", shown)
+        self.assertNotIn("noisy check row", shown)
+
+    def test_live_failure_shows_the_actual_diagnostic(self):
+        # promise: hiding successful Forge logs does not hide a failed deployment's diagnostic.
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaisesRegex(RuntimeError, "exited 2"):
+            launch.run_live([sys.executable, "-c", "import sys; print('failed step'); sys.exit(2)"],
+                            env={**os.environ, "KEYSTORE_ACCOUNT": "ripe0x"})
+        self.assertIn("failed step", errors.getvalue())
 
     def setUp(self):
         self.planned = {
@@ -66,6 +104,17 @@ class ApprovalTests(unittest.TestCase):
             "to": tx["to"], "input": tx["input"], "value": "0x0",
             "gas": tx["gas"], "maxFeePerGas": "0x64", "maxPriorityFeePerGas": "0x1",
         }
+
+    def test_adapter_steps_name_the_approved_adapter(self):
+        # promise: each adapter approval names the module whose approved address it enables.
+        first = {"contractName": "SeaportBasicAdapter", "contractAddress": "0x" + "1" * 40,
+                 "transactionType": "CREATE2"}
+        second = {"contractName": "CreditStrategyAdapter", "contractAddress": "0x" + "2" * 40,
+                  "transactionType": "CREATE2"}
+        for address, name in ((first["contractAddress"], "Seaport"),
+                              (second["contractAddress"], "CreditStrategy")):
+            approval = {"function": "addAdapter(address)", "arguments": [address]}
+            self.assertIn(name, launch.describe_transaction(approval, [first, second]))
 
     def test_changed_signed_action_is_rejected(self):
         # promise: a signed transaction with extra authority or altered calldata cannot pass the approved preview.

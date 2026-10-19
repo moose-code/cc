@@ -2,6 +2,7 @@
 """Clean, preview, price, and confirm the existing mainnet deploy path."""
 
 import argparse
+from collections import deque
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,45 @@ def run(args, *, env=None, capture=False, input_text=None):
     return result
 
 
+def run_live(args, *, env):
+    """Keep Forge's password prompt interactive and show diagnostics only on failure."""
+    recent = deque(maxlen=80)
+    with subprocess.Popen(args, cwd=ROOT, env=env, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, bufsize=0) as process:
+        line = bytearray()
+        while char := process.stdout.read(1):
+            line.extend(char)
+            if line.endswith(b"Enter keystore password:"):
+                recent.append(line.decode(errors="replace"))
+                line.clear()
+                print(f"\nEnter the password for {env['KEYSTORE_ACCOUNT']} (input hidden), then press Return.", flush=True)
+            elif char == b"\n":
+                message = line.decode(errors="replace").rstrip()
+                recent.append(message)
+                line.clear()
+                if message == "deploy.sh: preflight":
+                    print("Checking the live chain and approved config...", flush=True)
+                elif message.startswith("deploy.sh: start block "):
+                    print(f"Recovery anchor: {message.removeprefix('deploy.sh: ')}. Save this if the run stops.", flush=True)
+                elif message == "deploy.sh: deploy":
+                    print("Preparing signed transactions. Forge will request the keystore password once.", flush=True)
+                elif message == "deploy.sh: postflight":
+                    print("Checking deployed contracts and writing the deployment record...", flush=True)
+                elif message.startswith("deploy.sh: wrote "):
+                    print(f"Deployment record: {message.removeprefix('deploy.sh: wrote ')}", flush=True)
+                elif message.startswith("deploy.sh: verify "):
+                    print(f"Verifying {message.removeprefix('deploy.sh: verify ')}", flush=True)
+                elif message == "deploy.sh: done":
+                    print("Deployment script completed.", flush=True)
+        if line:
+            recent.append(line.decode(errors="replace"))
+        code = process.wait()
+    if code:
+        print("Deployment stopped. Last Forge diagnostics:", file=sys.stderr)
+        print(redact("\n".join(recent)), file=sys.stderr)
+        raise RuntimeError(f"{args[0]} exited {code}")
+
+
 def redact(output):
     for name in ("RPC_URL", "PRIVATE_RPC", "ETHERSCAN_API_KEY"):
         value = os.environ.get(name)
@@ -46,8 +86,16 @@ def number(value):
 
 def print_launch_config(path):
     config = json.loads(path.read_text())
-    print(f"\nLaunch config ({path}):", flush=True)
-    print(json.dumps(config, indent=2, sort_keys=True), flush=True)
+    print(f"\nExact launch settings ({path}):", flush=True)
+
+    def show(prefix, value):
+        if isinstance(value, dict):
+            for key, child in sorted(value.items()):
+                show(f"{prefix}.{key}" if prefix else key, child)
+        else:
+            print(f"  {prefix}: {json.dumps(value)}", flush=True)
+
+    show("", config)
 
 
 def rpc(url, method, params, *, preserve_response=False):
@@ -101,6 +149,38 @@ def check_transaction(tx, expected, owner, nonce, fee_cap):
     return signed_fee
 
 
+CONSEQUENCES = {
+    "CoreLib": "Deploy the pricing and accounting library Core uses.",
+    "CoreOpsLib": "Deploy the operations library Core uses.",
+    "Core": "Deploy Core, which holds and routes system assets.",
+    "ControllerV1": "Deploy the Credit and Statement pricing controller.",
+    "SeaportBasicAdapter": "Deploy the Seaport order adapter.",
+    "CreditStrategyAdapter": "Deploy the CreditStrategy listing adapter.",
+    "LogoCoinRenderer": "Deploy the animated SVG coin metadata renderer.",
+    "setCore(address)": "Connect the renderer to this Core.",
+    "setController(address)": "Make Core use the deployed pricing controller.",
+    "addAdapter(address)": "Authorize this adapter in Core.",
+    "deployToken": "Create the CC coin and launch its pool through Artcoin V2.",
+}
+
+
+def describe_transaction(planned, transactions=()):
+    if planned.get("transactionType") == "CREATE2":
+        key = planned.get("contractName")
+    else:
+        key = planned.get("function", "").split("(")[0] if planned.get("function", "").startswith("deployToken") else planned.get("function")
+    if key == "addAdapter(address)" and planned.get("arguments"):
+        address = planned["arguments"][0].lower()
+        for item in transactions:
+            if (item.get("contractAddress") or "").lower() == address:
+                name = item.get("contractName")
+                if name == "SeaportBasicAdapter":
+                    return "Authorize the Seaport order adapter in Core."
+                if name == "CreditStrategyAdapter":
+                    return "Authorize the CreditStrategy listing adapter in Core."
+    return CONSEQUENCES.get(key, key or "Execute approved contract call.")
+
+
 class ApprovalGate:
     def __init__(self, read_url, send_url, transactions, fee_cap, expected_coin, owner=OWNER):
         self.read_url = read_url
@@ -130,7 +210,8 @@ class ApprovalGate:
                 if not receipt or number(receipt["status"]) != 1:
                     raise RuntimeError("the previous receipt is missing or failed; stop and reconcile")
                 self.check_previous_state(self.transactions[self.index - 1])
-                print(f"Previous receipt {self.previous_hash}: status 1, gas used {number(receipt['gasUsed']):,}; expected state confirmed.", flush=True)
+                print(f"Step {self.index}/{len(self.transactions)} confirmed: {self.previous_hash}; "
+                      f"gas used {number(receipt['gasUsed']):,}; expected state checked.", flush=True)
             target = tx.get("to")
             code = rpc(self.read_url, "eth_getCode", [target, "latest"])
             created = planned.get("contractAddress") if planned.get("transactionType") == "CREATE2" else None
@@ -145,30 +226,17 @@ class ApprovalGate:
                 factory_owner = rpc(self.read_url, "eth_call", [{"to": target, "data": "0x8da5cb5b"}, "latest"])
                 if "0x" + factory_owner[-40:].lower() != self.owner:
                     raise RuntimeError("factory owner changed before coin launch")
-            label = planned.get("contractName") or "Artcoin V2 factory"
-            function = planned.get("function") or ("CREATE2 deploy" if created else "contract call")
-            print(f"\nTransaction {self.index + 1}/{len(self.transactions)}: {label} {function}", flush=True)
-            print(f"Chain 1; signer {self.owner}; nonce {nonce}; target {target}; value {number(tx['value'])} wei", flush=True)
-            print(f"Target code: {len(code[2:]) // 2} bytes; predicted creation: {created or 'none'}", flush=True)
-            print(f"Gas limit {number(tx['gas']):,}; max fee {signed_fee / 1e9:.3f} gwei; calldata {len(tx['input'][2:]) // 2:,} bytes", flush=True)
-            consequences = {
-                "CoreLib": "Deploys the pricing and accounting library Core will call.",
-                "CoreOpsLib": "Deploys the operations library Core will call.",
-                "Core": "Deploys the Core that holds and routes system assets.",
-                "ControllerV1": "Deploys the Credit and Statement pricing controller.",
-                "SeaportBasicAdapter": "Deploys the Seaport order adapter.",
-                "CreditStrategyAdapter": "Deploys the CreditStrategy listing adapter.",
-                "LogoCoinRenderer": "Deploys the animated SVG coin metadata renderer.",
-                "setCore(address)": "Binds the renderer to this Core.",
-                "setController(address)": "Makes Core use the new pricing controller.",
-                "addAdapter(address)": "Allows Core to use this listing adapter.",
-                "deployToken": "Creates the CC coin and launches its pool through Artcoin V2.",
-            }
-            consequence = consequences.get(label) if created else consequences.get(function.split("(")[0] if function.startswith("deployToken") else function)
-            print(f"Consequence: {consequence or function}", flush=True)
+            print(f"\nStep {self.index + 1}/{len(self.transactions)}: "
+                  f"{describe_transaction(planned, self.transactions)}", flush=True)
+            print(f"Chain 1 | signer {self.owner} | nonce {nonce}", flush=True)
+            print(f"Target {target}" + (f" | creates {created}" if created else ""), flush=True)
+            print(f"ETH transferred {number(tx['value']) / 1e18:.6f} | "
+                  f"maximum gas cost {number(tx['gas']) * signed_fee / 1e18:.6f} ETH", flush=True)
+            print(f"Gas limit {number(tx['gas']):,} | max fee {signed_fee / 1e9:.3f} gwei | "
+                  f"target code {len(code[2:]) // 2} bytes", flush=True)
             args = planned.get("arguments")
             if args:
-                print("Decoded arguments:", json.dumps(args, indent=2), flush=True)
+                print("Arguments:", json.dumps(args), flush=True)
             if input(f"Type SEND {self.index + 1} to broadcast this transaction: ") != f"SEND {self.index + 1}":
                 raise RuntimeError("operator declined this transaction")
             digest = run(["cast", "keccak"], capture=True, input_text=raw).stdout.strip()
@@ -187,7 +255,7 @@ class ApprovalGate:
             self.previous_hash = result
             self.previous_raw = raw
             self.index += 1
-            print(f"Sent {result}. Forge --slow waits for the receipt before the next step.", flush=True)
+            print(f"Submitted {result}. Waiting for its receipt before the next step.", flush=True)
             return result
 
     def check_previous_state(self, planned):
@@ -252,7 +320,9 @@ class GateHandler(BaseHTTPRequestHandler):
 
     def forward(self, request):
         method = request.get("method", "")
-        if method == "eth_sendRawTransaction":
+        if method == "cc_approvalGateOwner":
+            result = self.gate.owner
+        elif method == "eth_sendRawTransaction":
             result = self.gate.send(request["params"][0])
         elif method.startswith("eth_send") or method.startswith("personal_"):
             raise RuntimeError(f"unapproved signing method {method}")
@@ -322,7 +392,7 @@ def main():
         parser.error("unset PASSWORD_FILE; Foundry will prompt for the keystore password in this terminal")
     if not sys.stdin.isatty() and not args.preview:
         parser.error("broadcast requires an interactive terminal for individual approvals")
-    env = dict(os.environ, TERMINAL_KEYSTORE="1", PASSWORD_FILE="", DRY_RUN="1",
+    env = dict(os.environ, TERMINAL_KEYSTORE="1", PASSWORD_FILE="", DRY_RUN="1", APPROVAL_GATE="",
                LAUNCH_CONFIG=str(config_path))
     if args.local_rehearsal:
         env.update(CHAIN_ID="1", REHEARSAL_SKIP_GIT="1")
@@ -357,7 +427,6 @@ def main():
         return
     previous_manifest_time = manifest.stat().st_mtime_ns if manifest.exists() else 0
     preview = run(["script/deploy.sh", env_name], env=env, capture=True)
-    print(redact(preview.stdout), flush=True)
     hashes = re.findall(r"deploy\.sh: CONFIG_HASH=(0x[0-9a-fA-F]{64})", preview.stdout)
     if len(hashes) != 1 or not manifest.is_file() or manifest.stat().st_mtime_ns <= previous_manifest_time:
         raise RuntimeError("the dry run did not produce one config hash and transaction manifest")
@@ -373,12 +442,16 @@ def main():
     fee_cap = gas_price * 2
     value = sum(number(item["transaction"].get("value")) for item in transactions)
     balance = number(run(["cast", "balance", owner, "--rpc-url", env["RPC_URL"]], capture=True).stdout.strip().split()[0])
-    print(f"\n{len(transactions)} planned transactions; summed dry-run gas limits {gas_limit:,}; maximum accepted signed limits {gas_ceiling:,}.")
+    print(f"\nDry run passed. {len(transactions)} planned transactions; no transaction sent.")
+    print("This deploys Core and its dependencies. The CC coin and pool remain unlaunched." if not args.launch_only
+          else "This launches the CC coin and pool from the existing deferred Core.")
+    print(f"Summed dry-run gas limits {gas_limit:,}; maximum accepted signed limits {gas_ceiling:,}.")
     print(f"Current gas price {gas_price / 1e9:.3f} gwei; approved per-gas ceiling {fee_cap / 1e9:.3f} gwei.")
     print(f"Maximum accepted gas cost at that ceiling: {gas_ceiling * fee_cap / 1e18:.6f} ETH; transaction value {value / 1e18:.6f} ETH; signer balance {balance / 1e18:.6f} ETH.")
     for index, item in enumerate(transactions, 1):
         tx = item["transaction"]
-        print(f"{index:2}. {item.get('contractName') or 'Artcoin V2 factory'} {item.get('function') or 'CREATE2 deploy'}: gas limit {number(tx['gas']):,}, value {number(tx.get('value'))} wei")
+        print(f"{index:2}. {describe_transaction(item, transactions)} Gas limit {number(tx['gas']):,}; "
+              f"value {number(tx.get('value'))} wei.")
     print_launch_config(config_path)
     print(f"Config hash for review: {hashes[0]}")
     if args.preview:
@@ -394,7 +467,8 @@ def main():
     if run(["git", "status", "--porcelain"], capture=True).stdout.strip():
         raise RuntimeError("broadcast requires a clean checkout")
     if not args.local_rehearsal:
-        run(["script/tools/check-freeze.sh"])
+        run(["script/tools/check-freeze.sh"], capture=True)
+        print("Release gate passed for deferred Core deployment.", flush=True)
     if input("Type the full config hash to approve this exact dry run: ").lower() != hashes[0].lower():
         raise RuntimeError("config hash was not confirmed")
     if input("Type START to begin individual transaction confirmations: ") != "START":
@@ -406,18 +480,20 @@ def main():
     thread.start()
     try:
         gate_url = f"http://127.0.0.1:{server.server_port}"
-        live_env = dict(env, DRY_RUN="0", CONFIG_HASH=hashes[0], ETH_RPC_TIMEOUT="600", ETH_TIMEOUT="600")
+        live_env = dict(env, DRY_RUN="0", APPROVAL_GATE=gate_url, CONFIG_HASH=hashes[0],
+                        ETH_RPC_TIMEOUT="600", ETH_TIMEOUT="600")
         if args.local_rehearsal:
             live_env["RECORD_RPC_URL"] = env["RPC_URL"]
         live_env["RPC_URL" if args.local_rehearsal else "PRIVATE_RPC"] = gate_url
-        run(["script/deploy.sh", env_name], env=live_env)
+        run_live(["script/deploy.sh", env_name], env=live_env)
         if gate.index != len(transactions):
             raise RuntimeError(f"deploy returned after only {gate.index}/{len(transactions)} approved sends")
         last_receipt = rpc(gate.read_url, "eth_getTransactionReceipt", [gate.previous_hash])
         if not last_receipt or number(last_receipt["status"]) != 1:
             raise RuntimeError("final receipt is missing or failed")
         gate.check_previous_state(transactions[-1])
-        print(f"Final receipt {gate.previous_hash}: status 1, gas used {number(last_receipt['gasUsed']):,}; expected state confirmed.")
+        print(f"Step {len(transactions)}/{len(transactions)} confirmed: {gate.previous_hash}; "
+              f"gas used {number(last_receipt['gasUsed']):,}; expected state checked.")
         if args.local_rehearsal:
             print("All approved local sends, postflight and rehearsal record completed; Etherscan verification is mainnet only.")
         else:
