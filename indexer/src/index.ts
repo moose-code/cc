@@ -1,7 +1,7 @@
 import { ponder } from "ponder:registry";
 import { zeroAddress, type Hex } from "viem";
 
-import { CORE_ADDRESS, STRATEGY_ADDRESS } from "../ponder.config";
+import { COLLECTIONS, CORE_ADDRESS, STRATEGY_ADDRESS } from "../ponder.config";
 import {
   activity,
   anchorMove,
@@ -17,6 +17,7 @@ import {
 } from "../ponder.schema";
 import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, refreshStatementArt, settingsColumns, snapshot } from "./chain";
 import { composeModeOf } from "./lib/mode";
+import { CREDIT_TRANSFER_TOPIC, hydrateCreditPeers } from "./lib/credit-peers";
 import { creditSaleSplit, statementPot } from "./lib/split";
 import { act, bump, bumpBalanceCommitted, idOf, lc, posOf, record, toJson, type At, type Ctx } from "./shared";
 
@@ -543,6 +544,14 @@ ponder.on("Coin:Transfer", async ({ event, context }) => {
 ponder.on("Credits:Transfer", async ({ event, context }) => {
   await record(context, event, "credits", "Transfer");
   const { from, to, id } = event.args;
+  if (!await context.db.find(credit, { id })) {
+    const logs = await context.client.request({
+      method: "eth_getLogs",
+      params: [{ address: COLLECTIONS.credits, blockHash: event.block.hash, topics: [CREDIT_TRANSFER_TOPIC] }],
+    });
+    await hydrateCreditPeers(logs, id, { address: COLLECTIONS.credits, blockHash: event.block.hash },
+      (ids) => ensureCredits(context, ids));
+  }
   const c = await ensureCredit(context, id, lc(to));
   const patch: Partial<typeof credit.$inferInsert> = { owner: lc(to) };
   if (c.state === "held" && lc(from) === CORE_ADDRESS) {

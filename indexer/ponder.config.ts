@@ -62,7 +62,7 @@ const STRATEGY_START = strategyStart();
 
 // ---- RPC ---------------------------------------------------------------------------------------------------
 
-// Archive capable endpoints first (docs/INDEXER.md section 7.1). Caps are requests per second, overridable with
+// Public requests rotate across these endpoints before using the reserve. Caps are requests per second, overridable with
 // RPC_RPS as a comma separated list in the same order.
 const PUBLIC: Endpoint[] = [
   { url: "https://gateway.tenderly.co/public/mainnet", rps: 8 },
@@ -74,12 +74,12 @@ const PUBLIC: Endpoint[] = [
 ];
 const caps = (process.env.RPC_RPS ?? "").split(",").map((s) => Number(s.trim())).filter(Boolean);
 const endpoints: Endpoint[] = PUBLIC.map((e, i) => ({ ...e, rps: caps[i] ?? e.rps }));
-const reserve = process.env.PONDER_RPC_URL_1?.trim();
-if (reserve) endpoints.push({ url: reserve, rps: Number(process.env.RPC_RPS_RESERVE ?? 10) });
+const reserveUrl = process.env.PONDER_RPC_URL_1?.trim();
+const reserve = reserveUrl ? { url: reserveUrl, rps: Number(process.env.RPC_RPS_RESERVE ?? 10) } : undefined;
 
 const localUrl = localRpc(CHAIN_ID, record.rpcUrl as string | undefined, process.env.RPC_URL?.trim());
 if (IS_LOCAL && !localUrl) throw new Error("RPC_URL is not set and the record has no rpcUrl. Refusing to start.");
-const rpc = localUrl ? guardedHttp(localUrl) : fallbackTransport(endpoints);
+const rpc = localUrl ? guardedHttp(localUrl) : fallbackTransport(endpoints, reserve);
 
 // PGlite serves local development only. A real chain needs Postgres so the RPC cache and schemas outlive the machine.
 if (!IS_LOCAL && !process.env.DATABASE_URL) throw new Error("DATABASE_URL is required on a real chain. Refusing to start.");

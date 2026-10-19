@@ -1,4 +1,4 @@
-import { rateLimit } from "ponder";
+import { loadBalance, rateLimit } from "ponder";
 import { fallback, http, type Transport } from "viem";
 
 export type EndpointStats = { requests: number; errors: number; lastError: string | null; rps: number | null };
@@ -77,14 +77,27 @@ export function guardedHttp(url: string, rps: number | null = null): Transport {
 
 export type Endpoint = { url: string; rps: number };
 
-/** Ordered fallback over rate limited, guarded endpoints. The first endpoints in the list should serve archive state. */
-export function fallbackTransport(endpoints: Endpoint[]): Transport {
+/** Round robin across public endpoints; each request tries the other publics before the optional reserve. */
+export function fallbackTransport(endpoints: Endpoint[], reserve?: Endpoint): Transport {
+  if (endpoints.length === 0) throw new Error("At least one public RPC endpoint is required");
+  let shared: ReturnType<Transport> | undefined;
   return (params) => {
-    const transports = endpoints.map((e): Transport => {
-      // Viem fallback reconstructs children per request; one shared limiter must own each endpoint's budget.
-      const shared = rateLimit(guardedHttp(e.url, e.rps), { requestsPerSecond: e.rps, browser: false })({ ...params, retryCount: 0 });
-      return () => shared;
+    if (shared) return shared;
+    // Constructors and fallback requests share one limiter per endpoint and one round-robin cursor.
+    const limited = [...endpoints, ...(reserve ? [reserve] : [])].map((e): Transport => {
+      const transport = rateLimit(guardedHttp(e.url, e.rps), { requestsPerSecond: e.rps, browser: false })({ ...params, retryCount: 0 });
+      return () => transport;
     });
-    return fallback(transports, { rank: false, retryCount: 0 })(params);
+    const publics = limited.slice(0, endpoints.length);
+    const reserveTransport = limited.slice(endpoints.length);
+    const rotations = publics.map((_, i): Transport => {
+      const transport = fallback([...publics.slice(i), ...publics.slice(0, i), ...reserveTransport], {
+        rank: false,
+        retryCount: 0,
+        shouldThrow: (error) => REVERT.test(`${error.message} ${(error as { details?: string }).details ?? ""}`),
+      })({ ...params, retryCount: 0 });
+      return () => transport;
+    });
+    return (shared = loadBalance(rotations)({ ...params, retryCount: 0 }));
   };
 }
