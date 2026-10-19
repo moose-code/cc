@@ -232,11 +232,11 @@ test("listing: the artist royalty is part of the room bound and the payment cap"
   assert.equal(listingPayment(capped, l, GAS_GUESS.buyListing, parseGwei("1")), 10n ** 13n);
 });
 
-// promise: a lapsed value quote degrades the eth bid instead of halting it, so the keeper still sweeps (decision 159, C02)
-test("listing: in value mode an unusable quote degrades the bid and still sweeps", () => {
+// promise: a zero Core bid during a protected quote outage prevents the keeper from buying a listing
+test("listing: in value mode an unusable quote gives no ETH sweep", () => {
   const p = policy({}, 0);
-  const degraded = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
-  assert.ok(doorsOf(degraded).includes("buyListing"), "the sweep runs at the degraded bid, not NoQuote-halted");
+  const degraded = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [{ ...listing(), bid: 0n }], gas("1"), p, new Map());
+  assert.ok(!doorsOf(degraded).includes("buyListing"), "the Core's zero bid cannot cover the listing price");
   const live = decide(state({ valueModeOn: true, noQuote: false }), [listing()], gas("1"), p, new Map());
   assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps the same way");
 });

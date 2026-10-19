@@ -73,9 +73,9 @@ export interface State {
   balanceModule: Address;
   // the held statements with controller.atFloor(sid) true
   atFloor: bigint[];
-  // the value switch (decision 148): the controller, the Core's valueModeOn, whether the controller's value quote is
-  // unusable now (informational: the eth bid falls back to the last good rate, decision 159, so it never halts a door), the
-  // controller reference, quote controls, and the spot read at the pinned block. A refresh pays only when the controller
+  // the value switch: the controller, the Core's valueModeOn, whether the protected value quote is unusable now,
+  // the controller reference, quote controls, and the spot read at the pinned block. An unusable quote makes the Core
+  // ETH bid zero. A refresh pays only when the controller
   // sees a nonzero spot and a nonzero integer move at inclusion
   controller: Address;
   valueModeOn: boolean;
@@ -272,8 +272,8 @@ export function decide(
 
   // 1. buyListing
   const sweepable: { l: Listing; key: string; payment: bigint; cost: bigint }[] = [];
-  // a lapsed value quote no longer halts the eth bid: it falls back to the last good rate (decision 159, C02), so a
-  // sweep still runs at the degraded bid. `noQuote` is informational, not a gate
+  // `noQuote` reports an unusable protected quote; the pinned Core bid for each listing is zero then, so a sweep
+  // cannot pass the listing's price check. The quote flag itself is informational here.
   if (on("buyListing") && !s.retired && s.potRoom === 0n) {
     skips.push({ door: "buyListing", reason: `ReserveHeld: the pot ${s.potWithPending} is at or under the reserve ${s.reserve}, acquisitions wait for fees` });
   } else if (on("buyListing") && !s.retired && ceiling("buyListing")) {
