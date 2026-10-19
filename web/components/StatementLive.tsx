@@ -209,7 +209,7 @@ function History({ s, rec }: { s?: HeldStatement; rec?: StatementRecord }) {
 
 function RedeemedLine({ r }: { r: NonNullable<StatementRecord["redeemed"]> }) {
   const balance = useBalanceToken();
-  return <HistLine mark="c" ts={r.ts} block={r.block} text={`redeemed for ${formatHistoricalBalance(r.received, r.token, balance)}`} value="—" />;
+  return <HistLine mark="c" ts={r.ts} block={r.block} text={`module received ${formatHistoricalBalance(r.received, r.token, balance)}`} value="—" />;
 }
 
 const pct = (bps: bigint | number) => `${(Number(bps) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
@@ -370,11 +370,11 @@ function RedeemSection({ s, snap, updatedAt }: { s: HeldStatement; snap: Snapsho
           {!on ? "redemption is off" : s.atFloor ? "at floor" : `opens at floor · ${etaLabel({ seconds: left, estimated: true })}`}
         </span>
       </div>
-      <p className="side-copy">once the price reaches its floor, the statement can be redeemed for {BALANCE_SYMBOL} by its rating.</p>
+      <p className="side-copy">once eligible, anyone can move this statement to the balance module. The module keeps the {BALANCE_SYMBOL} it receives; the caller may earn an ETH tip.</p>
       <div className="side-act">
         <Act
           secondary
-          label={`redeem for ${BALANCE_SYMBOL}`}
+          label="redeem to module"
           disabled={!ready}
           title={!on ? "redemption is off" : !s.atFloor ? "the price has not reached its floor" : undefined}
           steps={async (write) => void (await write({ address: core, abi: coreAbi, functionName: "redeemStatement", args: [BigInt(s.sid)] }))}
@@ -407,7 +407,7 @@ function ExitSection({ rec, known, cost }: { rec?: StatementRecord; known: boole
             bought by <Addr address={sale.buyer} />.
           </p>
         )}
-        {redeemed && <p className="side-copy">redeemed for {formatHistoricalBalance(redeemed.received, redeemed.token, balance)}.</p>}
+        {redeemed && <p className="side-copy">the module received {formatHistoricalBalance(redeemed.received, redeemed.token, balance)}.</p>}
         {!sale && !redeemed && known && <p className="side-copy">no sale or redemption is logged for this statement.</p>}
       </section>
       {sale && (

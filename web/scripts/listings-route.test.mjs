@@ -25,6 +25,7 @@ export async function resolve(spec, ctx, next) {
 register("data:text/javascript," + encodeURIComponent(hook));
 
 process.env.OPENSEA_API_KEY = "test";
+process.env.TRUSTED_PROXY_HOPS = "1";
 process.env.NEXT_PUBLIC_CORE = "0x" + "1".repeat(40);
 process.env.NEXT_PUBLIC_SEAPORT_ADAPTER = "0x" + "2".repeat(40);
 
@@ -53,8 +54,8 @@ globalThis.fetch = async (url, init) => {
 };
 
 const { GET } = await import(pathToFileURL(join(web, "app/api/listings/route.ts")).href);
-const call = (hash, ip = "1.1.1.1") =>
-  GET(new Request(`http://x/api/listings?fulfill=${hash}`, { headers: { "x-forwarded-for": `${ip}, 9.9.9.9` } }));
+const call = (hash, ip = "1.1.1.1", supplied = "9.9.9.9") =>
+  GET(new Request(`http://x/api/listings?fulfill=${hash}`, { headers: { "x-forwarded-for": `${supplied}, ${ip}` } }));
 
 // unknown hash: rejected, no upstream POST
 let r = await call(h(999));
@@ -73,7 +74,7 @@ assert.equal(posts, 1);
 
 // burst over the per-client limit is rejected
 const codes = [];
-for (let i = 0; i < 15; i++) codes.push((await call(KNOWN[1], "3.3.3.3")).status);
+for (let i = 0; i < 15; i++) codes.push((await call(KNOWN[1], "3.3.3.3", `198.51.100.${i}`)).status);
 assert.ok(codes.includes(429), "burst must hit the client limit");
 assert.equal(codes.indexOf(429), 10);
 assert.equal(posts, 2); // KNOWN[1] fetched once, cached for the rest
@@ -108,6 +109,13 @@ assert.equal(posts, 12);
 // the cache serves repeats without a POST or a token
 for (let i = 0; i < 12; i++) assert.equal((await call(ALL[i], `30.0.${i >> 8}.${i & 255}`)).status, 200);
 assert.equal(posts, 12);
+
+// promise: absent a verified proxy chain, arbitrary forwarding headers cannot select a client bucket;
+// the global upstream budget still bounds uncached requests.
+process.env.TRUSTED_PROXY_HOPS = "0";
+for (let i = 0; i < 15; i++) assert.equal((await call(ALL[0], "3.3.3.3", `203.0.113.${i}`)).status, 200);
+assert.equal(posts, 12);
+process.env.TRUSTED_PROXY_HOPS = "1";
 
 // promise: ineligible upstream pages cannot keep one website request fetching without a bound.
 clock += 60_000;

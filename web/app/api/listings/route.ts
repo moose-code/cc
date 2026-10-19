@@ -4,6 +4,7 @@
 // requests; `?fulfill=<orderHash>` returns the encoded `params` for Core.buyListing of one order, cached per order.
 
 import { createPublicClient, encodeAbiParameters, getAddress, http, zeroAddress, type Address, type Hex } from "viem";
+import { isIP } from "node:net";
 import { core, credits, rpcUrl, seaportAdapter } from "@/lib/config";
 import { basicOrderParameters, seaportAdapterAbi } from "@/lib/abis";
 
@@ -74,6 +75,16 @@ function allow(key: string): boolean {
   if (b.tokens < 1) return false;
   b.tokens -= 1;
   return true;
+}
+
+// A proxy must append one address per configured trusted hop. Ignore untrusted left-hand entries and malformed
+// chains. Without that deployment guarantee the global upstream budget remains the request bound.
+function clientKey(req: Request): string | undefined {
+  const hops = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
+  if (!Number.isInteger(hops) || hops < 1 || hops > 8) return undefined;
+  const chain = req.headers.get("x-forwarded-for")?.split(",").map((s) => s.trim()) ?? [];
+  const candidate = chain.at(-hops);
+  return candidate && isIP(candidate) ? candidate : undefined;
 }
 
 const lc = (a: string) => a.toLowerCase();
@@ -176,8 +187,8 @@ export async function GET(req: Request) {
   const hash = new URL(req.url).searchParams.get("fulfill");
   if (hash) {
     if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) return Response.json({ skipped: "bad order hash" } satisfies Fulfill, { status: 400 });
-    const client = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
-    if (!allow(client)) return Response.json({ skipped: "rate limited" } satisfies Fulfill, { status: 429 });
+    const client = clientKey(req);
+    if (client && !allow(client)) return Response.json({ skipped: "rate limited" } satisfies Fulfill, { status: 429 });
     const key = hash.toLowerCase();
     if (!(await snapshot()).listings.some((l) => lc(l.orderHash) === key)) return Response.json({ skipped: "order not in the current listings" } satisfies Fulfill, { status: 404 });
     const hit = fulfilled.get(key);
