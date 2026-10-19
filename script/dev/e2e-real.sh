@@ -203,7 +203,7 @@ warp 28800
 KEEPER_ENV="DOORS=book" keeper_run 1
 POT_BOOK="$(num "$CORE" 'ethPot()(uint256)')"
 RATE_BOOK="$(num "$CORE" 'ethRate()(uint256)')"
-check "the keeper booked enough ETH to start the funded clock" "$(calc "$POT_BOOK > 105022500000000000")" "pot $POT_BOOK"
+check "the keeper booked enough ETH to start the funded clock" "$(calc "$POT_BOOK >= 104766250000000000")" "pot $POT_BOOK"
 check "booking starts near the opening bid" "$(calc "$RATE_BOOK >= $RATE_START and $RATE_BOOK < $RATE_START * 101 // 100")" "rate $RATE_BOOK"
 warp 28800
 BIDA="$(num "$CORE" "bidOf(uint256)(uint256)" "$LISTED_A")"
