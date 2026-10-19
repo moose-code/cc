@@ -78,6 +78,17 @@ test("pending: optional listing identity preserves old records and validates new
   assert.throws(() => new PendingStore(dir), /invalid keeper pending transaction/);
 });
 
+// promise: old state without listing cooldowns still starts, while a damaged wait file cannot silently enable retries
+test("pending: listing cooldown file is optional and malformed records fail closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-listing-cooldowns-"));
+  assert.equal(new PendingStore(dir).cooldownUntil("seaport:42"), 0);
+  const path = join(dir, "listing-cooldowns.json");
+  writeFileSync(path, JSON.stringify({ "seaport:42": { hash: "0x" + "11".repeat(32), until: 1_003_600_000 } }));
+  assert.equal(new PendingStore(dir).cooldownUntil("seaport:42"), 1_003_600_000);
+  writeFileSync(path, JSON.stringify({ "seaport:42": { hash: "0xbad", until: 1_003_600_000 } }));
+  assert.throws(() => new PendingStore(dir), /invalid keeper listing cooldowns/);
+});
+
 test("breaker: the threshold-th consecutive failure pauses the door; a success resets the count", () => {
   let now = 0;
   const b = new Breaker(3, 60, () => now);

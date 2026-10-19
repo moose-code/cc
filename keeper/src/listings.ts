@@ -21,6 +21,7 @@ import type { Listing } from "./decide.ts";
 import type { Snapshot } from "@cc/engine/snapshot";
 import { log, safeError } from "./log.ts";
 import { indexerSeed, StrategyBook, type BookChain, type Move } from "./inventory.ts";
+import type { PendingStore } from "./ledger.ts";
 
 // the ids read per multicall when indexing the strategy scores
 const SCORE_READ = 1500;
@@ -76,21 +77,24 @@ export class Sources {
   private book?: StrategyBook;
   private seaport: Watched[] = [];
   private seaportAt = 0;
-  // listings whose simulation reverted, skipped until the time stored
+  // Decoded simulation faults have a short in-memory wait; receipt reverts also have a durable wait.
   private cooldown = new Map<string, number>();
   private nextCandidate = { strategy: 0, seaport: 0 };
 
   private client: PublicClient;
   private cfg: Config;
   private now: () => number;
+  private pending?: PendingStore;
   constructor(
     client: PublicClient,
     cfg: Config,
     now: () => number = Date.now,
+    pending?: PendingStore,
   ) {
     this.client = client;
     this.cfg = cfg;
     this.now = now;
+    this.pending = pending;
   }
 
   coolDown(key: string, sec: number) {
@@ -236,7 +240,10 @@ export class Sources {
     const t = this.now();
     const pick = (venue: "strategy" | "seaport", ws: Watched[]) => {
       const ranked = ws
-        .filter((w) => w.price > 0n && (this.cooldown.get(`${w.venue}:${w.id}`) ?? 0) <= t)
+        .filter((w) => {
+          const key = `${w.venue}:${w.id}`;
+          return w.price > 0n && Math.max(this.cooldown.get(key) ?? 0, this.pending?.cooldownUntil(key) ?? 0) <= t;
+        })
         .map((w) => ({ w, bid: ((this.scores.get(w.id) ?? 0n) * snap.ethRate) / ref }))
         .filter((x) => x.bid >= x.w.price)
         .sort((a, b) => {

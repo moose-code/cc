@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Sources } from "../src/listings.ts";
+import { PendingStore } from "../src/ledger.ts";
 import { listingCooldown } from "../src/main.ts";
 import { setSink } from "../src/log.ts";
 import { CREDIT_STRATEGY } from "@cc/engine/addresses";
@@ -106,24 +107,27 @@ test("seaport: malformed signed order is isolated from a valid order", async () 
   }
 });
 
-// promise: a confirmed reverted listing waits one hour, while another listing remains eligible during that wait
-test("seaport: a reverted listing waits one hour and yields the next candidate", async () => {
+// promise: after a keeper restart, a reverted listing waits one hour while another listing remains eligible
+test("seaport: a durable reverted listing wait survives restart and yields the next candidate", async () => {
   let now = 1_000_000_000;
+  const dir = mkdtempSync(join(tmpdir(), "keeper-listing-wait-"));
   const cfg: any = {
     record: { core: "0x00000000000000000000000000000000000000c0", seaportAdapter: "0x00000000000000000000000000000000000000a1" },
     strategy: { mode: "off" }, opensea: { refreshSec: 60 },
   };
   const client: any = { multicall: async ({ contracts }: any) => contracts.map((c: any) => ({ status: "success", result:
     c.functionName === "bidOf" ? 2000n : c.functionName === "price" ? ["0x0", 1000n, "0x"] : c.functionName === "ownerOf" ? offerer : [true, false, 0n, 0n] })) };
-  const source = new Sources(client, cfg, () => now);
+  const outcome = { kind: "sent", hash: ("0x" + "11".repeat(32)) as `0x${string}`, status: "reverted", spent: 1n, received: 0n, listingKey: "seaport:42" } as const;
+  const cooldown = listingCooldown(outcome);
+  assert.ok(cooldown);
+  new PendingStore(dir, () => now).recordListingRevert(cooldown.key, outcome.hash);
+  const source = new Sources(client, cfg, () => now, new PendingStore(dir));
   (source as any).scores = new Map([[42n, 2000n], [43n, 2000n]]);
   (source as any).seaport = [42n, 43n].map((id) => ({
     venue: "seaport", adapter: cfg.record.seaportAdapter, id, price: 1000n,
     params: "0x", hash: "0x" + "11".repeat(32), offerer,
   }));
-  const cooldown = listingCooldown({ kind: "sent", hash: ("0x" + "11".repeat(32)) as `0x${string}`, status: "reverted", spent: 1n, received: 0n, listingKey: "seaport:42" });
-  assert.ok(cooldown);
-  source.coolDown(cooldown.key, cooldown.seconds);
+  assert.equal(cooldown.seconds, 3_600);
   assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 1n)).map((l) => l.id), [43n]);
   now += 3_599_999;
   assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 2n)).map((l) => l.id), [43n]);

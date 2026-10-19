@@ -189,6 +189,10 @@ export class Executor {
     try {
       if (!tx.ledgerDay) { tx = { ...tx, ledgerDay: utcDay(Date.now()) }; this.pending.save(tx); }
       this.ledger.record(spent, received, hash, tx.ledgerDay);
+      // Persist the listing wait before releasing the pending send gate; a restart must not retry it immediately.
+      if (door === "buyListing" && receipt.status === "reverted" && tx.listingKey) {
+        this.pending.recordListingRevert(tx.listingKey, hash);
+      }
       this.pending.clear();
     } catch (e) {
       log("error", "receipt accounting failed", { ...fields, error: txError(e) });

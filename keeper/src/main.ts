@@ -111,8 +111,6 @@ export class Keeper {
     const state = { ...read.state, lastBookAt: this.lastBookAt };
     const pending = await this.exec.reconcile();
     if (pending) {
-      const cooldown = listingCooldown(pending);
-      if (cooldown) this.sources.coolDown(cooldown.key, cooldown.seconds);
       log("info", "pending transaction", { block: state.blockNumber, outcome: pending });
       return { block: state.blockNumber, calls: [], skips: [], outcomes: [{ door: "pending", key: "pending", outcome: pending }] };
     }
@@ -146,7 +144,7 @@ export class Keeper {
       if (outcome.kind === "failed" || outcome.kind === "skipped") log("info", "not sent", { block: state.blockNumber, door: c.door, key: c.key, reason: outcome.reason });
       const cooldown = listingCooldown(outcome, listing);
       if (cooldown) {
-        this.sources.coolDown(cooldown.key, cooldown.seconds);
+        if (outcome.kind === "failed") this.sources.coolDown(cooldown.key, cooldown.seconds);
         this.seen.delete(c.key);
       }
       // one transaction per tick: the next decision reads the state after it
@@ -179,7 +177,7 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
   const pending = new PendingStore(cfg.stateDir);
   const breaker = new Breaker(cfg.breakerThreshold, cfg.breakerPauseSec);
   const policy: Policy = { doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec };
-  const keeper = new Keeper(client, cfg, fixed, new Sources(client, cfg), new Executor(client, cfg, policy, signer, ledger, breaker, pending), policy);
+  const keeper = new Keeper(client, cfg, fixed, new Sources(client, cfg, Date.now, pending), new Executor(client, cfg, policy, signer, ledger, breaker, pending), policy);
   return { cfg, client, keeper };
 }
 

@@ -127,10 +127,33 @@ export interface PendingTx {
 // Only one keeper process may use a signer and state directory; this file is not a cross-process lock.
 export class PendingStore {
   private path?: string;
+  private cooldownPath?: string;
+  private cooldowns = new Map<string, { hash: string; until: number }>();
+  private now: () => number;
   current?: PendingTx;
   get() { return this.current; }
-  constructor(dir?: string) {
+  constructor(dir?: string, now: () => number = Date.now) {
+    this.now = now;
     this.path = dir ? join(dir, "pending.json") : undefined;
+    this.cooldownPath = dir ? join(dir, "listing-cooldowns.json") : undefined;
+    if (this.cooldownPath) {
+      let raw: string | undefined;
+      try { raw = readFileSync(this.cooldownPath, "utf8"); }
+      catch (e) { if (!missing(e)) throw e; }
+      if (raw !== undefined) {
+        const j = JSON.parse(raw);
+        if (!j || typeof j !== "object" || Array.isArray(j)) throw new Error(`invalid keeper listing cooldowns: ${this.cooldownPath}`);
+        for (const [key, entry] of Object.entries(j)) {
+          const v = entry as { hash?: unknown; until?: unknown };
+          if (!/^(strategy|seaport):\d+$/.test(key) || !v || typeof v !== "object" ||
+              typeof v.hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(v.hash) ||
+              !Number.isSafeInteger(v.until) || (v.until as number) < 0) {
+            throw new Error(`invalid keeper listing cooldowns: ${this.cooldownPath}`);
+          }
+          this.cooldowns.set(key, { hash: v.hash, until: v.until as number });
+        }
+      }
+    }
     if (!this.path) return;
     let raw: string;
     try { raw = readFileSync(this.path, "utf8"); }
@@ -144,6 +167,26 @@ export class PendingStore {
       throw new Error(`invalid keeper pending transaction: ${this.path}`);
     }
     this.current = { ...j, before: BigInt(j.before) };
+  }
+
+  cooldownUntil(key: string): number { return this.cooldowns.get(key)?.until ?? 0; }
+
+  // A reverted listing's hour begins at receipt accounting. Reconciliation of the same hash keeps its first expiry.
+  recordListingRevert(key: string, hash: string): number {
+    if (!/^(strategy|seaport):\d+$/.test(key) || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+      throw new Error("invalid keeper listing cooldown");
+    }
+    const previous = this.cooldowns.get(key);
+    if (previous?.hash.toLowerCase() === hash.toLowerCase()) return previous.until;
+    const until = this.now() + 3_600_000;
+    const next = new Map(this.cooldowns);
+    next.set(key, { hash, until });
+    if (this.cooldownPath) {
+      mkdirSync(dirname(this.cooldownPath), { recursive: true });
+      atomicJson(this.cooldownPath, Object.fromEntries(next));
+    }
+    this.cooldowns = next;
+    return until;
   }
 
   save(tx: PendingTx) {

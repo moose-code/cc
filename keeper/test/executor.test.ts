@@ -114,6 +114,8 @@ const listingState = {
 
 // promise: an included buyListing revert receives the hour cooldown while independent bookkeeping remains eligible
 test("executor: confirmed reverted listing receipt cools that listing for one hour", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-listing-confirmed-"));
+  const clock = 1_000_000_000;
   const spent = 60_000n * parseGwei("1");
   const client: any = {
     getBlock: async () => ({ baseFeePerGas: parseGwei("1") }),
@@ -123,12 +125,14 @@ test("executor: confirmed reverted listing receipt cools that listing for one ho
     request: async () => "0x" + "66".repeat(32),
     getTransactionReceipt: async () => ({ status: "reverted", gasUsed: 60_000n, effectiveGasPrice: parseGwei("1"), blockNumber: 2n }),
   };
-  const exec = new Executor(client, cfg, policy, { address: keeper, impersonate: true }, new Ledger(undefined, cfg.dailyBudget), new Breaker(2, 60), new PendingStore());
+  const exec = new Executor(client, cfg, policy, { address: keeper, impersonate: true }, new Ledger(dir, cfg.dailyBudget), new Breaker(2, 60), new PendingStore(dir, () => clock));
   const out = await exec.run(listingCall, listingState, listing);
   assert.equal(out.kind, "sent");
   if (out.kind !== "sent") return;
   assert.equal(out.status, "reverted");
   assert.deepEqual(listingCooldown(out, listing), { key: "seaport:42", seconds: 3_600 });
+  assert.equal(new PendingStore(dir).current, undefined);
+  assert.equal(new PendingStore(dir).cooldownUntil("seaport:42"), clock + 3_600_000, "receipt accounting persisted the wait before a new tick");
   const bookPolicy = { ...policy, doorsOn: new Set(["buyListing", "book"] as const) } as Policy;
   const next = decide(listingState, [], { baseFee: parseGwei("1") }, bookPolicy, new Map());
   assert.deepEqual(next.calls.map((c) => c.door), ["book"], "the listing cooldown does not block an independent door");
@@ -137,6 +141,7 @@ test("executor: confirmed reverted listing receipt cools that listing for one ho
 // promise: a receipt found after restart retains its listing identity and receives the same hour cooldown
 test("executor: reconciled reverted listing receipt keeps its cooldown identity across restart", async () => {
   const dir = mkdtempSync(join(tmpdir(), "keeper-listing-pending-"));
+  const clock = 1_000_000_000;
   const account = privateKeyToAccount(generatePrivateKey());
   const localCfg = { ...cfg, receiptTimeoutSec: 0, stateDir: dir };
   const spent = 60_000n * parseGwei("1");
@@ -148,17 +153,46 @@ test("executor: reconciled reverted listing receipt keeps its cooldown identity 
     request: async ({ params }: { params: string[] }) => keccak256(params[0] as `0x${string}`),
     getTransactionReceipt: async () => ({ status: "reverted", gasUsed: 60_000n, effectiveGasPrice: parseGwei("1"), blockNumber: 2n }),
   };
-  const first = new Executor(client, localCfg, policy, { address: account.address, account }, new Ledger(dir, cfg.dailyBudget), new Breaker(2, 60), new PendingStore(dir));
+  const first = new Executor(client, localCfg, policy, { address: account.address, account }, new Ledger(dir, cfg.dailyBudget), new Breaker(2, 60), new PendingStore(dir, () => clock));
   assert.equal((await first.run(listingCall, listingState, listing)).kind, "failed", "the first receipt poll timed out");
   assert.equal(new PendingStore(dir).current?.listingKey, "seaport:42");
-  const restarted = new Executor(client, localCfg, policy, { address: account.address, account }, new Ledger(dir, cfg.dailyBudget), new Breaker(2, 60), new PendingStore(dir));
+  const restarted = new Executor(client, localCfg, policy, { address: account.address, account }, new Ledger(dir, cfg.dailyBudget), new Breaker(2, 60), new PendingStore(dir, () => clock));
   const out = await restarted.reconcile();
   assert.equal(out?.kind, "reconciled");
   if (out?.kind !== "reconciled") return;
   assert.equal(out.status, "reverted");
   assert.deepEqual(listingCooldown(out), { key: "seaport:42", seconds: 3_600 });
   assert.equal(new PendingStore(dir).current, undefined, "receipt accounting cleared the pending marker");
+  assert.equal(new PendingStore(dir).cooldownUntil("seaport:42"), clock + 3_600_000, "the wait survives a second restart after receipt reconciliation");
   assert.equal(new Ledger(dir, cfg.dailyBudget).snapshot().spent, spent);
+});
+
+// promise: a crash after the cooldown write but before pending clear cannot reset the wait or double count gas
+test("executor: repeated receipt accounting keeps the original listing expiry", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-listing-clear-"));
+  const account = privateKeyToAccount(generatePrivateKey());
+  const localCfg = { ...cfg, receiptTimeoutSec: 0, stateDir: dir };
+  const spent = 60_000n * parseGwei("1");
+  const client: any = {
+    getBlock: async () => ({ baseFeePerGas: parseGwei("1") }),
+    estimateGas: async () => 60_000n,
+    getBalance: async ({ blockNumber }: { blockNumber?: bigint }) => blockNumber ? parseEther("1") - spent : parseEther("1"),
+    getTransactionCount: async () => 7,
+    request: async ({ params }: { params: string[] }) => keccak256(params[0] as `0x${string}`),
+    getTransactionReceipt: async () => ({ status: "reverted", gasUsed: 60_000n, effectiveGasPrice: parseGwei("1"), blockNumber: 2n }),
+  };
+  const original = new PendingStore(dir, () => 1_000_000_000);
+  const first = new Executor(client, localCfg, policy, { address: account.address, account }, new Ledger(dir, cfg.dailyBudget), new Breaker(2, 60), original);
+  assert.equal((await first.run(listingCall, listingState, listing)).kind, "failed");
+  original.clear = () => { throw new Error("interrupted before pending clear"); };
+  assert.equal((await first.reconcile())?.kind, "failed");
+  assert.equal(new PendingStore(dir).cooldownUntil("seaport:42"), 1_003_600_000);
+  assert.ok(new PendingStore(dir).current, "the pending receipt remains available for retry");
+  const restarted = new Executor(client, localCfg, policy, { address: account.address, account }, new Ledger(dir, cfg.dailyBudget), new Breaker(2, 60), new PendingStore(dir, () => 1_000_060_000));
+  assert.equal((await restarted.reconcile())?.kind, "reconciled");
+  assert.equal(new PendingStore(dir).cooldownUntil("seaport:42"), 1_003_600_000, "reconciliation cannot extend the first wait");
+  assert.equal(new PendingStore(dir).current, undefined);
+  assert.equal(new Ledger(dir, cfg.dailyBudget).snapshot().spent, spent, "the same receipt is charged once");
 });
 
 test("executor: a fee-bearing pending simulation that receives no caller payment trips the breaker", async () => {
