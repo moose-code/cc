@@ -80,12 +80,10 @@ All addresses and start blocks come from `deployments/<chainId>.json`. The confi
 | Credits | `0x97630aA70AB14ed9883B41dAfccBc11349723043` | `Transfer` | collection deploy block (to be read) | owners for every credit, engine ins and outs, migrate moves |
 | Statements | `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b` | `Transfer` | collection deploy block (to be read) | statement owners after sale |
 | CreditStrategy | `0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6` (proxy) | `NFTBoughtByProtocol`, `NFTSoldByProtocol` | env `STRATEGY_START_BLOCK`; chain 1 requires it (`26037623`, the first block with code); local fork: 60000 blocks before the Core deploy block | strategy listings (6.11) |
-| CC pool swaps (phase 2) | PoolManager `0x000000000004444c5dc75cB358380D2e3dE08A90` | `Swap` with topic `id = ccPoolId` | record `deployBlock` | price history, volume, 24 h change; replaces the archive `getSlot0` read |
-| $BALANCE pool swaps (phase 2) | PoolManager | `Swap` with topic `id = balancePoolId` | first `BalancePoolKeySet` | price history for `valueOf` inputs |
 
 The Credits and Statements event lists must be confirmed against the deployed contracts before build. Their source is outside this repo.
 
-The PoolManager sources filter on the indexed pool id topic, so the endpoint returns only this pool's swaps. The artcoins indexer dropped an unfiltered PoolManager source as too heavy for public RPCs; the topic filter is the difference.
+PoolManager swap sources are planned for phase 2 and are absent from the current config. They will need indexed pool-id filters before use; the current indexer does not ingest swap history or populate hourly pool prices.
 
 ### 5.2 call sources
 
@@ -105,7 +103,7 @@ Conventions: addresses lowercase hex; amounts `bigint` in base units; every row 
 
 ### 6.1 `log` (every event)
 
-`id` (`txHash:logIndex`), `address`, `contract` (core, controller, coin, credits, statements, strategy, pool_manager), `event` (name), `args` (json, bigints as strings), block and tx fields. Index on (`contract`, `event`, `blockNumber`). BALANCE token transfers from modules are not indexed as raw logs; `BalanceFill` records acquisition obligations, not observed ERC-20 outflow.
+`id` (`txHash:logIndex`), `address`, `contract` (core, controller, coin, credits, statements, strategy), `event` (name), `args` (json, bigints as strings), block and tx fields. Index on (`contract`, `event`, `blockNumber`). BALANCE token transfers from modules are not indexed as raw logs; `BalanceFill` records acquisition obligations, not observed ERC-20 outflow.
 
 ### 6.2 `engine` (one row per Core)
 
@@ -163,7 +161,7 @@ One row per user-visible event, newest first by (`blockNumber`, `logIndex`): `ki
 
 `stats_hourly`: the same counters per hour bucket, plus `creditsBought`. The buy rate for compose estimates reads the last 24 rows.
 
-`price_hourly` (phase 2): open, high, low, close and volume for the CC pool and the $BALANCE pool, from `Swap`.
+`price_hourly` is planned for phase 2. The current schema has no such table or `Swap` handler.
 
 ### 6.10 `account`
 
