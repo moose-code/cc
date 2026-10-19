@@ -19,7 +19,7 @@ import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 /// the value switch (decisions 148, 150 to 154): the controller's rate limited reference of the balance token, its
 /// protected buy and sale prices, `valuePerPoint`, and the Core in value mode: the eth bid is the shared balance instance
 /// times the protected buy value per point. ETH fills drop the shared instance; flat balance fills leave it alone.
-/// Unusable quotes use the last good ETH value rate and refuse balance payouts. Sale references exclude cost;
+/// Unusable quotes close ETH and balance payouts. Sale references exclude cost;
 /// final quotes still cover the Core's historical cost floor.
 abstract contract ValueBase is Fixture {
     /// wei per balance token base unit is 0.49, so one point (`POINT_UNIT * UNIT` base units) is worth 4.9e13 wei, the
@@ -553,19 +553,20 @@ contract ValueModeTest is ValueBase {
         assertEq(core.balanceRate(), 9_000, "the posted balance rate throughout");
     }
 
-    // promise: SPEC 4 an unusable quote degrades the eth bid to the last good rate instead of halting it (decision 159,
-    // C02): sellForEth and ethRate stay live on the fallback; sellForBalance, redeemStatement and book also stay live
-    function test_staleQuoteDegradesTheEthRoutes() public {
+    // promise: a stale value quote closes acquisitions while fee booking and age-only redemption stay live
+    function test_staleQuoteClosesAcquisitions() public {
         Composed memory c = _composeOnce();
         _valueOn();
         _fundPot(20 ether);
         vm.warp(block.timestamp + 1 days + 1); // the reference is stale
-        assertGt(core.ethRate(), 0, "the eth bid falls back to the last good rate, not NoQuote");
+        assertEq(core.ethRate(), 0, "the eth bid closes when the quote is stale");
+        assertEq(core.ethPrice(), 0, "the unclamped value rate closes too");
         uint256[] memory ids = _credits(seller, 2);
         uint256 before = seller.balance;
         vm.prank(seller);
+        vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForEth(_one(ids[0]));
-        assertGt(seller.balance, before, "the eth sell pays at the fallback rate");
+        assertEq(seller.balance, before, "a stale quote spends no ETH");
         vm.prank(seller);
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         core.sellForBalance(_one(ids[1]));
@@ -574,8 +575,7 @@ contract ValueModeTest is ValueBase {
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "conversion runs by age, no quote read");
     }
 
-    // promise: a hostile value quote cannot lift the ETH bid above rateCap; a missing balance clamp refuses BALANCE
-    // fills in value mode while the separate ETH bid fallback remains live
+    // promise: a hostile value quote cannot lift the ETH bid above rateCap; an unusable quote closes acquisitions
     function test_hostileQuoteIsBounded() public {
         _valueOn();
         _fundPot(20 ether);
@@ -585,9 +585,9 @@ contract ValueModeTest is ValueBase {
         assertEq(core.ethRate(), core.settings().rateCap, "a huge quote pays the rate cap");
         uint256 bal0 = core.balanceRate();
         q.setValue(0, true);
-        assertLe(core.ethRate(), core.settings().rateCap, "a zero quote degrades to the bounded fallback, not NoQuote");
+        assertEq(core.ethRate(), 0, "a zero quote closes the ETH bid");
         q.setValue(1e13, false);
-        assertLe(core.ethRate(), core.settings().rateCap, "a not-ok quote degrades to the bounded fallback");
+        assertEq(core.ethRate(), 0, "a not-ok quote closes the ETH bid");
         assertEq(core.balanceRate(), bal0, "the quote never moves the balance bid");
         uint256[] memory ids = _credits(seller, 1);
         assertEq(core.balanceBidOf(ids[0]), 0, "missing clamp disables the quoted BALANCE bid");
@@ -744,8 +744,7 @@ contract ValueModeTest is ValueBase {
             (paid, back) = _trip(ids[k++], true);
             _assertLoses(paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference");
         }
-        // the reference stale after the buy: the eth bid degrades to the last good rate (decision 159, C02), the balance
-        // door refuses: no cap can be computed
+        // the reference stale after the buy: both bids close until a usable quote returns
         _swapToSpot(ctl.referencePrice());
         _settleReference();
         uint256 id = ids[k++];
@@ -754,7 +753,7 @@ contract ValueModeTest is ValueBase {
         vm.prank(TRIPPER);
         ctl.buyCredit{value: price}(id);
         _warp(1 days + 1);
-        assertGt(core.ethRate(), 0, "the eth bid degrades to the last good rate, not NoQuote");
+        assertEq(core.ethRate(), 0, "the stale quote closes the ETH bid");
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         this.tripBackExternal(id);
     }
@@ -803,10 +802,7 @@ contract ValueModeTest is ValueBase {
         _assertLoses(paid, back, "balance with the spot far above the reference");
     }
 
-    // promise: SPEC 10 in value mode an unusable reference refuses the balance fill instead of paying the posted amount.
-    // the return lock (21,600 s) blocks the engine buyer from selling the credit back, but a credit moved to a second
-    // wallet is not tracked by it. with the pool drained for two samples the buyer reverts ReturnLocked and the second
-    // wallet reaches the balance fill, which reverts ZeroAmount; the payout view reports 0
+    // promise: an unusable value reference pays no balance tokens, and a transfer cannot bypass the return lock
     function test_balanceFillRefusesWhileTheReferenceIsUnusable() public {
         uint256[] memory ids = _fillEthPile(4);
         _valueOn();
@@ -844,6 +840,11 @@ contract ValueModeTest is ValueBase {
         vm.stopPrank();
         vm.startPrank(second);
         CREDITS.setApprovalForAll(address(core), true);
+        vm.expectPartialRevert(ICore.ReturnLocked.selector);
+        core.sellForBalance(_one(id));
+        vm.stopPrank();
+        _setReturnLock(0);
+        vm.startPrank(second);
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         core.sellForBalance(_one(id));
         vm.stopPrank();

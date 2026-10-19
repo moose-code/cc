@@ -6,9 +6,8 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {OrderComponents} from "./utils/SeaportTypes.sol";
 
 /// a credit the engine sold through `sellCreditTo` is refused at every intake door for `returnLockSeconds` from the sale
-/// when the buyer offers it back (`ReturnLocked(id, until)`): `sellForEth`, `sellForBalance`, `buyListing` of a listing
-/// the buyer offers, and `swapCredit` as the incoming credit. the lock is keyed to the buyer the engine sold to: a
-/// secondary holder who bought the credit from that buyer sells to the bid at once. a lock of 0 is no lock.
+/// when anyone offers it back (`ReturnLocked(id, until)`): `sellForEth`, `sellForBalance`, `buyListing` of a listing
+/// and `swapCredit` as the incoming credit. the lock follows the credit through transfers; a lock of 0 is no lock.
 contract ReturnLockTest is SeaportBase {
     address internal buyer;
 
@@ -99,9 +98,9 @@ contract ReturnLockTest is SeaportBase {
         core.sellForBalance(_one(ids[0]));
     }
 
-    // promise: SPEC 6 the lock is keyed to the buyer: a secondary holder who bought from the buyer sells to the bid at once
-    function test_secondaryHolderSellsAtOnce() public {
-        (uint256[] memory ids,) = _buyFirst(1);
+    // promise: a secondary transfer cannot bypass the credit's return lock; the holder can sell after it expires
+    function test_secondaryHolderCannotBypassLock() public {
+        (uint256[] memory ids, uint256 until) = _buyFirst(1);
         uint256 id = ids[0];
         address secondary = _user("rl.secondary");
         // the buyer sells the credit on to a secondary holder, who is not the engine's buyer
@@ -110,10 +109,38 @@ contract ReturnLockTest is SeaportBase {
         vm.prank(secondary);
         CREDITS.setApprovalForAll(address(core), true);
         _fundPot(10 ether);
-        // inside the window the secondary holder sells to the eth bid with no refusal
+        // inside the window even this new holder cannot sell to the ETH bid
+        vm.prank(secondary);
+        vm.expectRevert(_locked(id, until));
+        core.sellForEth(_one(id));
+        vm.warp(until);
         vm.prank(secondary);
         core.sellForEth(_one(id));
-        assertEq(CREDITS.ownerOf(id), address(core), "the secondary holder's sale is not locked");
+        assertEq(CREDITS.ownerOf(id), address(core), "the secondary holder sells after the lock ends");
+    }
+
+    // promise: all intake routes share the credit-wide lock even when the engine's buyer transfers the credit
+    function test_secondaryHolderCannotUseOtherIntakeRoutes() public {
+        _enterPhase2();
+        (uint256[] memory ids, uint256 until) = _buyFirst(2);
+        uint256 id = ids[0];
+        address secondary = maker;
+        vm.prank(buyer);
+        CREDITS.transferFrom(buyer, secondary, id);
+        vm.prank(secondary);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.prank(secondary);
+        vm.expectRevert(_locked(id, until));
+        core.sellForBalance(_one(id));
+        vm.prank(secondary);
+        vm.expectRevert(_locked(id, until));
+        core.swapCredit(id, ids[1]);
+        vm.prank(secondary);
+        CREDITS.setApprovalForAll(address(SEAPORT), true);
+        bytes memory order = _basicData(_open(id, 0.01 ether, 0));
+        vm.prank(keeper);
+        vm.expectRevert(_locked(id, until));
+        core.buyListing(seaportAdapter, id, order);
     }
 
     // promise: SPEC 6 a lock of 0 is no lock: a credit may return in the second of its sale

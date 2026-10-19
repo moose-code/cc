@@ -35,7 +35,7 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// Owner pool-key changes seed the reference and both spot/liquidity samples. Later quotes use a prior-block spot
 /// sample and require both recent liquidity samples at least `minLiquidity`. Refreshes are cadence/rate/step bounded.
 /// Sale views project a due refresh to match the sale door. Unusable quotes revert value-mode sale prices with
-/// `NoQuote`; the Core's ETH bid has its own last-good fallback. Mode-off sale valuations ignore the pool.
+/// `NoQuote`; the Core closes its ETH bid at zero until the quote recovers. Mode-off sale valuations ignore the pool.
 contract ControllerV1 is IController {
     using StateLibrary for IPoolManager;
 
@@ -325,8 +325,7 @@ contract ControllerV1 is IController {
     /// two most recent liquidity samples at least `minLiquidity`, a balance module set and a unit read. with
     /// `project` true the views and the sale doors run the read-only equivalent of `refreshReference` first, so a
     /// view read in the same block as a sale door's refresh equals the price the door charges. the Core's eth bid
-    /// and the balance cap read it with `project` false, so a lapsed refresh reads stale: the eth bid falls back to
-    /// the last good value rate and the balance fill refuses
+    /// and the balance cap read it with `project` false, so a lapsed refresh closes both bids
     function _protected(bool project) private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
         Quote memory q = quote;
         uint256 ref = referencePrice;
@@ -377,7 +376,7 @@ contract ControllerV1 is IController {
         uint256 pSell;
         uint256 unit;
         // the Core's eth bid reads the stored reference without a projected refresh, so a lapsed refresh reads stale and
-        // the Core falls back to its last good value rate rather than halting
+        // the Core closes its ETH bid while this read is unusable
         (pBuy, pSell, unit, ok) = _protected(false);
         if (!ok) return (0, false);
         value = forSale

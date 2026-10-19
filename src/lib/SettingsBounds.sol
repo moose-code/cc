@@ -8,8 +8,7 @@ import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../
 library SettingsBounds {
     /// @notice the name of the first field out of bounds, or zero when every field is inside its bounds
     function firstViolation(Settings memory s) internal pure returns (bytes32) {
-        // The climb raises the rate from its current value, so a rate driven to zero stays at zero. dropPer100PointsBps
-        // at most 9,999 and dropFloorBps at least 1 keep the post-fill rate above zero (decision 143).
+        // A post-fill floor of one wei keeps a rounded drop from making the climb's rate zero.
         if (s.dropPer100PointsBps < 1 || s.dropPer100PointsBps > 9_999) return "dropPer100PointsBps";
         if (s.dropFloorBps < 1 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1) return "climbPerMinBps";
@@ -49,7 +48,7 @@ library SettingsBounds {
         return bytes32(0);
     }
 
-    /// @notice the bounds of the eth rate, wei per 100 points. `setRate` and the constructor argument `rateStart`
+    /// @notice the bounds of the ETH rate, wei per 100 points, for `setRate`, `setOpeningRate` and the constructor
     function rateInBounds(uint256 r) internal pure returns (bool) {
         return r >= RATE_START_MIN_WEI && r <= RATE_START_MAX_WEI;
     }

@@ -9,6 +9,7 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {CoreLib, State} from "./CoreLib.sol";
+import {Settings} from "../interfaces/Interfaces.sol";
 import {SettingsBounds} from "./SettingsBounds.sol";
 import {CreditBounds} from "./CreditBounds.sol";
 
@@ -28,6 +29,7 @@ library CoreOpsLib {
     error NoBalanceModule();
     event PausedSet(bool paused);
     event RateSet(uint256 rate);
+    event SettingsSet(Settings settings);
     event RedeemBurnReleased(uint256 amount);
     event AdapterSet(address indexed adapter, bool allowed);
     event CreditCostToPotBpsSet(uint16 bps);
@@ -57,10 +59,12 @@ library CoreOpsLib {
             uint64 ethPeak = s.anchor.peakTime;
             uint64 balancePeak = s.balance.anchor.peakTime;
             uint64 climbStart = s.climbRestartTime;
+            uint64 ethFill = s.lastFillTime;
             uint64 balanceFill = s.balance.lastFillTime;
             s.anchor.peakTime = ethPeak < since ? ethPeak + elapsed : t;
             s.balance.anchor.peakTime = balancePeak < since ? balancePeak + elapsed : t;
             s.climbRestartTime = climbStart < since ? climbStart + elapsed : t;
+            s.lastFillTime = ethFill < since ? ethFill + elapsed : t;
             s.balance.lastFillTime = balanceFill < since ? balanceFill + elapsed : t;
             s.paused = false;
             s.pausedTotal += elapsed;
@@ -75,6 +79,20 @@ library CoreOpsLib {
     function setRate(uint256 rate) external {
         State storage s = CoreLib.state();
         if (!SettingsBounds.rateInBounds(rate) || rate > s.settings.rateCap) revert BadRate();
+        _resetRate(s, rate);
+    }
+
+    /// restates the opening reference, its 3x cap and the live bid before the coin exists
+    function setOpeningRate(uint256 rate) external {
+        State storage s = CoreLib.state();
+        if (!SettingsBounds.rateInBounds(rate) || rate > type(uint64).max / 3) revert BadRate();
+        s.openingRate = rate;
+        s.settings.rateCap = uint64(rate * 3);
+        _resetRate(s, rate);
+        emit SettingsSet(s.settings);
+    }
+
+    function _resetRate(State storage s, uint256 rate) private {
         s.anchor.lastFillRate = rate;
         s.anchor.peakRate = rate;
         // forge-lint: disable-start(unsafe-typecast)

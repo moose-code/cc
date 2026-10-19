@@ -70,6 +70,25 @@ contract BidRuleTest is Fixture {
         assertEq(core.lastFillTime(), block.timestamp);
     }
 
+    // promise: rounding a tiny positive ETH price down on a fill cannot make the price state permanently zero
+    function test_tinyRateRemainsPositiveAcrossFills() public {
+        Settings memory cfg = core.settings();
+        cfg.dropPer100PointsBps = 9_999;
+        cfg.dropFloorBps = 1;
+        _setSettings(cfg);
+        _potTo(1 ether);
+        vm.prank(owner);
+        core.setRate(2);
+        uint256[] memory ids = _credits(seller, 2);
+        for (uint256 i; i < ids.length; ++i) {
+            _unitScore(ids[i]);
+            vm.prank(seller);
+            core.sellForEth(_one(ids[i]));
+            assertEq(core.rateAtCheckpoint(), 1, "the stored state stays positive after each rounded drop");
+            assertGt(core.ethPrice(), 0, "the next read can recover from the positive state");
+        }
+    }
+
     // promise: SPEC 1 the minute floor dropFloorBps bounds the drop inside a minute
     /// with a 5 percent drop and a 50 percent floor the floor is reached on the 14th fill in one minute (0.95^13 is
     /// above 0.5, 0.95^14 is below it, so the 14th fill clamps to the floor). set here, since launch runs no practical

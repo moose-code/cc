@@ -74,10 +74,10 @@ abstract contract LaunchChecks is PostflightChecks {
     /// and both library address slots zeroed (the mask of `artifactHash`), and the keccak256 of both library creation
     /// codes. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
-    bytes32 internal constant BUILD_HASH_CORE = 0x3229a50eaca6067227f487adc0aa6479e77658539a823b3ee8b320691e4f6d21;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0x1715d3685ec9c9cfa679ac86cb491245489098ba340cef77f6e15c8af11e0fc4;
+    bytes32 internal constant BUILD_HASH_CORE = 0x81181a41500dd286fb11c16f949cc7dc75913ad4500ce087c5b7e1d8fa0e9e3e;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xedb4602e2cf3e67d44d2d66124bde7d1f4f0cfb2466ba55cb64bef40a634a9bc;
     bytes32 internal constant BUILD_HASH_COREOPSLIB =
-        0x3237260e6856f332de483e9f73b60f697c6ff886976ce39f1cf84e4d87d7fa35;
+        0x3e6f70200864a45e22ec7242fa57a0412dc5ee8c0d7a97fbfa9fba0f410c9b1e;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
         0x03359cd845473b5053e5d0c46b7ad1b388b4d9a06b6318e0e46f5be449a8b98b;
     bytes32 internal constant BUILD_HASH_SEAPORT_ADAPTER =
@@ -86,9 +86,9 @@ abstract contract LaunchChecks is PostflightChecks {
         0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x789770d6ad6b21255e6aa816a264650ed079691ad3ee36359a2972b75b7d9be9;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x65911163a4bb2f3e98886d09012e6732346f2c5bb92aabf84239820fc54e9e45;
+        0xc4ec984e47e30d605af00bbd646caede7b31949fd6c34564d895bf40db7f3d2f;
     bytes32 internal constant BUILD_CREATION_HASH_COREOPSLIB =
-        0x0b4009fdd38f08368b9427fbf12658364f8144a6408d149eab888f88f161d689;
+        0x38d25f5c67998d7e8ca2c117217bfa94f499cf77dfddf8c84a5fda1a2718c829;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
     uint24 internal constant PAYEE_MAX_PPM = 1_000_000;
     uint24 internal constant PIN_SNIPER_START = 9_000;
