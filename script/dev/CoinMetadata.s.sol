@@ -2,34 +2,11 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {CoinRenderer} from "../../src/CoinRenderer.sol";
-import {ICore} from "../../src/interfaces/ICore.sol";
-import {ICredits, Mainnet} from "../../src/interfaces/Interfaces.sol";
+import {LogoCoinRenderer} from "../../src/LogoCoinRenderer.sol";
+import {ICoinRenderer} from "../../src/interfaces/ICoinRenderer.sol";
+import {IArtCoinsTokenV2} from "../../src/interfaces/ArtCoinsV2.sol";
 
-/// a wallet's credits as a pile: the two pile reads CoinRenderer makes, over `Credits.tokensOf(holder)`
-contract HolderPile {
-    ICredits private constant CREDITS = ICredits(Mainnet.CREDITS);
-    address public immutable holder;
-
-    constructor(address holder_) {
-        holder = holder_;
-    }
-
-    function pileSize() external view returns (uint256) {
-        return CREDITS.balanceOf(holder);
-    }
-
-    function pilePage(uint256, uint256 n) external view returns (uint256[] memory ids) {
-        ids = CREDITS.tokensOf(holder);
-        if (n < ids.length) {
-            assembly ("memory-safe") {
-                mstore(ids, n)
-            }
-        }
-    }
-}
-
-/// the three coin reads CoinRenderer makes
+/// The empty-config coin fields used when no deployed coin is supplied.
 contract DemoCoin {
     function name() external pure returns (string memory) {
         return "CC";
@@ -40,31 +17,25 @@ contract DemoCoin {
     }
 
     function description() external pure returns (string memory) {
-        return
-            "CC is a coin whose trading fees fund a permanent public bid for Credits. Anyone can sell Credits to the engine at that bid, and the engine sweeps cheaper listings on approved venues. The engine composes 80 Credits into a Statement, holds it, and sells it at a price that starts above cost and falls to a floor. A quarter of every sale burns CC and three quarters buys more Credits. The image is the engine's pile of Credits, up to 80 of them, drawn as a Statement page and re-sampled every block.";
+        return "";
     }
 }
 
-/// prints the coin metadata CoinRenderer returns, on a fork. `CORE` names a deployed Core and `COIN` its coin;
-/// without them `HOLDER` names a wallet whose credits stand in for the pile. script/tools/coin-metadata.sh decodes
-/// the output into files and a viewer
+/// Prints metadata through the live coin's renderer, or the launch LogoCoinRenderer with the current empty fields.
+/// script/tools/coin-metadata.sh decodes the URI into files and a viewer.
 contract CoinMetadata is Script {
     function run() external {
-        address core = vm.envOr("CORE", address(0));
         address coin = vm.envOr("COIN", address(0));
-        if (core == address(0)) {
-            address holder = vm.envAddress("HOLDER");
-            core = address(new HolderPile(holder));
+        ICoinRenderer renderer;
+        if (coin == address(0)) {
             coin = address(new DemoCoin());
-            console.log("pile: the credits of", holder);
+            renderer = new LogoCoinRenderer(address(uint160(uint256(keccak256("coin-metadata.owner")))));
+        } else {
+            renderer = ICoinRenderer(IArtCoinsTokenV2(coin).metadataRenderer());
         }
-        address owner = address(uint160(uint256(keccak256("coin-metadata.owner"))));
-        CoinRenderer renderer = new CoinRenderer(owner);
-        vm.prank(owner);
-        renderer.setCore(ICore(payable(core)));
-        console.log("pile size", ICore(payable(core)).pileSize());
-        console.log("block", block.number, "prevrandao", block.prevrandao);
         string memory uri = renderer.contractURI(coin);
+        console.log("renderer", address(renderer));
+        console.log("block", block.number);
         console.log("uri bytes", bytes(uri).length);
         console.log(string.concat("CONTRACT_URI=", uri));
     }

@@ -11,7 +11,7 @@ import {LaunchConfig, ConfigReader} from "./LaunchConfig.sol";
 /// @notice builds the v2 factory config and the coin address prediction of a launch from a `LaunchConfig`
 /// (docs/DECISIONS.md 10.4). shared by the deploy, the preflight, the postflight and the tests
 abstract contract SystemBuilder is ConfigReader {
-    /// @dev the CREATE2 salt prefix of `CoinRenderer`; the deterministic deployer is `PostflightChecks.CREATE2_DEPLOYER`
+    /// @dev the CREATE2 salt prefix of the launch renderer; the deterministic deployer is `PostflightChecks.CREATE2_DEPLOYER`
     bytes32 internal constant RENDERER_SALT = keccak256("credits.coinRenderer.v1");
 
     /// @notice the CREATE2 salt of the renderer of `l`: `RENDERER_SALT` and the config `salt`
@@ -19,7 +19,7 @@ abstract contract SystemBuilder is ConfigReader {
         return keccak256(abi.encode(RENDERER_SALT, l.salt));
     }
 
-    /// @notice the address of the `CoinRenderer` of `l`: CREATE2 through the deterministic deployer with `rendererSalt`
+    /// @notice the address of the `LogoCoinRenderer` of `l`: CREATE2 through the deterministic deployer with `rendererSalt`
     /// and the creation code with the config owner as constructor argument. the Core is not an input, so the token
     /// config names the renderer before the Core exists. a renderer is bound to one Core, so a launch with a different
     /// Core under the same owner and `salt` needs another `salt`
