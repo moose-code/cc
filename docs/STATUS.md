@@ -140,7 +140,7 @@ the first run's two failures were fixed at the root at eab58c7 (`9fb6c65`): the 
 | timings | clean build 3 to 4 minutes, a test file change seconds, a src/Core.sol change about 40 seconds. a test file about 10 to 60 seconds. a Deep suite 10 to 15 minutes |
 | verification | during an edit run the smallest test that covers it (`--match-path`). the full suite, the deep invariants and the rehearsal belong to the frozen candidate, marked `CANDIDATE_RUN=1`; the hook in .claude/settings.json refuses a whole suite run without it |
 | interfaces and pins | after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and re-pin test/BuildIdentity.t.sol and script/Checks.sol. never import src/Core.sol in a test |
-| Core size | 902 bytes of headroom at 84ea170 (Core 23,674 of 24,576, CoreLib 23,635); new logic goes into CoreLib; never drop a check to make room |
+| Core size | 770 bytes of headroom after the decision 190 refusal branch (Core 23,806 of 24,576, CoreLib 23,633); new logic goes into CoreLib; never drop a check to make room |
 | safety | no mainnet broadcast, deploy, push to main, merge or private key without the owner's explicit instruction |
 
 ## 6. known and not fixed

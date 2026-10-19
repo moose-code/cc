@@ -553,19 +553,21 @@ contract ValueModeTest is ValueBase {
         assertEq(core.balanceRate(), 9_000, "the posted balance rate throughout");
     }
 
-    // promise: SPEC 4 an unusable quote degrades the eth bid to the last good rate instead of halting it (decision 159):
-    // sellForEth and ethRate stay live on the fallback; sellForBalance, redeemStatement and book also stay live
-    function test_staleQuoteDegradesTheEthRoutes() public {
+    // promise: SPEC 4 an unusable quote halts the eth purchase doors instead of paying a stored rate (decision 190):
+    // ethRate and bidOf read 0, sellForEth and adopt revert NoQuote; sellForBalance refuses; redeemStatement and book
+    // stay live
+    function test_staleQuoteHaltsTheEthPurchaseDoors() public {
         Composed memory c = _composeOnce();
         _valueOn();
         _fundPot(20 ether);
         vm.warp(block.timestamp + 1 days + 1); // the reference is stale
-        assertGt(core.ethRate(), 0, "the eth bid falls back to the last good rate, not NoQuote");
+        assertEq(core.ethRate(), 0, "the eth bid reads 0 without a quote");
+        assertEq(core.ethPrice(), 0, "the price state reads 0 without a quote");
         uint256[] memory ids = _credits(seller, 2);
-        uint256 before = seller.balance;
+        assertEq(core.bidOf(ids[0]), 0, "bidOf reads 0 without a quote");
         vm.prank(seller);
+        vm.expectRevert(ICore.NoQuote.selector);
         core.sellForEth(_one(ids[0]));
-        assertGt(seller.balance, before, "the eth sell pays at the fallback rate");
         vm.prank(seller);
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         core.sellForBalance(_one(ids[1]));
@@ -575,8 +577,7 @@ contract ValueModeTest is ValueBase {
     }
 
     // promise: SPEC 1 a hostile controller quoting a huge value pays at most rateCap and cannot move the balance bid; a
-    // zero or not-ok quote degrades the eth bid to the last good rate (bounded by rateCap) and leaves conversion and the
-    // balance bid live (decision 159)
+    // zero or not ok quote reads a zero eth bid and leaves conversion and the balance bid live (decision 190)
     function test_hostileQuoteIsBounded() public {
         _valueOn();
         _fundPot(20 ether);
@@ -586,9 +587,9 @@ contract ValueModeTest is ValueBase {
         assertEq(core.ethRate(), core.settings().rateCap, "a huge quote pays the rate cap");
         uint256 bal0 = core.balanceRate();
         q.setValue(0, true);
-        assertLe(core.ethRate(), core.settings().rateCap, "a zero quote degrades to the bounded fallback, not NoQuote");
+        assertEq(core.ethRate(), 0, "a zero quote reads a zero eth bid");
         q.setValue(1e13, false);
-        assertLe(core.ethRate(), core.settings().rateCap, "a not-ok quote degrades to the bounded fallback");
+        assertEq(core.ethRate(), 0, "a not ok quote reads a zero eth bid");
         assertEq(core.balanceRate(), bal0, "the quote never moves the balance bid");
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
@@ -644,6 +645,10 @@ contract ValueModeTest is ValueBase {
 
     function tripBackExternal(uint256 id) external {
         _tripBack(id, true);
+    }
+
+    function tripBackEthExternal(uint256 id) external {
+        _tripBack(id, false);
     }
 
     function _tripBack(uint256 id, bool viaBalance) internal {
@@ -709,8 +714,8 @@ contract ValueModeTest is ValueBase {
             (paid, back) = _trip(ids[k++], true);
             _assertLoses(paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference");
         }
-        // the reference stale after the buy: the eth bid degrades to the last good rate (decision 159), the balance
-        // door refuses: no cap can be computed
+        // the quote unusable after the buy (the pool drained under minLiquidity at two samples): the eth bid reads 0
+        // and the eth door refuses NoQuote (decision 190), the balance door refuses: no cap can be computed
         _swapToSpot(ctl.referencePrice());
         _settleReference();
         uint256 id = ids[k++];
@@ -718,8 +723,14 @@ contract ValueModeTest is ValueBase {
         vm.deal(TRIPPER, price);
         vm.prank(TRIPPER);
         ctl.buyCredit{value: price}(id);
-        _warp(1 days + 1);
-        assertGt(core.ethRate(), 0, "the eth bid degrades to the last good rate, not NoQuote");
+        _addFullRange(-int256(uint256(POOL_LIQ)));
+        for (uint256 i; i < 2; ++i) {
+            _nextSecond();
+            ctl.refreshReference();
+        }
+        assertEq(core.ethRate(), 0, "the eth bid reads 0 without a usable quote");
+        vm.expectRevert(ICore.NoQuote.selector);
+        this.tripBackEthExternal(id);
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         this.tripBackExternal(id);
     }
@@ -807,6 +818,8 @@ contract ValueModeTest is ValueBase {
         core.sellForBalance(_one(id));
         CREDITS.transferFrom(TRIPPER, second, id);
         vm.stopPrank();
+        // the lock binds the credit for the second holder too (decision 193); past it the quote still refuses
+        _warp(21_600);
         vm.startPrank(second);
         CREDITS.setApprovalForAll(address(core), true);
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));

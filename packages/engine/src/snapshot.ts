@@ -104,8 +104,8 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
   // the pot scaled climb multiplier and the reserve (the eth the pot keeps for processing). tolerant reads: a failed
   // climbMultiplier read defaults to 1x (10_000 bps) and a failed reserve read to 0, so one failing view does not blank
   // the snapshot.
-  // The eth bid and price state degrade to the last good value while the protected quote is unusable. A failed Core
-  // read still leaves the rest of the snapshot intact.
+  // the eth bid and price state read 0 while the protected quote is unusable in value mode. a failed Core read still
+  // leaves the rest of the snapshot intact.
   const [climbMultiplierRes, reserveRes, ethRateRes, ethPriceRes] = await client.multicall({
     ...mc,
     blockNumber,
@@ -211,7 +211,7 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
   };
   const statementSupply = ok<bigint>(supplyRes);
   return {
-    // In value mode an unusable protected quote sets noQuote; the Core's eth bid can still use its last good rate.
+    // in value mode an unusable protected quote sets noQuote and the Core's eth bid reads 0.
     ethRate,
     ethPrice,
     noQuote,

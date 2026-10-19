@@ -19,12 +19,12 @@ interface IController {
     /// failed read is logged as 0
     function priceOf(uint256 sid) external view returns (uint256);
     /// the wei value of one point (`POINT_UNIT` score units, `POINT_UNIT * unitPerPoint` balance token base units)
-    /// at the protected price of the balance token: the buy price `min(spot, reference * (10_000 + tolBps) /
-    /// 10_000)` for `forSale` false, rounded down, the sale price `max(spot, reference * (10_000 - tolBps) /
-    /// 10_000)` for true, rounded up. `ok` is false, and `value` 0, while the quote is unusable (no pool key or
-    /// module, a stale reference, pool liquidity samples under the minimum, a failed unit read). `spot` is the
-    /// prior-block refresh sample. the Core reads it with a gas bound and falls back to its last good value rate on
-    /// an unusable answer
+    /// at the protected price of the balance token: the buy price `min(sample, live spot, reference * (10_000 +
+    /// tolBps) / 10_000)` for `forSale` false, rounded down, the sale price `max(sample, live spot, reference *
+    /// (10_000 - tolBps) / 10_000)` for true, rounded up, where `sample` is the prior block refresh sample and a due
+    /// refresh is projected first. `ok` is false, and `value` 0, while the quote is unusable (no pool key or module,
+    /// no live spot, a stale reference, pool liquidity samples under the minimum, a failed unit read). the Core reads
+    /// it with a gas bound; on an unusable answer its eth bid reads 0 and its purchase doors refuse
     function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
     /// the `posted` balance payout for a credit of `score` stored units lowered to its value mode cap, balance base
     /// units: the smaller of `posted` and `ethPrice() * score / RATE_SCORE` converted at the protected sale price,
@@ -321,8 +321,9 @@ struct Quote {
     uint32 referenceRateBpsPerHour;
     /// the most one update moves the reference, bps of the reference. 0 to 10_000
     uint16 referenceStepBps;
-    /// the band around the reference, using the prior-block refresh sample as `spot`: buys use `min(spot, reference
-    /// * (10_000 + tolBps) / 10_000)`, sales use `max(spot, reference * (10_000 - tolBps) / 10_000)`. 0 to 9_999
+    /// the band around the reference: buys use `min(sample, live spot, reference * (10_000 + tolBps) / 10_000)`, sales
+    /// use `max(sample, live spot, reference * (10_000 - tolBps) / 10_000)`, `sample` the prior block refresh sample.
+    /// 0 to 9_999
     uint16 tolBps;
     /// seconds after the last update the reference stays usable. 0 keeps the reference price unusable
     uint32 referenceMaxStale;

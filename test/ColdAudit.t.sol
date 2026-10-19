@@ -154,7 +154,7 @@ contract ColdAuditTest is Fixture {
     }
 
     // promise: a keeper refresh books the pending fee income first and pays the caller from the pot share the keeper's
-    // gate predicted, and a later stale reference degrades the eth bid instead of reverting (decision 159)
+    // gate predicted, and a later stale reference in the same block reads a zero eth bid (decision 190)
     function test_refreshReferenceBooksPendingIncomeAndPays() public {
         _valuePool();
         autoBook = false;
@@ -175,9 +175,9 @@ contract ColdAuditTest is Fixture {
         assertGt(paid, 0, "the refresh booked the pending income and paid the caller from the pot share");
         assertLe(paid, pending, "the payment is at most the pending income it booked");
         assertGt(core.ethPot() + paid, 0, "the pending pot share is booked");
-        // a stale reference no longer reverts the eth bid: it falls back to the last good value rate
+        // a stale reference that no projected refresh can renew (the same block as the last refresh) reads a zero bid
         vm.warp(block.timestamp + 3_601);
-        assertGt(core.ethRate(), 0, "a stale reference degrades to the last good rate, not NoQuote");
+        assertEq(core.ethRate(), 0, "a stale reference reads a zero eth bid");
         emit log_named_uint("pending income booked and paid from as pot", pending);
     }
 

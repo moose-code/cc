@@ -74,7 +74,7 @@ export interface State {
   // the held statements with controller.atFloor(sid) true
   atFloor: bigint[];
   // the value switch: the controller, the Core's valueModeOn, whether the controller's value quote is unusable now
-  // (informational: the eth bid falls back to the last good rate, so it never halts a door), the
+  // (in value mode the eth bid then reads 0 and buyListing reverts NoQuote, so the sweep is skipped), the
   // controller's reference sample time (0 before the pool key), the reference staleness bound (0 is never usable) and
   // the least seconds between two refreshes
   controller: Address;
@@ -266,9 +266,11 @@ export function decide(
 
   // 1. buyListing
   const sweepable: { l: Listing; key: string; payment: bigint; cost: bigint }[] = [];
-  // a lapsed value quote no longer halts the eth bid: it falls back to the last good rate, so a
-  // sweep still runs at the degraded bid. `noQuote` is informational, not a gate
-  if (on("buyListing") && !s.retired && s.potRoom === 0n) {
+  // in value mode an unusable quote reads a zero eth bid and buyListing reverts NoQuote, so the sweep waits for the
+  // quote; outside value mode `noQuote` means nothing to the eth bid
+  if (on("buyListing") && !s.retired && s.valueModeOn && s.noQuote) {
+    skips.push({ door: "buyListing", reason: "NoQuote: value mode is on and the reference price is unusable, the eth bid reads 0" });
+  } else if (on("buyListing") && !s.retired && s.potRoom === 0n) {
     skips.push({ door: "buyListing", reason: `ReserveHeld: the pot ${s.potWithPending} is at or under the reserve ${s.reserve}, acquisitions wait for fees` });
   } else if (on("buyListing") && !s.retired && ceiling("buyListing")) {
     const pol = p.doors.buyListing;

@@ -31,11 +31,12 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// reference includes cost and `floorRate`; in value mode it is the protected sale value without cost. in both modes
 /// the final statement and credit quotes keep the Core's cost floor. statement age excludes pauses; the anchor decays
 /// with wall time; a setting applies to held inventory at once. `setBalancePoolKey` seeds the reference and both spot
-/// and liquidity samples; later quotes read the spot sampled in a prior block and need both liquidity samples at least
+/// and liquidity samples; later quotes take the live pool spot on the side that favors the engine, bounded on the other
+/// side by the spot sampled in a prior block and the reference band, and need both liquidity samples at least
 /// `minLiquidity`. a refresh is bounded by `referenceMinSeconds`, `referenceRateBpsPerHour` and `referenceStepBps`.
-/// the sale views project a due refresh so a view equals the door's charge. an unusable quote reverts the value mode
-/// sale prices with `NoQuote`; the Core's eth bid has its own last good fallback. with value mode off no sale price
-/// reads the pool
+/// every price view projects a due refresh so a view equals the door's charge. an unusable quote reverts the value
+/// mode sale prices with `NoQuote`, reads 0 from `valuePerPoint` and `balanceClampFor`, and so halts the Core's eth
+/// purchase doors and balance fills. with value mode off no sale price reads the pool
 contract ControllerV1 is IController {
     using StateLibrary for IPoolManager;
 
@@ -117,8 +118,8 @@ contract ControllerV1 is IController {
     /// the sample time of `referencePrice`: the moment the stored reference was sampled from the spot
     uint40 public referenceTime;
     /// the pool spot sampled at the two most recent refreshes, newest in `spotSampleA`, wei per 1e18 base units. the
-    /// executable quote clamps the band to the sample taken in a prior block, so a same-block pool move cannot change
-    /// the bid or the ask
+    /// executable quote bounds the adverse side with the sample taken in a prior block, so a same block pool move can
+    /// only lower the bid or raise the ask
     uint256 private spotSampleA;
     uint256 private spotSampleB;
     /// the pool liquidity sampled at the two most recent refreshes, newest in `liqSampleA`. the quote is usable only
@@ -319,18 +320,21 @@ contract ControllerV1 is IController {
     }
 
     /// the buy price, the sale price and the unit, wei per 1e18 base units and base units per score unit, and
-    /// whether the reference price is usable. the band is centred on the reference and clamped to the pool spot
-    /// sampled at the last refresh (a prior block), never the live spot, so a same-block pool move cannot change
-    /// the quote. the quote is usable with a reference set, the sample at most `referenceMaxStale` old, both of the
-    /// two most recent liquidity samples at least `minLiquidity`, a balance module set and a unit read. with
-    /// `project` true the views and the sale doors run the read-only equivalent of `refreshReference` first, so a
-    /// view read in the same block as a sale door's refresh equals the price the door charges. the Core's eth bid
-    /// and the balance cap read it with `project` false, so a lapsed refresh reads stale: the eth bid falls back to
-    /// the last good value rate and the balance fill refuses
-    function _protected(bool project) private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
+    /// whether the reference price is usable. the buy price is `min(prior block spot sample, live spot, reference *
+    /// (10_000 + tolBps) / 10_000)` and the sale price `max(prior block spot sample, live spot, reference * (10_000 -
+    /// tolBps) / 10_000)`: the live spot enters only on the side that favors the engine, so a same block pool push can
+    /// lower what the engine pays or raise what it charges and nothing else; the sample and the band bound the other
+    /// side. every caller gets the read only equivalent of `refreshReference` first, so a view read in the block of a
+    /// door's refresh equals the price the door charges. the quote is usable with a reference set, a live spot, the
+    /// sample at most `referenceMaxStale` old, both of the two most recent liquidity samples at least `minLiquidity`,
+    /// a balance module set and a unit read; otherwise `ok` is false, the sale doors revert `NoQuote` and the Core's
+    /// eth purchase doors and balance fills refuse
+    function _protected() private view returns (uint256 pBuy, uint256 pSell, uint256 unit, bool ok) {
         Quote memory q = quote;
         uint256 ref = referencePrice;
         if (ref == 0 || q.referenceMaxStale == 0) return (0, 0, 0, false);
+        (uint256 live, bool priced) = _spot();
+        if (!priced || live == 0) return (0, 0, 0, false);
         uint256 t = referenceTime;
         uint256 sA = spotSampleA;
         uint256 sB = spotSampleB;
@@ -338,28 +342,25 @@ contract ControllerV1 is IController {
         uint256 lB = liqSampleB;
         // forge-lint: disable-next-line(unsafe-typecast)
         bool aThisBlock = uint48(block.number) == lastRefreshBlock;
-        // forge-lint: disable-next-line(unsafe-typecast)
-        if (project && !aThisBlock && block.timestamp - t >= q.referenceMinSeconds) {
-            (uint256 spot, bool priced) = _spot();
-            if (priced && spot != 0) {
-                uint256 move = uint256(q.referenceRateBpsPerHour) * (block.timestamp - t) / 1 hours;
-                if (move > q.referenceStepBps) move = q.referenceStepBps;
-                if (move != 0) {
-                    uint256 hi = ref * (BPS + move) / BPS;
-                    uint256 lo = ref * (BPS - move) / BPS;
-                    ref = spot > hi ? hi : spot < lo ? lo : spot;
-                    sB = sA;
-                    lB = lA;
-                    sA = spot;
-                    lA = _sampleLiq();
-                    t = block.timestamp;
-                    aThisBlock = true;
-                }
+        // the read only equivalent of `refreshReference`: a due refresh is projected so a view equals the door's charge
+        if (!aThisBlock && block.timestamp - t >= q.referenceMinSeconds) {
+            uint256 move = uint256(q.referenceRateBpsPerHour) * (block.timestamp - t) / 1 hours;
+            if (move > q.referenceStepBps) move = q.referenceStepBps;
+            if (move != 0) {
+                uint256 hi = ref * (BPS + move) / BPS;
+                uint256 lo = ref * (BPS - move) / BPS;
+                ref = live > hi ? hi : live < lo ? lo : live;
+                sB = sA;
+                lB = lA;
+                sA = live;
+                lA = _sampleLiq();
+                t = block.timestamp;
+                aThisBlock = true;
             }
         }
         if (block.timestamp - t > q.referenceMaxStale) return (0, 0, 0, false);
         if (lA < q.minLiquidity || lB < q.minLiquidity) return (0, 0, 0, false);
-        // the clamp spot is a prior block's sample: the previous one when the latest was taken this block
+        // the bound on the adverse side is a prior block's sample: the previous one when the latest was taken this block
         uint256 spotNow = aThisBlock ? sB : sA;
         address module = CORE.balanceModule();
         if (module == address(0)) return (0, 0, 0, false);
@@ -367,8 +368,11 @@ contract ControllerV1 is IController {
         if (!ok) return (0, 0, 0, false);
         uint256 up = ref * (BPS + q.tolBps) / BPS;
         uint256 down = ref * (BPS - q.tolBps) / BPS;
+        // the live spot enters only on the engine's side: it can lower what the engine pays and raise what it charges
         pBuy = spotNow < up ? spotNow : up;
+        if (live < pBuy) pBuy = live;
         pSell = spotNow > down ? spotNow : down;
+        if (live > pSell) pSell = live;
     }
 
     /// the wei value of one point at the protected price, see `IController.valuePerPoint`
@@ -376,9 +380,7 @@ contract ControllerV1 is IController {
         uint256 pBuy;
         uint256 pSell;
         uint256 unit;
-        // the Core's eth bid reads the stored reference without a projected refresh, so a lapsed refresh reads stale and
-        // the Core falls back to its last good value rate rather than halting
-        (pBuy, pSell, unit, ok) = _protected(false);
+        (pBuy, pSell, unit, ok) = _protected();
         if (!ok) return (0, false);
         value = forSale
             ? FullMath.mulDivRoundingUp(POINT_UNIT * unit, pSell, 1e18)
@@ -397,7 +399,7 @@ contract ControllerV1 is IController {
     /// balance until the reference recovers
     function balanceClampFor(uint256 score, uint256 posted) external view returns (uint256 paid, bool ok) {
         uint256 pSell;
-        (, pSell,, ok) = _protected(false);
+        (, pSell,, ok) = _protected();
         if (!ok || pSell == 0) return (0, true);
         uint256 cap = FullMath.mulDiv(FullMath.mulDiv(CORE.ethPrice(), score, RATE_SCORE), 1e18, pSell);
         paid = posted < cap ? posted : cap;
@@ -470,7 +472,7 @@ contract ControllerV1 is IController {
 
     function _valueOf(uint256 points, Settings memory cfg) private view returns (uint256) {
         if (cfg.valueModeOn) {
-            (, uint256 pSell, uint256 unit, bool ok) = _protected(true);
+            (, uint256 pSell, uint256 unit, bool ok) = _protected();
             if (!ok) revert NoQuote();
             return FullMath.mulDivRoundingUp(points * unit, pSell, 1e18);
         }

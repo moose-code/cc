@@ -100,10 +100,11 @@ export class Keeper {
       this.skipLogged.set(k, now);
       log("info", "skip", { block: state.blockNumber, ...sk });
     }
-    // An unusable protected buy quote degrades the eth bid to its last good rate. Sale doors may recover on a
-    // projected reference refresh; the balance bid, compose and redemption keep running.
+    // an unusable protected quote halts the eth purchase doors (the bid reads 0, buyListing reverts NoQuote) and the
+    // balance fill; compose, redemption and the buyback keep running. the quote recovers on a projected refresh once
+    // the pool reads again
     if (state.valueModeOn && state.noQuote && !state.retired) {
-      await alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token reference price is unusable; the eth bid uses its last good rate", { referenceTime: state.referenceTime, referenceMaxStale: state.referenceMaxStale });
+      await alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token reference price is unusable; the eth bid reads 0 and listing sweeps are refused", { referenceTime: state.referenceTime, referenceMaxStale: state.referenceMaxStale });
     }
     // the reserve alert: a pot at or under the reserve halts every acquisition until fee income refills it; processing
     // (compose, redeem, buyback) keeps paying from the whole pot

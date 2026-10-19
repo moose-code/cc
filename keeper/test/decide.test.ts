@@ -229,13 +229,17 @@ test("listing: the artist royalty is part of the room bound and the payment cap"
   assert.equal(listingPayment(capped, l, GAS_GUESS.buyListing, parseGwei("1")), 10n ** 13n);
 });
 
-// promise: a lapsed value quote degrades the eth bid instead of halting it, so the keeper still sweeps (decision 159, C02)
-test("listing: in value mode an unusable quote degrades the bid and still sweeps", () => {
+// promise: in value mode an unusable quote reads a zero eth bid and buyListing reverts NoQuote, so the keeper skips the
+// sweep with that reason instead of sending a reverting transaction (decision 190); outside value mode noQuote is nothing
+test("listing: in value mode an unusable quote skips the sweep, outside value mode it does not", () => {
   const p = policy({}, 0);
-  const degraded = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
-  assert.ok(doorsOf(degraded).includes("buyListing"), "the sweep runs at the degraded bid, not NoQuote-halted");
+  const halted = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
+  assert.ok(!doorsOf(halted).includes("buyListing"), "no sweep without a quote in value mode");
+  assert.ok(halted.skips.some((k) => k.door === "buyListing" && k.reason.startsWith("NoQuote")), "the skip names NoQuote");
   const live = decide(state({ valueModeOn: true, noQuote: false }), [listing()], gas("1"), p, new Map());
-  assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps the same way");
+  assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps");
+  const modeOff = decide(state({ valueModeOn: false, noQuote: true }), [listing()], gas("1"), p, new Map());
+  assert.ok(doorsOf(modeOff).includes("buyListing"), "outside value mode the quote flag does not gate the sweep");
 });
 
 // ------------------------------------------------------------------ refreshReference

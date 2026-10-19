@@ -62,10 +62,14 @@ library CoreOpsLib {
             uint64 ethPeak = s.anchor.peakTime;
             uint64 balancePeak = s.balance.anchor.peakTime;
             uint64 climbStart = s.climbRestartTime;
+            uint64 ethFill = s.lastFillTime;
             uint64 balanceFill = s.balance.lastFillTime;
             s.anchor.peakTime = ethPeak < since ? ethPeak + elapsed : t;
             s.balance.anchor.peakTime = balancePeak < since ? balancePeak + elapsed : t;
             s.climbRestartTime = climbStart < since ? climbStart + elapsed : t;
+            // the eth instance's fill time moves with its funded restart: the idle loosening anchors on the later of
+            // the two, so leaving one behind would hand the ceiling the paused seconds
+            s.lastFillTime = ethFill < since ? ethFill + elapsed : t;
             s.balance.lastFillTime = balanceFill < since ? balanceFill + elapsed : t;
             s.paused = false;
             s.pausedTotal += elapsed;

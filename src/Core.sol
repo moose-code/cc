@@ -108,7 +108,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NoCode(address who);
     /// `sellForEth`, `buyListing`, `sellForBalance`, `adopt`, `compose`, `composeChosen` or `swapCredit` after `migrate`
     error Retired();
-    /// never raised by the Core or CoreLib; kept until the next abi change
+    /// `sellForEth`, `buyListing` or `adopt` in value mode while the controller's quote is unusable: the eth bid has no
+    /// price, so the purchase doors refuse instead of paying a stored rate
     error NoQuote();
 
     // raised by CoreLib or CoreOpsLib code run in the Core; declared here so the Core abi decodes them.
@@ -524,8 +525,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         return CoreLib.ethRate();
     }
 
+    /// value mode prices the eth bid off the controller's quote: while it is unusable the price state reads 0 and the
+    /// eth purchase doors refuse with `NoQuote` rather than pay a stored rate. mode off never reads a quote
+    function _requireQuote() private view {
+        if (s.settings.valueModeOn && CoreLib.ethPrice() == 0) revert NoQuote();
+    }
+
     /// the eth price state before the pot clamp, wei per 100 points. mode off uses the climbed eth instance; value
-    /// mode uses the shared instance times the protected buy value, or the last good value rate on quote failure. an
+    /// mode uses the shared instance times the protected buy value, and reads 0 while the quote is unusable. an
     /// adopted cost basis scales this price by score and adds the artist purchase royalty
     function ethPrice() external view returns (uint256) {
         return CoreLib.ethPrice();
@@ -691,6 +698,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     function _sellForEth(uint256[] calldata ids, uint256 minOut) private {
         _openDoor();
         if (ids.length == 0) revert Empty();
+        _requireQuote();
         // `_openDoor` climbs once under the booked pot; each credit's drop walks down without re-climbing.
         uint256 total;
         uint256 artistTotal;
@@ -698,7 +706,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];
             _owned(id);
-            CoreLib.checkReturn(s, id, msg.sender);
+            CoreLib.checkReturn(s, id);
             uint256 score = _scoreOf(id);
             uint256 bid = _bid();
             // the pot is at or under the reserve, so the bid reads zero: a named refusal, not ZeroAmount from the spend
@@ -733,9 +741,10 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (!s.allowedAdapter[adapter]) revert AdapterNotAllowed();
         if (id == 0) revert ZeroId();
         if (CREDITS.ownerOf(id) == address(this)) revert AlreadyOwned();
-        (address target, uint256 value, bytes memory data, address offerer) = _quote(adapter, id, params);
-        // the return lock reads the listing offerer: a credit the engine sold is refused while its buyer offers it back
-        CoreLib.checkReturn(s, id, offerer);
+        _requireQuote();
+        (address target, uint256 value, bytes memory data,) = _quote(adapter, id, params);
+        // the return lock binds the credit whoever lists it
+        CoreLib.checkReturn(s, id);
         if (_forbidden(target)) revert ForbiddenTarget();
         uint256 score = _scoreOf(id);
         uint256 bid = _bid().mulDiv(score, RATE_SCORE);
@@ -1489,7 +1498,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// the stored price state of the eth instance at `checkpointTime`, wei per 100 points, before the climb to now
-    /// and the clamp. in value mode it holds the last good value rate instead
+    /// and the clamp. in value mode it holds the last good value rate, which seeds the eth instance when value mode is
+    /// turned off and is the cost basis of a balance sale while the quote is momentarily down; no bid reads it
     function rateAtCheckpoint() external view returns (uint256) {
         return s.rateAtCheckpoint;
     }

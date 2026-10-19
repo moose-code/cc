@@ -199,8 +199,6 @@ library CoreLib {
     error Empty();
     error NoBalanceModule();
     error BadModule();
-    /// declared for abi parity with the Core; CoreLib never raises it
-    error BadQuote();
     error ZeroId();
     error NotOwner();
     error ZeroAmount();
@@ -212,7 +210,7 @@ library CoreLib {
     error BalanceTokenChanged();
     /// a credit the engine sold through `sellCreditTo` is offered back to an intake door by its buyer before `until`
     error ReturnLocked(uint256 id, uint256 until);
-    /// never raised by the Core or CoreLib; kept until the next abi change
+    /// `adopt` in value mode while the controller's quote is unusable (the Core's eth purchase doors raise the same)
     error NoQuote();
     /// one eth fill in value mode: the eth paid, the shared instance's price state (bps of par) after this credit's
     /// drop, and the pot left. mirrors `EthRateFill`
@@ -520,9 +518,9 @@ library CoreLib {
     }
 
     /// @notice the eth bid now, wei per 100 points: the price state lowered to the bid room (the pot with pending less
-    /// the reserve, over `1 + buyToArtistBps / 10_000`). in value mode the price state is `_valueRate`, falling back to
-    /// the last good value rate while the quote is unusable. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint`
-    /// and `bidOf` and its doors read it
+    /// the reserve, over `1 + buyToArtistBps / 10_000`). in value mode the price state is `_valueRate`, 0 while the
+    /// quote is unusable, so the bid reads 0 and the purchase doors refuse `NoQuote`. the Core forwards `ethRate`,
+    /// `bidForScore`, `ethPerPoint` and `bidOf` and its doors read it
     function ethRate() external view returns (uint256 read) {
         State storage c = state();
         if (!c.settings.valueModeOn) {
@@ -530,28 +528,27 @@ library CoreLib {
             read = price.min(_bidRoom(c));
             return read;
         }
-        return _valueRateOrLast(c).min(_bidRoom(c));
+        return _valueRateOrZero(c).min(_bidRoom(c));
     }
 
-    /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode the value rate, falling back
-    /// to the last good value rate while the quote is unusable. the Core forwards its `ethPrice()`
+    /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode the value rate, 0 while the
+    /// quote is unusable. the Core forwards its `ethPrice()`
     function ethPrice() external view returns (uint256) {
         return _ethPrice(state());
     }
 
-    /// the eth price state now: the eth instance outside value mode, the value rate (or the last good one) in value mode
+    /// the eth price state now: the eth instance outside value mode, the value rate (0 without a quote) in value mode
     function _ethPrice(State storage c) private view returns (uint256 price) {
-        if (c.settings.valueModeOn) return _valueRateOrLast(c);
+        if (c.settings.valueModeOn) return _valueRateOrZero(c);
         (price,,) = _ethClimb(c);
     }
 
-    /// the value mode eth price state now: the controller's value read when usable, else the last good value mode eth
-    /// rate kept in the eth instance checkpoint. a lapsed or unusable quote degrades the eth bid to the last good value
-    /// rate instead of halting it, so the engine keeps buying while the reference recovers
-    function _valueRateOrLast(State storage c) private view returns (uint256) {
+    /// the value mode eth price state now: the controller's value read when usable, else 0. an unusable quote halts
+    /// the eth purchase doors (`NoQuote` in the Core) and reads a zero bid rather than paying a stored rate that no
+    /// longer follows the token
+    function _valueRateOrZero(State storage c) private view returns (uint256) {
         (uint256 rate, bool ok) = _valueRate(c);
-        // the fallback is the last good value rate, itself stored at or under `rateCap` by `_valueRate`
-        return ok ? rate : c.rateAtCheckpoint;
+        return ok ? rate : 0;
     }
 
     /// the value mode eth price state, wei per 100 points: the shared instance climbed to now (clamped to the cap, not
@@ -652,18 +649,16 @@ library CoreLib {
         return uint256(s.reserveWei).max(queued * 15 / 10);
     }
 
-    /// reverts `ReturnLocked` while credit `id` is offered back by the buyer the engine sold it to, before
-    /// `soldAt + returnLockSeconds`. `creditSoldAt[id]` packs that buyer in the high 160 bits and the sale time in the
-    /// low 96. the lock binds only when `counterparty` is the stored buyer, so a secondary holder who bought the credit
-    /// from the engine's buyer sells at once. a `returnLockSeconds` of 0, a word of 0 (never sold), or a counterparty
-    /// other than the buyer passes at any clock. every intake door calls it per credit with the counterparty:
-    /// `msg.sender` for `sellForEth`, `sellForBalance` and `swapCredit`, the listing offerer for `buyListing`
-    function checkReturn(State storage c, uint256 id, address counterparty) internal view {
+    /// reverts `ReturnLocked` while credit `id`, sold by the engine through `sellCreditTo`, is offered back to any
+    /// intake door before `soldAt + returnLockSeconds`, whoever offers it: the lock binds the credit, so a transfer to
+    /// another wallet does not end it. `creditSoldAt[id]` packs the buyer of that sale in the high 160 bits (a record)
+    /// and the sale time in the low 96. a `returnLockSeconds` of 0 or a word of 0 (never sold) passes at any clock.
+    /// every intake door (`sellForEth`, `sellForBalance`, `swapCredit`, `buyListing`) calls it per credit
+    function checkReturn(State storage c, uint256 id) internal view {
         uint256 lock = c.settings.returnLockSeconds;
         if (lock == 0) return;
         uint256 word = c.creditSoldAt[id];
         if (word == 0) return;
-        if (counterparty != address(uint160(word >> 96))) return;
         uint256 until = uint96(word) + lock;
         if (block.timestamp < until) revert ReturnLocked(id, until);
     }
@@ -825,7 +820,8 @@ library CoreLib {
         uint256 fallNum = uint256(s.dropPer100PointsBps) * score;
         uint256 denom = 10_000 * RATE_SCORE;
         uint256 dropped = fallNum >= denom ? 0 : price.mulDiv(denom - fallNum, denom);
-        return dropped.max(a.minuteStartRate * s.dropFloorBps / 10_000).max(absFloor);
+        // never 0: a stored price state of 0 would never climb again (the climb compounds the stored rate)
+        return dropped.max(a.minuteStartRate * s.dropFloorBps / 10_000).max(absFloor).max(1);
     }
 
     /// @notice sends coin the Core holds to `to`. the Core's `rescueCoin` forwards its call here untouched, so the owner
@@ -900,6 +896,8 @@ library CoreLib {
         if (ids.length == 0) revert Empty();
         State storage c = state();
         uint256 price = _ethPrice(c);
+        // value mode prices the basis off the controller's quote; without one the basis would be 1 wei per credit
+        if (price == 0 && c.settings.valueModeOn) revert NoQuote();
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];
             if (id == 0) revert ZeroId();
@@ -926,7 +924,7 @@ library CoreLib {
         if (c.retired) revert Retired();
         if (c.paused) revert Paused();
         if (inId == 0) revert ZeroId();
-        checkReturn(c, inId, msg.sender);
+        checkReturn(c, inId);
         Credit storage out = c.credits[outId];
         if (!out.inPile) revert NotInPile(outId);
         if (c.credits[inId].inPile) revert InPile();
@@ -1214,7 +1212,7 @@ library CoreLib {
     function _fillOne(uint256 id, uint256 unit, uint256 floor) private returns (uint256 paid, uint256 toArtist) {
         State storage c = state();
         owned(id);
-        checkReturn(c, id, msg.sender);
+        checkReturn(c, id);
         uint256 score = scoreOf(id);
         // value mode: lower the posted payout to the eth bid for the score at the protected sale price; the royalty
         // and the `avail` bound follow the converted payout
