@@ -209,7 +209,7 @@ library CoreLib {
     error BalanceTokenChanged();
     /// a credit the engine sold through `sellCreditTo` is offered back to an intake door before `until`
     error ReturnLocked(uint256 id, uint256 until);
-    /// retained for ABI compatibility; an unusable value quote closes the ETH bid at zero
+    /// adoption has no safe value-mode basis when both the live quote and stored rate are zero
     error NoQuote();
     /// one eth fill in value mode: the eth paid, the shared instance rate (bps of par) after this credit's drop, and the
     /// pot left. mirrors `EthRateFill`
@@ -877,19 +877,21 @@ library CoreLib {
     }
 
     /// @notice puts credits the Core holds without a record into the eth pile, anyone may call. The cost basis of a
-    /// credit is the price state at `block.timestamp` (`climb`, before the clamp) times the
+    /// credit is the mode-off price state or the value-mode accounting rate before the clamp, times the
     /// credit's score over 100 points, plus the artist royalty `buyToArtistBps` the eth bid would pay, at least 1 wei,
-    /// so the sale floor matches a bought credit (decision 163). The price state is what the engine pays with a funded
-    /// pot, so statements built from adopted credits are priced at that level; the clamp of a thin pot would book a
-    /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
-    /// eth pile grows; the Core checkpoints before the reserve may rise. `acquiredAt` is the current
-    /// time. Reverts `Empty` for an empty list, `ZeroId` for id zero, `InPile` for a credit that is in a pile (the same
-    /// id twice included), and `NotHolder` for a credit the Core does not hold. The Core books the fee income, then
+    /// so the sale floor matches a bought credit. In value mode an unusable quote uses the stored last good rate;
+    /// adoption reverts if no basis is available. The clamp of a thin pot does not lower the booked basis. A donor who
+    /// inflates the basis of a statement gives credits away. The basis is booked and the eth pile grows; the Core
+    /// checkpoints before the reserve may rise. `acquiredAt` is the current time. Reverts `Empty` for an empty list,
+    /// `NoQuote` without an accounting rate, `ZeroId` for id zero, `InPile`
+    /// for a credit that is in a pile (the same id twice included), and `NotHolder` for a credit the Core does not hold.
+    /// The Core books the fee income, then
     /// forwards its call here untouched, under its own reentrancy guard
     function adopt(uint256[] calldata ids) external {
         if (ids.length == 0) revert Empty();
         State storage c = state();
-        uint256 price = _ethPrice(c);
+        uint256 price = c.settings.valueModeOn ? _ethFloorNow(c) : _ethPrice(c);
+        if (price == 0) revert NoQuote();
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];
             if (id == 0) revert ZeroId();

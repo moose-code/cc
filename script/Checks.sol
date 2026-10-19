@@ -75,7 +75,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// codes. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x81181a41500dd286fb11c16f949cc7dc75913ad4500ce087c5b7e1d8fa0e9e3e;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xedb4602e2cf3e67d44d2d66124bde7d1f4f0cfb2466ba55cb64bef40a634a9bc;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0xdb52c68a102911882c83712ff22b35c9282c613442ea4e7ae1f5ad83dacd9d82;
     bytes32 internal constant BUILD_HASH_COREOPSLIB =
         0x3e6f70200864a45e22ec7242fa57a0412dc5ee8c0d7a97fbfa9fba0f410c9b1e;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
@@ -86,7 +86,7 @@ abstract contract LaunchChecks is PostflightChecks {
         0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x789770d6ad6b21255e6aa816a264650ed079691ad3ee36359a2972b75b7d9be9;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0xc4ec984e47e30d605af00bbd646caede7b31949fd6c34564d895bf40db7f3d2f;
+        0x78ce8391ad8231ed4eb1cc80a783918ce33ae558b72a28558bb20014f96c46c8;
     bytes32 internal constant BUILD_CREATION_HASH_COREOPSLIB =
         0x38d25f5c67998d7e8ca2c117217bfa94f499cf77dfddf8c84a5fda1a2718c829;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it

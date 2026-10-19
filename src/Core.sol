@@ -133,7 +133,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     // inside the Core
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
-    /// retained for ABI compatibility; an unusable value quote closes the ETH bid at zero
+    /// adoption has no safe value-mode basis when both the live quote and stored rate are zero
     error NoQuote();
 
     /*//////////////////////////////////////////////////////////////
@@ -1308,13 +1308,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// puts credits the core holds without a record into the pile, anyone may call. the fee income is booked first,
     /// like at every door that reads the pot, so it is in the pot before the price is read. the cost basis of each
-    /// credit is `ethPrice * score / RATE_SCORE` plus its on-top artist royalty, at least 1 wei. the price state is
-    /// the figure the engine pays with a funded pot, so a statement built from adopted credits is priced at that
-    /// level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the pile grows: eth and the
-    /// pots keep their values. the bid checkpoints before the pile changes, preserving earned climb under the old
-    /// reserve without changing the live price. a donor who inflates the basis of a statement gives credits away.
-    /// reverts `Retired` after `migrate`, `InPile`, `NotHolder`, `ZeroId` and `Empty`. logs `CreditAdopted`. the
-    /// body is `CoreLib.adopt`, called with the calldata untouched
+    /// credit is the mode-off price state or value-mode accounting rate times `score / RATE_SCORE`, plus its on-top
+    /// artist royalty, at least 1 wei. a failed value quote uses the last good stored rate; if none exists, adoption
+    /// reverts `NoQuote`. the clamp of a thin pot does not lower the booked basis. the basis is booked and the pile
+    /// grows; eth and the pots keep their values. the bid checkpoints before the pile changes, preserving earned
+    /// climb under the old reserve without changing the live price. a donor who inflates the basis of a statement
+    /// gives credits away.
+    /// reverts `Retired` after `migrate`, `NoQuote` without an accounting rate, `InPile`, `NotHolder`, `ZeroId` and
+    /// `Empty`. logs `CreditAdopted`. the body is `CoreLib.adopt`, called with the calldata untouched
     function adopt(uint256[] calldata) external nonReentrant {
         _openDoor();
         _toLib();

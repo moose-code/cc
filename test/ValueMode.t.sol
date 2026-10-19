@@ -467,6 +467,7 @@ contract ValueReferenceTest is ValueBase {
 }
 
 contract ValueModeTest is ValueBase {
+    using stdStorage for StdStorage;
     // promise: an owner pause freezes the shared value-mode climb through booking, funding and half-life edits
     function test_pauseFreezesSharedBidAndResumesEarnedClimb() public {
         _valueOn();
@@ -573,6 +574,55 @@ contract ValueModeTest is ValueBase {
         core.book();
         core.redeemStatement(c.sid);
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "conversion runs by age, no quote read");
+    }
+
+    // promise: a stale value quote cannot book donated Credits at a 1 wei basis, and composition preserves their costs
+    function test_staleQuoteAdoptKeepsLastGoodBasisThroughComposition() public {
+        _valueOn();
+        _fundPot(1 ether);
+        core.book();
+        uint256 lastGood = core.rateAtCheckpoint();
+        assertEq(lastGood, core.ethPrice(), "a usable quote established the accounting rate");
+        uint256[] memory ids = _credits(seller, 80);
+        for (uint256 i; i < ids.length; ++i) {
+            vm.prank(seller);
+            CREDITS.transferFrom(seller, address(core), ids[i]);
+        }
+        vm.warp(block.timestamp + 1 days + 1);
+        assertEq(core.ethRate(), 0, "the stale quote still closes ETH acquisition");
+        assertEq(core.ethPrice(), 0, "the live value price does not fall back");
+        vm.prank(seller);
+        core.adopt(ids);
+        uint256 sum;
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 pay = lastGood * _scoreOf(ids[i]) / RATE_SCORE;
+            uint256 expected = pay + pay * core.settings().buyToArtistBps / 10_000;
+            (, uint256 cost,) = core.creditInfo(ids[i]);
+            assertEq(cost, expected, "adoption uses the stored accounting rate");
+            assertGt(cost, 1, "the quote outage cannot erase cost");
+            sum += cost;
+        }
+        uint256 sid = STATEMENTS.supply() + 1;
+        vm.fee(composeBasefee);
+        vm.prank(keeper);
+        core.compose();
+        (bool held, uint256 statementCost,) = core.statementInfo(sid);
+        assertTrue(held, "the page composed");
+        assertEq(statementCost, sum, "composition preserves every adopted cost");
+    }
+
+    // promise: adoption refuses a missing accounting rate while a value quote is unusable
+    function test_staleQuoteAdoptWithoutStoredBasisReverts() public {
+        _valueOn();
+        uint256[] memory ids = _credits(seller, 1);
+        vm.prank(seller);
+        CREDITS.transferFrom(seller, address(core), ids[0]);
+        vm.warp(block.timestamp + 1 days + 1);
+        stdstore.target(address(core)).sig("rateAtCheckpoint()").checked_write(uint256(0));
+        assertEq(core.ethPrice(), 0, "the quote is stale");
+        vm.expectRevert(ICore.NoQuote.selector);
+        core.adopt(ids);
+        assertEq(core.pileSize(), 0, "a failed adoption leaves the pile unchanged");
     }
 
     // promise: a hostile value quote cannot lift the ETH bid above rateCap; an unusable quote closes acquisitions
