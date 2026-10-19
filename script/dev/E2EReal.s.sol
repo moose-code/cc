@@ -596,8 +596,7 @@ contract E2EReal is Scenario {
         console.log("phase7: value mode off, ethRate", core.ethRate());
     }
 
-    /// A1 sells one credit for eth in value mode; prints the quote and the paid amount so the shell asserts the fill
-    /// sits inside the bands.
+    /// A1 sells one credit for eth in value mode and checks that the payout equals the pretrade bid quote.
     function phase7ValueSell() external {
         _boot();
         _approveCredits(A1);

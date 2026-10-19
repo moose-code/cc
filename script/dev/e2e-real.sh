@@ -367,7 +367,7 @@ if [ -n "$BTOK" ]; then
   KEEPER_ENV="DOORS=refreshReference" keeper_once
   REFRESHES="$(grep -c '"door":"refreshReference"' "$KEEPER_LOG" 2>/dev/null | tr -d '[:space:]')"
   check "the keeper refreshed the reference on cadence" "$(calc "$REFRESHES >= 1")" "$REFRESHES refresh ticks"
-  if step "phase7ValueSell()"; then check "a value mode sell pays inside the bands" 1 "see step log"; fi
+  if step "phase7ValueSell()"; then check "a value mode sell pays its quoted bid" 1 "see step log"; fi
   OUT7SPOT="$(step "phase7SameBlockSpotProbe(address)" "$BTOK")"; echo "$OUT7SPOT" | sed 's/^/    /'
   SPOT_LOSS="$(echo "$OUT7SPOT" | grep -m1 'SPOT_PROBE_POOL_LOSS' | awk '{print $2}')"
   check "same-block bid view held fixed while two pool swaps lost value" "$([ -n "$SPOT_LOSS" ] && calc "$SPOT_LOSS > 0")" "pool loss $SPOT_LOSS"
