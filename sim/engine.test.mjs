@@ -1304,7 +1304,8 @@ const R0 = 6.668e15;
   assert.equal(rows.length, 12); n++;
   for (const row of rows) {
     assert.equal(row.stopped.credits + row.remainingCredits, assumptions.credits);
-    near(row.stopped.spentEth + row.finalPotEth, assumptions.initialPotEth, 1e-12, 'bounded scenario funds reconcile');
+    // the pot pays each seller's bid and the artist royalty on top (decision 163), so both leave the pot
+    near(row.stopped.spentEth + row.stopped.royaltyEth + row.finalPotEth, assumptions.initialPotEth, 1e-12, 'bounded scenario funds reconcile');
     assert.ok(row.stopped.seconds % assumptions.blockSeconds === 0);
     assert.ok(row.stopped.seconds <= assumptions.sellingHorizonSeconds);
     if (row.crossing === null) assert.equal(row.recoverySecondsAfterStop, null);

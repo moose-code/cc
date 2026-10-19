@@ -265,7 +265,7 @@ export function runSpendCapStudy() {
     };
     for (let t = 0; t <= assumptions.totalHorizonSeconds; t += assumptions.blockSeconds) {
       checkCrossing(t);
-      if (stopped === null && (t >= assumptions.sellingHorizonSeconds || inventory.length === 0)) stopped = { seconds: t, credits: bought, pointsBought, spentEth: spent, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: inventory.length === 0 ? 'inventory exhausted' : 'selling horizon' };
+      if (stopped === null && (t >= assumptions.sellingHorizonSeconds || inventory.length === 0)) stopped = { seconds: t, credits: bought, pointsBought, spentEth: spent, royaltyEth: core.royaltyPaid, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: inventory.length === 0 ? 'inventory exhausted' : 'selling horizon' };
       if (stopped !== null) {
         if (crossing !== null && recovery === null && core.ethRate(t + offset) / W >= assumptions.flatAskEth) recovery = t - stopped.seconds;
         if (initialRecovery === null && core.ethRate(t + offset) >= DEFAULTS.rateStart) initialRecovery = t - stopped.seconds;
@@ -282,7 +282,7 @@ export function runSpendCapStudy() {
         pointsBought += inventory[index]; inventory.splice(index, 1); bought++; spent += paid; filled++; checkCrossing(t);
       }
       if (inventory.length === 0) {
-        stopped = { seconds: t, credits: bought, pointsBought, spentEth: spent, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: 'inventory exhausted' };
+        stopped = { seconds: t, credits: bought, pointsBought, spentEth: spent, royaltyEth: core.royaltyPaid, potEth: core.ethPot, referenceBidEth: core.ethRate(t + offset) / W, reason: 'inventory exhausted' };
         if (crossing !== null && core.ethRate(t + offset) / W >= assumptions.flatAskEth) recovery = 0;
         if (core.ethRate(t + offset) >= DEFAULTS.rateStart) initialRecovery = 0;
       }
