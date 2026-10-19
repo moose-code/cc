@@ -472,7 +472,7 @@ contract OwnerHandoverTest is OwnerBase {
 
     // promise: INTEGRATION OnlyPendingOwner
     /// while nothing is pending the pending owner is the zero address, and a call from it must not pass
-    /// `acceptOwnership` (review S-9, fixed): the owner stays
+    /// `acceptOwnership`: the owner stays
     function test_handover_zeroAddressAcceptWhileNothingPendingReverts() public {
         assertEq(core.pendingOwner(), address(0));
         vm.prank(address(0));

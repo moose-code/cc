@@ -35,7 +35,7 @@ export const core = addr(process.env.NEXT_PUBLIC_CORE);
 // Fixed collections (docs/INTEGRATION.md section 1, packages/engine/src/addresses.ts).
 export { CREDITS as credits, STATEMENTS as statements } from "@cc/engine/addresses";
 
-// Listing venues (docs/INDEXER.md section 9.1, owner decision 134): the CreditStrategy proxy, and the two adapters the
+// Listing venues (docs/INDEXER.md section 9.1): the CreditStrategy proxy, and the two adapters the
 // Core allows for Core.buyListing (deployment record keys strategyAdapter, seaportAdapter).
 export const strategy: Address = "0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6";
 export const strategyAdapter = addr(process.env.NEXT_PUBLIC_STRATEGY_ADAPTER);

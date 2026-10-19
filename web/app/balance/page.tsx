@@ -30,7 +30,7 @@ export default function BalancePage() {
         </p>
       )}
       {snap?.value.referencePrice !== undefined && snap.value.referencePrice > 0n && (
-        // the protected price (decision 148): the controller's rate limited reference against the pool spot, eth per
+        // the protected price: the controller's rate limited reference against the pool spot, eth per
         // whole token (1e18 base units). value mode prices the eth bid and the engine's sales off the two
         <p className="muted">
           {BALANCE_SYMBOL} reference {eth(snap.value.referencePrice, 6)} eth · spot {snap.value.spot === undefined ? "unavailable" : `${eth(snap.value.spot, 6)} eth`}

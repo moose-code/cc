@@ -26,7 +26,7 @@ const SKIP_LOG_SEC = 600;
 export async function startChecks(client: PublicClient, cfg: Config, fixed: Fixed, signer: Signer) {
   const chainId = await client.getChainId();
   if (chainId !== cfg.record.chainId) throw new Error(`start: the rpc is chain ${chainId}, the record is chain ${cfg.record.chainId}`);
-  // the keeper runs on its own hot wallet, never the owner key (decision 57)
+  // the keeper runs on its own hot wallet, never the owner key
   if (isAddressEqual(signer.address, OWNER) || isAddressEqual(signer.address, fixed.owner)) {
     throw new Error(`start: refusing to run as the owner ${signer.address}; the keeper uses its own hot wallet`);
   }

@@ -70,11 +70,11 @@ contract BidRuleTest is Fixture {
         assertEq(core.lastFillTime(), block.timestamp);
     }
 
-    // promise: SPEC 1 the minute floor dropFloorBps bounds the drop inside a minute
+    // promise: SPEC 1 the bucket floor dropFloorBps bounds the drop inside a bucket
     /// with a 5 percent drop and a 50 percent floor the floor is reached on the 14th fill in one minute (0.95^13 is
     /// above 0.5, 0.95^14 is below it, so the 14th fill clamps to the floor). set here, since launch runs no practical
-    /// minute floor (dropFloorBps 1, decision 146)
-    function test_dropReachesTheMinuteFloor() public {
+    /// bucket floor (dropFloorBps 1, decision 146)
+    function test_dropReachesTheBucketFloor() public {
         Settings memory cfg = core.settings();
         cfg.dropPer100PointsBps = 500;
         cfg.dropFloorBps = 5_000;
@@ -535,15 +535,15 @@ contract BidRuleTest is Fixture {
 
     // promise: SPEC 1 risk: a market above the bid waits for the climb or setRate
     /// every seller asks the full new price, 200 percent of the old one. the 20 eth pot loosens the ceiling at the 4x
-    /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128 variant
-    /// d, climbPerMinBps 200): the bid reaches 200 percent only when the 2 percent a minute climb gets there, minute 40
+    /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128,
+    /// climbPerMinBps 200): the bid reaches 200 percent only when the 2 percent a minute climb gets there, minute 40
     function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() public {
         (uint256 m,) = _minutesToFirstFill(20_000);
         emit log_named_uint("minutes to the first fill, no cheap ask", m);
         assertEq(m, 40);
     }
 
-    // ------------------------------------------------------------------ decision 128: pot scaled climb
+    // ------------------------------------------------------------------ decision 128: the per minute climb is unscaled, the loosening scales
 
     function _highCeiling(Settings memory s) internal pure {
         s.ceilBps = 30_000;
@@ -565,7 +565,7 @@ contract BidRuleTest is Fixture {
         return core.ethPrice() * 10_000 / stored;
     }
 
-    // promise: SPEC 4 decision 128 variant d: the per minute climb does not scale with the pot, only the loosening does
+    // promise: SPEC 4 decision 128: the per minute climb is unscaled, only the loosening scales with the pot
     /// the climb is the launch rate (climbPerMinBps 200, 2 percent a minute) at one, three and ten pages alike
     function test_climbUnscaledByPotPages() public {
         _with(_highCeiling);
@@ -592,7 +592,7 @@ contract BidRuleTest is Fixture {
         return core.ethRate() * 1e8 / (anchor * core.settings().ceilBps);
     }
 
-    // promise: SPEC 4 decision 128 variant d: the ceiling's idle loosening scales with the pages the pot covers, clamped to [1x, the cap]
+    // promise: SPEC 4 decision 128: the ceiling's idle loosening scales with the pages the pot covers, clamped to [1x, the cap]; the per minute climb is unscaled
     /// the launch loosening is 6 percent per 10 minutes (idleLoosenBps 600); at three pages it is 18 percent, at ten
     /// pages the 4x cap, 24 percent
     function test_ceilingLooseningScalesWithPotPages() public {
@@ -751,7 +751,7 @@ contract BidRuleTest is Fixture {
     }
 
     // promise: a booked pot keeps climbing, while unbooked fees do not change its multiplier
-    function test_bookedPotClimbsWithPendingFees() public {
+    function test_bookedPotClimbsWhilePendingFeesWait() public {
         _with(_openCeiling);
         _skipSniperWindow();
         _potTo(1 ether);

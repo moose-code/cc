@@ -51,7 +51,7 @@ assert.equal(replayEth(ref(1), { ...royal, pot: 1100n }), 1000n);
 // a pot of 550 clamps the read to 500 below the state: payout 500, royalty 50, the whole pot, so minOut 500 clears
 assert.equal(replayEth(ref(1), { ...royal, pot: 550n }), 500n);
 // balance: score * unit * rate / 10000 per credit, flat: the posted bid does not drop on a fill (decision 164)
-const b = { rate: 10000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 50n, dropFloorBps: 5000n, floorBps: 9000n };
+const b = { rate: 10000n, unit: 100n, scorePer100Points: 10n, dropFloorBps: 5000n, floorBps: 9000n };
 assert.equal(replayBalance([3n, 5n], b), 300n + 500n);
 assert.deepEqual(replayBalanceFills([3n, 5n], b), [300n, 500n]);
 // the posted rate at the launch discount: 270 then 450, in either order

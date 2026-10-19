@@ -27,8 +27,8 @@ interface IV2Reads {
     function coin() external view returns (address);
 }
 
-/// @notice the artcoins v2 stack on the pinned fork. STACK=master reads the master stack fork record
-/// (script/config/v2-master.json); the default reads the superseded live record (script/config/v2-mainnet.json). the
+/// @notice the artcoins v2 stack on the pinned fork. the default reads the live record (script/config/v2-mainnet.json);
+/// STACK=master reads the superseded master stack fixture (script/config/v2-master.json). the
 /// factory owner of the record owns the whole stack. the factory is deprecated: the owner launches, through
 /// `deployToken`. the master stack has no keeper; the fee controller is the escrow's non core depositor, not the locker.
 library V2Stack {

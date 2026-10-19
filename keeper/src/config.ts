@@ -10,10 +10,10 @@ import { getAddress, parseEther, parseGwei, type Address } from "viem";
 export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference";
 export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "refreshReference"];
 
-// the owner key never signs a keeper transaction (decision 57)
+// the owner key never signs a keeper transaction
 export const OWNER: Address = "0xCB43078C32423F5348Cab5885911C3B5faE217F9";
 
-// launch default relays (decision 139): MEV Blocker first, Flashbots Protect as the fallback
+// launch default relays: MEV Blocker first, Flashbots Protect as the fallback
 export const DEFAULT_RELAYS = ["https://rpc.mevblocker.io", "https://rpc.flashbots.net/fast"];
 // public mainnet read fallbacks behind RPC_URLS (docs/RUNBOOK.md section 0 and .env.example list archive capable ones)
 export const PUBLIC_RPCS = ["https://gateway.tenderly.co/public/mainnet", "https://eth.drpc.org", "https://ethereum-rpc.publicnode.com"];
@@ -48,7 +48,7 @@ export interface Config {
   margin: bigint;
   // the gross gas spend allowed per UTC day, wei
   dailyBudget: bigint;
-  // a listing must be seen sweepable this long before the keeper sweeps it (decision 137)
+  // a listing must be seen sweepable this long before the keeper sweeps it
   listingDelaySec: number;
   // pending income above this, wei, and a last book older than bookMinSec, make the keeper book a latched Core
   bookMinWei: bigint;
@@ -131,9 +131,8 @@ export function readRecord(path: string): Deployment {
 }
 
 // launch defaults per door: the paid keeper doors at the 5 gwei `keeperMaxBaseFee`, compose and redeem at the 3 gwei
-// `callerMaxBaseFee` (decision 138), the unpaid doors at 3 gwei. a door never sends above its ceiling
-// the default tips: compose spends about 8.5 million gas, so its 0.0003 eth `callerFee` covers a tip of at most about
-// 0.035 gwei; the other doors use under 1.5 million gas
+// `callerMaxBaseFee`, the unpaid doors at 3 gwei. a door never sends above its ceiling
+// the default tips: compose spends about GAS_GUESS.compose gas; the other doors use under 1.5 million gas
 const DOOR_DEFAULT_TIP: { [d in Door]: string } = {
   buyListing: "0.05",
   buyback: "0.05",

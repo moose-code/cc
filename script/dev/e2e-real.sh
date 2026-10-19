@@ -100,9 +100,9 @@ if [ "${FRESH:-0}" != "1" ] && [ -f "$STATE" ] && [ -f "$RECORD" ] && [ -f "$BLO
   jq --arg u "$RPC" '.rpcUrl = $u' "$RECORD" > "$REC"
 else
   echo "cache miss: key $KEY, building the deployed and seeded state"
-  # FORK_BLOCK pins the fork so the cache compounds across runs and a cold run is deterministic. the deploy predicts the
-  # Core, coin and renderer at CREATE2 addresses; the live protocol occupies them at recent head blocks, so a head fork
-  # collides. the default pins the cold-audit block, which predates those deployments. unset FORK_BLOCK to track head.
+  # FORK_BLOCK pins the fork for two reasons: a cold run is deterministic, and the cached state under script/dev/.cache
+  # is dumped at the block it was built on and reloaded on that same block, so a pinned block keeps the deployed and
+  # seeded state reusable across runs. the default pins the cold-audit block. set FORK_BLOCK=head to track head.
   BLOCK="${FORK_BLOCK:-26208025}"
   [ "$BLOCK" = head ] && BLOCK=$(( $(cast block-number --rpc-url "$FORK_URL") - 100 ))
   echo "fork block $BLOCK"

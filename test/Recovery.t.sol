@@ -39,8 +39,8 @@ contract RecoveryTest is Fixture {
     }
 
     /// @dev sells `n` credits within the current block (one minute bucket), so the minute floor binds. each credit has
-    /// `refScore` set to its score, so the eth bid pays the full rate and the fill drops the rate by the full
-    /// dropPer100PointsBps (score / refScore is 1); the per-point scaling is covered by the invariant suite
+    /// a 100 point credit (RATE_SCORE), so the eth bid pays the full rate and the fill drops the rate by the full
+    /// dropPer100PointsBps (score / RATE_SCORE is 1); the per-point scaling is covered by the invariant suite
     function _dump(uint256 n) internal {
         uint256[] memory ids = _credits(seller_, n);
         for (uint256 i; i < n; ++i) {

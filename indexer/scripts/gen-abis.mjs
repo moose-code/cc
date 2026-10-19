@@ -1,6 +1,6 @@
 // Generates abis/Core.ts and abis/ControllerV1.ts from forge artifacts.
-// Core: Core functions and events plus the CoreLib events. CoreLib events are emitted under the
-// Core address through delegatecall, so the union is the Core's log ABI.
+// Core: Core functions and events plus the CoreLib and CoreOpsLib events, emitted under the Core address
+// through delegatecall, so the union is the Core's log ABI.
 // Usage: node scripts/gen-abis.mjs [outDir]   (default ../out, run `forge build` first)
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

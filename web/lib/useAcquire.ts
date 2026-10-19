@@ -1,6 +1,6 @@
 "use client";
 
-// The listing the header acquire button buys (owner decision 134). Candidates come from the CreditStrategy
+// The listing the header acquire button buys. Candidates come from the CreditStrategy
 // (indexer table strategy_listing; in chain mode a browser scan of its two events) and from the OpenSea route. They
 // are shortlisted by an estimated bid, read at one snapshot block (price, owner, Core.bidOf, buying room) and filtered by lib/acquire.ts.
 // One query per chain head; the route caches OpenSea for 20 s on the server.
@@ -115,7 +115,7 @@ export async function fetchOpenSea(): Promise<{ listings: { id: string; price: s
 
 /**
  * Every listing of both venues and the scores the indexer already holds. Strategy listings come from the indexer
- * (decision 133: the chain scan when it is unconfigured or failing); OpenSea from the server route, unexpired only.
+ * (the chain scan when it is unconfigured or failing); OpenSea from the server route, unexpired only.
  */
 export async function gatherListings(c: Client, head: bigint): Promise<{ listings: Listing[]; known: Map<bigint, bigint>; osMax: number }> {
   const listings: Listing[] = [];

@@ -159,7 +159,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         token = String(a.balanceToken).toLowerCase();
         break;
       case "BalanceFill":
-        // the seller's posted payout; the artist royalty (a.toArtist) rides on top from the module (decisions 163, 164)
+        // the seller's posted payout; the artist royalty (a.toArtist) rides on top from the module
         if (balanceBuy?.tx === tx) balanceBuy.row.eth = formatHistoricalBalance(a.paid, token, inp.balanceToken);
         balanceBuy = undefined;
         break;
@@ -172,7 +172,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const id = Number(a.id);
         const viaEth = fill?.tx === tx;
         const f = viaEth ? fill : undefined;
-        // cost is the pile cost basis: on the eth bid the price plus the artist royalty (decision 163)
+        // cost is the pile cost basis: on the eth bid the price plus the artist royalty
         cr(id).push({ t: "bought", how: viaEth ? "eth bid" : `${BALANCE_SYMBOL} bid`, cost: a.cost, from: a.from, rate: f?.rate, pot: f?.pot, block, tx });
         if (viaEth) stats.creditsEth++;
         else stats.creditsBalance++;
@@ -183,7 +183,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
       }
       case "ListingBought": {
         const id = Number(a.id);
-        // the price, the artist royalty on it and the keeper payment: the pile cost basis (decision 163)
+        // the price, the artist royalty on it and the keeper payment: the pile cost basis
         const total = a.cost + (a.toArtist ?? 0n) + a.paid;
         cr(id).push({ t: "bought", how: "listing", cost: total, from: a.caller, paid: a.paid, adapter: a.adapter, rate: a.rate, block, tx });
         stats.creditsListing++;

@@ -327,7 +327,7 @@ export function useStatements() {
 // Eth Core.sellForEth pays for n credits sold in one call at chain time `now`
 // (CoreLib.drop and CoreLib.climb replayed in sell.ts). Reads ethPrice,
 // floorRate, the pot with the unbooked fee share the first book adds (Core._book,
-// _split), the settings and the minute anchor. Every read is pinned to one block (atBlock); `pinned` is false when
+// _split), the settings and the bucket anchor. Every read is pinned to one block (atBlock); `pinned` is false when
 // the node refused the pinned reads and the quote came from unpinned ones. `fills` is what each credit pays, id to
 // wei, in the order of `ids`; `amount` is their sum.
 export interface SellQuote {
@@ -595,7 +595,6 @@ export function balanceFills(snap: Snapshot, scores: bigint[]): bigint[] {
     rate: snap.balanceRate,
     unit: snap.balanceUnit,
     scorePer100Points: SCORE_PER_100_POINTS,
-    dropPer100PointsBps: BigInt(snap.settings.dropPer100PointsBps),
     dropFloorBps: BigInt(snap.settings.dropFloorBps),
     floorBps: 10000n - BigInt(snap.settings.balanceBidMarginBps),
     valueModeOn: valued,

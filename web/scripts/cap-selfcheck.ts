@@ -34,11 +34,11 @@ assert.equal(replayEth([1000n, 1000n], quote), 1000n + 994n);
 assert.equal(replayEth([1000n, 1000n], { ...quote, nowBucket: 8n }), 1000n + 990n);
 
 // promise: the balance bid is posted and flat: every credit of a batch pays score * unit * rate / 10000 (decision 164).
-assert.equal(replayBalance([10n, 10n], { rate: 9000n, unit: 100n, scorePer100Points: 10n, dropPer100PointsBps: 10000n, dropFloorBps: 0n, floorBps: 9000n }), 900n + 900n);
+assert.equal(replayBalance([10n, 10n], { rate: 9000n, unit: 100n, scorePer100Points: 10n, dropFloorBps: 0n, floorBps: 9000n }), 900n + 900n);
 
 // promise: a value mode eth sale pays the shared instance times the buy value per credit, dropping the instance to its floor.
 {
-  const v = { rate: 10000n, value: 100n, pot: 10n ** 18n, rateCap: 10n ** 18n, scorePer100Points: 10n, dropPer100PointsBps: 10000n, dropFloorBps: 0n, floorBps: 9000n, buyToArtistBps: 0n };
+  const v = { rate: 10000n, value: 100n, pot: 10n ** 18n, rateCap: 10n ** 18n, scorePer100Points: 10n, dropPer100PointsBps: 1000n, dropFloorBps: 0n, floorBps: 9000n, buyToArtistBps: 0n };
   // the first credit at 10000 bps pays 100 * 100 wei, the drop lands on the 9000 floor, the second pays 9000 bps of it
   assert.equal(replayValue([10n, 10n], v), 10000n + 9000n);
   assert.equal(replayValue([10n], { ...v, rateCap: 500n }), 500n, "rateCap bounds a huge value");

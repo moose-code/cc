@@ -234,7 +234,7 @@ contract ValueReferenceTest is ValueBase {
     }
 
     // promise: SPEC 8 an update moves the reference toward the spot by at most referenceRateBpsPerHour times the elapsed time
-    function test_observeMovesAtMostTheRate() public {
+    function test_refreshReferenceMovesAtMostTheRate() public {
         uint256 ref0 = ctl.referencePrice();
         _swapSpot(10_000); // a real swap pushes the spot to about double the reference, past the step cap
         vm.warp(block.timestamp + 30 minutes);
@@ -553,8 +553,8 @@ contract ValueModeTest is ValueBase {
         assertEq(core.balanceRate(), 9_000, "the posted balance rate throughout");
     }
 
-    // promise: SPEC 4 an unusable quote degrades the eth bid to the last good rate instead of halting it (decision 159,
-    // C02): sellForEth and ethRate stay live on the fallback; sellForBalance, redeemStatement and book also stay live
+    // promise: SPEC 4 an unusable quote degrades the eth bid to the last good rate instead of halting it (decision 159):
+    // sellForEth and ethRate stay live on the fallback; sellForBalance, redeemStatement and book also stay live
     function test_staleQuoteDegradesTheEthRoutes() public {
         Composed memory c = _composeOnce();
         _valueOn();
@@ -576,7 +576,7 @@ contract ValueModeTest is ValueBase {
 
     // promise: SPEC 1 a hostile controller quoting a huge value pays at most rateCap and cannot move the balance bid; a
     // zero or not-ok quote degrades the eth bid to the last good rate (bounded by rateCap) and leaves conversion and the
-    // balance bid live (decision 159, C02)
+    // balance bid live (decision 159)
     function test_hostileQuoteIsBounded() public {
         _valueOn();
         _fundPot(20 ether);
@@ -709,7 +709,7 @@ contract ValueModeTest is ValueBase {
             (paid, back) = _trip(ids[k++], true);
             _assertLoses(paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference");
         }
-        // the reference stale after the buy: the eth bid degrades to the last good rate (decision 159, C02), the balance
+        // the reference stale after the buy: the eth bid degrades to the last good rate (decision 159), the balance
         // door refuses: no cap can be computed
         _swapToSpot(ctl.referencePrice());
         _settleReference();
@@ -946,9 +946,9 @@ contract ValueModeTest is ValueBase {
         assertEq(xt.balanceOf(TRIPPER), viewed, "the fill pays the view");
     }
 
-    // promise: SPEC 10 outside value mode the balance payout is par, the clamp does not apply (decision 165). a usable
+    // promise: SPEC 10 outside value mode the balance payout is the posted rate, the clamp does not apply. a usable
     // reference quote is set by the fixture, so the clamp would lower the payout if it ran; with value mode off it does not
-    function test_balancePayoutIsParOutsideValueMode() public view {
+    function test_balancePayoutIsThePostedRateOutsideValueMode() public view {
         uint256 score = 433 * POINT_UNIT;
         uint256 par = score * _moduleUnit() * core.balanceRate() / 10_000;
         assertEq(core.balanceBidForScore(score), par, "the balance payout is par outside value mode");
@@ -989,7 +989,7 @@ contract ValueModeTest is ValueBase {
     }
 
     // promise: SPEC 8 the controller sale doors move the reference before they price
-    function test_saleDoorsObserve() public {
+    function test_saleDoorsRefreshTheReference() public {
         uint256 id = _fillEthPile(1)[0];
         _setCreditSaleOn(true);
         uint256 ref0 = ctl.referencePrice();
@@ -1203,7 +1203,7 @@ contract ValueRealPoolTest is ValueBase {
 
     // promise: SPEC 8 the minLiquidity gate reads the live pool depth; just-in-time liquidity added in the same block
     // lifts the pool above the minimum and makes the quote usable, the known ceiling of a block local liquidity check
-    // promise: the quote reads the liquidity sampled at the last refresh, so a one-block add cannot open it (C04)
+    // promise: the quote reads the liquidity sampled at the last refresh, so a one-block add cannot open it
     function test_jitLiquidityCannotPassMinLiquidity() public {
         uint128 liq0 = _liquidityNow();
         _setQuote(_quoteWithMinLiquidity(liq0 + uint128(POOL_LIQ)));

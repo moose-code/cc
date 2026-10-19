@@ -123,17 +123,17 @@ contract ReviewMatrixConfigTest is ReviewHarness {
         revert("see runOne");
     }
 
-    // promise: matrix stack
+    // promise: a config mutation of the stack rows (hook, locker, pool fee, tick spacing, mev module, factory) never launches with the signed hash
     function test_matrix_stack() public {
         _matrix(0, 0, N_STACK);
     }
 
-    // promise: matrix launch
+    // promise: a launch config mutation (coin, pool, sale and settings fields) fails preflight or changes the config hash, never launching with the signed hash
     function test_matrix_launch() public {
         _matrix(1, 0, N_LAUNCH);
     }
 
-    // promise: matrix rate people
+    // promise: a changed rate start or cap, a stack address as owner or another deployer fails preflight or changes the config hash, never launching with the signed hash
     function test_matrix_ratePeople() public {
         bytes32 signed = configHash(base);
         uint256[5] memory counts;
@@ -192,7 +192,7 @@ contract ReviewMatrixStateTest is ReviewHarness {
         vm.stopPrank();
     }
 
-    // promise: matrix chain state
+    // promise: a chain state mutation (factory, stack code, the predicted Core address, the linked library, the chain id) fails preflight or reverts the deploy, never launching with the signed hash
     function test_matrix_chainState() public {
         _matrix(4, 0, N_STATE);
         // the baseline launches clean: the signed config deploys with every check passing and the signed hash

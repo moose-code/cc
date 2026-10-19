@@ -626,7 +626,7 @@ contract E2EReal is Scenario {
     /// the spot, reads the eth bid at the raised spot, then swaps back in the same block. `bidOf` is the amount a
     /// sellForEth pays at that block; it clamps to the prior-block spot sample, so the bid does not move within the
     /// block and the swap round trip loses the pool fee. net gain is at most zero. mirrors the ColdAudit real-pool
-    /// round-trip check (C01). runs in the local simulation only (no broadcast), reading the deployed pool and its
+    /// same block spot round trip check: the balance payout clamps to the prior block sample. runs in the local simulation only (no broadcast), reading the deployed pool and its
     /// liquidity from the node; uses the bid view rather than an executed sell so the check does not depend on the pot.
     function phase7RoundTrip(address token) external {
         _boot();

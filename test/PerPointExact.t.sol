@@ -111,8 +111,8 @@ contract PerPointExactTest is Fixture {
         }
     }
 
-    // promise: SPEC 4 a ratio above 1 reaches the minute floor in fewer fills than the ratio-1 count (139 in BidRule)
-    function test_minuteFloor_reachedInFewerFillsAtRatioAboveOne() public {
+    // promise: SPEC 4 a ratio above 1 reaches the bucket floor in fewer fills than the ratio-1 count (139 in BidRule)
+    function test_bucketFloor_reachedInFewerFillsAtRatioAboveOne() public {
         uint256 R = 1e16;
         uint256[] memory ids = _credits(who, 300);
         // a real minute floor, so the compounding drop rests on it (launch dropFloorBps is 1, no practical floor)

@@ -15,7 +15,7 @@ import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditS
 /// credit sale window. pile credits are for sale from acquisition at a price that falls linearly from a start to a
 /// floor over `creditWindow` and rests at the floor. the floor is the larger of the credit's cost and
 /// `valueOf(score)`, times `floorMultBps()` (`(10_000 + creditSpreadBps)` of the Core's `balanceBidCapBps`); the start is the floor times `creditStartBps`. `valueOf` is the rate term
-/// `floorRate * score / refScore` with value mode off. the core keeps a hard floor
+/// `floorRate * score / RATE_SCORE` with value mode off. the core keeps a hard floor
 /// at `saleFloorBps` of the credit's cost. a buy pays the price, with the artist and operator cuts taken off it (decision 123). while
 /// the sale is on compose takes only credits past their window
 contract CreditSaleTest is Fixture {
@@ -133,7 +133,7 @@ contract CreditSaleTest is Fixture {
         c.startBps = type(uint32).max;
         vm.stopPrank();
 
-        // refScore is a Core setting now, its bound is covered by test/SetSettings.t.sol
+        // the per point divisor is the constant RATE_SCORE (100 points); there is no refScore setting
 
         // owner only
         c.saleOn = false;

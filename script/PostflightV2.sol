@@ -12,7 +12,8 @@ import {ArtifactIdentity, ArtifactLoader} from "./ArtifactLoader.sol";
 /// @notice the safe readers and the coin side of the postflight (docs/DECISIONS.md 10.4): every read is a staticcall that
 /// reports a failure instead of reverting, so a wrong address turns into a failed row and never aborts the table
 abstract contract PostflightV2 is SystemBuilder, Report, ArtifactIdentity {
-    /// @dev the gas bound of the coin's `tokenURI()` read in the postflight. the page of 80 cells costs about 25,000,000
+    /// @dev the gas bound of the coin's `tokenURI()` read. the launch `LogoCoinRenderer` is a constant string; the bound
+    /// also covers a later swap to `CoinRenderer`, whose 80 cell page costs about 25,000,000
     uint256 internal constant URI_READ_GAS = 60_000_000;
 
     // ------------------------------------------------------------------ runtime code identity
@@ -217,7 +218,7 @@ abstract contract PostflightV2 is SystemBuilder, Report, ArtifactIdentity {
         _info("coin: lock", t.locked() ? "locked" : "unlocked, script/Lock.s.sol locks it as an owner decision");
     }
 
-    /// @dev the coin's metadata renderer is the `CoinRenderer` of the config, at its CREATE2 address, bound to the
+    /// @dev the coin's metadata renderer is the renderer of the config, at its CREATE2 address, bound to the
     /// Core, and the coin's `tokenURI()` returns a json data uri. the admin may replace the renderer (`COIN_CHANGED=1`)
     function _postRenderer(LaunchConfig memory c, address core, IArtCoinsTokenV2 t, bool ch) private {
         address at = rendererAddress(c);
@@ -230,7 +231,7 @@ abstract contract PostflightV2 is SystemBuilder, Report, ArtifactIdentity {
             (bool ok, address bound) = _addr(at, abi.encodeCall(ICoinRenderer.core, ()));
             _check("renderer: core is the Core", ok && bound == core, vm.toString(bound));
         }
-        _soft(ch, "coin: metadata renderer is the CoinRenderer of the config", t.metadataRenderer() == at, vm.toString(t.metadataRenderer()), "COIN_CHANGED=1");
+        _soft(ch, "coin: metadata renderer is the renderer of the config", t.metadataRenderer() == at, vm.toString(t.metadataRenderer()), "COIN_CHANGED=1");
         (bool okUri, string memory uri) = _tokenUri(address(t));
         _soft(
             ch,

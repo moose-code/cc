@@ -289,7 +289,7 @@ contract ReviewDeployTest is ReviewHarness {
 
     /// the one value the operator signs. preflight and postflight print the same hash, Deploy needs it and every change
     /// of the config changes it
-    // promise: the one value the operator signs
+    // promise: the sign off hash is the one value the operator signs; a changed config changes it
     function test_configHashIsTheSignOffValue() public {
         bytes32 h = configHash(base);
         this.runPre(base, deployer);
@@ -362,7 +362,7 @@ contract ReviewFundedTest is Fixture {
     }
 
     /// forge-config: default.fuzz.runs = 400
-    // promise: fuzz funded rule and clamp
+    // promise: for every funded pot the bid is the price state clamped to the royalty adjusted room
     function testFuzz_fundedRuleAndClamp(uint256 rateSeed, uint256[10] memory ops) public {
         uint256 rate = bound(rateSeed, 1e13, 1e18);
         ICore c = _newCore(rate);

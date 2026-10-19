@@ -45,7 +45,8 @@ contract DemoCoin {
     }
 }
 
-/// prints the coin metadata CoinRenderer returns, on a fork. `CORE` names a deployed Core and `COIN` its coin;
+/// prints the coin metadata CoinRenderer returns, on a fork. renders CoinRenderer, the pile renderer kept for an owner
+/// swap; the launch coin uses LogoCoinRenderer. `CORE` names a deployed Core and `COIN` its coin;
 /// without them `HOLDER` names a wallet whose credits stand in for the pile. script/tools/coin-metadata.sh decodes
 /// the output into files and a viewer
 contract CoinMetadata is Script {

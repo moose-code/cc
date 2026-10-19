@@ -58,7 +58,7 @@ contract LaunchTest is Fixture {
         assertEq(core.RATE_START(), OPEN_RATE, "the opening rate the first fill starts from");
         _skipSniperWindow();
         uint256 id = _credits(seller, 1)[0];
-        _unitScore(id); // score is refScore, so the bid is the full rate
+        _unitScore(id); // a 100 point credit, so the bid is the full rate
 
         autoBook = false;
         _buyCoin(funder, 1 ether);

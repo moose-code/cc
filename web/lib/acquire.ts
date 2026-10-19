@@ -1,4 +1,4 @@
-// Selection of the listing the header acquire button buys (owner decision 134). Pure: no chain or react imports, so
+// Selection of the listing the header acquire button buys. Pure: no chain or react imports, so
 // scripts/selfcheck.ts runs it.
 
 export type AcquireSource = "strategy" | "opensea";

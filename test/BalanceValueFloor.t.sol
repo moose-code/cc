@@ -13,7 +13,7 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
-/// with value mode off `valueOf(points)` is the rate term `floorRate * points / refScore`, whether or not a balance pool
+/// with value mode off `valueOf(points)` is the rate term `floorRate * points / RATE_SCORE`, whether or not a balance pool
 /// key is set. the reference of a statement and the floor of a credit price are built on it
 contract BalanceValueFloorTest is Fixture {
     /// initializes a native eth / balance token pool at sqrt price `sp` and points the controller at it. native eth is

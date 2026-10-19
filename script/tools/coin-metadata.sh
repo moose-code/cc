@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# renders the coin metadata on a mainnet fork and decodes it into out/coin-metadata/: contractURI.txt (raw),
+# renders the pile renderer's (CoinRenderer) coin metadata on a mainnet fork; the launch coin uses LogoCoinRenderer.
+# decodes it into out/coin-metadata/: contractURI.txt (raw),
 # metadata.json (parsed), image.svg, index.html (a viewer with raw, parsed and the image).
 #   script/tools/coin-metadata.sh <holder>            a wallet's credits stand in for the pile
 #   CORE=<core> COIN=<coin> script/tools/coin-metadata.sh   the deployed Core and coin

@@ -123,8 +123,8 @@ contract CoreLayoutTest is Fixture {
         assertTrue(core.retired(), "retired value");
     }
 
-    // promise: SPEC 1 the balance bid instance is appended after the eth anchor
-    /// `State.balance` (the balance bid Rate) follows `anchor` (slots 28 to 31): rateAtCheckpoint at 32,
+    // promise: SPEC 1 the shared value mode instance is appended after the eth anchor
+    /// `State.balance` (value mode's shared Rate) follows `anchor` (slots 28 to 31): rateAtCheckpoint at 32,
     /// checkpointTime and lastFillTime packed at 33, its anchor (lastFillRate, minuteStartRate, minuteBucket and
     /// peakTime, peakRate) at 34 to 37. at launch the instance is reset to the floor 10_000 - balanceBidMarginBps, which
     /// the stored rate keeps until a balance fill or a margin change

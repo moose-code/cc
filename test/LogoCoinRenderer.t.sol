@@ -12,7 +12,7 @@ interface IContractUri {
 }
 
 contract LogoCoinRendererTest is Test {
-    // promise: the image is the animated CC logo svg, served to every coin unchanged, and deploy cost is known.
+    // promise: the image is the animated CC logo svg, served to every coin unchanged, and deploy cost is known
     function test_image_is_animated_logo() public {
         LogoCoinRenderer r = new LogoCoinRenderer(address(this));
         string memory img = r.image();

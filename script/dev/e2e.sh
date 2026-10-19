@@ -121,7 +121,7 @@ past_window; stage compose-a
 stage claims
 stage d-open
 
-say "the credit price holds at or above its floor as the bid climbs (decision 116)"
+say "the credit price holds at or above its floor as the bid climbs"
 # creditPrice(id) = max(cost, valueOf(score)) * floorMultBps() / 10000, scaled up by the age curve to creditStartBps at
 # acquisition. the floor tracks the climbing eth bid through valueOf, so the price rises with the bid; the invariant is
 # that it never sits below that floor. compute the floor from the controller's getters and assert price >= floor.

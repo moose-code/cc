@@ -65,7 +65,7 @@ abstract contract SeaportBase is Fixture {
     /// hands the next usable credit to the maker and approves Seaport itself as operator, no conduit.
     function _list() internal returns (uint256 id) {
         id = _credits(maker, 1)[0];
-        // refScore set to the listed credit's score, so its bid is the full rate and the ethRate based order prices hold
+        // the listed credit is a 100 point credit, so its bid is the whole rate and the ethRate based order prices hold
         _unitScore(id);
         vm.prank(maker);
         CREDITS.setApprovalForAll(address(SEAPORT), true);
@@ -260,15 +260,15 @@ contract SeaportTest is SeaportBase {
                     1. the basic order through the adapter
     //////////////////////////////////////////////////////////////*/
 
-    // promise: SPEC 6 buyListing caps value and the keeper payment at the credit's scaled bid, at score != refScore
-    function test_basic_capAndPaymentAtScoreNotRefScore() public {
-        // a fresh listing without forcing refScore to the credit's score, so score / refScore is not 1
+    // promise: SPEC 6 buyListing caps value and the keeper payment at the credit's scaled bid, at a score other than 100 points
+    function test_basic_capAndPaymentAtScoreNot100Points() public {
+        // a fresh listing without mocking the credit to 100 points, so score / RATE_SCORE is not 1
         uint256 id = _credits(maker, 1)[0];
         vm.prank(maker);
         CREDITS.setApprovalForAll(address(SEAPORT), true);
         uint256 ref = RATE_SCORE;
         uint256 s = _scoreOf(id);
-        assertTrue(s != ref, "the credit's score is not refScore");
+        assertTrue(s != ref, "the credit's score is not 100 points");
         _fundPot(10 ether);
         // the per-credit bid by the hand formula, not bidOf
         uint256 handBid = (core.ethRate() * s) / ref;

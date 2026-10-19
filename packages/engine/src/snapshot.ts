@@ -101,9 +101,9 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { ...c, functionName: "creditCostToPotBps" },
     ] as const,
   });
-  // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
-  // the whole snapshot. defaults to 1x (10_000 bps) when the Core does not answer
-  // and the reserve (the eth the pot keeps for processing), a tolerant read that defaults to 0 for a Core without it
+  // the pot scaled climb multiplier and the reserve (the eth the pot keeps for processing). tolerant reads: a failed
+  // climbMultiplier read defaults to 1x (10_000 bps) and a failed reserve read to 0, so one failing view does not blank
+  // the snapshot.
   // The eth bid and price state degrade to the last good value while the protected quote is unusable. A failed Core
   // read still leaves the rest of the snapshot intact.
   const [climbMultiplierRes, reserveRes, ethRateRes, ethPriceRes] = await client.multicall({
@@ -172,7 +172,7 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { address: STATEMENTS, abi: statementsAbi, functionName: "supply" },
     ] as const,
   });
-  // the protected price (decision 148): the controller's reference of the balance token against the pool spot, both
+  // the protected price: the controller's reference of the balance token against the pool spot, both
   // wei per 1e18 base units, the reference's age and the quote settings, and the value of one point at the buy and sale
   // prices. a controller without them leaves the fields undefined
   const [refRes, refTimeRes, spotRes, quoteRes, buyRes, sellRes] = await client.multicall({

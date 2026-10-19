@@ -87,7 +87,7 @@ contract Scenario is Script {
         else if (stage == keccak256("fill-a")) _fillA();
         else if (stage == keccak256("adopt")) _adopt();
         else if (stage == keccak256("compose-a")) _composeA();
-        else if (stage == keccak256("claims")) _claims();
+        else if (stage == keccak256("claims")) _payeeShare();
         else if (stage == keccak256("d-open")) _dOpen();
         else if (stage == keccak256("d-buy")) _dBuy();
         else if (stage == keccak256("fill-b")) _fillB();
@@ -254,10 +254,10 @@ contract Scenario is Script {
         console.log("compose-a: ethToBuyback after", core.ethToBuyback());
     }
 
-    // ------------------------------------------------------------------ claims: the pushed payee fee share
+    // ------------------------------------------------------------------ the pushed payee fee share
 
-    function _claims() internal {
-        // the payee fee share is pushed by `_book`, not claimed (decision 123). payeePpm is 0 at launch (decision 120);
+    function _payeeShare() internal {
+        // the payee fee share is pushed by `_book`, not claimed. payeePpm is 0 at launch;
         // the owner raises it, then a booked buy pushes the share to the payee
         if (core.settings().payeePpm == 0) {
             Settings memory sp = core.settings();

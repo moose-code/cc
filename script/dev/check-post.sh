@@ -68,7 +68,7 @@ WANT_HASH="$(jq -r '.runtimeHash' "$ART")"
 check "the token runtime hash equals the pinned hash (immutables masked)" \
   "$([ "$(lc "$GOT_HASH")" = "$(lc "$WANT_HASH")" ] && echo 1 || echo 0)" "got $GOT_HASH"
 
-# 3. redeem and balance bid are on (settings struct, fields 12 and 13)
+# 3. redeem and balance bid are on (settings struct, redeemOn and balanceBidOn, tuple indices 11 and 12)
 SIG='settings()((uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool))'
 SETTINGS_JSON="$(cast call "$CORE" "$SIG" --json --rpc-url "$RPC")"
 REDEEM_ON="$(echo "$SETTINGS_JSON" | jq -r '.[0][11]' 2>/dev/null)"
@@ -90,8 +90,8 @@ AVAIL="$(callc "$BMOD" 'available()(uint256)' | awk '{print $1}')"
 check "the module available balance is nonzero" "$(calc "$AVAIL > 0")" "available $AVAIL"
 
 # 6. a sellForBalance from A1 pays balanceBidOf. the credit approval lands in its own block first, then the bid is read
-# and the sell sent, one block apart; the balance bid climbs a little each block, so the realized pay is checked within
-# a small tolerance of the read. e2e-real's phase7BalanceSell asserts the exact equality atomically in one tx.
+# and the sell sent, one block apart; the balance bid is a flat posted price, so the realized pay equals the balanceBidOf
+# read. e2e-real's phase7BalanceSell asserts the same equality atomically in one tx.
 cast send "$CREDITS" 'setApprovalForAll(address,bool)' "$CORE" true --from "$A1" --unlocked --rpc-url "$RPC" >/dev/null 2>&1
 ID="$(callc "$CREDITS" 'tokensOf(address)(uint256[])' "$A1" | tr -d '[]' | tr ',' '\n' | grep -oE '[0-9]+' | head -1)"
 if [ "$BALBID_ON" != "true" ]; then
@@ -102,7 +102,7 @@ elif [ -n "$ID" ]; then
   if cast send "$CORE" 'sellForBalance(uint256[])' "[$ID]" --from "$A1" --unlocked --rpc-url "$RPC" >/dev/null 2>&1; then
     AFTER="$(callc "$BTOK" 'balanceOf(address)(uint256)' "$A1" | awk '{print $1}')"
     PAID="$(python3 -c "print($AFTER - $BEFORE)")"
-    check "a sellForBalance from A1 pays balanceBidOf" "$(calc "$BID > 0 and abs($PAID - $BID) <= $BID * 2 // 100")" "bid $BID paid $PAID"
+    check "a sellForBalance from A1 pays balanceBidOf" "$(calc "$BID > 0 and $PAID == $BID")" "bid $BID paid $PAID"
   else
     check "a sellForBalance from A1 pays balanceBidOf" 0 "sellForBalance reverted for credit $ID"
   fi

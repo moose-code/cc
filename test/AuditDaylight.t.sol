@@ -47,7 +47,7 @@ contract AuditDaylightTest is Fixture {
         t.mint(address(m), 1e24);
     }
 
-    // promise: M1 the balance rate is the posted 10_000 - balanceDiscountBps whatever the module state and whatever time
+    // promise: the balance rate is the posted 10_000 - balanceDiscountBps whatever the module state and whatever time
     // passes: no climb while idle, no module read (decision 164)
     function test_balanceRateIsPostedWithoutModule() public {
         _enableBid();
@@ -58,7 +58,7 @@ contract AuditDaylightTest is Fixture {
         assertEq(core.balanceRate(), _posted(), "a module set leaves the posted rate unchanged");
     }
 
-    // promise: M1 the posted balance rate is unchanged by a failing unit read: it never reads the module or the instance
+    // promise: the posted balance rate is unchanged by a failing unit read: it never reads the module or the instance
     function test_balanceRatePostedThroughUnitFailure() public {
         MockBalanceModule m = _module();
         _setBalanceModule(address(m));

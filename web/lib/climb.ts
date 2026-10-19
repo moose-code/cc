@@ -1,7 +1,6 @@
 // Forecast of the eth bid for one credit as the price state climbs, and the time a listing price is reached.
-// Pure: no chain or react imports, so scripts/selfcheck.ts runs it. Floating point mirror of CoreLib._climb
-// (src/lib/CoreLib.sol:334-356), _recover (:371-386) and _climbTo (:392-396), Halving.halve, and Core.ethRate / bidOf
-// (src/Core.sol:458-470). It reproduces the contract to within fixed-point rounding (about 1e-12 relative); the
+// Pure: no chain or react imports, so scripts/selfcheck.ts runs it. Floating point mirror of CoreLib._climb,
+// CoreLib._recover, CoreLib._climbTo, Halving.halve, and Core.ethRate and Core.bidOf. It reproduces the contract to within fixed-point rounding (about 1e-12 relative); the
 // forecast is an estimate and is shown with "~".
 
 export interface ClimbState {

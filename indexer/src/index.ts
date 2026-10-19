@@ -101,7 +101,7 @@ ponder.on("Core:EthRateFill", async ({ event, context }) => {
   await bump(context, event, { ethIntoCredits: event.args.spent });
 });
 
-// value mode (decision 148): an eth fill drops the shared balance instance and logs ValueRateFill in place of EthRateFill
+// value mode: an eth fill drops the shared balance instance and logs ValueRateFill in place of EthRateFill
 ponder.on("Core:ValueRateFill", async ({ event, context }) => {
   await coreEvent(context, event, "ValueRateFill");
   ethFill = event.transaction.hash;
@@ -111,7 +111,7 @@ ponder.on("Core:ValueRateFill", async ({ event, context }) => {
 ponder.on("Core:CreditBought", async ({ event, context }) => {
   await coreEvent(context, event, "CreditBought");
   // cost is the pile cost basis (eth bid: the price plus the artist royalty; balance bid: the eth floor basis);
-  // toArtist is the royalty in the route's currency (decision 163)
+  // toArtist is the royalty in the route's currency
   const { id, from, cost, toArtist } = event.args;
   const how = ethFill === event.transaction.hash ? "eth_bid" : "balance_bid";
   ethFill = null;
@@ -126,7 +126,7 @@ ponder.on("Core:CreditBought", async ({ event, context }) => {
 
 ponder.on("Core:BalanceFill", async ({ event, context }) => {
   await coreEvent(context, event, "BalanceFill");
-  // paid is the seller's posted payout, toArtist the royalty, both in balance token (decisions 163, 164)
+  // paid is the seller's posted payout, toArtist the royalty, both in balance token
   const { paid, toArtist } = event.args;
   // This column follows earlier BalanceModuleSet logs, never a latest-state RPC read.
   const { balanceToken } = await ensureEngine(context);
@@ -149,7 +149,7 @@ ponder.on("Core:BalanceFill", async ({ event, context }) => {
 
 ponder.on("Core:ListingBought", async ({ event, context }) => {
   await coreEvent(context, event, "ListingBought");
-  // cost is the listing price, paid the keeper payment, toArtist the royalty on the price (decision 163); the pile
+  // cost is the listing price, paid the keeper payment, toArtist the royalty on the price; the pile
   // cost basis is the three summed
   const { id, caller, cost, paid, toArtist } = event.args;
   ethFill = null;
@@ -333,7 +333,7 @@ ponder.on("Core:BalanceRateSet", async ({ event, context }) => {
   await coreEvent(context, event, "BalanceRateSet");
   // BalanceRateSet reports value mode's shared instance reset to the floor, not the posted balance bid rate: the
   // balance bid is 10_000 - balanceDiscountBps and lives in the balanceRate column, sourced from SettingsSet and the
-  // snapshot read (decision 164). record this under a separate shared-rate key so it does not conflate with that column
+  // snapshot read. record this under a separate shared-rate key so it does not conflate with that column
   await settingValue(context, event, "core", "BalanceRateSet", null, { sharedRateBps: Number(event.args.rateBps) });
 });
 
@@ -501,7 +501,7 @@ ponder.on("Controller:BalancePoolKeySet", async ({ event, context }) => {
   });
 });
 
-// the protected price (decision 148): the quote settings and the rate limited reference of the balance token
+// the protected price: the quote settings and the rate limited reference of the balance token
 ponder.on("Controller:QuoteSet", async ({ event, context }) => {
   await record(context, event, "controller", "QuoteSet");
   const q = event.args.quote;

@@ -313,7 +313,7 @@ contract ConfigTest is Fixture {
         c = lc;
         c.payee = c.stack.escrow;
         _pre(c, d2);
-        // the payee share and the operator cut are forced pushes (decision 123), so the preflight no longer probes the
+        // the payee share and the operator cut are forced pushes, so the preflight does not probe the claim path or the
         // payee for an eth call; only the dead-or-stack-address rule fails for a stack payee
         assertEq(_failedNames(), "rule: owner, creator and payee are not dead or stack addresses");
     }
@@ -523,12 +523,12 @@ contract ConfigTest is Fixture {
         assertFalse(_warnClean("warn: coin: description equals the config"));
     }
 
-    /// the coin's renderer is the CoinRenderer of the config, bound to the Core, and `tokenURI()` answers. an admin
+    /// the coin's renderer is the renderer of the config, bound to the Core, and `tokenURI()` answers. an admin
     /// replacement fails the renderer row until the operator names the change (COIN_CHANGED=1); a renderer that reverts
     /// fails the tokenURI row; a renderer bound to another address fails its Core row while the fixed logo still renders
     // promise: the postflight reads the coin renderer, its Core and the coin's tokenURI
-    function test_FIXED_postflightReadsTheCoinRenderer() public {
-        string memory rendererRow = "coin: metadata renderer is the CoinRenderer of the config";
+    function test_FIXED_postflightReadsTheRenderer() public {
+        string memory rendererRow = "coin: metadata renderer is the renderer of the config";
         string memory uriRow = "coin: tokenURI returns a json data uri";
         string memory coreRow = "renderer: core is the Core";
         assertEq(coin.metadataRenderer(), rendererAddress(lc), "named by the launch");
@@ -559,10 +559,10 @@ contract ConfigTest is Fixture {
         assertTrue(ok, "the admin sets the renderer");
     }
 
-    /// the token config names the CoinRenderer of the config: its address is a function of the owner and the salt,
+    /// the token config names the renderer of the config: its address is a function of the owner and the salt,
     /// and the config holds no renderer field
-    // promise: the token config names the CoinRenderer of the config
-    function test_buildConfigNamesTheCoinRenderer() public view {
+    // promise: the token config names the renderer of the config
+    function test_buildConfigNamesTheRenderer() public view {
         assertEq(buildConfig(lc, lc.owner, address(0)).token.renderer, rendererAddress(lc));
         LaunchConfig memory c = lc;
         c.salt = keccak256("another salt");
@@ -713,7 +713,7 @@ contract ConfigTest is Fixture {
         postflightAs(c, address(core), address(0));
         assertEq(
             _failedNames(),
-            "core: owner, coin: admin is the config owner, coin: metadata renderer is the CoinRenderer of the config"
+            "core: owner, coin: admin is the config owner, coin: metadata renderer is the renderer of the config"
         );
 
         c = lc;

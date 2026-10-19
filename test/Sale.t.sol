@@ -680,8 +680,8 @@ contract SaleAnchorTest is SaleShapeBase {
     }
 
     // promise: SPEC 1 anchorMinCost: dust statements leave the anchor
-    /// the review of d77b82c (F1): with an empty pot the engine pays 1 wei per credit, so a statement of about 80 wei is
-    /// composed and bought at its start price. four rounds leave the anchor, its time and the fresh start price unchanged
+    /// with an empty pot the engine pays 1 wei per credit, so a statement of about 80 wei is composed and bought at its
+    /// start price. four rounds leave the anchor, its time and the fresh start price unchanged
     function test_anchor_dustStatementsLeaveTheAnchor() public {
         // a page costs at most a page at the capped fill rate, under this minimum, so every round is dust
         _setAnchorMinCost(0.2 ether);
@@ -695,7 +695,7 @@ contract SaleAnchorTest is SaleShapeBase {
                 vm.deal(attacker, attacker.balance + 2);
                 vm.prank(attacker);
                 core.fund{value: 2}();
-                // refScore set to this credit's score, so the pot reads a 1 wei bid for it (score / refScore is 1)
+                // a 100 point credit, so its bid is the whole rate and the pot reads a 1 wei bid for it
                 _unitScore(ids[i]);
                 uint256[] memory one = new uint256[](1);
                 one[0] = ids[i];

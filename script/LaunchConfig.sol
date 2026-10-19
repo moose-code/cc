@@ -35,7 +35,8 @@ bytes32 constant V2_CODEHASH_BURN_ROUTER = 0x446c38e7f907b120416c06e90f92f966a20
 
 // the EIP 7702 delegation of the owner account, read at V2_PIN_BLOCK. the account runs the code of OWNER_DELEGATE
 // (Uniswap Calibur, 24,504 bytes, no proxy). preflight requires the account code, the delegate code hash and an empty
-// key registry (`keyCount()` 0), so no registered key can act as the owner. docs/reviews/REVIEW-sandwich-delegate.md section 2
+// key registry (`keyCount()` 0): preflight pins the owner's 7702 delegate code hash and requires an empty key registry,
+// so no registered key can act as the owner
 bytes constant OWNER_DELEGATION_CODE = hex"ef0100612373d7003d694220f7800eeaf8e3924c0951d3";
 address constant OWNER_DELEGATE = 0x612373D7003d694220f7800EeaF8E3924c0951D3;
 bytes32 constant OWNER_DELEGATE_CODEHASH = 0xff0357b543bbb94845b6791a8becac5e87d467814f86538a62649c877227d631;

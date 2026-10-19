@@ -7,9 +7,9 @@
 import type { Address, Hex } from "viem";
 import type { Door, DoorPolicy } from "./config.ts";
 
-// the private gas constants of the Core (src/Core.sol 224 to 236), restated
+// the private gas constants of the Core, restated (COMPOSE_GAS, REDEEM_GAS, BUYBACK_GAS, BUYLISTING_GAS; CoreLib.REFRESH_GAS)
 export const COMPOSE_GAS = 13_700_000n;
-// the most gas the Core's refreshReference door counts for the caller payment (Core.REFRESH_GAS)
+// the most gas the Core's refreshReference door counts for the caller payment (CoreLib.REFRESH_GAS)
 export const REFRESH_GAS = 200_000n;
 export const REDEEM_GAS = 1_500_000n;
 export const BUYBACK_GAS = 600_000n;
@@ -37,7 +37,7 @@ export interface Settings {
   // the ETH purchase budget: spendCapBps 10,000 disables it; a bucket lasts bucketSeconds
   spendCapBps: number;
   bucketSeconds: number;
-  // the artist royalty on every purchase, bps of the price, paid on top from the pot (decision 163)
+  // the artist royalty on every purchase, bps of the price, paid on top from the pot
   buyToArtistBps: number;
 }
 
@@ -73,8 +73,8 @@ export interface State {
   balanceModule: Address;
   // the held statements with controller.atFloor(sid) true
   atFloor: bigint[];
-  // the value switch (decision 148): the controller, the Core's valueModeOn, whether the controller's value quote is
-  // unusable now (informational: the eth bid falls back to the last good rate, decision 159, so it never halts a door), the
+  // the value switch: the controller, the Core's valueModeOn, whether the controller's value quote is unusable now
+  // (informational: the eth bid falls back to the last good rate, so it never halts a door), the
   // controller's reference sample time (0 before the pool key), the reference staleness bound (0 is never usable) and
   // the least seconds between two refreshes
   controller: Address;
@@ -155,7 +155,7 @@ export function profitable(payment: bigint, cost: bigint, margin: bigint): boole
 
 // Core.buyListing: min(min(counted, BUYLISTING_GAS) * min(basefee, keeperMaxBaseFee) + keeperFee, bid - price,
 // room - price - royalty), where the room is the pot read after the door's book less the reserve (Core.room) and the
-// royalty is buyToArtistBps of the price, paid to the artist on top (decision 163). a listing whose price plus
+// royalty is buyToArtistBps of the price, paid to the artist on top. a listing whose price plus
 // royalty passes the room reverts PotTooSmall
 export function listingPayment(s: State, l: Listing, gasUsed: bigint, b: bigint): bigint {
   const royalty = (l.price * BigInt(s.settings.buyToArtistBps)) / 10_000n;
@@ -239,7 +239,7 @@ export function refreshReferenceDue(s: State): { ok: boolean; reason: string } {
 }
 
 // every call the keeper would make at this state, in priority order: buyListing (best gap first), buyback, compose,
-// collectEscrow, book, redeemStatement, observe. returns the updated staleness map
+// collectEscrow, book, redeemStatement, refreshReference. returns the updated listing staleness map
 export function decide(
   s: State,
   listings: Listing[],
@@ -266,7 +266,7 @@ export function decide(
 
   // 1. buyListing
   const sweepable: { l: Listing; key: string; payment: bigint; cost: bigint }[] = [];
-  // a lapsed value quote no longer halts the eth bid: it falls back to the last good rate (decision 159, C02), so a
+  // a lapsed value quote no longer halts the eth bid: it falls back to the last good rate, so a
   // sweep still runs at the degraded bid. `noQuote` is informational, not a gate
   if (on("buyListing") && !s.retired && s.potRoom === 0n) {
     skips.push({ door: "buyListing", reason: `ReserveHeld: the pot ${s.potWithPending} is at or under the reserve ${s.reserve}, acquisitions wait for fees` });
@@ -280,7 +280,7 @@ export function decide(
         continue;
       }
       if (l.price > l.bid) continue;
-      // the pot pays the price plus its artist royalty, so the room bounds price + royalty (Core.buyListing, decision 163)
+      // the pot pays the price plus its artist royalty, so the room bounds price + royalty (Core.buyListing)
       const royalty = (l.price * BigInt(s.settings.buyToArtistBps)) / 10_000n;
       if (l.price + royalty > s.potRoom) {
         skips.push({ door: "buyListing", key, reason: "PotTooSmall: price plus its artist royalty above ethPot less the reserve" });
