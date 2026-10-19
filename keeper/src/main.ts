@@ -18,6 +18,8 @@ import { log, safeError } from "./log.ts";
 
 // A decoded order-specific simulation failure suppresses that listing for this long.
 const LISTING_COOLDOWN_SEC = 300;
+// An included revert may reflect a changed order or state after simulation; wait longer before trying it again.
+const REVERTED_LISTING_COOLDOWN_SEC = 3_600;
 // the head is polled this often; a tick runs per new block, or per TICK_MS while the head holds
 const HEAD_POLL_MS = 4_000;
 // the same skip reason of a door is logged again after this long
@@ -70,6 +72,13 @@ export async function candidatesOrEmpty(sources: Pick<Sources, "candidates">, sn
   }
 }
 
+export function listingCooldown(outcome: Outcome, listing?: Listing): { key: string; seconds: number } | undefined {
+  if ((outcome.kind === "sent" || outcome.kind === "reconciled") && outcome.status === "reverted" && outcome.listingKey)
+    return { key: outcome.listingKey, seconds: REVERTED_LISTING_COOLDOWN_SEC };
+  if (outcome.kind === "failed" && outcome.listingFault && listing)
+    return { key: `${listing.venue}:${listing.id}`, seconds: LISTING_COOLDOWN_SEC };
+}
+
 export class Keeper {
   private seen = new Map<string, bigint>();
   private lastBookAt = 0n;
@@ -102,6 +111,8 @@ export class Keeper {
     const state = { ...read.state, lastBookAt: this.lastBookAt };
     const pending = await this.exec.reconcile();
     if (pending) {
+      const cooldown = listingCooldown(pending);
+      if (cooldown) this.sources.coolDown(cooldown.key, cooldown.seconds);
       log("info", "pending transaction", { block: state.blockNumber, outcome: pending });
       return { block: state.blockNumber, calls: [], skips: [], outcomes: [{ door: "pending", key: "pending", outcome: pending }] };
     }
@@ -133,8 +144,9 @@ export class Keeper {
       const outcome = await this.exec.run(c, state, listing);
       outcomes.push({ door: c.door, key: c.key, outcome });
       if (outcome.kind === "failed" || outcome.kind === "skipped") log("info", "not sent", { block: state.blockNumber, door: c.door, key: c.key, reason: outcome.reason });
-      if (outcome.kind === "failed" && outcome.listingFault && listing) {
-        this.sources.coolDown(`${listing.venue}:${listing.id}`, LISTING_COOLDOWN_SEC);
+      const cooldown = listingCooldown(outcome, listing);
+      if (cooldown) {
+        this.sources.coolDown(cooldown.key, cooldown.seconds);
         this.seen.delete(c.key);
       }
       // one transaction per tick: the next decision reads the state after it

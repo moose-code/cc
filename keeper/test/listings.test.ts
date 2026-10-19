@@ -5,6 +5,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Sources } from "../src/listings.ts";
+import { listingCooldown } from "../src/main.ts";
 import { setSink } from "../src/log.ts";
 import { CREDIT_STRATEGY } from "@cc/engine/addresses";
 
@@ -105,8 +106,8 @@ test("seaport: malformed signed order is isolated from a valid order", async () 
   }
 });
 
-// promise: a listing that reverted after simulation is excluded until its cooldown expires, leaving other listings eligible
-test("seaport: a cooled listing yields the next candidate", async () => {
+// promise: a confirmed reverted listing waits one hour, while another listing remains eligible during that wait
+test("seaport: a reverted listing waits one hour and yields the next candidate", async () => {
   let now = 1_000_000_000;
   const cfg: any = {
     record: { core: "0x00000000000000000000000000000000000000c0", seaportAdapter: "0x00000000000000000000000000000000000000a1" },
@@ -120,9 +121,13 @@ test("seaport: a cooled listing yields the next candidate", async () => {
     venue: "seaport", adapter: cfg.record.seaportAdapter, id, price: 1000n,
     params: "0x", hash: "0x" + "11".repeat(32), offerer,
   }));
-  source.coolDown("seaport:42", 300);
+  const cooldown = listingCooldown({ kind: "sent", hash: ("0x" + "11".repeat(32)) as `0x${string}`, status: "reverted", spent: 1n, received: 0n, listingKey: "seaport:42" });
+  assert.ok(cooldown);
+  source.coolDown(cooldown.key, cooldown.seconds);
   assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 1n)).map((l) => l.id), [43n]);
-  now += 300_001;
+  now += 3_599_999;
+  assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 2n)).map((l) => l.id), [43n]);
+  now += 1;
   assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 2n)).map((l) => l.id), [42n, 43n]);
 });
 

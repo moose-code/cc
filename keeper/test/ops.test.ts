@@ -65,6 +65,19 @@ test("budget: damaged live ledger and pending transaction files fail closed", ()
   assert.throws(() => new PendingStore(dir), SyntaxError);
 });
 
+// promise: pending files from before listing identity was added still load, while malformed identities fail closed
+test("pending: optional listing identity preserves old records and validates new ones", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-pending-legacy-"));
+  const path = join(dir, "pending.json");
+  const old = { hash: "0x" + "11".repeat(32), nonce: 1, chainId: 1, address: "0x" + "f1".repeat(20), door: "buyListing", before: "1" };
+  writeFileSync(path, JSON.stringify(old));
+  assert.equal(new PendingStore(dir).current?.listingKey, undefined);
+  writeFileSync(path, JSON.stringify({ ...old, listingKey: "seaport:42" }));
+  assert.equal(new PendingStore(dir).current?.listingKey, "seaport:42");
+  writeFileSync(path, JSON.stringify({ ...old, listingKey: "seaport:not-an-id" }));
+  assert.throws(() => new PendingStore(dir), /invalid keeper pending transaction/);
+});
+
 test("breaker: the threshold-th consecutive failure pauses the door; a success resets the count", () => {
   let now = 0;
   const b = new Breaker(3, 60, () => now);

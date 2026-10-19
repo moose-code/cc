@@ -25,8 +25,8 @@ import { log, txUrl } from "./log.ts";
 export type Signer = { address: Address; account?: PrivateKeyAccount; impersonate?: boolean };
 
 export type Outcome =
-  | { kind: "sent"; hash: Hex; status: "success" | "reverted"; spent: bigint; received: bigint }
-  | { kind: "reconciled"; hash: Hex; status: "success" | "reverted"; spent: bigint; received: bigint }
+  | { kind: "sent"; hash: Hex; status: "success" | "reverted"; spent: bigint; received: bigint; listingKey?: string }
+  | { kind: "reconciled"; hash: Hex; status: "success" | "reverted"; spent: bigint; received: bigint; listingKey?: string }
   | { kind: "dry"; gas: bigint }
   | { kind: "skipped"; reason: string }
   | { kind: "failed"; reason: string; listingFault?: boolean };
@@ -139,7 +139,7 @@ export class Executor {
     const before = await this.client.getBalance({ address: this.signer.address });
     let hash: Hex;
     try {
-      hash = await this.send(tx, chainId, c.door, before);
+      hash = await this.send(tx, chainId, c.door, before, c.door === "buyListing" && listing ? `${listing.venue}:${listing.id}` : undefined);
     } catch (e) {
       const unresolved = this.pending.get();
       if (unresolved) void alert(this.cfg.alertWebhook, "pending", "keeper transaction acceptance is uncertain; later sends are blocked until its receipt is accounted", { hash: unresolved.hash, nonce: unresolved.nonce, door: c.door });
@@ -210,13 +210,13 @@ export class Executor {
       if (this.breaker.fail(door)) void alert(this.cfg.alertWebhook, `breaker:${door}`, `${door} paused after repeated on chain reverts`, fields);
     }
     if (after !== undefined && after < this.cfg.lowBalance) void alert(this.cfg.alertWebhook, "balance", "keeper balance low, top up", { balance: after, address: this.signer.address });
-    return { kind, hash, status: receipt.status, spent, received };
+    return { kind, hash, status: receipt.status, spent, received, ...(tx.listingKey ? { listingKey: tx.listingKey } : {}) };
   }
 
   // a signed transaction goes to each relay in order until one accepts it; without relays (a local node) to the read
   // node. An impersonated account sends unsigned through eth_sendTransaction on a local node; its hash cannot be
   // persisted before the RPC accepts it, so a lost local response requires manual nonce reconciliation.
-  private async send(tx: { to: Address; data: Hex; gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }, chainId: number, door: Intended["door"], before: bigint): Promise<Hex> {
+  private async send(tx: { to: Address; data: Hex; gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }, chainId: number, door: Intended["door"], before: bigint, listingKey?: string): Promise<Hex> {
     const hex = (v: bigint) => `0x${v.toString(16)}`;
     if (this.signer.impersonate) {
       const nonce = await this.client.getTransactionCount({ address: this.signer.address, blockTag: "pending" });
@@ -224,14 +224,14 @@ export class Executor {
         method: "eth_sendTransaction" as any,
         params: [{ from: this.signer.address, to: tx.to, data: tx.data, gas: hex(tx.gas), maxFeePerGas: hex(tx.maxFeePerGas), maxPriorityFeePerGas: hex(tx.maxPriorityFeePerGas) }] as any,
       })) as Hex;
-      this.pending.save({ hash, nonce, chainId, address: this.signer.address, door, before });
+      this.pending.save({ hash, nonce, chainId, address: this.signer.address, door, before, listingKey });
       return hash;
     }
     const account = this.signer.account!;
     const nonce = await this.client.getTransactionCount({ address: account.address, blockTag: "pending" });
     const raw = await account.signTransaction({ type: "eip1559", chainId, nonce, ...tx });
     const expected = keccak256(raw);
-    this.pending.save({ hash: expected, nonce, chainId, address: account.address, door, before });
+    this.pending.save({ hash: expected, nonce, chainId, address: account.address, door, before, listingKey });
     const relays = this.cfg.relayUrls;
     if (relays.length === 0) {
       const hash = (await this.client.request({ method: "eth_sendRawTransaction", params: [raw] })) as Hex;

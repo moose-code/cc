@@ -120,6 +120,7 @@ export interface PendingTx {
   door: Door;
   before: bigint;
   ledgerDay?: string;
+  listingKey?: string; // venue:id of a buyListing; survives receipt reconciliation after restart
 }
 
 // A signed transaction remains unresolved until a receipt is accounted, even if a relay request or receipt poll fails.
@@ -138,7 +139,8 @@ export class PendingStore {
     if (!/^0x[0-9a-fA-F]{64}$/.test(j?.hash) || !Number.isSafeInteger(j.nonce) || j.nonce < 0 ||
         !Number.isSafeInteger(j.chainId) || j.chainId <= 0 || !/^0x[0-9a-fA-F]{40}$/.test(j.address) ||
         typeof j.door !== "string" || !/^\d+$/.test(j.before) ||
-        (j.ledgerDay !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(j.ledgerDay))) {
+        (j.ledgerDay !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(j.ledgerDay)) ||
+        (j.listingKey !== undefined && (j.door !== "buyListing" || !/^(strategy|seaport):\d+$/.test(j.listingKey)))) {
       throw new Error(`invalid keeper pending transaction: ${this.path}`);
     }
     this.current = { ...j, before: BigInt(j.before) };
