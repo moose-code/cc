@@ -24,8 +24,9 @@
 # the scripts require chain id 1 (Checks.sol), so forge runs with --chain-id 1; a local node keeps its own chain id
 # and the record carries it.
 # env rehearsal with REHEARSAL_DEPLOYER signs with a keystore on the anvil fork (docs/RUNBOOK.md section 6, signer drill).
-# secrets: the keystore and its password file are named in the env file and read by forge only. a private key on the
-# command line or in the environment of a keystore env is refused. API keys and the broadcast rpc come from the shell.
+# secrets: a keystore name comes from the shell. Direct use accepts a password file outside the repository;
+# TERMINAL_KEYSTORE=1 prompts in the terminal instead. A private key in the environment of a keystore env is refused.
+# API keys and the broadcast rpc come from the shell.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -51,7 +52,7 @@ DRY_RUN="${DRY_RUN:-0}"
 case "$DRY_RUN" in 0|1) ;; *) die "DRY_RUN is 0 or 1" ;; esac
 RESUME="${RESUME:-}"
 case "$RESUME" in ''|state|record) ;; *) die "RESUME is state or record" ;; esac
-[ -z "$RESUME" ] || [ "$DRY_RUN" = 0 ] || die "RESUME and DRY_RUN do not combine"
+[ "$RESUME" != record ] || [ "$DRY_RUN" = 0 ] || die "RESUME=record has no transaction to preview"
 DEFER_LAUNCH="${DEFER_LAUNCH:-0}"
 LAUNCH_ONLY="${LAUNCH_ONLY:-0}"
 case "$DEFER_LAUNCH$LAUNCH_ONLY" in 00|01|10) ;; *) die "DEFER_LAUNCH and LAUNCH_ONLY are 0 or 1 and do not combine" ;; esac
@@ -76,6 +77,7 @@ CONFIG_OVERRIDE="${LAUNCH_CONFIG:-}"
 CHAIN_OVERRIDE="${CHAIN_ID:-}"
 KEYSTORE_SHELL="${KEYSTORE_ACCOUNT:-}"
 PASSWORD_SHELL="${PASSWORD_FILE:-}"
+TERMINAL_KEYSTORE="${TERMINAL_KEYSTORE:-0}"
 RECORD_SHELL="${RECORD_FILE:-}"
 LOCK_DIR_SHELL="${CONFIG_LOCK_DIR:-}"
 REH_DEPLOYER="${REHEARSAL_DEPLOYER:-}"
@@ -85,6 +87,8 @@ set -a; . "$ENV_FILE"; set +a
 # shell, so a frozen checkout needs no edit
 if [ -z "${KEYSTORE_ACCOUNT:-}" ]; then KEYSTORE_ACCOUNT="$KEYSTORE_SHELL"; fi
 if [ -z "${PASSWORD_FILE:-}" ]; then PASSWORD_FILE="$PASSWORD_SHELL"; fi
+case "$TERMINAL_KEYSTORE" in 0|1) ;; *) die "TERMINAL_KEYSTORE is 0 or 1" ;; esac
+[ "$TERMINAL_KEYSTORE" = 0 ] || [ -z "$PASSWORD_FILE" ] || die "TERMINAL_KEYSTORE and PASSWORD_FILE do not combine"
 # env rehearsal only: REHEARSAL_DEPLOYER=<addr> makes <addr> the owner, signer and DEPLOYER and signs with the keystore
 # (script/dev/rehearse-signer.sh); REHEARSAL_SKIP_GIT=1 drops the git guards. both are refused in every other env
 if [ -n "$REH_DEPLOYER$REH_SKIP_GIT" ] && [ "$ENV" != rehearsal ]; then die "REHEARSAL_DEPLOYER and REHEARSAL_SKIP_GIT apply to env rehearsal only"; fi
@@ -164,17 +168,20 @@ FACTORY="$(jq -r .stack.factory "$LAUNCH_CONFIG")"
 WALLET_FLAGS=()
 SIGNER="$DEPLOYER"
 if [ "$WALLET" = keystore ]; then
-  if [ -z "${KEYSTORE_ACCOUNT:-}" ] || [ -z "${PASSWORD_FILE:-}" ]; then
-    guard "KEYSTORE_ACCOUNT and PASSWORD_FILE are empty in $ENV_FILE and in the shell. set the foundry keystore name and a password file outside the repository"
-  elif [ ! -f "$PASSWORD_FILE" ]; then
+  if [ -z "${KEYSTORE_ACCOUNT:-}" ] || { [ "$TERMINAL_KEYSTORE" = 0 ] && [ -z "${PASSWORD_FILE:-}" ]; }; then
+    guard "KEYSTORE_ACCOUNT is required, with PASSWORD_FILE or TERMINAL_KEYSTORE=1"
+  elif [ "$TERMINAL_KEYSTORE" = 0 ] && [ ! -f "$PASSWORD_FILE" ]; then
     guard "PASSWORD_FILE $PASSWORD_FILE is not a file"
   else
-    case "$(cd "$(dirname "$PASSWORD_FILE")" && pwd -P)" in
-      "$ROOT"|"$ROOT"/*) guard "PASSWORD_FILE resolves inside the repository working tree. keep key material outside it" ;;
-    esac
-    WALLET_FLAGS=(--account "$KEYSTORE_ACCOUNT" --password-file "$PASSWORD_FILE")
+    WALLET_FLAGS=(--account "$KEYSTORE_ACCOUNT")
+    if [ "$TERMINAL_KEYSTORE" = 0 ]; then
+      case "$(cd "$(dirname "$PASSWORD_FILE")" && pwd -P)" in
+        "$ROOT"|"$ROOT"/*) guard "PASSWORD_FILE resolves inside the repository working tree. keep key material outside it" ;;
+      esac
+      WALLET_FLAGS+=(--password-file "$PASSWORD_FILE")
+    fi
     if [ "$DRY_RUN" = 0 ]; then
-      SIGNER="$(cast wallet address --account "$KEYSTORE_ACCOUNT" --password-file "$PASSWORD_FILE")"
+      SIGNER="$(cast wallet address "${WALLET_FLAGS[@]}")"
     fi
   fi
 else
@@ -288,6 +295,7 @@ PRE_RC=0
 PRE="$(DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" forge script script/Preflight.s.sol "${FLAGS[@]}" 2>&1)" || PRE_RC=$?
 PRE_HASH="$(printf '%s\n' "$PRE" | grep -oE 'CONFIG_HASH=0x[0-9a-fA-F]{64}' | tail -1 | cut -d= -f2 || true)"
 [ -n "$PRE_HASH" ] || { echo "$PRE" | tail -40; die "no CONFIG_HASH from preflight"; }
+echo "deploy.sh: CONFIG_HASH=$PRE_HASH"
 PRE_OK=1
 CORE_ABSENT=0
 if [ -n "$RESUME" ] && [ "$(cast code "$CORE" --rpc-url "$RPC_URL")" = 0x ]; then CORE_ABSENT=1; fi
@@ -312,7 +320,16 @@ fi
 export CONFIG_HASH
 LOCK_DIR="${LOCK_DIR_SHELL:-broadcast/config-locks}"
 LOCK="$LOCK_DIR/${CHAIN_ID}-$(lc "$DEPLOYER").json"
-if [ "$DRY_RUN" = 1 ] && [ "$LAUNCH_ONLY" = 1 ]; then
+BACKUP="${CONFIG_LOCK_BACKUP:-}"
+if [ "$NODE" = live ] && { [ "$DRY_RUN" = 0 ] || [ -n "$RESUME" ] || [ "$LAUNCH_ONLY" = 1 ]; }; then
+  [ -n "$BACKUP" ] || late "CONFIG_LOCK_BACKUP must name a durable path outside this repository"
+  if [ -n "$BACKUP" ]; then
+    case "$BACKUP" in /*) ;; *) die "CONFIG_LOCK_BACKUP must be an absolute path" ;; esac
+    case "$(cd "$(dirname "$BACKUP")" && pwd -P)" in "$ROOT"|"$ROOT"/*) die "CONFIG_LOCK_BACKUP must be outside this repository" ;; esac
+    if [ ! -e "$LOCK" ] && [ -f "$BACKUP" ]; then mkdir -p "$LOCK_DIR"; cp "$BACKUP" "$LOCK"; fi
+  fi
+fi
+if [ "$DRY_RUN" = 1 ] && { [ "$LAUNCH_ONLY" = 1 ] || [ "$RESUME" = state ]; }; then
   if [ ! -f "$LOCK" ]; then PRE_OK=0; guard "no original signed config lock $LOCK";
   elif ! jq -e --arg hash "$(lc "$CONFIG_HASH")" '(.configHash | ascii_downcase) == $hash' "$LOCK" >/dev/null; then
     PRE_OK=0; guard "the deferred config lock differs from the signed config"
@@ -323,9 +340,10 @@ fi
 if [ "$DRY_RUN" = 1 ]; then
   if [ "$PRE_OK" = 1 ]; then
     echo "deploy.sh: deploy simulation"
-    if [ "$LAUNCH_ONLY" = 1 ]; then SIM=script/Resume.s.sol; else SIM=script/Deploy.s.sol; fi
+    if [ "$LAUNCH_ONLY" = 1 ] || [ "$RESUME" = state ]; then SIM=script/Resume.s.sol; else SIM=script/Deploy.s.sol; fi
     if DEP="$(CORE="${CORE:-}" LAUNCH_ONLY="$LAUNCH_ONLY" RECORD_TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER" CONFIG_LOCK="$LOCK" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" forge script "$SIM" "${FLAGS[@]}" 2>&1)"; then
-      printf '%s\n' "$DEP" | grep -E '^ +(core|coin|controller|seaport adapter|strategy adapter|renderer) 0x' || true
+      printf '%s\n' "$DEP" | grep -E '^ +(core|coin|coin \(predicted, launch deferred\)|controller|seaport adapter|strategy adapter|renderer) 0x' || true
+      printf '%s\n' "$DEP" | grep -E '^ +gas of step [0-9]+ [0-9]+' || true
     else
       echo "$DEP" | tail -40; guard "the deploy simulation failed"
     fi
@@ -342,12 +360,8 @@ fi
 # ---- broadcast ----------------------------------------------------------------------------------------------------
 # A recovery must use the exact config signed before the first transaction. Core's CREATE2 address does not include
 # every controller, adapter and coin input, so its address alone cannot prove this. Keep this lock across interruptions.
-BACKUP="${CONFIG_LOCK_BACKUP:-}"
 if [ "$NODE" = live ]; then
   [ -n "$BACKUP" ] || die "CONFIG_LOCK_BACKUP must name a durable path outside this repository before a live broadcast"
-  case "$BACKUP" in /*) ;; *) die "CONFIG_LOCK_BACKUP must be an absolute path" ;; esac
-  case "$(cd "$(dirname "$BACKUP")" && pwd -P)" in "$ROOT"|"$ROOT"/*) die "CONFIG_LOCK_BACKUP must be outside this repository" ;; esac
-  if [ ! -e "$LOCK" ] && [ -f "$BACKUP" ]; then mkdir -p "$LOCK_DIR"; cp "$BACKUP" "$LOCK"; fi
 fi
 if [ -e "$LOCK" ]; then
   jq -e --arg chain "$CHAIN_ID" --arg owner "$(lc "$DEPLOYER")" --arg hash "$(lc "$CONFIG_HASH")" \
