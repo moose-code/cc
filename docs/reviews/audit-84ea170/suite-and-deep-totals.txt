@@ -1,0 +1,2 @@
+/tmp/claude-0/-home-user-cc/221119c3-ace1-539b-80d3-3386d3108a03/scratchpad/logs/suite.log:Ran 112 test suites in 949.67s (3518.47s CPU time): 768 tests passed, 0 failed, 7 skipped (775 total tests)
+/tmp/claude-0/-home-user-cc/221119c3-ace1-539b-80d3-3386d3108a03/scratchpad/logs/deep.log:Ran 7 test suites in 2517.97s (8252.32s CPU time): 55 tests passed, 0 failed, 0 skipped (55 total tests)

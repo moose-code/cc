@@ -1,0 +1,12 @@
+=== PHASE=post chain checklist on http://127.0.0.1:8619 ===
+  PASS: the balance module is set to Jack's module (module 0x8Df990bd63B383a7D830085Dbeb892e9211FbB09)
+  PASS: the balance token matches the record (token 0x14C4575c22fA663BF5E5a1A7b11B8b51Ed4F7e6a)
+  PASS: the token runtime hash equals the pinned hash (immutables masked) (got 0x29b369bc9814eaaf98e696df1a521200ad8584726f2fe036b3408a9d0bf3c3bd)
+  PASS: redeem is on (redeemOn true)
+  PASS: no balance bid on with value mode off and a pool key set (balanceBidOn false valueModeOn false poolKeySet true)
+  PASS: the launch supply holder holds balance tokens (funder balance 24950011800000000000000)
+  PASS: the module available balance is nonzero (available 29115709126750000000000)
+  skip: balance-fill probe skipped, the bid is off in the safe final state (scenario stage and e2e-real exercise the fill)
+passes: 7   fails: 0
+CHECK-POST PASSED
+CHECKPOST_EXIT=0

@@ -1,0 +1,223 @@
+Ran 8 tests for test/invariant/Invariants.t.sol:InvariantsPhase1Deep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsPhase1Deep invariants (runs: 64, calls: 12800, reverts: 1)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14379362)
+[PASS] test_composeChosenComposesAPage() (gas: 14010522)
+[PASS] test_everyActionSucceeds() (gas: 115030898)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2066001)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9415234)
+[PASS] test_storageLayoutMatchesTheHandlerSlots() (gas: 24687)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 8 tests for test/invariant/Invariants.t.sol:InvariantsPhase1WindowDeep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsPhase1WindowDeep invariants (runs: 64, calls: 12800, reverts: 0)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14325772)
+[PASS] test_composeChosenComposesAPage() (gas: 13831625)
+[PASS] test_everyActionSucceeds() (gas: 215298425)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2045981)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9438559)
+[PASS] test_startsInsideTheSniperWindow() (gas: 12918)
+[PASS] test_theBidCheckFindsASeller() (gas: 817017)
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileOwnerDeep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsHostileOwnerDeep invariants (runs: 64, calls: 12800, reverts: 0)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055779)
+[PASS] test_composeChosenComposesAPage() (gas: 12094351)
+[PASS] test_everyActionSucceeds() (gas: 122818483)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075286)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9424544)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileControllerDeep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsHostileControllerDeep invariants (runs: 64, calls: 12800, reverts: 0)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15027479)
+[PASS] test_composeChosenComposesAPage() (gas: 12362051)
+[PASS] test_everyActionSucceeds() (gas: 126378174)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075286)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9401318)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 9 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1Deep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsSalePhase1Deep invariants (runs: 64, calls: 12800, reverts: 0)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14379383)
+[PASS] test_composeChosenComposesAPage() (gas: 14010500)
+[PASS] test_everyActionSucceeds() (gas: 115030897)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2065979)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9415234)
+[PASS] test_saleActionsEverySucceed() (gas: 31922536)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 4758465)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsPhase2Deep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsPhase2Deep invariants (runs: 64, calls: 12800, reverts: 0)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055779)
+[PASS] test_composeChosenComposesAPage() (gas: 12094351)
+[PASS] test_everyActionSucceeds() (gas: 122818436)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075286)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9424544)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 9 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2Deep
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+ InvariantsSalePhase2Deep invariants (runs: 64, calls: 12800, reverts: 1)
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055800)
+[PASS] test_composeChosenComposesAPage() (gas: 12094329)
+[PASS] test_everyActionSucceeds() (gas: 122818364)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075264)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9424544)
+[PASS] test_saleActionsEverySucceed() (gas: 33052121)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 5274015)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)

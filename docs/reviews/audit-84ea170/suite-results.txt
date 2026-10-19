@@ -1,0 +1,1070 @@
+Ran 8 tests for test/Lock.t.sol:LockTest
+[PASS] test_aFailedPostflightStopsTheLock() (gas: 23067479)
+[PASS] test_aRepointedBountyRecipientRefusesTheLockWhateverCoinChangedSays() (gas: 25421049)
+[PASS] test_aSecondRunIsANoOp() (gas: 22346580)
+[PASS] test_aSignerThatIsNotTheCoinAdminIsRefused() (gas: 17043448)
+[PASS] test_dryRunSendsNothing() (gas: 17032215)
+[PASS] test_theBountyRecipientRowIsSoft() (gas: 27175246)
+[PASS] test_theCoinAdminLocksTheRecipients() (gas: 17092323)
+[PASS] test_thePostflightPassesBeforeAndAfterTheLock() (gas: 26786920)
+Ran 2 tests for test/LogoCoinRenderer.t.sol:LogoCoinRendererLaunchTest
+[PASS] test_theLaunchNamesTheRendererInTheTokenConfig() (gas: 1312608)
+[PASS] test_theRendererAddressIsAFunctionOfTheConfig() (gas: 84780)
+Ran 2 tests for test/LogoCoinRenderer.t.sol:LogoCoinRendererTest
+[PASS] test_deploy_gas() (gas: 5786)
+[PASS] test_image_is_animated_logo() (gas: 1194170)
+Ran 5 tests for test/Fees.t.sol:FeeFlowTest
+[PASS] test_aDoorBooksTheFeesFirstAndPaysTheQuote() (gas: 1746349)
+[PASS] test_launchSplitPerHundredEthOfVolume() (gas: 1066338)
+[PASS] test_protocolLegGoesToTheProtocolController() (gas: 744384)
+[PASS] test_rateCheckpointsOnFeeReceipt() (gas: 981331)
+[PASS] test_sniperWindowExtraLandsInThePot() (gas: 1649190)
+Ran 1 test for test/Fees.t.sol:ReceiveSettingsTest
+[PASS] testFuzz_receiveNeverRevertsAcrossSettings(uint256,uint96,uint32,uint96,uint256) (runs: 256, μ: 1454532, ~: 1456278)
+Ran 14 tests for test/Adapters.t.sol:AdaptersTest
+[PASS] test_core_aBadAnswerRevertsBadQuote() (gas: 5359838)
+[PASS] test_core_adapterThatQuotesAForbiddenTargetReverts() (gas: 1326408)
+[PASS] test_core_addAdapterRefusesAZeroOrForbiddenAdapter() (gas: 65833)
+[PASS] test_core_alreadyOwnedReverts() (gas: 1536455)
+[PASS] test_seaport_acceptsAnAllowlistedRecipientAndRefusesOthers() (gas: 417325)
+[PASS] test_seaport_allowlistIsTheCoreOwners() (gas: 322604)
+[PASS] test_seaport_refusesANonNativeConsideration() (gas: 371006)
+[PASS] test_seaport_refusesAWrongId() (gas: 368868)
+[PASS] test_seaport_refusesAWrongToken() (gas: 368770)
+[PASS] test_seaport_refusesAZeroPrice() (gas: 368929)
+[PASS] test_seaport_refusesTheRestrictedRoutes() (gas: 401752)
+[PASS] test_seaport_valueIsTheSumOfEveryPayoutAndTheCallIsTheOrder() (gas: 374813)
+[PASS] test_strategy_buyThroughTheCore() (gas: 1547464)
+[PASS] test_strategy_refusesACreditThatIsNotForSale() (gas: 32646)
+Ran 4 tests for test/Fees.t.sol:ReceiveTest
+[PASS] test_bookGasAfterTwentyYearsAtTheWorstRate() (gas: 631251)
+[PASS] test_onlyTheHookAndTheEscrowMaySend() (gas: 441870)
+[PASS] test_receiveFitsTheHookStipend() (gas: 17738)
+[PASS] test_swapInsideBuyListingLeavesTheFeeForTheNextBook() (gas: 2121468)
+Ran 2 tests for test/Fees.t.sol:RestrictedCoinTest
+[PASS] test_coinFromAListedHolderIsRescuedByTheOwner() (gas: 447787)
+[PASS] test_theLaunchIsRestrictedAndTheCoreIsNotAllowlisted() (gas: 49642)
+Ran 1 test for test/Fees.t.sol:UniversalRouterTest
+[PASS] test_buyAndSellThroughTheUniversalRouter() (gas: 1711030)
+Ran 7 tests for test/CoinRenderer.t.sol:CoinRendererTest
+[PASS] test_aFullPageMatchesTheLiveStatementArt() (gas: 18583926)
+[PASS] test_aPileOver80IsSampledPerBlock() (gas: 224147296)
+[PASS] test_aPileUnder80IsDrawnWholeInPileOrder() (gas: 52956784)
+[PASS] test_anEmptyPileIsABlankPage() (gas: 531426)
+[PASS] test_contractURICarriesTheCoinFieldsAndTheImage() (gas: 627762)
+[PASS] test_gasOfAFullPage() (gas: 65179083)
+[PASS] test_setCoreIsOwnerOnlyAndOnce() (gas: 134500)
+Ran 20 tests for test/ColdAudit.t.sol:ColdAuditTest
+[PASS] test_balanceTokenSentToCoreRemainsOutsideModule() (gas: 2169156)
+[PASS] test_coldModuleSetRejectsRevertingAvailableWithoutBookingIncome() (gas: 2544301)
+[PASS] test_coldOwnerRateSettingsControllerAndPauseBooking() (gas: 798798)
+[PASS] test_coldViewMatrixFirstBook() (gas: 4944986)
+[PASS] test_creditPriceEqualsFirstBuyChargeAtDueRefresh() (gas: 5328142)
+[PASS] test_firstRedeemIntoFreshEmptyModule() (gas: 48003794)
+[PASS] test_jitLiquidityCannotOpenQuoteInOneBlock() (gas: 4849691)
+[PASS] test_modeOffZeroStaleSkipsReferenceAndStillSellsCredit() (gas: 5466371)
+[PASS] test_realPoolLowUnitSaleValueRoundsUpToOneWei() (gas: 3941015)
+[PASS] test_realPoolMovedSpotRejectsStaleSeed() (gas: 3943405)
+[PASS] test_realPoolQuoteOutageRefusesBalanceFillAndLeavesPileUnchanged() (gas: 4246984)
+[PASS] test_realPoolSameBlockSpotRoundTripAroundCreditBuy() (gas: 5841768)
+[PASS] test_realPoolSameBlockSpotRoundTripAroundEthSell() (gas: 5473204)
+[PASS] test_realPoolSpotSpikeAndEveryBlockReferenceWalk() (gas: 14595129)
+[PASS] test_refreshAfterLatchBooksNewHookIncome() (gas: 4369663)
+[PASS] test_refreshReferenceBooksPendingIncomeAndPays() (gas: 4317121)
+[PASS] test_rescueTokenRecoversStrayErc20AndRefusesBalanceToken() (gas: 3060299)
+[PASS] test_statementPriceEqualsFirstBuyChargeAtDueRefresh() (gas: 53611349)
+[PASS] test_thinModuleBalanceBidReadsZero() (gas: 2729377)
+[PASS] test_valueModeRejectsDisabledSpendCap() (gas: 3889941)
+Ran 15 tests for test/Flow.t.sol:FlowTest
+[PASS] testFuzz_sale_anySplitIsExact(uint256) (runs: 24, μ: 46173157, ~: 46174273)
+[PASS] testFuzz_settings_roundTrip(uint256) (runs: 256, μ: 404070, ~: 411553)
+[PASS] test_buyback_burnsWhatTheSaleBooked() (gas: 46067278)
+[PASS] test_compose_emitsComposedWithTheSumOfTheBases() (gas: 43909127)
+[PASS] test_constructor_refusesBadInputs() (gas: 576186)
+[PASS] test_redeem_redeemReleasesTheReserveToTheBuyback() (gas: 48251649)
+[PASS] test_setRate_boundsEventAndReset() (gas: 576937)
+[PASS] test_settings_buybackSliceCoversTwiceTheLargestPayment() (gas: 732305)
+[PASS] test_settings_everyBoundEdgeIsAccepted() (gas: 21001754)
+[PASS] test_settings_everyBoundViolationReverts() (gas: 3343591)
+[PASS] test_settings_fieldListLengthEqualsTheStructFieldCount() (gas: 4478)
+[PASS] test_settings_highFloorStillCannotExceedControllerMarkup() (gas: 561009)
+[PASS] test_settings_launchValues() (gas: 61065)
+[PASS] test_settings_maxRateAndClimbStayCappedAfterLongIdle() (gas: 414335)
+[PASS] test_settings_saleCutsKeepANonzeroRemainder() (gas: 487915)
+Ran 7 tests for test/Formats.t.sol:FormatsTest
+[PASS] test_REVERT_compose_badFormat() (gas: 35971754)
+[PASS] test_REVERT_setHeldFormat_badFormat() (gas: 42744196)
+[PASS] test_REVERT_setHeldFormat_belowMinCc() (gas: 42814451)
+[PASS] test_REVERT_setHeldFormat_soldStatement() (gas: 43049971)
+[PASS] test_compose_defaultFormatFollowsPrevrandaoAndHeadId() (gas: 55269913)
+[PASS] test_compose_givenFormat() (gas: 48838886)
+[PASS] test_setHeldFormat_holderSetsAndReadsBack() (gas: 43278768)
+Ran 3 tests for test/ColdAudit.t.sol:ColdLaunchMatrixTest
+[PASS] test_launchValuesColdViewsEqualFirstBook() (gas: 5836809)
+[PASS] test_midIdleRealTradesGrowMultiplierOnlyAfterBook() (gas: 1042998)
+[PASS] test_zeroTradeColdBookDoesNotStartBid() (gas: 1972398)
+Ran 12 tests for test/Adopt.t.sol:AdoptTest
+[PASS] test_FUZZ_theBasisIsThePriceStateScaledByScore(uint256,uint8) (runs: 256, μ: 1950700, ~: 1928006)
+[PASS] test_OK_aCreditSentStraightToTheCoreIsAdoptedAtThePriceState() (gas: 907607)
+[PASS] test_OK_aPageOfAdoptedCreditsComposesIntoAStatementWorthTheirBases() (gas: 33973120)
+[PASS] test_OK_adoptBooksTheFeesFirst() (gas: 1086786)
+[PASS] test_OK_adoptCheckpointsRateWithoutMovingPots() (gas: 3997709)
+[PASS] test_OK_migrateThenAdoptOnTheSuccessorRestoresThePile() (gas: 61442452)
+[PASS] test_REVERT_aBatchWithOneBadIdChangesNothing() (gas: 1091735)
+[PASS] test_REVERT_aCreditTheCoreDoesNotHold() (gas: 431693)
+[PASS] test_REVERT_aMigratedCreditThatComesBackIsNotAdoptedByTheRetiredCore() (gas: 2513466)
+[PASS] test_REVERT_adoptInsideAGuardedCall() (gas: 1559930)
+[PASS] test_REVERT_adoptTwiceInOneCallOrTwoCalls() (gas: 1116796)
+[PASS] test_REVERT_emptyAndZero() (gas: 194373)
+Ran 13 tests for test/ArtistRoyalty.t.sol:ArtistRoyaltyTest
+[PASS] test_adoptRecordsTheRoyaltyInTheCostBasis() (gas: 1121916)
+[PASS] test_batchPushesTheArtistOnce() (gas: 4072017)
+[PASS] test_buyListingKeeperCoveredWithRevertingArtist() (gas: 1666805)
+[PASS] test_buyListingPaysTheRoyaltyOnThePrice() (gas: 1694482)
+[PASS] test_buyListingRefusesWhenTheRoyaltyDoesNotFit() (gas: 290955)
+[PASS] test_clampLeavesRoomForTheRoyalty() (gas: 6057561)
+[PASS] test_hostileArtistNeverBlocksAPurchase() (gas: 2177913)
+[PASS] test_launchValues() (gas: 33302)
+[PASS] test_ledgerCountsTheRoyalty() (gas: 1402009)
+[PASS] test_royaltyIsEditable() (gas: 2064838)
+[PASS] test_sellForEthPaysSellerWholeAndArtistOnTop() (gas: 1297408)
+[PASS] test_zeroArtistRulesAndBound() (gas: 817263)
+[PASS] test_zeroRoyaltyPaysTheBidAlone() (gas: 1356987)
+Ran 6 tests for test/AuditDaylight.t.sol:AuditDaylightTest
+[PASS] test_balanceRateIsPostedWithoutModule() (gas: 2098822)
+[PASS] test_balanceRatePostedThroughUnitFailure() (gas: 2363640)
+[PASS] test_dirtyBoolControllerReadsFalse() (gas: 47724782)
+[PASS] test_lockControllerRevertsWithoutController() (gas: 147962)
+[PASS] test_setControllerRejectsContractWithoutProbe() (gas: 131770)
+[PASS] test_setControllerRejectsEoa() (gas: 40586)
+Ran 4 tests for test/BalanceCustody.t.sol:BalanceCustodyTest
+[PASS] test_bidOff_accumulates() (gas: 46562745)
+[PASS] test_redeem_moduleHoldingShortRevertsBadModule() (gas: 46187731)
+[PASS] test_sellForBalance_availableBelowBatchRevertsPotTooSmall() (gas: 1212236)
+[PASS] test_sellForBalance_payUnderpaysRevertsBadModule() (gas: 656652)
+Ran 1 test for test/BalanceFlat.t.sol:BalanceFlatNoModuleTest
+[PASS] test_noModule() (gas: 393261)
+Ran 11 tests for test/BalanceFlat.t.sol:BalanceFlatTest
+[PASS] test_batchBoundedByAvailable() (gas: 2199278)
+[PASS] test_discountIsEditableAndBounded() (gas: 2267986)
+[PASS] test_failingUnitReadsZeroPayout() (gas: 429316)
+[PASS] test_fillPaysSellerAndArtistFromTheModule() (gas: 797432)
+[PASS] test_hostileArtistDoesNotBlockTheSale() (gas: 834383)
+[PASS] test_noClimbNoDrop() (gas: 2350384)
+[PASS] test_postedRateAndPayout() (gas: 562991)
+[PASS] test_routesAreIndependent() (gas: 1762741)
+[PASS] test_switchesAndModuleSetLeaveThePostedRate() (gas: 1223710)
+[PASS] test_tinyAvailableRefuses() (gas: 956363)
+[PASS] test_viewZeroAndFillRefusedWhenTheModuleCannotPayBoth() (gas: 1354608)
+Ran 16 tests for test/BalanceTokenReplacement.t.sol:BalanceTokenReplacementTest
+[PASS] test_handlerFreshTokenReplacementMode() (gas: 48837702)
+[PASS] test_handlerRejectsForbiddenToken() (gas: 48041718)
+[PASS] test_heldStatementRedeemsIntoReplacementModule() (gas: 46327541)
+[PASS] test_oldModuleRejectedAsBuyListingTarget() (gas: 532328)
+[PASS] test_oldPoolIgnoredUntilMatchingTokenSelected() (gas: 46550288)
+[PASS] test_oldTargetsStayForbiddenAfterReplacement() (gas: 401141)
+[PASS] test_ownerAndModuleLockStillApply() (gas: 114966)
+[PASS] test_replaceThenLockFreezesTheToken() (gas: 1881409)
+[PASS] test_replacementMidBucketThenSell() (gas: 1398065)
+[PASS] test_replacementPreservesSeparateModuleCustody() (gas: 358716)
+[PASS] test_replacementValidityAndAdapterFlags() (gas: 1995551)
+[PASS] test_replacementWhileBidOnLeavesTheInstance() (gas: 867829)
+[PASS] test_replacementWithSixDecimalToken() (gas: 3143688)
+[PASS] test_sellerCanPinThePaymentToken() (gas: 907184)
+[PASS] test_setBalancePoolKeyFollowsTheToken() (gas: 669985)
+[PASS] test_unpinnedOverloadsAfterReplacement() (gas: 1331082)
+Ran 7 tests for test/BalanceValueFloor.t.sol:BalanceValueFloorTest
+[PASS] test_creditFloorIgnoresThePoolKey() (gas: 4023270)
+[PASS] test_keyUnsetGivesTheRateTerm() (gas: 47714555)
+[PASS] test_poolKeyDoesNotMoveValueOrReference() (gas: 48313166)
+[PASS] test_poolKeyIgnoresTheUnitAndOverflow() (gas: 48329080)
+[PASS] test_setterIsOwnerOnly() (gas: 2068228)
+[PASS] test_setterRejectsPairsWithoutTheTokenAndNativeEth() (gas: 2109492)
+[PASS] test_uninitializedPoolRejected() (gas: 2083277)
+Ran 13 tests for test/GasCap.t.sol:GasCapTest
+[PASS] test_gas_book_forcesThePayeeShare() (gas: 482651)
+[PASS] test_gas_buyCredit_creditSalePushesTheCuts() (gas: 2095295)
+[PASS] test_gas_buyListing_creditStrategy_incomeLoaded() (gas: 1846431)
+[PASS] test_gas_buyListing_seaport_basicWithFee() (gas: 1658070)
+[PASS] test_gas_buy_statementSalePushesTheCuts() (gas: 45852284)
+[PASS] test_gas_buyback_afterAStatementSale() (gas: 46040968)
+[PASS] test_gas_compose_ethLane_firstCold() (gas: 42411738)
+[PASS] test_gas_readCaps_nextPage() (gas: 36216174)
+[PASS] test_gas_redeemStatement_ethLane() (gas: 48178524)
+[PASS] test_gas_sellForBalance_batch() (gas: 366529119)
+[PASS] test_gas_sellForEth_batch_launchSettings() (gas: 279819790)
+[PASS] test_gas_swapCredit() (gas: 2259810)
+[PASS] test_modeOffPrePacket86CreditEthBatchGasRegression() (gas: 55118911)
+Ran 31 tests for test/BidRule.t.sol:BidRuleTest
+[PASS] test_aFillResetsTheLoosening() (gas: 1599760)
+[PASS] test_anchorLoosensSixPercentPerTenIdleMinutesAtLaunch() (gas: 1163480)
+[PASS] test_bookStartsClimbWithoutRetroactiveRise() (gas: 498234)
+[PASS] test_booked100PointThresholdIncludesRoyaltyAndReserve() (gas: 720086)
+[PASS] test_bookedPotClimbsWithPendingFees() (gas: 2172796)
+[PASS] test_boundsRevertOnEveryOutOfRangeValue() (gas: 625848)
+[PASS] test_buyListingIsOneFillAndTheAnchorIsTheBidRate() (gas: 1438052)
+[PASS] test_ceilingHoldsAt110PercentOfTheAnchor() (gas: 1134040)
+[PASS] test_ceilingLooseningScalesWithPotPages() (gas: 3160457)
+[PASS] test_clampHoldsAtThePotWhenItAffordsLessThanOneCredit() (gas: 521950)
+[PASS] test_climbUnscaledByPotPages() (gas: 2680830)
+[PASS] test_dropReachesTheMinuteFloor() (gas: 6327633)
+[PASS] test_fillAfterIdleTimeUsesTheClimbedRateAsTheAnchorAndPeak() (gas: 1416101)
+[PASS] test_fullPotLoosensAtTheCapOverFourHours() (gas: 1007998)
+[PASS] test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() (gas: 2929595)
+[PASS] test_highRateMaximumRoyaltyFundingEdge() (gas: 531549)
+[PASS] test_loosenedCeilingNeverPassesTheRateCap() (gas: 866855)
+[PASS] test_minimumRateFundingEdge() (gas: 531289)
+[PASS] test_modelRestartsClearedDropAnchor() (gas: 3346)
+[PASS] test_oneFillDropsTheLaunchDrop() (gas: 853854)
+[PASS] test_payableDoorExcludesItsOwnValueFromPendingIncome() (gas: 143830)
+[PASS] test_pendingFeesDoNotStartEmptyClock() (gas: 558093)
+[PASS] test_pumpInSniperWindowIsUnprofitable() (gas: 10617700)
+[PASS] test_pumpViaFundIsUnprofitable() (gas: 10320623)
+[PASS] test_pumpViaSwapIsUnprofitable() (gas: 10637223)
+[PASS] test_readIsMonotoneInThePot() (gas: 5729132)
+[PASS] test_repeatedEmptyAndRefillDoesNotAccrueIdleHours() (gas: 1650081)
+[PASS] test_risingThenFallingListingAsksStayInsideTheBid() (gas: 3835450)
+[PASS] test_setRateRestatesTheRateAndTheAnchorAndKeepsTheFillClock() (gas: 1137369)
+[PASS] test_starvedPotDoesNotRaiseThePriceState() (gas: 1444030)
+[PASS] test_unbookedDripDoesNotScaleTheMultiplierAndLoosening() (gas: 2630466)
+Ran 6 tests for test/BuildIdentity.t.sol:BuildIdentityTest
+[PASS] test_aSingleChangedByteIsDetected() (gas: 18903023)
+[PASS] test_coreAndCoreLibFitEip170() (gas: 12295)
+[PASS] test_libraryInterfaceSelectorsMatchTheArtifact() (gas: 1279740)
+[PASS] test_pinnedBuildHashesEqualTheArtifacts() (gas: 19465899)
+[PASS] test_testsCompileWithoutViaIr() (gas: 4707529)
+[PASS] test_theFixtureDeploysTheViaIrArtifacts() (gas: 35595713)
+Ran 8 tests for test/CallerPay.t.sol:CallerPayTest
+[PASS] test_bookIsCounted() (gas: 49275854)
+[PASS] test_callerPaymentBounds() (gas: 233178)
+[PASS] test_composePaysCountedGasAtTheBaseFeePlusTheFee() (gas: 42598471)
+[PASS] test_launchSettingsPayCappedGasPlusFee() (gas: 42428343)
+[PASS] test_paidCallerFindsEveryDoorShut() (gas: 43031494)
+[PASS] test_paymentIsCappedAtThePot() (gas: 42792485)
+[PASS] test_worstCaseCountedGasIsUnderTheBound() (gas: 42827734)
+[PASS] test_zeroSettingsPayNothing() (gas: 42548730)
+Ran 8 tests for test/ChosenCompose.t.sol:ChosenComposeTest
+[PASS] test_REVERT_idNotInPile() (gas: 37655785)
+[PASS] test_REVERT_toggleOff() (gas: 36284186)
+[PASS] test_format_eightRevertsZeroToSevenPass() (gas: 87941813)
+[PASS] test_minCcToChoose_belowRevertsAtOrAbovePasses() (gas: 43218188)
+[PASS] test_parity_composeEqualsComposeChosen() (gas: 49114227)
+[PASS] test_record_composerIsTheCaller() (gas: 85257170)
+[PASS] test_record_costSumAndRatingRead() (gas: 43609598)
+[PASS] test_window_insideRevertsWhileSaleOn() (gas: 43083891)
+Ran 1 test for test/ClampDifferential.t.sol:ClampDifferentialTest
+[PASS] test_bookedClimbAndPendingReadLimitsStaySeparate() (gas: 2614876)
+Ran 1 test for test/ReviewMatrix.t.sol:ReviewMatrixStateTest
+[PASS] test_matrix_chainState() (gas: 331458687)
+Ran 32 tests for test/Config.t.sol:ConfigTest
+[PASS] test_FIXED_postflightComparesTheCoreAndControllerRuntime() (gas: 45658952)
+[PASS] test_FIXED_postflightReadsTheCoinImageAndDescription() (gas: 78167044)
+[PASS] test_FIXED_postflightReadsTheCoinRenderer() (gas: 81348649)
+[PASS] test_buildConfigNamesTheCoinRenderer() (gas: 271527)
+[PASS] test_deployRefusesPlaceholders() (gas: 369684)
+[PASS] test_feeSplitDerivation() (gas: 7622)
+[PASS] test_hashCoversSettingsAndStack() (gas: 1512916)
+[PASS] test_jsonEqualsDefaultConfig() (gas: 182556)
+[PASS] test_jsonParsesImageAndDescription() (gas: 126188)
+[PASS] test_namedListingsAreHeldAndPriced() (gas: 50925)
+[PASS] test_postflightAfterTheOwnerChangedTheSettings() (gas: 29044745)
+[PASS] test_postflightCatchesEveryMismatch() (gas: 62177124)
+[PASS] test_postflightChecksTheAdapters() (gas: 102719104)
+[PASS] test_postflightPassesOnTheFixture() (gas: 27240048)
+[PASS] test_postflightReadsBackEverySettingFirstHalf() (gas: 374174672)
+[PASS] test_postflightReadsBackEverySettingSecondHalf() (gas: 399885790)
+[PASS] test_preflightEnabledStack() (gas: 73982409)
+[PASS] test_preflightImageAndDescription() (gas: 273055620)
+[PASS] test_preflightPasses() (gas: 23988323)
+[PASS] test_preflightPinsAntiSniperSchedule() (gas: 48585624)
+[PASS] test_preflightPinsTheLiveCodeHashes() (gas: 479120310)
+[PASS] test_preflightPinsTheOwnerDelegation() (gas: 145223716)
+[PASS] test_preflightPredictedRendererIsEmpty() (gas: 45471239)
+[PASS] test_preflightRateBoundsRejectZeroAndAcceptTypedExtrema() (gas: 23650320)
+[PASS] test_preflightRateCapIsThreeTimesRateStart() (gas: 75226928)
+[PASS] test_preflightSeaportRecipients() (gas: 281064018)
+[PASS] test_preflightSimulatesTheLaunchAndLeavesNoTrace() (gas: 24222794)
+[PASS] test_preflightSniperSecondsMatchTheCoreSetting() (gas: 44988152)
+[PASS] test_preflightTheFactoryMustBeDeprecatedAndOwnedByTheDeployer() (gas: 68958553)
+[PASS] test_settingsBoundsEveryFieldBothEdges() (gas: 868256)
+[PASS] test_settingsRowsAndGuard() (gas: 48904094)
+[PASS] test_warnOwnerIsTheCreator() (gas: 104487636)
+Ran 3 tests for test/CoreLayout.t.sol:CoreLayoutTest
+[PASS] test_OK_balanceInstanceSitsAfterTheAnchor() (gas: 32894)
+[PASS] test_OK_pilesCreditsAndStatementsSitWhereTheMirrorSays() (gas: 88757852)
+[PASS] test_OK_scalarFieldsSitWhereTheMirrorSays() (gas: 5264841)
+Ran 8 tests for test/CoreUnit.t.sol:CoreComposedTest
+[PASS] test_compose_movesNoEthOut() (gas: 51141273)
+[PASS] test_compose_statementIdCostBasisAndPiles() (gas: 45577722)
+[PASS] test_redeem_ethLaneStaysInTheModule() (gas: 45210728)
+[PASS] test_redeem_guards() (gas: 45343495)
+[PASS] test_redeem_unitIsReadLive() (gas: 45841045)
+[PASS] test_xBid_guards() (gas: 46067362)
+[PASS] test_xBid_paysScoreTimesUnit() (gas: 46176769)
+[PASS] test_xFees_moduleHoldsTheBalanceToken() (gas: 45233823)
+Ran 28 tests for test/CoreUnit.t.sol:CoreUnitTest
+[PASS] test_balanceDoorsClosedAtLaunch() (gas: 241262)
+[PASS] test_bookCountsHookEth_fundAddsTheRest() (gas: 771059)
+[PASS] test_buyListing_aRefundFromTheTargetRevertsTheBuy() (gas: 1421805)
+[PASS] test_buyListing_aboveCeilingReverts() (gas: 375556)
+[PASS] test_buyListing_adapterAndTargetGuards() (gas: 1398889)
+[PASS] test_buyListing_capAndPaymentAtScoreNotRefScore() (gas: 1447311)
+[PASS] test_buyListing_countedGasCoversFirstCappedBucket() (gas: 2731446)
+[PASS] test_buyListing_failedCallRevertsOnlyThatBuy() (gas: 2473018)
+[PASS] test_buyListing_hostileTargetThatKeepsEthReverts() (gas: 376474)
+[PASS] test_buyListing_paymentIsCappedAtTheGap() (gas: 3988495)
+[PASS] test_buyListing_paysCountedGasAtTheBaseFeePlusTheFee() (gas: 2565537)
+[PASS] test_buyListing_potCheck() (gas: 2014046)
+[PASS] test_buyListing_probeModes() (gas: 11425584)
+[PASS] test_buyback_guards() (gas: 199915)
+[PASS] test_compose_controllerCannotNameBadPages() (gas: 8130509)
+[PASS] test_compose_notReady() (gas: 23644995)
+[PASS] test_compose_priceOfRevertingControllerLogsZero() (gas: 39910647)
+[PASS] test_compose_pullsFromTheMiddleAndKeepsTheListIntact() (gas: 34963186)
+[PASS] test_constructorAndSetControllerRejectZero() (gas: 1529221)
+[PASS] test_constructorRequiresCodeAtTheStack() (gas: 937784)
+[PASS] test_onERC721Received_senders() (gas: 28100)
+[PASS] test_owner_onlyOwner() (gas: 220559)
+[PASS] test_rateStartBounds() (gas: 699840)
+[PASS] test_sellForEth_guards() (gas: 1304154)
+[PASS] test_sellForEth_minOut() (gas: 1367681)
+[PASS] test_statementDoorsRefuseAnUnknownStatement() (gas: 196931)
+[PASS] test_tinyPotSellsItsWeiAndBuysNothing() (gas: 1495025)
+[PASS] test_unlockCallback_onlyPoolManager() (gas: 33362)
+Ran 18 tests for test/CreditSale.t.sol:CreditSaleTest
+[PASS] test_buy_balanceTokenCreditSellsAtItsRecordedCost() (gas: 3941736)
+[PASS] test_buy_coreFloorFollowsSaleFloorBps() (gas: 2396232)
+[PASS] test_buy_coreHardFloorHoldsAgainstAControllerBelowCost() (gas: 1775874)
+[PASS] test_buy_proceedsSplitAtDefault() (gas: 1878262)
+[PASS] test_buy_underpayReverts() (gas: 1608696)
+[PASS] test_compose_waitsForTheWindowWhenSaleOn() (gas: 43292788)
+[PASS] test_floor_followsTheLiveCap() (gas: 2284584)
+[PASS] test_floor_usesValueOfNotTheFlatFloorRate() (gas: 1838841)
+[PASS] test_h1_buyCreditsPricesEachAfterThePreviousSale() (gas: 2489261)
+[PASS] test_h1_buyThenSellBackIsUnprofitable() (gas: 3025669)
+[PASS] test_noProfit_buyThenSellBackNeverBeatsTheBid() (gas: 24080915)
+[PASS] test_pause_blocksBuy() (gas: 1695841)
+[PASS] test_price_neverUnderTheCoreFloor() (gas: 1992094)
+[PASS] test_price_revertsWhenNotInPile() (gas: 111467)
+[PASS] test_price_startMidFloorAfter() (gas: 1924136)
+[PASS] test_reentrancy_buyerCannotReenter() (gas: 2645091)
+[PASS] test_setters_boundsAndEventsAndOwner() (gas: 1061800)
+[PASS] test_toggle_offBlocksBuyCredit() (gas: 1260071)
+Ran 14 tests for test/CreditSwap.t.sol:CreditSwapTest
+[PASS] test_composeUsesSwappedInCredit() (gas: 42754218)
+[PASS] test_feeAtTheLaunchValueOfTenThousandCc() (gas: 2179096)
+[PASS] test_feeBurned() (gas: 2163317)
+[PASS] test_feeZeroBurnsNothing() (gas: 1759568)
+[PASS] test_notInPileReverts() (gas: 1602936)
+[PASS] test_notOwnerReverts() (gas: 1472512)
+[PASS] test_pausedReverts() (gas: 1524467)
+[PASS] test_pileCreditAsInIdReverts() (gas: 1708776)
+[PASS] test_retiredReverts() (gas: 2253103)
+[PASS] test_scoreRule_equalAllowed() (gas: 1565902)
+[PASS] test_scoreRule_higherAllowed() (gas: 1565924)
+[PASS] test_scoreRule_lowerReverts() (gas: 1486475)
+[PASS] test_slotInheritance() (gas: 1633706)
+[PASS] test_zeroInIdReverts() (gas: 1227162)
+Ran 1 test for test/FeeShare.t.sol:FeeShareBuybackTest
+[PASS] test_editableTimerAndOneWayLatch() (gas: 1097522)
+Ran 4 tests for test/FeeShare.t.sol:FeeShareTest
+[PASS] test_book_countsForcedEthAsIncome() (gas: 387352)
+[PASS] test_change_takesEffectOnTheNextFeeAndNeverRewritesTheBooks() (gas: 2578124)
+[PASS] test_forcedEthAsTheOnlyIncomeDoesNotClimbBeforeBookAndASellPaysTheQuote() (gas: 1110175)
+[PASS] test_split_atZeroHalfAndAllOnExactBuys() (gas: 2038864)
+Ran 9 tests for test/FeeShare.t.sol:PayeeShareTest
+[PASS] test_aBookWithoutIncomeDoesNotTurnTheShareOn() (gas: 506694)
+[PASS] test_aFailingPayeeStillReceivesThroughTheForcedPush() (gas: 5034540)
+[PASS] test_bookPushesThePayeeItsShare() (gas: 993047)
+[PASS] test_ownerReplacesThePayeeAndTheShare() (gas: 1063509)
+[PASS] test_payeeLatchesOnADoorAndThatBookSharesNothing() (gas: 1361110)
+[PASS] test_setSettingsBooksUnbookedIncomeUnderTheOldShare() (gas: 633297)
+[PASS] test_thePushGivesThePayeeNoReentry() (gas: 1189515)
+[PASS] test_theShareBoundIsOneMillionPpm() (gas: 1492998)
+[PASS] test_theShareStartsAfterTheWindowFromTheFactoryRecord() (gas: 1799698)
+Ran 3 tests for test/Fees.t.sol:BuybackPaymentTest
+[PASS] test_callerIsPaidCountedGasAtTheBaseFeePlusTheFee() (gas: 418831)
+[PASS] test_countedGasIsCappedAtTheBuybackGasConstant() (gas: 3606037)
+[PASS] test_sliceUnderTwiceTheLargestPaymentReverts() (gas: 494123)
+Ran 3 tests for test/Fees.t.sol:BuybackTest
+[PASS] test_buybackBurnsTheCoinBoughtAndBooksTheSkim() (gas: 46128606)
+[PASS] test_buybackDelayAtLaunchValues() (gas: 89081617)
+[PASS] test_sandwichOfTheSliceLoses() (gas: 2853258)
+Ran 18 tests for test/Migrate.t.sol:MigrateTest
+[PASS] test_GAS_migrateOneSixtyCredits() (gas: 71182527)
+[PASS] test_OK_aPartialBatchLeavesThePileMigratableAndComposeIsRefused() (gas: 39513028)
+[PASS] test_OK_aRetiredCoreStillBooksFeesAndSkims() (gas: 1323499)
+[PASS] test_OK_aSuccessorThatCallsBackIsRefused() (gas: 894740)
+[PASS] test_OK_aSuccessorWithoutFundTakesAPlainSend() (gas: 214948121)
+[PASS] test_OK_aZeroBatchMovesOnlyThePots() (gas: 214468911)
+[PASS] test_OK_buybackAfterAMigrationBurnsTheRetainedBuybackPot() (gas: 43097419)
+[PASS] test_OK_everyHeldStatementStaysAsItWas() (gas: 215057688)
+[PASS] test_OK_migrateHasNoBalanceTokenLeg() (gas: 214917243)
+[PASS] test_OK_potsAndCreditsMove() (gas: 215328611)
+[PASS] test_OK_retiredIsOneWayAndLogsOnce() (gas: 760864)
+[PASS] test_OK_setSuccessorTakesACodeAddressOrZero() (gas: 167125)
+[PASS] test_OK_theLockClosesSetSuccessorAndKeepsMigrate() (gas: 746379)
+[PASS] test_OK_theOldEngineSellsOutItsStatementsAndASecondMigrateMovesTheProceeds() (gas: 216259002)
+[PASS] test_REVERT_aSuccessorThatRefusesEthLeavesEverythingInPlace() (gas: 215671912)
+[PASS] test_REVERT_migrateNeedsASuccessor() (gas: 43301)
+[PASS] test_REVERT_onlyTheOwner() (gas: 185407)
+[PASS] test_REVERT_theSuccessorIsNotPartOfTheEngine() (gas: 2261667)
+Ran 5 tests for test/ModeOffDifferential.t.sol:ModeOffBalanceRouteTest
+[PASS] test_balanceBidOffClosesTheRoute() (gas: 3715061)
+[PASS] test_documentedHazard_modeOffBalanceBidOpensRoundTripWhenSpotLeads() (gas: 4820726)
+[PASS] test_referenceWarmsUpWhileModeIsOff() (gas: 337670)
+[PASS] test_valueModeClosesTheRoundTripWhenSpotLeads() (gas: 5526839)
+[PASS] test_valueModeClosesTheRoundTripWhenSpotLeads_cap30000() (gas: 5529661)
+Ran 6 tests for test/ModeOffDifferential.t.sol:ModeOffDifferentialTest
+[PASS] test_bidIsPerPoint() (gas: 942775)
+[PASS] test_climbCeilingAndLoosening() (gas: 1473457)
+[PASS] test_creditSaleStartIsOverTheFloor() (gas: 1585171)
+[PASS] test_dropIsTheLaunchDrop() (gas: 1161141)
+[PASS] test_poolKeyChangesNoPriceWhileModeIsOff() (gas: 97158110)
+[PASS] test_statementDecay() (gas: 45846071)
+Ran 7 tests for test/OnePile.t.sol:OnePileTest
+[PASS] test_compose_oneKindFromMixedCredits() (gas: 39609230)
+[PASS] test_sellForBalance_costIsScoreTimesPointRateWithoutAPoolKey() (gas: 3252977)
+[PASS] test_sellForBalance_costUnaffectedByAPushedUpPool() (gas: 3450650)
+[PASS] test_sellForBalance_usesFixedBasisNotTheController() (gas: 3190431)
+[PASS] test_setter_chosenComposeOn() (gas: 135666)
+[PASS] test_setter_creditCostToPotBps() (gas: 171306)
+[PASS] test_setter_minCcToChoose() (gas: 138077)
+Ran 6 tests for test/OwnerPowers.t.sol:OwnerFormerQueueTest
+[PASS] test_adapter_forbiddenAddressesAreRefused() (gas: 896462)
+[PASS] test_controller_takesEffectInTheSameBlock() (gas: 974533)
+[PASS] test_controller_zeroRevertsAndStrangerRevertsAndASecondSetWorks() (gas: 790417)
+[PASS] test_module_replaceChangesTheTokenAndReadsTheNewUnit() (gas: 2932987)
+[PASS] test_module_validityRulesAreIntact() (gas: 5386928)
+[PASS] test_queue_noQueueNoDelayNoCancelNoFreezeNoImmutableOwner() (gas: 214854)
+Ran 6 tests for test/OwnerPowers.t.sol:OwnerHandoverTest
+[PASS] test_handover_noOwnerDoorMovesAnAsset() (gas: 49700188)
+[PASS] test_handover_ownerCannotBeZeroedAndThereIsNoRenounce() (gas: 104922)
+[PASS] test_handover_theOldOwnerLosesEveryPowerAndTheNewOneHasEvery() (gas: 6068616)
+[PASS] test_handover_twoStepsAndOnlyThePendingOwnerAccepts() (gas: 1854917)
+[PASS] test_handover_zeroAddressAcceptWhileNothingPendingReverts() (gas: 46717)
+[PASS] test_handover_zeroClearsPendingAndANewNameReplacesIt() (gas: 268749)
+Ran 4 tests for test/OwnerPowers.t.sol:OwnerLocksTest
+[PASS] test_lockAdapters_blocksAddButNotRemoveAndKeepsTheOldOnes() (gas: 2197904)
+[PASS] test_lockBalanceModule_revertsWhileUnset() (gas: 265789)
+[PASS] test_lockController_blocksOnlyTheControllerSetterForever() (gas: 1754867)
+[PASS] test_locks_areIndependentAndOneWayAndRepeatable() (gas: 3998809)
+Ran 3 tests for test/Pause.t.sol:PauseClockTest
+[PASS] testFuzz_ageIsWallTimeMinusPausedTime(uint256) (runs: 48, μ: 116485776, ~: 135245088)
+[PASS] test_ageAtSeed17050() (gas: 139015607)
+[PASS] test_gas_ageReadIsConstantAfterManyPauses() (gas: 70604393)
+Ran 10 tests for test/Sale.t.sol:SaleAnchorTest
+[PASS] test_anchorDecaysOverEightDaysWithNoBuyerAtLaunchMinCost() (gas: 87176030)
+[PASS] test_anchor_aRevertedBuyDoesNotMoveIt() (gas: 45311658)
+[PASS] test_anchor_aSaleAtTheStartMovesTheAnchorHalfWay() (gas: 45365336)
+[PASS] test_anchor_buyRecordsTheAskNotMsgValue() (gas: 45356656)
+[PASS] test_anchor_decaysWithTime() (gas: 134525)
+[PASS] test_anchor_dustStatementsLeaveTheAnchor() (gas: 189732254)
+[PASS] test_anchor_floorSalesDoNotDragTheAnchor() (gas: 263184541)
+[PASS] test_anchor_neverPassesTheCap() (gas: 446467)
+[PASS] test_anchor_oddGapRoundsMovementDownAndFullMoveReachesSale() (gas: 87710440)
+[PASS] test_anchor_zeroMoveDoesNotRestartDecay() (gas: 45573496)
+Ran 3 tests for test/Sale.t.sol:SaleBuyTest
+[PASS] test_buy_exactPriceSplitAndOwnership() (gas: 187954702)
+[PASS] test_buy_refundsTheExcess() (gas: 45350743)
+[PASS] test_buy_underpayRevertsAndChangesNothing() (gas: 45369850)
+Ran 2 tests for test/Sale.t.sol:SaleCurveTest
+[PASS] test_curve_priceOfRefusesWhatIsNotForSale() (gas: 47076124)
+[PASS] test_curve_priceOfStaysAtOrAboveTheFloor() (gas: 47885339)
+Ran 8 tests for test/Sale.t.sol:SaleCutsTest
+[PASS] test_cuts_creditSaleSplitsSumToThePayment() (gas: 1872975)
+[PASS] test_cuts_pushReachesAnArtistThatReverts() (gas: 49005222)
+[PASS] test_cuts_setArtistOnlyTheOwner() (gas: 37442)
+[PASS] test_cuts_setArtistRefusesAForbiddenTarget() (gas: 42418)
+[PASS] test_cuts_setArtistZeroRefusedWhileTheCutIsOn() (gas: 447376)
+[PASS] test_cuts_setSettingsRefusesCutWhileArtistZero() (gas: 319953)
+[PASS] test_cuts_statementSaleSplitsSumToThePayment() (gas: 45965986)
+[PASS] test_cuts_zeroBpsSkipsThePush() (gas: 46056809)
+Ran 3 tests for test/Sale.t.sol:SaleDecayTest
+[PASS] testFuzz_decay_priceNeverRisesWithAge(uint256[8],uint128,uint32,uint32) (runs: 256, μ: 872680, ~: 872649)
+[PASS] test_decay_oneCallReachesAnyValidCombination() (gas: 208904)
+[PASS] test_decay_settingsMoveAnOpenListingAtOnce() (gas: 46474750)
+Ran 1 test for test/Sale.t.sol:SaleFloorTest
+[PASS] test_floor_followsTheSettingAtOnce() (gas: 47582864)
+Ran 1 test for test/Sale.t.sol:SaleLaunchColdTest
+[PASS] test_firstStatementSaleAtLaunchWithoutTheReferencePin() (gas: 46218228)
+Ran 1 test for test/Sale.t.sol:SaleLaunchCurveTest
+[PASS] test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() (gas: 46186435)
+Ran 6 tests for test/Sale.t.sol:SaleSellToTest
+[PASS] test_reenter_aBuyerThatRefusesTheRefundCanOnlyPayExactly() (gas: 46317999)
+[PASS] test_reenter_theBuyersRefundCannotReachAnyDoorTwice() (gas: 88795664)
+[PASS] test_sellTo_belowTheHardFloorRevertsAtTheFloorClears() (gas: 47076284)
+[PASS] test_sellTo_booksEverythingItIsPaid() (gas: 47023530)
+[PASS] test_sellTo_onlyTheCurrentController() (gas: 46981919)
+[PASS] test_sellTo_unknownAndSoldRevert() (gas: 48903081)
+Ran 5 tests for test/Sale.t.sol:SaleSettingsTest
+[PASS] test_settings_boundsOfEverySetter() (gas: 46258573)
+[PASS] test_settings_constructorBounds() (gas: 10415)
+[PASS] test_settings_eventsAndValues() (gas: 238073)
+[PASS] test_settings_launchValues() (gas: 173035)
+[PASS] test_settings_onlyTheCoreOwner() (gas: 488570)
+Ran 2 tests for test/SaleFloorStart.t.sol:SaleFloorStartTest
+[PASS] test_setSaleRefusesStartBelowFloor() (gas: 362108)
+[PASS] test_setSettingsRefusesFloorAboveStart() (gas: 156256)
+Ran 1 test for test/ScriptLint.t.sol:ScriptLintTest
+[PASS] test_scriptsDoNotUseAddressThis() (gas: 512106)
+Ran 1 test for test/Seaport.t.sol:SeaportCallerPayTest
+[PASS] test_breakEvenGapAtTwoGweiIsTheMeasuredGasCost() (gas: 2412527)
+Ran 6 tests for test/Seaport.t.sol:SeaportTest
+[PASS] testFuzz_selfDealingNeverBeatsTheSellDoor(uint256,uint256,uint256) (runs: 64, μ: 1490879, ~: 1496435)
+[PASS] test_basic_additionalRecipient() (gas: 1467564)
+[PASS] test_basic_capAndPaymentAtScoreNotRefScore() (gas: 1043873)
+[PASS] test_basic_singleConsiderationToSeller() (gas: 1381049)
+[PASS] test_basic_tipToTheCallerIsRefused() (gas: 659345)
+[PASS] test_fail_badSignature() (gas: 2036448)
+Ran 8 tests for test/SetSettings.t.sol:SetSettingsTest
+[PASS] test_combinedFloorAndMarkupUpdatesBothDirections() (gas: 6064435)
+[PASS] test_controllerPreviewRestoresStateAndKeepsChangePlanned() (gas: 331870)
+[PASS] test_dryRunSendsNothingAndTheCalldataWorks() (gas: 1929035)
+[PASS] test_leavesTheOtherFieldsAtTheirLiveValue() (gas: 856836)
+[PASS] test_newFieldsAndTypedWidths() (gas: 1865322)
+[PASS] test_oneVariableChangesOneField() (gas: 601552)
+[PASS] test_runRefusesOutOfBounds() (gas: 581601)
+[PASS] test_unknownFieldAndTooWideValue() (gas: 521319)
+Ran 17 tests for test/SpendCap.t.sol:SpendCapTest
+[PASS] test_balancePurchasesAreExcluded() (gas: 2619763)
+[PASS] test_batchFirstCreditPassesSecondReverts() (gas: 1585217)
+[PASS] test_batchIsAtomicForBothOverloads() (gas: 1765528)
+[PASS] test_bypassWithNewInflowsStillCounts() (gas: 1662531)
+[PASS] test_directThenKeeperSharesBudget() (gas: 1570444)
+[PASS] test_durationEditAfterExpirySnapshotsFresh() (gas: 1831009)
+[PASS] test_exactBudgetAndNextBucket() (gas: 1872793)
+[PASS] test_failedVenueRollsBackWithoutOpeningBudget() (gas: 770566)
+[PASS] test_firstPurchaseOfABucketPassesASubCreditBudget() (gas: 2013104)
+[PASS] test_keeperAndDirectShareBudget() (gas: 1433201)
+[PASS] test_minOutFailureRollsBackBudget() (gas: 1064174)
+[PASS] test_pendingFeesAreBookedBeforeSnapshot() (gas: 1321962)
+[PASS] test_settingsAndRateEditsPreserveUsedBudget() (gas: 2101073)
+[PASS] test_snapshotFixedAndPotScaling() (gas: 2008173)
+[PASS] test_spendCapBounds() (gas: 506744)
+[PASS] test_spendStateReadsTheLiveBucket() (gas: 1708542)
+[PASS] test_zeroBucketAndZeroRoundedBudget() (gas: 1326951)
+Ran 21 tests for test/StatementBalanceModule.t.sol:StatementBalanceModuleTest
+[PASS] test_accrualEqualsShortfallForEachFailureShape() (gas: 654924)
+[PASS] test_availableClosedUnlessRetiredTotalEqualsLaunchRetirement() (gas: 228718)
+[PASS] test_availableRequiresBothGates() (gas: 278111)
+[PASS] test_boundSuccessorReceivesNothingBeforeCoreRetires() (gas: 408638)
+[PASS] test_claimReentrancyPaysOnce() (gas: 422902)
+[PASS] test_constructorPinsConfiguration() (gas: 18448)
+[PASS] test_constructorRejectsMissingCode() (gas: 5985)
+[PASS] test_constructorRejectsWrongSourceUnitOrDecimals() (gas: 42723)
+[PASS] test_failedPaymentAccruesOwed() (gas: 407353)
+[PASS] test_hostileSuccessorModuleOnOtherTokenKeepsReserve() (gas: 1240793)
+[PASS] test_migrationGateFailurePreservesReserve() (gas: 616809)
+[PASS] test_migrationLeavesOwedInTheModule() (gas: 694728)
+[PASS] test_migrationRejectsInvalidModuleBinding() (gas: 1327051)
+[PASS] test_migrationRejectsInvalidSuccessor() (gas: 395943)
+[PASS] test_migrationRequiresRetiredCore() (gas: 424322)
+[PASS] test_migrationTransfersExactHoldingAndCanRepeat() (gas: 768693)
+[PASS] test_onlyCoreMayRedeemOrPay() (gas: 56231)
+[PASS] test_payRespectsLiveAvailable() (gas: 507256)
+[PASS] test_redeemCreditsRatingAndConsumesApproval() (gas: 216431)
+[PASS] test_redeemRevertsBelowRating() (gas: 199010)
+[PASS] test_reentrantTokenCallbackCannotMoveMoreThanTheHolding() (gas: 785430)
+Ran 14 tests for test/Pause.t.sol:PauseTest
+[PASS] testFuzz_priceIsFrozenAndResumesAtTheSameAge(uint32) (runs: 256, μ: 45734972, ~: 45736269)
+[PASS] test_allIntakeAndBuybackDoorsStopWhilePaused() (gas: 3681855)
+[PASS] test_anchorDecaysWhilePaused() (gas: 45375841)
+[PASS] test_bidClockFreezesAcrossPauseAndResumes() (gas: 699826)
+[PASS] test_buy_revertsWhilePausedAndWorksAfterResume() (gas: 45814915)
+[PASS] test_compose_stopsWhilePausedAndResumesWithTheSameAge() (gas: 87584383)
+[PASS] test_creditWindowRunsInWallTimeWhilePaused() (gas: 167699)
+[PASS] test_halfLifeEditDuringPausePreservesBid() (gas: 691321)
+[PASS] test_launchValueIsUnpaused() (gas: 26261)
+[PASS] test_rateResetAndSecondPauseDoNotLoseEarnedBid() (gas: 752860)
+[PASS] test_redemptionAndFeeIntakeRemainLiveWhilePaused() (gas: 48381365)
+[PASS] test_sellDoors_pausedRevertsAfterTheControllerCheck() (gas: 299305)
+[PASS] test_setPaused_eventAndNoOpRepeats() (gas: 284891)
+[PASS] test_setPaused_onlyTheLiveOwner() (gas: 245859)
+Ran 4 tests for test/PerPoint.t.sol:PerPointTest
+[PASS] test_aRicherCreditIsBidMore() (gas: 2906240)
+[PASS] test_adoptBasisScalesByScore() (gas: 1096338)
+[PASS] test_bidOfScalesTheRateByScoreOverRefScore() (gas: 1723658)
+[PASS] test_sellForEthPaysThePerCreditBidAndScalesTheDrop() (gas: 1385574)
+Ran 8 tests for test/UpstreamBalance.t.sol:UpstreamBalanceTest
+[PASS] test_boundedPayAccruesAndClaimSettles() (gas: 65645727)
+[PASS] test_directPayWarmAndColdMeasure() (gas: 65056387)
+[PASS] test_exactOpeningRedeemsAndRecyclesIntoCredits() (gas: 122045389)
+[PASS] test_oneCreditColdArtistRoyaltyIsPaidDirectly() (gas: 90017047)
+[PASS] test_redemptionClosedBeforeOpening() (gas: 65947210)
+[PASS] test_registrationFailureRollsBackCustody() (gas: 46299986)
+[PASS] test_retirementMigratesReserveAndLaterRedemption() (gas: 111867471)
+[PASS] test_retirementRequiredEvenAfterOpening() (gas: 46433395)
+Ran 5 tests for test/V2Port.t.sol:V2PortFeeTest
+[PASS] test_collectEscrowWithNothingOwedReverts() (gas: 75553)
+[PASS] test_escrowCreditOfTheCoreIsCollectedIntoThePot() (gas: 485191)
+[PASS] test_partialFillRefundsToTheHookDataAddress() (gas: 333634)
+[PASS] test_partialFillWithoutRefundAddressReverts() (gas: 165966)
+[PASS] test_strangerEscrowClaimLandsAsIncomeForTheNextBook() (gas: 783192)
+Ran 3 tests for test/V2Port.t.sol:V2PortMigrationTest
+[PASS] test_newCoreWithoutAllowlistBuysBack() (gas: 1642034)
+[PASS] test_refusingRecipientNeverBlocksSwaps() (gas: 2527410)
+[PASS] test_repointMovesTheFeesAndTheOldCoreKeepsWorking() (gas: 43477307)
+Ran 3 tests for test/V2Port.t.sol:V2PortRestrictionTest
+[PASS] test_aWalletCannotSendCoinToTheCore() (gas: 110018)
+[PASS] test_buybackConsumesTheWholeAllowance() (gas: 45920204)
+[PASS] test_unrestrictedTransferToTheCoreIsInert() (gas: 45597613)
+Ran 3 tests for test/V2Port.t.sol:V2PortSkimTest
+[PASS] test_lockFreezesLowerBaselineSkim() (gas: 91121)
+[PASS] test_lowerBaselineSkimLowersTheEngineFee() (gas: 560992)
+[PASS] test_protocolLegLandsAtTheController() (gas: 310300)
+Ran 3 tests for test/V2Stack.t.sol:V2StackTest
+[PASS] test_launchRestrictedCoinWithEmptyRecipient() (gas: 3554728)
+[PASS] test_liveStackPassesCheck() (gas: 339435)
+[PASS] test_writingRecipientIsCreditedInEscrowAndClaims() (gas: 3613918)
+Ran 23 tests for test/ValueMode.t.sol:ValueModeTest
+[PASS] test_balanceCapBoundedByValueRateWhenSpotLeads() (gas: 4581465)
+[PASS] test_balanceCapIgnoresEthPotClamp() (gas: 5504421)
+[PASS] test_balanceCapIgnoresPartialPotClamp() (gas: 5539806)
+[PASS] test_balanceCapUnchangedWithPotRoom() (gas: 5724839)
+[PASS] test_balanceFillRefusesWhileTheReferenceIsUnusable() (gas: 5128869)
+[PASS] test_balancePayoutIsParOutsideValueMode() (gas: 58627)
+[PASS] test_balanceRoundTripLosesWhenSpotLeadsReference() (gas: 5324785)
+[PASS] test_ethFillsDropTheInstanceAndBalanceFillsDoNot() (gas: 2214934)
+[PASS] test_hostileQuoteIsBounded() (gas: 2118795)
+[PASS] test_launchValues() (gas: 27830)
+[PASS] test_onlyTheSwitchResets() (gas: 1228043)
+[PASS] test_pSellHelperMatchesTheController() (gas: 3976177)
+[PASS] test_pauseFreezesSharedBidAndResumesEarnedClimb() (gas: 904353)
+[PASS] test_pauseInValueMode() (gas: 1531282)
+[PASS] test_roundTripsLoseTheSpread() (gas: 24505974)
+[PASS] test_saleDoorsObserve() (gas: 2017520)
+[PASS] test_sellForEthGasInValueMode() (gas: 1798168)
+[PASS] test_staleQuoteDegradesTheEthRoutes() (gas: 47226689)
+[PASS] test_statementPricesOffTheProtectedFloor() (gas: 46086643)
+[PASS] test_statementQuoteCoversHistoricalCostFloor() (gas: 46596079)
+[PASS] test_switchOffResetsEthInstanceToTheSharedRate() (gas: 1005223)
+[PASS] test_switchResetsTheSharedInstanceAndPricesTheBid() (gas: 1370879)
+[PASS] test_valueFloorClosesTheRoundTrip() (gas: 2180021)
+Ran 8 tests for test/ValueMode.t.sol:ValueRealPoolTest
+[PASS] test_jitLiquidityCannotPassMinLiquidity() (gas: 343599)
+[PASS] test_loopClosureRoundTripAtNonzeroBand() (gas: 3099360)
+[PASS] test_realPoolDownMoveStaleQuoteClosesWithinFiveRefreshes() (gas: 1068467)
+[PASS] test_realPoolUpMoveStaleQuoteClosesWithinFiveRefreshes() (gas: 1080687)
+[PASS] test_referenceWalksAtTheMaxRateForAnHour() (gas: 22613287)
+[PASS] test_singleBlockManipulationStaysInsideTheBand() (gas: 3427788)
+[PASS] test_tenXSpotSpikeStaysUnderTheRateCapAndPot() (gas: 1148254)
+[PASS] test_zeroToleranceUsesSampledSpotAndTwoPercentRefreshStep() (gas: 2179971)
+Ran 13 tests for test/ValueMode.t.sol:ValueReferenceTest
+[PASS] test_longIdleGainsOneStep() (gas: 310806)
+[PASS] test_observeMovesAtMostTheRate() (gas: 411685)
+[PASS] test_paidRefreshPreservesEarnedClimbBeforePotFalls() (gas: 662321)
+[PASS] test_poolKeySeedAllowsNormalDriftWithZeroTradingTolerance() (gas: 646586)
+[PASS] test_poolKeySeedRevertsOnManipulation() (gas: 271863)
+[PASS] test_protectedPricesAtSpotAboveAndBelow() (gas: 785182)
+[PASS] test_referenceStartsAtTheSpot() (gas: 16494)
+[PASS] test_refreshGatedByReferenceMinSeconds() (gas: 431823)
+[PASS] test_resettingTheSameKeyReseedsTheReference() (gas: 685395)
+[PASS] test_setQuoteBounds() (gas: 281886)
+[PASS] test_slowRateStillTracksUnderFrequentCalls() (gas: 18480390)
+[PASS] test_spamGainsNothingBeyondTheRate() (gas: 15125526)
+[PASS] test_unusableStates() (gas: 500761)
+Ran 6 tests for test/ViewEqualsStored.t.sol:ViewEqualsStoredTest
+[PASS] test_balanceBidEqualsFill_tokensArriveThenWarp() (gas: 2753747)
+[PASS] test_ethBidEqualsFill_freshDeployOneSell() (gas: 906171)
+[PASS] test_ethBidEqualsFill_freshLaunchOnlyUnbookedIncome() (gas: 874106)
+[PASS] test_ethBidEqualsFill_unbookedIncomeThenWarp() (gas: 971141)
+[PASS] test_spendBudgetDivergenceNumbers() (gas: 1063426)
+[PASS] test_spendBudgetQuotedEqualsEnforced_withUnbookedIncome() (gas: 1055487)
+Ran 1 test for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2Deep
+[SKIP: skipped] setUp() (gas: 0)
+Ran 7 tests for test/PerPointExact.t.sol:PerPointExactTest
+[PASS] test_adopt_oneWeiFloorWhenTheScaledPriceRoundsToZero() (gas: 790894)
+[PASS] test_batchOfThree_eachPayoutAndRateAfterInCallOrder() (gas: 3168314)
+[PASS] test_drop_scalesTheFallAtRatioTwoAndRatioHalf() (gas: 2065896)
+[PASS] test_minuteFloor_reachedInFewerFillsAtRatioAboveOne() (gas: 47751137)
+[PASS] test_rounding_buyAtTheFloorIsAboveTheSellForEthPayout() (gas: 1670134)
+[PASS] test_rounding_creditSaleFloorValueRoundsDown() (gas: 558464)
+[PASS] test_rounding_payoutAndCostBasisRoundDown() (gas: 1356207)
+Ran 1 test for test/audit/PostflightInputs.t.sol:PostflightInputsTest
+[PASS] test_FIXED_A02_verifyInputsDoNotChangeAfterSettingsOrControllerChange() (gas: 4531010)
+Ran 5 tests for test/PostflightSlots.t.sol:PostflightSlotsTest
+[PASS] test_deployAndResumeRefuseEveryChangeFlag() (gas: 36645)
+[PASS] test_oneDivergentControllerSiteFailsPostflight() (gas: 582823046)
+[PASS] test_oneDivergentImmutableSiteFailsPostflight() (gas: 354678366)
+[PASS] test_oneForeignLibrarySiteFailsPostflight() (gas: 148278312)
+[PASS] test_theScriptsCallTheGuards() (gas: 2571110)
+Ran 6 tests for test/RatingReference.t.sol:RatingReferenceTest
+[PASS] test_coreHardFloorBoundsAtCost() (gas: 46096620)
+[PASS] test_pointRateAndValueOf() (gas: 343147)
+[PASS] test_pointsPerPage_boundsAreEnforced() (gas: 470865)
+[PASS] test_referenceMovesWithTheFloorRate() (gas: 46337777)
+[PASS] test_reference_isMaxOfCostAndRateTerm() (gas: 46072055)
+[PASS] test_sameRatingSameReference_acrossLineages() (gas: 74562478)
+Ran 7 tests for test/Recovery.t.sol:RecoveryTest
+[PASS] testFuzz_priceStateMonotoneBetweenFills(uint256,uint256) (runs: 40, μ: 44320707, ~: 40932906)
+[PASS] test_launchGapIs1000() (gas: 59203)
+[PASS] test_oneMinuteDumpRecovers() (gas: 61931861)
+[PASS] test_recoveryAndPeakHalvingAtLaunchDrop() (gas: 35485016)
+[PASS] test_setRateRestatesThePeak() (gas: 17210306)
+[PASS] test_setSettingsChangingHalfLifeCheckpointsThePeak() (gas: 258783)
+[PASS] test_threeMinuteDumpRecovers() (gas: 193070897)
+Ran 9 tests for test/Redeem.t.sol:RedeemRepayTest
+[PASS] test_pay_ethLaneGasCountIsCappedExactly() (gas: 53201254)
+[PASS] test_pay_launchSettingsPayCappedGasPlusFee() (gas: 53040975)
+[PASS] test_pay_neverAboveTheBoundWithAGasBurningModule() (gas: 577247600)
+[PASS] test_pay_zeroPotPaysZeroAndDoesNotRevert() (gas: 49347699)
+[PASS] test_pay_zeroSettingsPayZero() (gas: 53166630)
+[PASS] test_reenter_aHostileModuleCannotUseAnyDoorMidRedeem() (gas: 491183740)
+[PASS] test_reenter_theRepaidCallerFindsEveryDoorShut() (gas: 91113646)
+[PASS] test_releaseRedeemBurnCapsAtReserveAndRefusesEmpty() (gas: 737895)
+[PASS] test_releaseRedeemBurnMovesExactlyAndHoldsSolvency() (gas: 747785)
+Ran 11 tests for test/Redeem.t.sol:RedeemTimingTest
+[PASS] test_eligibility_byAgeAtTheBoundary() (gas: 48037762)
+[PASS] test_eligibility_readsNoPrice() (gas: 48370414)
+[PASS] test_eligibility_startAtParIsEligibleAtOnce() (gas: 47788630)
+[PASS] test_eligibility_switchOffIsCurveOnIsAge() (gas: 47938615)
+[PASS] test_timing_anUnderpayingModuleRevertsEverything() (gas: 49365981)
+[PASS] test_timing_atFloorColdFitsTheCoreReadBudget() (gas: 48141189)
+[PASS] test_timing_eligibilityFrozenDuringPause() (gas: 48453244)
+[PASS] test_timing_noModuleNotHeldAndUnknown() (gas: 47639433)
+[PASS] test_timing_offWhenRedeemOnIsFalse() (gas: 48483603)
+[PASS] test_timing_redemptionNeedsTheController() (gas: 48270909)
+[PASS] test_timing_revertsUntilAtCostThenWorks() (gas: 48481341)
+Ran 1 test for test/Rehearsal.t.sol:RehearsalTest
+[PASS] test_rehearsal() (gas: 112572411)
+Ran 8 tests for test/Rescue.t.sol:RescueTest
+[PASS] test_OK_aForeignErc721Leaves() (gas: 264078)
+[PASS] test_REVERT_aCreditInAPileStays() (gas: 2138325)
+[PASS] test_REVERT_aCreditSentStraightToTheCoreStays() (gas: 365910)
+[PASS] test_REVERT_aHeldStatementStays() (gas: 45580205)
+[PASS] test_REVERT_aMigratedCreditIsNotRescuableOnTheSuccessor() (gas: 2658909)
+[PASS] test_REVERT_aTokenTheCoreDoesNotHold() (gas: 84706)
+[PASS] test_REVERT_notTheOwner() (gas: 377681)
+[PASS] test_REVERT_theZeroDestination() (gas: 341899)
+Ran 9 tests for test/Reserve.t.sol:ReserveTest
+[PASS] test_adoptReserveRiseKeepsEarnedClimb() (gas: 108050985)
+[PASS] test_buyListingRespectsTheRoom() (gas: 1559631)
+[PASS] test_composeReserveDropDoesNotGrantEmptyHours() (gas: 115078171)
+[PASS] test_creditSaleReserveDropDoesNotGrantEmptyHours() (gas: 108445049)
+[PASS] test_ethRateNeverAboveThePayable() (gas: 920366)
+[PASS] test_formulaFollowsTheQueue() (gas: 46046956)
+[PASS] test_processingPaysFromTheWholePot() (gas: 42251477)
+[PASS] test_sellForEthKeepsTheReserve() (gas: 1664439)
+[PASS] test_spendAboveTheRoomReverts() (gas: 695490)
+Ran 9 tests for test/Resume.t.sol:ResumeTest
+[PASS] test_deferredDeployThenLaunchEqualsOneShot() (gas: 91012402)
+[PASS] test_launchStepRefusals() (gas: 53505418)
+[PASS] test_launchStepRefusesAChangedFactory() (gas: 33925051)
+[PASS] test_launchStepRefusesHalfWiredDeploys() (gas: 65967560)
+[PASS] test_resumeBindsTheCoreOfACreatedRenderer() (gas: 49963894)
+[PASS] test_resumeFinishesADeployStoppedAfterTheCore() (gas: 50047217)
+[PASS] test_resumeRefusesWhatItCannotFinish() (gas: 37409027)
+[PASS] test_resumeSendsOnlyTheLaunchWhenTheRestIsOnChain() (gas: 51237200)
+[PASS] test_signerGuards() (gas: 287053)
+Ran 9 tests for test/ReturnLock.t.sol:ReturnLockTest
+[PASS] test_buyListingRefusedWhenTheBuyerOffersTheListing() (gas: 2334743)
+[PASS] test_launchLockIsSixHours() (gas: 25285)
+[PASS] test_lockFollowsTheLiveSetting() (gas: 2755032)
+[PASS] test_neverSoldCreditPasses() (gas: 1128767)
+[PASS] test_secondaryHolderSellsAtOnce() (gas: 2941346)
+[PASS] test_sellForBalanceRefusedInsideTheLock() (gas: 4251948)
+[PASS] test_sellForEthRefusedUntilTheLockEnds() (gas: 2997463)
+[PASS] test_swapCreditRefusedInsideTheLock() (gas: 2648165)
+[PASS] test_zeroLockIsNoLock() (gas: 2643776)
+Ran 8 tests for test/ReviewDeploy.t.sol:ReviewDeployTest
+[PASS] test_aCoreWithoutAControllerRefusesItsControllerDoors() (gas: 12403644)
+[PASS] test_configHashIsTheSignOffValue() (gas: 47901080)
+[PASS] test_coreCoinIsPredictedOrRecorded() (gas: 312389)
+[PASS] test_coreRejectsAStackWithoutCode() (gas: 121634)
+[PASS] test_jsonNumbersAreRejected() (gas: 2147124)
+[PASS] test_postflightReadsThePositionBack() (gas: 72114456)
+[PASS] test_postflightReadsTheSniperParamsBack() (gas: 104720106)
+[PASS] test_preflightLibraryRow() (gas: 78070533)
+Ran 2 tests for test/ReviewDeploy.t.sol:ReviewFundedTest
+[PASS] testFuzz_fundedRuleAndClamp(uint256,uint256[10]) (runs: 400, μ: 2880578, ~: 2846344)
+[PASS] test_rateStartBounds() (gas: 105359)
+Ran 8 tests for test/invariant/Invariants.t.sol:InvariantsPhase1
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14379362)
+[PASS] test_composeChosenComposesAPage() (gas: 14010522)
+[PASS] test_everyActionSucceeds() (gas: 115030864)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2066001)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9415234)
+[PASS] test_storageLayoutMatchesTheHandlerSlots() (gas: 24687)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 1 test for test/invariant/Invariants.t.sol:InvariantsPhase1Deep
+[SKIP: skipped] setUp() (gas: 0)
+Ran 9 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2Hostile
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15027500)
+[PASS] test_composeChosenComposesAPage() (gas: 12362029)
+[PASS] test_everyActionSucceeds() (gas: 126378138)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075264)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9401318)
+[PASS] test_saleActionsEverySucceed() (gas: 32977245)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 5276815)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 3 tests for test/ReviewMatrix.t.sol:ReviewMatrixConfigTest
+[PASS] test_matrix_launch() (gas: 436231758)
+[PASS] test_matrix_ratePeople() (gas: 138617771)
+[PASS] test_matrix_stack() (gas: 125420117)
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileOwner
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055779)
+[PASS] test_composeChosenComposesAPage() (gas: 12094351)
+[PASS] test_everyActionSucceeds() (gas: 122818447)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075286)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9424544)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 1 test for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileOwnerDeep
+[SKIP: skipped] setUp() (gas: 0)
+Ran 8 tests for test/invariant/Invariants.t.sol:InvariantsPhase1Window
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14325772)
+[PASS] test_composeChosenComposesAPage() (gas: 13831625)
+[PASS] test_everyActionSucceeds() (gas: 215298374)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2045981)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9438559)
+[PASS] test_startsInsideTheSniperWindow() (gas: 12918)
+[PASS] test_theBidCheckFindsASeller() (gas: 817017)
+Ran 1 test for test/invariant/Invariants.t.sol:InvariantsPhase1WindowDeep
+[SKIP: skipped] setUp() (gas: 0)
+Ran 1 test for test/invariant/InvariantsPhase2.t.sol:InvariantsPhase2Deep
+[SKIP: skipped] setUp() (gas: 0)
+Ran 2 tests for test/invariant/InvariantsValue.t.sol:InvariantsValue
+[PASS]
+[PASS] invariant_v01_ethOnlyLeavesAsThePayment
+[PASS] invariant_v02_noCreditAboveTheRead
+[PASS] invariant_v03_noStatementBelowTheHardFloor
+[PASS] invariant_v07_noSpendAboveTheRoom
+[PASS] invariant_v16_theBidNeverCloses
+[PASS] invariant_v19_readBounds
+[PASS] invariant_v20_roundTripsLoseTheSpread
+[PASS] test_handlerExercisesTheRoutes() (gas: 13293441)
+Ran 5 tests for test/Launch.t.sol:LaunchTest
+[PASS] test_firstFillDoesNotClimbOnUnbookedHookIncome() (gas: 1205108)
+[PASS] test_launchReadBack() (gas: 89205)
+[PASS] test_predictedCoinEqualsDeployed() (gas: 421842)
+[PASS] test_referralWithTheCapAtZeroDoesNotRevert() (gas: 258800)
+[PASS] test_theAntiSniperSkimStartsHighAndFallsToTheBaseline() (gas: 509705)
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileController
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15027479)
+[PASS] test_composeChosenComposesAPage() (gas: 12362051)
+[PASS] test_everyActionSucceeds() (gas: 126378138)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075286)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9401318)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 1 test for test/invariant/InvariantsPhase2.t.sol:InvariantsHostileControllerDeep
+[SKIP: skipped] setUp() (gas: 0)
+Ran 1 test for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1Deep
+[SKIP: skipped] setUp() (gas: 0)
+Ran 1 test for test/LaunchDay.t.sol:LaunchDayBuyersTest
+[PASS] test_sevenDaysWithBuyers() (gas: 97660390)
+Ran 4 tests for test/LaunchDay.t.sol:LaunchDayTest
+[PASS] test_equalAskAtCappedBidRemainsIdleForTheKeeper() (gas: 10679114)
+[PASS] test_firstComposeFromKeeperBoughtRealSeaportPage() (gas: 113290548)
+[PASS] test_launchDayKeeperIsTheOnlyEngineCaller() (gas: 225160605)
+[PASS] test_unbookedIncomeWaitsForBookBeforeBidClimbs() (gas: 28486149)
+Ran 1 test for test/LaunchDayPhase2.t.sol:LaunchDayPhase2Test
+[PASS] test_phase2DayWithProductionModule() (gas: 75218697)
+Ran 7 tests for test/invariant/InvariantsPhase2.t.sol:InvariantsPhase2
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055779)
+[PASS] test_composeChosenComposesAPage() (gas: 12094351)
+[PASS] test_everyActionSucceeds() (gas: 122818447)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075286)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9424544)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 9 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase1
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 14379383)
+[PASS] test_composeChosenComposesAPage() (gas: 14010500)
+[PASS] test_everyActionSucceeds() (gas: 115030886)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2065979)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9415234)
+[PASS] test_saleActionsEverySucceed() (gas: 31922536)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 4758465)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)
+Ran 9 tests for test/invariant/InvariantsSale.t.sol:InvariantsSalePhase2
+[PASS]
+[PASS] invariant_01_ethOnlyLeavesByAllowedPaths
+[PASS] invariant_02_noCreditAboveTheRead
+[PASS] invariant_03_noStatementSoldBelowTheHardFloor
+[PASS] invariant_04_everyStatementIsInExactlyOnePlace
+[PASS] invariant_05_potsNeverExceedBalances
+[PASS] invariant_06_rateFollowsTheModel
+[PASS] invariant_07_noSpendAboveThePot
+[PASS] invariant_08_ownerAndControllersNeverGain
+[PASS] invariant_09_coinSupplyOnlyFallsByBurns
+[PASS] invariant_10_receiveNeverReverts
+[PASS] invariant_11_noUnexpectedReverts
+[PASS] invariant_12_aStatementOnlyLeavesByASaleOrARedemption
+[PASS] invariant_13_locksAndHandoversNeverComeUndone
+[PASS] invariant_14_noCallFromInsideARedemptionEverWorked
+[PASS] invariant_16_theBidNeverCloses
+[PASS] invariant_17_everyCreditInExactlyOnePlace
+[PASS] invariant_18_ethConservation
+[PASS] invariant_19_bidBounds
+[PASS] invariant_20_purchaseBudgetIsRespected
+[PASS] invariant_21_ethBidEqualsNextFill
+[PASS] invariant_21b_balanceBidEqualsNextFill
+[PASS] invariant_callSummary
+[PASS] test_aRetiredCoreRefusesTheSixDoorActions() (gas: 15055800)
+[PASS] test_composeChosenComposesAPage() (gas: 12094329)
+[PASS] test_everyActionSucceeds() (gas: 122818375)
+[PASS] test_lowRateBatchZeroRefusalMatchesModel() (gas: 2075264)
+[PASS] test_purchaseBudgetGhostIsNotVacuous() (gas: 9424544)
+[PASS] test_saleActionsEverySucceed() (gas: 33052121)
+[PASS] test_saleActionsSurviveMaxSeeds() (gas: 5274015)
+[PASS] test_theBidCheckFindsASeller() (gas: 849983)

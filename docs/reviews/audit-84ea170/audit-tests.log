@@ -1,0 +1,38 @@
+Compiling 4 files with Solc 0.8.30
+Solc 0.8.30 finished in 35.47ms
+Compiler run successful!
+
+Ran 3 tests for test/audit/AuditFindings.t.sol:AuditFindingsTest
+[FAIL: paused time added idle loosening steps to the ceiling: 11767760417943988 != 9789904493600000] test_pauseDoesNotAddIdleLooseningSteps() (block: 26222700) (gas: 1234432)
+Logs:
+  price state, no pause, 50 min idle: 9789904493600000
+  price state, 3 h pause, 50 min idle: 11767760417943988
+
+[FAIL: a funded pot climbs the price state after a week: 0 <= 0] test_rateCanReachZeroAndNeverClimbsBack() (block: 26222700) (gas: 1514434)
+[PASS] test_setRateRecoversAZeroRate() (gas: 1374557)
+Suite result: FAILED. 1 passed; 2 failed; 0 skipped; finished in 84.48ms (8.49ms CPU time)
+
+Ran 1 test for test/audit/AuditFindings.t.sol:AuditValueFallbackTest
+[FAIL: the outage bid follows the token's value: 4410000000000000 > 2695000000278520] test_quoteOutageFreezesTheBidThroughATokenCrash() (block: 26222700) (gas: 2681748)
+Logs:
+  bid before the outage: 4410000000000000
+  bid during the outage after a 50 percent crash: 4410000000000000
+  bid a live quote would pay at the crashed spot: 2450000000253200
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 88.20ms (4.46ms CPU time)
+
+Ran 2 test suites in 112.74ms (172.68ms CPU time): 1 tests passed, 3 failed, 0 skipped (4 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/audit/AuditFindings.t.sol:AuditFindingsTest
+[FAIL: paused time added idle loosening steps to the ceiling: 11767760417943988 != 9789904493600000] test_pauseDoesNotAddIdleLooseningSteps() (block: 26222700) (gas: 1234432)
+[FAIL: a funded pot climbs the price state after a week: 0 <= 0] test_rateCanReachZeroAndNeverClimbsBack() (block: 26222700) (gas: 1514434)
+
+Encountered 1 failing test in test/audit/AuditFindings.t.sol:AuditValueFallbackTest
+[FAIL: the outage bid follows the token's value: 4410000000000000 > 2695000000278520] test_quoteOutageFreezesTheBidThroughATokenCrash() (block: 26222700) (gas: 2681748)
+
+Encountered a total of 3 failing tests, 1 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+EXIT=1

@@ -1,0 +1,126 @@
+
+=== start anvil (chain id 1) on port 8620 ===
+cache miss: key 34179b8e38b5, building the deployed and seeded state
+fork block 26208025
+
+=== deploy (script/deploy.sh local, chain id 1) ===
+deploy.sh: 0xCB43078C32423F5348Cab5885911C3B5faE217F9 carries an EIP 7702 delegation: one transaction in flight, the broadcast waits for each receipt (--slow)
+deploy.sh: env local, build ok, rpc 127.0.0.1 config script/config/anvil.json stack live
+deploy.sh: start block 26208025, signer nonce 3879
+deploy.sh: preflight
+deploy.sh: deploy
+deploy.sh: postflight
+deploy.sh: wrote deployments/1.json (core 0x9224cb4bA7A3E591c0b3233646092f76A2690e12, deploy block 26208028)
+deploy.sh: done
+
+=== seed PHASE=pre (credits to A1/A2/A3 and the owner, no fund, no setRate) ===
+saved cache script/dev/.cache/e2e-real-state-34179b8e38b5.hex
+keeper 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, keystore /tmp/tmp.LzmChmvSeL/keeper-keystore/e2e-real-keeper
+
+=== PHASE 1: launch ===
+      phase1: RATE_START 4900000000000000
+      phase1: rateCap 14700000000000000
+  PASS: ethPot is 0 at launch (pot 0)
+  PASS: ethRate is 0 (empty pot clamps the bid) (rate 0)
+  PASS: RATE_START is 4.9e15 (4900000000000000)
+  PASS: rateCap is 1.47e16 (14700000000000000)
+  PASS: balance module is zero (0x0000000000000000000000000000000000000000)
+
+=== PHASE 2: real fee income through the hook (10 buys, 5 sells, inside the sniper window) ===
+  phase2: buys 10
+  phase2: sells 5
+  phase2: core balance 4515573929052667398
+  phase2: ethPot 0
+
+  PASS: Core balance grew from the hook pushes (before 0 after 4506639077736739630)
+  PASS: no door booked (pot still 0) (pot 0)
+
+=== step 10 minutes in 60 s blocks, no engine call ===
+  PASS: unbooked fees do not start the bid clock (decision 176) (rate 4900000000000000)
+
+=== PHASE 3: the keeper books, sweeps a strategy listing, the rate drops ===
+  PASS: the keeper booked enough ETH to start the funded clock (pot 4506639077736739630)
+  PASS: booking starts near the opening bid (rate 4922693392191757)
+  listing 35377 bid 96351899700000000 price 36000000000000000
+  PASS: the keeper booked (pot > 0) (pot 4468869787861739630)
+  PASS: the keeper bought the strategy listing 35377 (ListingBought) (owner 0x9224cb4bA7A3E591c0b3233646092f76A2690e12)
+  PASS: the keeper logged a confirmed buyListing (keeper log)
+  PASS: ethRate dropped on the fill (pre 14700000000000000 post 14505045639369014)
+
+=== PHASE 4: listings, sellers, the return lock, the reserve ===
+  PASS: the keeper filled a signed Seaport order 18683 (owner 0x9224cb4bA7A3E591c0b3233646092f76A2690e12)
+  phase4: direct sell credit 19727
+  phase4: bid / paid 30119743177404583 30119743177404583
+
+  PASS: direct sellForEth paid exactly bidOf (see step log)
+  PASS: A2 bought a credit through the sale (credit 35377)
+  phase4: return lock refused A2 reselling 35377
+  phase4: A3 sold the transferred credit after the lock released it 35377
+Warning: No transactions to broadcast.
+  PASS: the return lock refuses A2 and allows A3 after transfer (credit 35377)
+  phase4: pot / reserve 4303156466949365305 5303156466949365305
+  phase4: sellForEth refused with PotTooSmall at the reserve, reserve restored
+
+  PASS: sellForEth reverts with the reserve error at the reserve (PotTooSmall)
+
+=== PHASE 5: a page composes, the statement sells, a buyback burns CC ===
+  phase5: sold, pileSize 84
+  phase5: pileSize 84
+Warning: No transactions to broadcast.
+  PASS: the pile holds a composable page (pile 84)
+  PASS: the keeper composed a page (Composed) (keeper log)
+  phase5: statement 245
+  phase5: price / buyback share 5806518112903410000 1408080642379076925
+
+  PASS: the statement sale split to artist, operator and buyback (see step log)
+  PASS: a buyback burned CC (supply 1000000000000000000000000000 -> 982128617765430892080774621)
+  PASS: the payee share latched after the sniper window (payeeOn)
+
+=== PHASE 6: phase 2 balance side (the owner's real calls on Jack's pinned contracts) ===
+  >>> wiring Jack's pinned contracts from out/upstream-balance.json
+  PASS: the owner set the production balance module (Jack's pinned build) (module 0x63a5985393907F882053D55D3904230f022C94f1)
+  phase6prod: sold, pileSize 84
+  phase6prod: pileSize 84
+Warning: No transactions to broadcast.
+  PASS: phase 6 pile holds a composable page (pile 84)
+  PASS: phase 6 composed a held statement (statement 247)
+  PASS: phase 6 statement reached its floor (atFloor 247)
+  phase6prod: redeemed statement 247
+  phase6prod: owed (rating * 1e14) / module available 25908431500000000000000 25908431500000000000000
+
+  PASS: redeem at the floor pays rating times 1e14 into the module (see step log)
+
+=== PHASE 7: value mode ===
+      phase7: funder balance / supply 24950011800000000000000 53750000000000000000000000
+      POOL_DEPTH 164258402685300000000
+      MOVED_TOKENS 23702511210000000000000
+      ETH_LEG 1149808818797100000
+  PASS: the funder seeded real balance-pool depth (depth 164258402685300000000 moved 23702511210000000000000)
+  phase7: value mode on, spendCapBps 1000, referencePrice 49000000000000
+
+  PASS: value mode is on with the quote set (referencePrice 49000000000000)
+  phase7: balance sell credit 24722
+  phase7: balanceBidOf / paid 246560400000000000000 246560400000000000000
+  phase7: buyToArtistBps 250
+
+  PASS: a balance sell pays a positive amount, at most balanceBidOf (see step log)
+  PASS: the balance sell royalty reached the artist or is owed to the artist (royalty held 6164010000000000000 before 0 paid 246560400000000000000 bps 250)
+  phase7: pool spot start / after 49000000000000 52986170305599
+
+  PASS: the keeper refreshed the reference on cadence (6 refresh ticks)
+  phase7: value sell bid / paid 26852000000000000 26852000000000000
+
+  PASS: a value mode sell pays inside the bands (see step log)
+      RT_BID 4250240760150000
+      RT_POOL_LOSS 177461682905660
+      RT_DEPTH 164258402685300000000
+    Warning: No transactions to broadcast.
+  PASS: no profitable same-block round trip (loses the pool fee) (pool loss 177461682905660)
+  phase7: value mode off, ethRate 4590810000000000
+
+  PASS: the eth instance resets near the shared rate at switch off (on 4590810000000000 off 4595220000000000)
+
+=== RESULT ===
+passes: 37   fails: 0   wall: 791s
+E2E-REAL PASSED
+EXIT=0

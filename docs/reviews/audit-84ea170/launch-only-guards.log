@@ -1,0 +1,12 @@
+PASS DEFER_LAUNCH wrote coinLive false and no launchBlock
+PASS the coin has no code after DEFER_LAUNCH
+PASS coinLive true: refused (is not a deferred record)
+PASS wrong controller: refused (controller on chain differs)
+PASS wrong CoreLib: refused (record library differs)
+PASS wrong CoreOpsLib: refused (record opsLibrary differs)
+PASS wrong chain id: refused (is for chain 1)
+PASS wrong token deployer: refused (tokenDeployer differs)
+PASS DRY_RUN collected 3 guard failures
+PASS the untampered record launched: coinLive true, launchBlock 26222712
+test-launch-only-guards: all passed
+EXIT=0

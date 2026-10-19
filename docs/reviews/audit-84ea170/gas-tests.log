@@ -1,0 +1,322 @@
+No files changed, compilation skipped
+
+Ran 1 test for test/Rehearsal.t.sol:RehearsalTest
+[PASS] test_rehearsal() (gas: 121645383)
+Logs:
+  rehearsal at block 26222700 timestamp 1792365647
+  rehearsing the config file script/config/mainnet.json
+  v2 stack from the config file, factory 0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c
+  config hash
+  0xb3d6cfc400e5305238201e2841401f90e83d07d0e33b71b8a4421feb80f967a7
+  preflight
+    ok    chain id  |  got 1 want 1
+    ok    placeholders filled  |  owner creator name symbol salt set
+    ok    rateStart in bounds and at most rateCap  |  rateStart 4900000000000000 rateCap 14700000000000000
+    ok    rateCap is 3 times rateStart  |  rateStart 4900000000000000 rateCap 14700000000000000 ratio x10000 30000
+    ok    settings inside the bounds  |  every field of the settings block
+    ok    sale settings inside the bounds  |  markupBps startCapBps decayHours anchorHalfLife anchorMinCost, reference referenceStepBps tolBps
+    WARN  warn: reference price inputs pending the balance token pool  |  tolBps 100; referenceRateBpsPerHour 0 referenceStepBps 0 referenceMaxStale 0 referenceMinSeconds 600 minLiquidity 0 are set with setQuote before the switch; valueModeOn false
+    ok    credit settings inside the bounds  |  creditCostToPotBps creditWindow creditStartBps (creditSpreadBps at least max(200, loop bound))
+    ok    supply equals the launch coin supply  |  got 1000000000000000000000000000 want 1000000000000000000000000000
+    ok    rule: tick spacing in 1 to 32767  |  200
+    ok    rule: pool fee is the dynamic fee flag  |  0x800000
+    ok    rule: position lower equals the start tick  |  start -175000 lower -175000
+    ok    rule: position upper is the highest usable tick  |  upper 887200 want 887200
+    ok    rule: ticks are multiples of the spacing  |  start tick, position lower, position upper
+    ok    rule: position lower below upper  |  range is not empty
+    ok    rule: baseline skim bps is 690  |  got 690 want 690
+    ok    rule: bounty bps is 9000  |  bounty 9000
+    ok    rule: sniper start bps is 9000  |  got 9000 want 9000
+    ok    rule: sniper seconds is 1800  |  got 1800 want 1800
+    ok    rule: settings.sniperSeconds equals launch.sniperSeconds  |  settings 1800 launch 1800
+    ok    rule: coin is restricted with no extra allowlist entry  |  restricted yes extra entries 0
+    ok    rule: payee share is inside its bound  |  payee ppm 0
+    ok    rule: owner, creator and payee are not dead or stack addresses  |  dead, stack, mev module
+    ok    rule: image at most 2048 bytes, description at most 4096 bytes  |  image 0 bytes description 0 bytes
+    ok    rule: image and description are empty or real values, not placeholders  |  empty or set in the launch transaction
+    WARN  warn: owner differs from creator  |  one party takes both roles
+    ok    code: pool manager  |  0x000000000004444c5dc75cB358380D2e3dE08A90 code 24009
+    ok    code: Credits  |  0x97630aA70AB14ed9883B41dAfccBc11349723043 code 7114
+    ok    code: Statements  |  0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b code 14133
+    ok    code: CreditStrategy  |  0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6 code 121
+    ok    code: Seaport  |  0x0000000000000068F116a894984e2DB1123eB395 code 23981
+    ok    code: Permit2  |  0x000000000022D473030F116dDEE9F6B43aC78BA3 code 9152
+    ok    code: position manager  |  0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e code 23877
+    ok    code: universal router  |  0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af code 19499
+    ok    build: Core runtime code hash equals the pinned build  |  out/ 0x3229a50eaca6067227f487adc0aa6479e77658539a823b3ee8b320691e4f6d21
+    ok    build: CoreLib runtime code hash equals the pinned build  |  out/ 0xbe30bdc90c010d7e9524026be8968d134e1b236e985f8f2aa20c6737a0873947
+    ok    build: CoreOpsLib runtime code hash equals the pinned build  |  out/ 0x3237260e6856f332de483e9f73b60f697c6ff886976ce39f1cf84e4d87d7fa35
+    ok    build: ControllerV1 runtime code hash equals the pinned build  |  out/ 0x03359cd845473b5053e5d0c46b7ad1b388b4d9a06b6318e0e46f5be449a8b98b
+    ok    build: SeaportBasicAdapter runtime code hash equals the pinned build  |  out/ 0xf5c8fd4b675f717f11908ff47d000431035956c15a5f38d74b63a3d40310d30c
+    ok    build: CreditStrategyAdapter runtime code hash equals the pinned build  |  out/ 0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38
+    ok    build: LogoCoinRenderer runtime code hash equals the pinned build  |  out/ 0x789770d6ad6b21255e6aa816a264650ed079691ad3ee36359a2972b75b7d9be9
+    ok    build: CoreLib creation code hash equals the pinned build  |  0x2976071ea572f728ce1d84dd6e892a1015ce582297ca7c6689c0d67ddca6cada
+    ok    build: CoreOpsLib creation code hash equals the pinned build  |  0x0b4009fdd38f08368b9427fbf12658364f8144a6408d149eab888f88f161d689
+    ok    code: deterministic deployer  |  0x4e59b44847b379578588920cA78FbF26c0B4956C code 69
+    ok    library: CoreLib at its create2 address is the compiled code or absent  |  0xFae5939A144409a2bCa8B60f94dbd5a7b94bf01F on chain, the broadcast skips it
+    ok    library: CoreOpsLib at its create2 address is the compiled code or absent  |  0xAbcfEE48bA34760420B068BE28a15a886C574DF1 on chain, the broadcast skips it
+    ok    hook: address carries the v2 permission flags  |  0x866F31562dDe70D7B989C2529a9deFFFFd3bE8CC
+    ok    hook: reports the pool manager  |  0x000000000004444c5dc75cB358380D2e3dE08A90
+    ok    hook: reports the fee escrow  |  got 0xB65816a3cE6C4DFd1dfa6D27832eD77781a65192 want 0xB65816a3cE6C4DFd1dfa6D27832eD77781a65192
+    ok    hook: the factory is a launcher  |  isLauncher(factory)
+    ok    locker: the factory is a launcher  |  isLauncher(factory)
+    ok    mev: module is bound to the hook  |  0x866F31562dDe70D7B989C2529a9deFFFFd3bE8CC
+    ok    escrow: the hook is a core depositor  |  isCoreDepositor(hook)
+    ok    escrow: the protocol fee controller is a depositor  |  isDepositor(controller)
+    ok    factory: STACK_VERSION is 2  |  STACK_VERSION 2
+    ok    v2: hook constantsHash equals the pinned live value  |  hook 0x1b7deab81425bd850537efbb78d999939ab5fe16c424268886a5554d864e23d0 pinned 0x1b7deab81425bd850537efbb78d999939ab5fe16c424268886a5554d864e23d0
+    ok    v2: constantsHash is equal across hook, factory, locker, escrow and mev module  |  constantsHash()
+    ok    code hash: hook is the live v2 contract  |  0x866F31562dDe70D7B989C2529a9deFFFFd3bE8CC 0x6778602725c0d685c6444cdc70d6616d266939e09d283388a6b79b7bd496ebdc pinned at block 26205064
+    ok    code hash: factory is the live v2 contract  |  0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c 0xc81a73b9453ca0e93afd762d32b98e4a9e2b157cdccd05d28fda9080f98e0c65 pinned at block 26205064
+    ok    code hash: locker is the live v2 contract  |  0xbD049E961a414CaF3Ec040405fa688f641e63C64 0x191e433101a918cc441bf7c143de216757b9a40ed2402131434a8747861c386a pinned at block 26205064
+    ok    code hash: escrow is the live v2 contract  |  0xB65816a3cE6C4DFd1dfa6D27832eD77781a65192 0xeb557e5be7ab0b29b0c77f8dc18aada8e1d17910ae9e3b92909a9126872b9975 pinned at block 26205064
+    ok    code hash: mev module is the live v2 contract  |  0x32Ab8Ec09eE09A37a6cD58Fbc7d6Da2da31982c5 0xe3bf485f62bf367feabe951d667032c6cea47a3089056ce0652df6edd145dc80 pinned at block 26205064
+    ok    code hash: token deployer is the live v2 contract  |  0x99EB38d6a757a9f1061dFb1887bffD4637050903 0xaf3924c04e77f7e9ccb5949e977c2d67c2186076108e5676cbe99ecd08dfb043 pinned at block 26205064
+    ok    code hash: extension allowlist is the live v2 contract  |  0xc73eB3D8b3c0066DAcBb3ED3a64658a5E54452B9 0x7a98bacb16f0ec968f5d450c37e6a5a4ef213a8d48c61c666b2cea3e0f6318c4 pinned at block 26205064
+    ok    code hash: protocol fee controller is the live v2 contract  |  0xbD5A853f556F17EAF692a4925371f5BFe3DD40df 0x33ac026109644470a4feaf0c0960c41468adfc0029fe5bdca29fe0342ff85bae pinned at block 26205064
+    ok    protocol fee controller: treasury is the recorded treasury  |  got 0x41c3BD8A36f8fE9Bb77900ca02400b32BB35A6A4 want 0x41c3BD8A36f8fE9Bb77900ca02400b32BB35A6A4
+    ok    code hash: burn router is the live v2 contract  |  0x183751c6D50c3f2B377c0aD9BD8Fab1e187740d4 0x446c38e7f907b120416c06e90f92f966a20cca49df8ea19711c6b12c4a40edd9 pinned at block 26205064
+    ok    factory: owner is the config owner  |  owner 0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    factory: owner is the deployer  |  owner 0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    factory: deprecated, only the owner can launch  |  deprecated yes
+    ok    factory: reports the pool manager  |  0x000000000004444c5dc75cB358380D2e3dE08A90
+    ok    factory: token deployer is set  |  0x99EB38d6a757a9f1061dFb1887bffD4637050903
+    ok    factory: hook enabled  |  enabledHooks(hook)
+    ok    factory: locker enabled  |  enabledLockers(locker)
+    ok    factory: mev module enabled  |  enabledMevModules(module)
+    ok    deployer: balance covers the deploy fee and the gas  |  balance 5000000000000000000 need 893673352000000
+    ok    rule: the factory deploy fee is at most 0.1 ether  |  fee 0 (the master launch fee is 0)
+    ok    factory: protocol recipient set (the launcher protocol, not the engine owner)  |  0xbD5A853f556F17EAF692a4925371f5BFe3DD40df
+    ok    factory: the deploy fee is zero, no team fee recipient check  |  0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    factory: deployToken accepts the config (simulated)  |  coin 0x696f4dC78F29dd14Ad3CbD5153BbbbC5dC661b5c launch gas 3078765
+    ok    factory: deprecated, the owner launches and any other caller reverts Deprecated()  |  deployToken by a stranger reverts Deprecated(). deployToken by the owner is the owner path (simulated above)
+    ok    owner: code is the pinned EIP 7702 delegation  |  0xCB43078C32423F5348Cab5885911C3B5faE217F9 code 0xef0100612373d7003d694220f7800eeaf8e3924c0951d3
+    ok    owner: delegate code hash is the pinned Calibur  |  got 0xff0357b543bbb94845b6791a8becac5e87d467814f86538a62649c877227d631 want 0xff0357b543bbb94845b6791a8becac5e87d467814f86538a62649c877227d631
+    ok    owner: no registered keys  |  keyCount 0
+    ok    predicted core is empty  |  0xA66dbb50B9D6622233F195C4d795EAA2abD59116 code 0
+    ok    predicted renderer is empty  |  0x0D2022F8D780884A1B46de156CBfc4f36423504c code 0
+    ok    predicted coin is empty  |  0x696f4dC78F29dd14Ad3CbD5153BbbbC5dC661b5c code 0
+    ok    seaport recipients: at least one  |  1
+    ok    seaport recipients: none is the zero address  |  a zero entry pays nobody
+    ok    seaport recipients: no duplicates  |  each entry once
+    ok    seaport recipients: none is the Core, controller, owner, payee or a stack address  |  see the signoff list
+    ok    Credits supply  |  122154
+    ok    Statements supply  |  250
+    ok    signoff: owner (core owner, token admin, factory owner)  |  0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    signoff: creator (named for the launch record, not a pool recipient; the pool charges no lp fee)  |  0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    signoff: deployer (sends the transactions, must be the factory owner)  |  0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    signoff: core address (the bounty recipient of the pool)  |  0xA66dbb50B9D6622233F195C4d795EAA2abD59116
+    ok    signoff: other addresses  |  controller 0x7b48F47F272E392f27A76E222a168D55D39AEb97 seaport adapter 0x22C6De3380dA5bF52B19c84efD225768BFfeD466 strategy adapter 0x5757788D0A6dF507dba064d66532F0b630Be1dc9
+    ok    signoff: payee (one address, owner replaces it later with setPayee)  |  0xCB43078C32423F5348Cab5885911C3B5faE217F9 ppm 0 of the fee income
+    ok    signoff: seaport recipients (permanent payout addresses once the adapters are locked)  |  0x0000a26b00c1F0DF003000390027140000fAa719
+    ok    signoff: payee share  |  starts at the first book with income after the anti sniper window, the recipients are not locked by the deploy
+    ok    signoff: opening bid  |  rateStart 4900000000000000 wei per 100 points, pointsPerPage 35200 (launch day rule: the market price of 100 points)
+    ok    signoff: economics  |  skim 690 bounty 9000 sniper 9000->690 over 1800s lp fee 0
+    ok    signoff: protocol leg  |  the protocol leg (10_000 minus bountyBps of the baseline skim, 0.69 percent of volume at bounty 9000) lands at the launcher protocol fee controller, a separate business from this engine and its owner
+    ok    signoff: bid  |  rateCap 14700000000000000
+    ok    signoff: drop and climb  |  drop per 100 points 115 floor 1 climb per minute 200 ceiling 11000 loosen per 10 minutes 600 (bps)
+    ok    signoff: statement sale  |  saleFloorBps 10000
+    ok    signoff: reserve and return lock  |  reserveWei 100000000000000000 (the reserve is the larger of it and 1.5 times the queued compose and redeem payments), returnLockSeconds 21600
+    ok    signoff: credit swap  |  swapFeeCc 10000000000000000000000 coin burned per swapCredit
+    ok    signoff: balance side  |  redeemOn true balanceBidOn false redeem slippage 200 balance bid margin 1000 redeem burn 2000 fee to redeem burn 0 (bps)
+    ok    signoff: splits  |  sale to buyback 2500 buyback slice 500000000000000000 keeper fee 300000000000000 keeper base fee ceiling 5000000000
+    ok    signoff: sale controller  |  markup 15000 start cap 100000 falling in a straight line over 4 hours to saleFloorBps 10000 anchor half life 604800s, the anchor moves on statements costing at least 100000000000000000 wei
+    ok    signoff: credit sale  |  sale on window 14400s spread over the bid's hard cap 1000 start 15000 bps, cost to pot 8000 bps, pointsPerPage 35200
+    ok    signoff: nft sale cuts  |  saleToArtistBps 250 to artist 0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a, saleToOperatorBps 50 to the payee
+    ok    signoff: chosen composition  |  chosen compose off min coin to choose 1000000000000000000 base units (1e18 is 1 coin)
+    ok    signoff: settings are adjustable  |  the owner can change every setting at once after launch
+    ok    signoff: build (runtime code hashes of out/, slots masked)  |  Core 0x3229a50eaca6067227f487adc0aa6479e77658539a823b3ee8b320691e4f6d21 CoreLib 0xbe30bdc90c010d7e9524026be8968d134e1b236e985f8f2aa20c6737a0873947 CoreOpsLib 0x3237260e6856f332de483e9f73b60f697c6ff886976ce39f1cf84e4d87d7fa35 ControllerV1 0x03359cd845473b5053e5d0c46b7ad1b388b4d9a06b6318e0e46f5be449a8b98b SeaportBasicAdapter 0xf5c8fd4b675f717f11908ff47d000431035956c15a5f38d74b63a3d40310d30c CreditStrategyAdapter 0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38 LogoCoinRenderer 0x789770d6ad6b21255e6aa816a264650ed079691ad3ee36359a2972b75b7d9be9 CoreLib creation 0x2976071ea572f728ce1d84dd6e892a1015ce582297ca7c6689c0d67ddca6cada CoreOpsLib creation 0x0b4009fdd38f08368b9427fbf12658364f8144a6408d149eab888f88f161d689
+    ok    signoff: CONFIG_HASH  |  0xb3d6cfc400e5305238201e2841401f90e83d07d0e33b71b8a4421feb80f967a7
+  118 of 118 checks passed
+  deploy gas, tx 1 library CoreLib (create2 deployer) 5186624
+  deploy gas, tx 2 library CoreOpsLib (create2 deployer) 788657
+  deploy gas, tx 3 core (create2 deployer) 5927012
+  deploy gas, tx 4 controller (create2 deployer) 3969084
+  deploy gas, tx 5 seaport adapter (create2 deployer) 638760
+  deploy gas, tx 6 strategy adapter (create2 deployer) 172741
+  deploy gas, tx 7 coin renderer (create2 deployer) 1026122
+  deploy gas, tx 8 setCore on the renderer 69307
+  deploy gas, tx 9 setController 87583
+  deploy gas, tx 10 addAdapter seaport adapter 77785
+  deploy gas, tx 11 addAdapter strategy adapter 77785
+  deploy gas, tx 12 launch through the factory (deployToken) 3209212
+  DEPLOY_GAS_ESTIMATE 22000000
+  library at 0x03A6a84cD762D9707A21605b548aaaB891562aAb
+  ops library at 0xD6BbDE9174b1CdAa358d2Cf4D57D1a9F7178FBfF
+  total deploy gas, twelve transactions 21230672
+  per transaction gas cap 16777216
+  factory deploy fee (wei, sent as value of tx 12) 0
+  deployer needs at 1 gwei: gas 0.02123 eth, plus fee 0.02123
+  deployer needs at 5 gwei: gas 0.10615 eth, plus fee 0.10615
+  deployer needs at 20 gwei: gas 0.42461 eth, plus fee 0.42461
+  deployer paid wei (the fee only, the test gas price is 0) 0
+  core 0xA66dbb50B9D6622233F195C4d795EAA2abD59116
+  coin 0x696f4dC78F29dd14Ad3CbD5153BbbbC5dC661b5c
+  renderer 0x0D2022F8D780884A1B46de156CBfc4f36423504c
+  postflight after the launch
+    ok    code: core  |  0xA66dbb50B9D6622233F195C4d795EAA2abD59116 code 23674
+    ok    core: owner  |  got 0xCB43078C32423F5348Cab5885911C3B5faE217F9 want 0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    core: stack equals the config  |  pool manager, hook, tick spacing, pool fee, factory, locker, escrow
+    ok    core: settings inside the bounds  |  all fields
+    ok    core: settings equal the config  |  set SETTINGS_CHANGED=1 only after the owner called setSettings
+    ok    core: credit settings equal the config  |  creditCostToPotBps chosenComposeOn minCcToChoose
+    ok    core: settings.sniperSeconds equals the launch mev window  |  settings 1800 launch 1800
+    ok    core: not paused  |  not paused
+    ok    core: ethRate at most rateCap  |  0
+    ok    core: linked library is the compiled CoreLib  |  library at 0xFae5939A144409a2bCa8B60f94dbd5a7b94bf01F
+    ok    core: linked ops library is the compiled CoreOpsLib  |  ops library at 0xAbcfEE48bA34760420B068BE28a15a886C574DF1
+    ok    core: every library call site and every immutable slot holds the library or the getter value  |  all compiled library and immutable reference sites
+    ok    core: controller is the deployed controller  |  got 0x7b48F47F272E392f27A76E222a168D55D39AEb97 want 0x7b48F47F272E392f27A76E222a168D55D39AEb97
+    ok    code: controller  |  0x7b48F47F272E392f27A76E222a168D55D39AEb97 code 17189
+    ok    controller: core  |  got 0xA66dbb50B9D6622233F195C4d795EAA2abD59116 want 0xA66dbb50B9D6622233F195C4d795EAA2abD59116
+    ok    core: runtime code is the compiled Core (immutables and the library address masked)  |  0xA66dbb50B9D6622233F195C4d795EAA2abD59116
+    ok    controller: runtime code is the compiled ControllerV1 (immutables masked)  |  0x7b48F47F272E392f27A76E222a168D55D39AEb97
+    ok    controller: every CORE slot of the runtime code is the Core  |  the immutable CORE sites of the controller runtime code
+    ok    core: no locks, no balance module  |  launch state
+    ok    warn: no pending owner  |  an owner handover is offered
+    ok    controller: sale settings equal the config  |  markupBps startCapBps decayHours anchorHalfLife anchorMinCost anchorMoveBps
+    ok    controller: anchor is 10_000  |  10000
+    ok    controller: credit sale settings equal the config  |  creditSaleOn creditWindow creditSpreadBps creditStartBps
+    ok    controller: reference price settings equal the config  |  referenceRateBpsPerHour referenceStepBps tolBps referenceMaxStale referenceMinSeconds minLiquidity
+    ok    core: pots covered by balance  |  balance 0
+    ok    warn: price state is rateStart  |  rateAtCheckpoint 4900000000000000 rateStart 4900000000000000
+    ok    code: coin  |  0x696f4dC78F29dd14Ad3CbD5153BbbbC5dC661b5c code 8745
+    ok    factory: the coin is a recorded launch  |  isCoin(coin)
+    ok    factory: deploymentInfo names the coin, hook, locker, mev module, escrow and pool of the config  |  pool id 0xea751b593b03498f9802dfdcf812ef097777eefa1fd5a179d99c35b7a170281b
+    ok    factory: deploymentInfo version, launch time, no extensions  |  version 2 launched 1792365647
+    ok    hook: poolInfo names the coin, locker, mev module and the factory as launcher, no extension  |  token 0x696f4dC78F29dd14Ad3CbD5153BbbbC5dC661b5c launcher 0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c
+    ok    hook: poolInfo restricted flag and creation time  |  restricted yes created 1792365647
+    ok    hook: the pool is an official pool  |  isOfficialPool(poolId)
+    ok    hook: carries the v2 permission flags  |  0x866F31562dDe70D7B989C2529a9deFFFFd3bE8CC
+    ok    hook: bounty recipient is the Core  |  got 0xA66dbb50B9D6622233F195C4d795EAA2abD59116 want 0xA66dbb50B9D6622233F195C4d795EAA2abD59116
+    ok    hook: skim config equals the config  |  baseline 690 bounty 9000
+    ok    warn: protocol recipient equals the factory protocol recipient  |  0xbD5A853f556F17EAF692a4925371f5BFe3DD40df
+    ok    mev: schedule equals the config (start, end at the baseline, window, start time)  |  start 9000 end 690 window 1800
+    ok    locker: one locked position for the coin  |  token 0x696f4dC78F29dd14Ad3CbD5153BbbbC5dC661b5c positions 1
+    ok    locker: pool key equals the launch key  |  poolKey
+    ok    position: ticks equal the config (mirrored, the coin is currency1)  |  lower -887200 upper 175000
+    ok    position: held by the locker with liquidity  |  liquidity 158530662489480938190069 holder 0xbD049E961a414CaF3Ec040405fa688f641e63C64
+    ok    pool: initialized  |  499765542325424914083981603724884
+    ok    pool: start tick equals the config while nothing was bought  |  tick 175000 untouched
+    ok    coin: supply at most the config supply  |  supply 1000000000000000000000000000
+    ok    warn: coin supply is the config supply (less the locker dust)  |  coin was burned since launch
+    ok    coin: launcher, canonical hook, canonical pool id and pool manager equal the config  |  launcher is the factory
+    ok    coin: admin is the config owner  |  0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    coin: restricted as in the config  |  restricted()
+    ok    coin: image equals the config  |  
+    ok    coin: description equals the config  |  
+    ok    renderer: runtime code is the compiled LogoCoinRenderer  |  0x0D2022F8D780884A1B46de156CBfc4f36423504c
+    ok    renderer: core is the Core  |  0xA66dbb50B9D6622233F195C4d795EAA2abD59116
+    ok    coin: metadata renderer is the CoinRenderer of the config  |  0x0D2022F8D780884A1B46de156CBfc4f36423504c
+    ok    coin: tokenURI returns a json data uri  |  3717 bytes
+    ok    coin: allowlist holds the locker and the config entries  |  isAllowed
+    ok    coin: allowlist holds none of core, owner, creator, payee, hook, factory, mev module, controller  |  isAllowed
+    ok    coin: lock  |  unlocked, script/Lock.s.sol locks it as an owner decision
+    ok    warn: core holds no coin  |  coin sent by an allowlisted holder, the owner can call rescueCoin
+    ok    core: payee equals the config  |  0xCB43078C32423F5348Cab5885911C3B5faE217F9
+    ok    warn: payee share is not on yet  |  payeeOn: the first book after the window turned it on
+    ok    core: artist set while the artist cut is on  |  saleToArtistBps is nonzero but the artist is the zero address
+    ok    core: artist equals the config  |  0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a
+    ok    code: seaport adapter  |  0x22C6De3380dA5bF52B19c84efD225768BFfeD466 code 2536
+    ok    code: strategy adapter  |  0x5757788D0A6dF507dba064d66532F0b630Be1dc9 code 534
+    ok    adapters: runtime code is the compiled adapters (immutables masked)  |  0x22C6De3380dA5bF52B19c84efD225768BFfeD466 0x5757788D0A6dF507dba064d66532F0b630Be1dc9
+    ok    adapters: seaport adapter core  |  got 0xA66dbb50B9D6622233F195C4d795EAA2abD59116 want 0xA66dbb50B9D6622233F195C4d795EAA2abD59116
+    ok    adapters: seaport recipients are the config allowlist  |  fee collector allowed
+    ok    adapters: both are allowed in the Core  |  seaport and CreditStrategy adapters
+    ok    adapters: no stack contract is allowed  |  hook, factory, locker, escrow, pool manager, coin, core
+    ok    core: address is the CREATE2 address of the config and the deployer  |  got 0xA66dbb50B9D6622233F195C4d795EAA2abD59116 want 0xA66dbb50B9D6622233F195C4d795EAA2abD59116
+    ok    warn: coin equals the factory prediction for the deployer  |  0x696f4dC78F29dd14Ad3CbD5153BbbbC5dC661b5c
+    ok    signoff: CONFIG_HASH  |  0xb3d6cfc400e5305238201e2841401f90e83d07d0e33b71b8a4421feb80f967a7
+  73 of 73 checks passed
+  sold credit 1 for wei 6649850270000000
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 1.85s (1.85s CPU time)
+
+Ran 6 tests for test/BuildIdentity.t.sol:BuildIdentityTest
+[PASS] test_aSingleChangedByteIsDetected() (gas: 18903023)
+[PASS] test_coreAndCoreLibFitEip170() (gas: 12295)
+Logs:
+  Core runtime bytes: 23674
+  Core margin under EIP-170: 902
+  CoreLib runtime bytes: 23635
+  CoreLib margin under EIP-170: 941
+  CoreOpsLib runtime bytes: 3378
+  CoreOpsLib margin under EIP-170: 21198
+
+[PASS] test_libraryInterfaceSelectorsMatchTheArtifact() (gas: 1279740)
+[PASS] test_pinnedBuildHashesEqualTheArtifacts() (gas: 19465899)
+[PASS] test_testsCompileWithoutViaIr() (gas: 4707529)
+[PASS] test_theFixtureDeploysTheViaIrArtifacts() (gas: 35595713)
+Suite result: ok. 6 passed; 0 failed; 0 skipped; finished in 3.20s (2.09s CPU time)
+
+Ran 13 tests for test/GasCap.t.sol:GasCapTest
+[PASS] test_gas_book_forcesThePayeeShare() (gas: 482651)
+Logs:
+  GAS | book with a nonzero payee share (forced push), cold | exec 108212 | tx 129276 | pct 0.7
+
+[PASS] test_gas_buyCredit_creditSalePushesTheCuts() (gas: 2095295)
+Logs:
+  GAS | buyCredit (sellCreditTo forces the artist and operator cuts), cold | exec 354290 | tx 375506 | pct 2.2
+
+[PASS] test_gas_buyListing_creditStrategy_incomeLoaded() (gas: 1846431)
+Logs:
+  GAS | buyListing through the CreditStrategy adapter, 1 eth of unbooked income, cold | exec 583934 | tx 605786 | pct 3.6
+
+[PASS] test_gas_buyListing_seaport_basicWithFee() (gas: 1658070)
+Logs:
+  GAS | buyListing through the Seaport adapter, basic order with a fee recipient, cold | exec 569791 | tx 596867 | pct 3.5
+
+[PASS] test_gas_buy_statementSalePushesTheCuts() (gas: 45852284)
+Logs:
+  GAS | buy a statement (sellTo forces the artist and operator cuts), cold | exec 243885 | tx 265089 | pct 1.5
+
+[PASS] test_gas_buyback_afterAStatementSale() (gas: 46040968)
+Logs:
+  GAS | buyback (swaps, burns), cold | exec 221130 | tx 242194 | pct 1.4
+
+[PASS] test_gas_compose_ethLane_firstCold() (gas: 42411738)
+Logs:
+  GAS | compose eth lane, 80 credits, first compose, cold | exec 8549226 | tx 8570290 | pct 51.0
+
+[PASS] test_gas_readCaps_nextPage() (gas: 36216174)
+Logs:
+  READ ControllerV1.nextPage, full eth pile, cold, gas 244914 cap 500000
+  READ nextPage share of the cap in percent 48
+
+[PASS] test_gas_redeemStatement_ethLane() (gas: 48178524)
+Logs:
+  GAS | redeemStatement, eth lane (stand in balanceModule), cold | exec 223008 | tx 244212 | pct 1.4
+
+[PASS] test_gas_sellForBalance_batch() (gas: 366529119)
+Logs:
+  GAS | sellForBalance (launch), 1 credit, cold | exec 423662 | tx 445146 | pct 2.6
+  sellForBalance (launch): marginal tx gas per credit (fit 1 to 40) 173521
+  sellForBalance (launch): exec gas for 10 credits 1973088
+  sellForBalance (launch): LARGEST BATCH under the cap 94
+  sellForBalance (launch): gas per credit at the largest batch 176935
+  GAS | sellForBalance (launch), largest batch 94, cold | exec 16596273 | tx 16631893 | pct 99.1 | FLAG above 60 percent
+  sellForBalance (launch): next size is over the cap, tx gas 16822826
+
+[PASS] test_gas_sellForEth_batch_launchSettings() (gas: 279819790)
+Logs:
+  GAS | sellForEth (launch), 1 credit, cold | exec 501755 | tx 523239 | pct 3.1
+  sellForEth (launch): marginal tx gas per credit (fit 1 to 40) 188310
+  sellForEth (launch): exec gas for 10 credits 2184275
+  sellForEth (launch): LARGEST BATCH under the cap 87
+  sellForEth (launch): gas per credit at the largest batch 192361
+  GAS | sellForEth (launch), largest batch 87, cold | exec 16700899 | tx 16735455 | pct 99.7 | FLAG above 60 percent
+  sellForEth (launch): next size is over the cap, tx gas 16940199
+
+[PASS] test_gas_swapCredit() (gas: 2259810)
+Logs:
+  GAS | swapCredit, one pile credit for one of higher score, fee burned, cold | exec 229080 | tx 250448 | pct 1.4
+
+[PASS] test_modeOffPrePacket86CreditEthBatchGasRegression() (gas: 55118911)
+Logs:
+  mode-off one-credit estimated tx gas: 523252
+  mode-off 86-credit estimated tx gas: 16515833
+
+Suite result: ok. 13 passed; 0 failed; 0 skipped; finished in 3.20s (5.36s CPU time)
+
+Ran 3 test suites in 3.23s (8.26s CPU time): 20 tests passed, 0 failed, 0 skipped (20 total tests)
+EXIT=0
