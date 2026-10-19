@@ -4,6 +4,8 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
+Current release baton (2026-10-19, decisions 196 to 208): GitHub `main` remains `84ea170ab3330a4163ef8ac00cb5fa2cd067fe09`; PRs #111 and #112 are open and unmerged. Branch `codex/system-audit-84ea170` contains selective repairs. The immutable audit of main is `docs/reviews/AUDIT-84ea170-2026-10-18.md`. Executable candidate `a0fa1dc493c796ba63c05dfd06e9368b39b883a0` has the provisional 0.00465 ETH opening bid per 100 Credit points and 3x cap of 0.01395 ETH, the latest animated `LogoCoinRenderer`, corrected 39-field rehearsal decoder, and durable keeper listing cooldown. On a chain-id-1 fork at block 26,208,025, the full Foundry suite reported 797 passed, 0 failed, 7 skipped across 113 suites, and the combined deep campaign passed 56/56 at 64 runs and depth 200. The mainnet-value in-process rehearsal passed with preflight 118/118, postflight 77/77 and 21,557,347 simulated gas across 12 transactions; the production-wrapper dry run passed without sending. The signed same-record Anvil deployment/recovery drill and production service acceptance have not run. The older `9c8bb1a` candidate and its failed broad transcripts are archival evidence in `docs/reviews/CANDIDATE-9c8bb1a-2026-10-19.md`. Issue #113 records the phase-two controller change; leave `controllerLocked` false at phase-one launch. A dedicated test keystore now exists for local rehearsal, but each local broadcast still needs a decoded confirmation. The complete trailing-24-hour market check, deployment-day signoff, final config and signer review, operator services, and RPC key rotation remain open. No mainnet broadcast, push or merge has occurred. Next: present the owner packet and decide how to close or explicitly accept the unproven signed recovery and production service gates before merging to `main`. See `docs/reviews/LAUNCH-OWNER-REVIEW.md` for the exact owner gates.
+
 Current baton (2026-10-19, decisions 188 to 195): the independent whole-system audit of main `84ea170` is recorded in the immutable `docs/reviews/AUDIT-84ea170-2026-10-18.md`. On `codex/system-audit-84ea170`, local post-audit behavior repairs are committed at `dc42593`, comment, naming and test-claim cleanup at `789e928`, the BALANCE economic bound at `92dc650` with reviewed wording at `d391cf3`, and indexer accounting at `b65a47f` with guide correction at `2882f99`. The repairs cover deployment resume owner checks, the web's CC pool identity, BALANCE payout and reserve rules, the paused-clock model, phase-two settings, keeper/indexer/alert liveness, and focused test corrections. The owner selected the 203/100-bps phase-two pair, same-token inactive reserve recovery, rollback of a BALANCE sale on whole-call artist royalty failure, and a royalty/slippage-aware minimum BALANCE discount while preserving each field's broad individual range. There has been no mainnet broadcast, push or merge. The opening bid still needs deployment-day signoff. Older status rows below are historical.
 
 Focused repair evidence: `forge build`, interface generation check, shell syntax and diff checks pass. On a chain-id-1 fork at block 26,208,025, StatementBalanceModule 23/23, BalanceFlat 12/12, ValueMode 46/46, Config 33/33, BuildIdentity 6/6, GasCap 13/13, BalanceTokenReplacement 16/16, Fees 19/19 and ModeOffPricingRules 11/11 pass. The affected deep sale invariant passes 1/1 at 64 runs and depth 200. Jack's pinned balance token tests pass 8/8 and LaunchDayPhase2 passes 1/1 with the ignored artifact whose creation hash matches the pin. Keeper ops/listings pass 13/13, indexer RPC selection 2/2, web v4 self-check 16/16, and the relevant TypeScript checks pass. A local browser preview rendered the trade panel, kept trading disabled without a deployment record, and exercised the slippage control. The updated full suite, all deep campaigns, same-code Anvil lifecycle, final-state service checks, executable MEV round trip, and production-service acceptance remain unproven. The next action is to resolve the remaining launch inputs, freeze a candidate when its code and configuration are complete, run those broad gates once with `CANDIDATE_RUN=1`, and obtain owner launch acceptance.
@@ -60,7 +62,9 @@ measured on the branch tip against `main` (lines without the generated interface
 
 runtime sizes at the tip (limit 24,576) after decisions 163, 164 and the review fixes merged with main: Core 24,495 (81 under), CoreLib 24,452 (124 under), ControllerV1 17,263; `setArtist` and `rescueToken` run in CoreLib behind `_toLib`. the balance route's artist royalty is a non-blocking gas-bounded `pay` (a revert leaves the royalty in the module), so it adds no net CoreLib bytes. before them: Core 21,531, CoreLib 14,495, ControllerV1 13,129, SeaportBasicAdapter 2,558, CreditStrategyAdapter 508. after decisions 116 and 117 (branch `points/v1`): Core 22,119, CoreLib 14,985, ControllerV1 13,138, adapters unchanged. after decision 118: Core 23,118, CoreLib 15,190, ControllerV1 13,167, adapters unchanged. after the credit sale floor dropped the flat floorRate term (part of decision 116): ControllerV1 13,056; after decision 121 (one rate decay): ControllerV1 12,443, the rest unchanged. after decision 122 (rising balance bid): Core 23,315, CoreLib 16,861, ControllerV1 12,443 unchanged. after decision 123 (the nft sale cuts, the forced pushes and the royalty removal): Core 23,613, CoreLib 17,147, ControllerV1 11,667. after the security and intent review fixes at ac8da10 (the balance floor revert, the same block return guard, the artist constructor argument, the per credit drop rounding, both instance checkpoints): Core 23,797, CoreLib 17,475, ControllerV1 11,667. after decision 128 (the pot scaled climb multiplier, in the shared CoreLib body): Core 24,330, CoreLib 19,031, ControllerV1 11,737 to 11,756 (the Settings struct gained climbMultiplierCapBps, which the controller decodes). after decision 145 (points are the unit; `swapCredit` moved to CoreLib to pay for the new views): Core 23,773, CoreLib 22,131, ControllerV1 12,011, adapters and renderer unchanged.
 
-## 2. the plan
+## 2. historical plan
+
+This section records earlier packet sequencing. The current release action and gates are in section 1 and `docs/reviews/LAUNCH-OWNER-REVIEW.md`.
 
 | # | packet | status |
 |---|---|---|
@@ -80,7 +84,9 @@ runtime sizes at the tip (limit 24,576) after decisions 163, 164 and the review 
 | 11b | the two high findings of the independent review fixed (decision 115) | done |
 | 12 | the local end to end on anvil (12a), the web app ported with a local mode (12b), the flywheel bar (12c), the browser run (docs/reviews/E2E-ecf51f3.md) | done |
 
-## 3. open items
+## 3. historical open items
+
+These entries predate the current candidate. Use section 1 and `docs/reviews/LAUNCH-OWNER-REVIEW.md` for current launch blockers.
 
 - the launch config's `image` and `description` are empty owner inputs; the preflight metadata row fails until they are filled with the final content.
 - `coin.lockRecipients()` and `lockSuccessor()`: later owner decisions (RUNBOOK section 4, the lock table). `coin.lockAllowlist()`: the owner's.
@@ -99,12 +105,12 @@ runtime sizes at the tip (limit 24,576) after decisions 163, 164 and the review 
 
 | gate | commit | result |
 |---|---|---|
-| candidate | pending | freeze reopened by decision 174 contract cleanup |
-| suite | pending | prior 85dbc51 evidence is historical |
-| deep | pending | prior 85dbc51 evidence is historical |
-| e2e | pending | prior 85dbc51 evidence is historical |
-| rehearsal | pending | prior 85dbc51 evidence is historical |
-| review | pending | focused cleanup review does not replace release review |
+| candidate | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
+| suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
+| deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
+| e2e | pending | signed same-record local chain-id-1 lifecycle not run |
+| rehearsal | pending | dry run and in-process Foundry rehearsal only; signed receipt gas and recovery drill not run |
+| review | pending | candidate findings and owner decisions still need release acceptance |
 | acceptance | pending | (owner signs off) |
 
 ### history (outside the gate)
@@ -142,16 +148,18 @@ the first run's two failures were fixed at the root at eab58c7 (`9fb6c65`): the 
 | topic | rule |
 |---|---|
 | naming | "balance", never "exit", in code, comments, tests and docs (decision 102) |
-| tests | recent mainnet fork against the live v2 stack (`FORK_BLOCK` pins the block, the stack code hashes are pinned at block 26205064), real contracts only, the balance module and the balance token are the test doubles in test/standins; `StatementBalanceModule` has its own test files (docs/SPEC.md section 13). every kept test carries a `// promise:` line |
+| tests | pinned mainnet fork against the live v2 stack (block 26,208,025; stack hashes pinned at 26,205,064). Most stateful BALANCE tests use standins; `UpstreamBalance` and `LaunchDayPhase2` deploy Jack's pinned token artifact. `StatementBalanceModule` has focused tests. Every kept test carries a `// promise:` line |
 | toolchain | foundry 1.8.1 (isolate on), solc 0.8.30. forge 1.8.1 rewrites foundry.lock and bumps lib/solady on build: `git checkout foundry.lock; git submodule update -- lib/solady` before committing. a fresh worktree needs the nested uniswap submodules: `git -C lib/v4-periphery submodule update --init lib/v4-core lib/permit2`, or an rsync of them from a checkout that has them |
 | fork env | `set -a; source <a .env with MAINNET_RPC_URL and FORK_BLOCK>; set +a` before fork tests; this repo tracks only .env.example |
 | timings | clean build 3 to 4 minutes, a test file change seconds, a src/Core.sol change about 40 seconds. a test file about 10 to 60 seconds. a Deep suite 10 to 15 minutes |
 | verification | during an edit run the smallest test that covers it (`--match-path`). the full suite, the deep invariants and the rehearsal belong to the frozen candidate, marked `CANDIDATE_RUN=1`; the hook in .claude/settings.json refuses a whole suite run without it |
 | interfaces and pins | after changing a production contract's external surface run `script/tools/gen-interfaces.sh` and re-pin test/BuildIdentity.t.sol and script/Checks.sol. never import src/Core.sol in a test |
-| Core size | 538 bytes of headroom after issue 23; new logic goes into CoreLib; never drop a check to make room |
+| Core size | candidate `9c8bb1a` runtime is 23,762 bytes, 814 below EIP-170; CoreLib is 23,811, 765 below. Recheck sizes after executable changes; never drop a check to make room |
 | safety | no mainnet broadcast, deploy, push to main, merge or private key without the owner's explicit instruction |
 
-## 6. known and not fixed
+## 6. historical known items
+
+These rows are retained for context and may be superseded. Current release blockers are in section 1 and `docs/reviews/LAUNCH-OWNER-REVIEW.md`.
 
 | item | detail |
 |---|---|
