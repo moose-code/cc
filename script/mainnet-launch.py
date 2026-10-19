@@ -103,10 +103,14 @@ class ApprovalGate:
         self.owner = owner.lower()
         self.index = 0
         self.previous_hash = None
+        self.previous_raw = None
         self.lock = threading.Lock()
 
     def send(self, raw):
         with self.lock:
+            if raw == self.previous_raw:
+                print(f"Repeated delivery of {self.previous_hash}; returning its existing hash.", flush=True)
+                return self.previous_hash
             if self.index >= len(self.transactions):
                 raise RuntimeError("unplanned transaction after the dry-run manifest")
             planned = self.transactions[self.index]
@@ -159,11 +163,21 @@ class ApprovalGate:
                 print("Decoded arguments:", json.dumps(args, indent=2), flush=True)
             if input(f"Type SEND {self.index + 1} to broadcast this transaction: ") != f"SEND {self.index + 1}":
                 raise RuntimeError("operator declined this transaction")
-            result = rpc(self.send_url, "eth_sendRawTransaction", [raw])
             digest = run(["cast", "keccak"], capture=True, input_text=raw).stdout.strip()
+            try:
+                result = rpc(self.send_url, "eth_sendRawTransaction", [raw])
+            except RuntimeError as error:
+                try:
+                    seen = rpc(self.read_url, "eth_getTransactionByHash", [digest])
+                except RuntimeError as lookup_error:
+                    raise RuntimeError(f"send result uncertain for {digest}; reconcile before continuing") from lookup_error
+                if not seen or seen.get("hash", "").lower() != digest.lower():
+                    raise RuntimeError(f"send result uncertain for {digest}; reconcile before continuing") from error
+                result = digest
             if result.lower() != digest.lower():
                 raise RuntimeError("relay returned an unexpected transaction hash; reconcile before continuing")
             self.previous_hash = result
+            self.previous_raw = raw
             self.index += 1
             print(f"Sent {result}. Forge --slow waits for the receipt before the next step.", flush=True)
             return result
@@ -367,7 +381,7 @@ def main():
     thread.start()
     try:
         gate_url = f"http://127.0.0.1:{server.server_port}"
-        live_env = dict(env, DRY_RUN="0", CONFIG_HASH=hashes[0])
+        live_env = dict(env, DRY_RUN="0", CONFIG_HASH=hashes[0], ETH_RPC_TIMEOUT="600", ETH_TIMEOUT="600")
         if args.local_rehearsal:
             live_env["RECORD_RPC_URL"] = env["RPC_URL"]
         live_env["RPC_URL" if args.local_rehearsal else "PRIVATE_RPC"] = gate_url
