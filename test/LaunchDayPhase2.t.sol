@@ -17,17 +17,16 @@ interface IERC20Min {
 
 /// @notice a launch day with the balance side on against Jack's pinned production contracts and the real
 /// `StatementBalanceModule`: the renderer is registered, the funder retires the launch supply, a statement redeems once
-/// transfers open, and a seller takes the balance bid. there is no dev-mock variant; the artifact from
-/// `script/tools/upstream-balance.sh` is required (the test fails with the build instruction when it is absent).
+/// transfers open, and a seller takes the balance bid. there is no dev-mock variant; routine runs skip without the
+/// pinned artifact, while frozen-candidate runs require it.
 contract LaunchDayPhase2Test is LaunchDayBase {
     /// @dev the balance pool sqrt the Seed post section and the e2e flows use (script/config/anvil.json .dev)
     uint160 internal constant DEV_SQRT = uint160(11618581461159793320010313039067);
 
     // promise: SPEC 4 the balance door against the pinned production module and Jack's token: the renderer is registered,
     // the funder retires the launch supply, a statement redeems once transfers open, and a seller then takes the balance bid.
-    // the artifact comes from script/tools/upstream-balance.sh; the test fails with the build instruction when it is absent
+    // the artifact comes from script/tools/upstream-balance.sh; frozen-candidate runs fail when it is absent
     function test_phase2DayWithProductionModule() public {
-        require(vm.exists("out/upstream-balance.json"), "run script/tools/upstream-balance.sh");
         (address token, address module, address funderWallet) = _deployProduction();
         IUpstreamToken up = IUpstreamToken(token);
         _registerAndRetire(up, funderWallet);
@@ -42,6 +41,15 @@ contract LaunchDayPhase2Test is LaunchDayBase {
         assertEq(IBalanceModule(module).available(), 0, "no reserve before the first redemption");
         uint256 owed = _redeemAtOpening(up, IBalanceModule(module));
         _sellThroughModule(token, IBalanceModule(module), owed);
+    }
+
+    function setUp() public override {
+        if (!vm.exists("out/upstream-balance.json")) {
+            require(!vm.envOr("REQUIRE_UPSTREAM_BALANCE", false), "run script/tools/upstream-balance.sh first");
+            vm.skip(true);
+            return;
+        }
+        super.setUp();
     }
 
     /// @dev the pinned upstream token and the StatementBalanceModule, wired the way test/UpstreamBalance.t.sol builds
