@@ -22,6 +22,11 @@ OWNER = launch.OWNER
 
 
 class ApprovalTests(unittest.TestCase):
+    def test_fee_ceiling_covers_the_observed_forge_fee_drift(self):
+        # promise: a small base-fee move after preview does not reject a signed transaction before review.
+        self.assertGreaterEqual(launch.fee_ceiling(122_000_000), 272_363_873)
+        self.assertEqual(launch.fee_ceiling(300_000_000), 1_200_000_000)
+
     def test_rpc_identifies_the_client_to_the_send_relay(self):
         # promise: the approval gate's RPC client passes relay HTTP filtering before an approved send.
         with patch.object(launch.urllib.request, "urlopen", return_value=io.BytesIO(b'{"result":"0x1"}')) as opened:

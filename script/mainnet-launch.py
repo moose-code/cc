@@ -84,6 +84,11 @@ def number(value):
     return int(value, 0) if isinstance(value, str) and value.startswith("0x") else int(value or 0)
 
 
+def fee_ceiling(gas_price):
+    # Forge's EIP-1559 cap can exceed the RPC gas-price sample when the base fee moves before signing.
+    return max(gas_price * 4, 500_000_000)
+
+
 def print_launch_config(path):
     config = json.loads(path.read_text())
     print(f"\nExact launch settings ({path}):", flush=True)
@@ -439,7 +444,7 @@ def main():
     gas_limit = sum(number(item["transaction"]["gas"]) for item in transactions)
     gas_ceiling = sum(number(item["transaction"]["gas"]) * 3 // 2 for item in transactions)
     gas_price = number(run(["cast", "gas-price", "--rpc-url", env["RPC_URL"]], capture=True).stdout.strip())
-    fee_cap = gas_price * 2
+    fee_cap = fee_ceiling(gas_price)
     value = sum(number(item["transaction"].get("value")) for item in transactions)
     balance = number(run(["cast", "balance", owner, "--rpc-url", env["RPC_URL"]], capture=True).stdout.strip().split()[0])
     print(f"\nDry run passed. {len(transactions)} planned transactions; no transaction sent.")
