@@ -6,8 +6,8 @@
 #   script/tools/upstream-balance.sh
 #   UPSTREAM_DIR=<dir> script/tools/upstream-balance.sh    keep the checkout in <dir> and reuse it on the next run
 #
-# read access to the repository comes from GH_TOKEN, else UPSTREAM_CREDITS_TOKEN, else `gh auth token`. the token is
-# passed to git on the command line only and is written to no file.
+# GitHub CLI supplies read credentials through Git's credential-helper protocol. GH_TOKEN takes precedence over
+# UPSTREAM_CREDITS_TOKEN; when neither is set, the CLI uses its existing login.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -21,11 +21,10 @@ RUNTIME_RENDERER=0xc8b64ac9f76c8e4afbb3cad2f840e077cec107ac16952f8d4bdd592a01b2d
 RUNTIME_ARTWORK=0xc5b019615fa141d8092130f38868036d154105b0b57a3301ce70f85087d128ea
 
 die() { echo "upstream-balance: $*" >&2; exit 1; }
-for t in git forge cast jq; do command -v "$t" >/dev/null || die "$t is required"; done
-
-TOKEN="${GH_TOKEN:-${UPSTREAM_CREDITS_TOKEN:-$(gh auth token 2>/dev/null || true)}}"
-[ -n "$TOKEN" ] || die "no read token: set GH_TOKEN or run gh auth login"
-AUTH="http.extraHeader=Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+for t in git gh forge cast jq; do command -v "$t" >/dev/null || die "$t is required"; done
+if [ -z "${GH_TOKEN:-}" ] && [ -n "${UPSTREAM_CREDITS_TOKEN:-}" ]; then
+  export GH_TOKEN="$UPSTREAM_CREDITS_TOKEN"
+fi
 
 DIR="${UPSTREAM_DIR:-$(mktemp -d)}"
 mkdir -p "$DIR"
@@ -34,11 +33,13 @@ if [ ! -d "$DIR/.git" ]; then
   git -C "$DIR" remote add origin "https://github.com/$REPO.git"
 fi
 if [ "$(git -C "$DIR" rev-parse HEAD 2>/dev/null || true)" != "$PIN" ]; then
-  git -C "$DIR" -c "$AUTH" fetch -q --depth 1 origin "$PIN"
+  GIT_TERMINAL_PROMPT=0 git -C "$DIR" -c credential.helper= -c credential.helper='!gh auth git-credential' \
+    fetch -q --depth 1 origin "$PIN"
   git -C "$DIR" checkout -q --force FETCH_HEAD
 fi
 [ "$(git -C "$DIR" rev-parse HEAD)" = "$PIN" ] || die "checkout is not at $PIN"
-git -C "$DIR" submodule update -q --init --depth 1 contracts/lib/openzeppelin-contracts contracts/lib/forge-std
+GIT_TERMINAL_PROMPT=0 git -C "$DIR" -c credential.helper= -c credential.helper='!gh auth git-credential' \
+  submodule update -q --init --depth 1 contracts/lib/openzeppelin-contracts contracts/lib/forge-std
 git -C "$DIR" diff --quiet HEAD -- contracts/src contracts/foundry.toml || die "checkout differs from $PIN"
 
 cd "$DIR/contracts"

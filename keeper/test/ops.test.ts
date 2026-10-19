@@ -3,12 +3,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCipheriv, randomBytes, scryptSync } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { concat, decodeAbiParameters, keccak256, parseEther, type Address } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { Breaker, Ledger } from "../src/ledger.ts";
+import { Breaker, Ledger, PendingStore } from "../src/ledger.ts";
 import { decryptKeystore } from "../src/keystore.ts";
 import { insideRepo, loadConfig, OWNER, type Deployment } from "../src/config.ts";
 import { encodeBasicOrder } from "../src/listings.ts";
@@ -43,6 +43,50 @@ test("budget: a send fits while its cost is at most the net loss left today; pay
   assert.match(readFileSync(join(dir, "ledger-2026-10-16.json"), "utf8"), /"txs":3/);
   now = Date.parse("2026-10-17T00:00:01Z");
   assert.equal(l.remaining(), parseEther("0.01"));
+});
+
+// promise: a damaged existing ledger cannot reset the keeper's daily loss budget
+test("budget: malformed existing ledger fails closed on restart", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-ledger-corrupt-"));
+  writeFileSync(join(dir, "ledger-2026-10-16.json"), '{"spent":"bad"}\n');
+  assert.throws(() => new Ledger(dir, 1n, () => Date.parse("2026-10-16T10:00:00Z")), /invalid keeper ledger/);
+});
+
+// promise: damage after startup cannot be overwritten by the next receipt or interpreted as fresh budget
+test("budget: damaged live ledger and pending transaction files fail closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-state-corrupt-"));
+  const now = Date.parse("2026-10-16T10:00:00Z");
+  const ledger = new Ledger(dir, 1n, () => now);
+  ledger.record(1n, 0n, "0x01");
+  writeFileSync(join(dir, "ledger-2026-10-16.json"), "broken");
+  assert.throws(() => ledger.remaining(), SyntaxError);
+  assert.throws(() => ledger.record(1n, 0n, "0x02"), SyntaxError);
+  writeFileSync(join(dir, "pending.json"), "broken");
+  assert.throws(() => new PendingStore(dir), SyntaxError);
+});
+
+// promise: pending files from before listing identity was added still load, while malformed identities fail closed
+test("pending: optional listing identity preserves old records and validates new ones", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-pending-legacy-"));
+  const path = join(dir, "pending.json");
+  const old = { hash: "0x" + "11".repeat(32), nonce: 1, chainId: 1, address: "0x" + "f1".repeat(20), door: "buyListing", before: "1" };
+  writeFileSync(path, JSON.stringify(old));
+  assert.equal(new PendingStore(dir).current?.listingKey, undefined);
+  writeFileSync(path, JSON.stringify({ ...old, listingKey: "seaport:42" }));
+  assert.equal(new PendingStore(dir).current?.listingKey, "seaport:42");
+  writeFileSync(path, JSON.stringify({ ...old, listingKey: "seaport:not-an-id" }));
+  assert.throws(() => new PendingStore(dir), /invalid keeper pending transaction/);
+});
+
+// promise: old state without listing cooldowns still starts, while a damaged wait file cannot silently enable retries
+test("pending: listing cooldown file is optional and malformed records fail closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-listing-cooldowns-"));
+  assert.equal(new PendingStore(dir).cooldownUntil("seaport:42"), 0);
+  const path = join(dir, "listing-cooldowns.json");
+  writeFileSync(path, JSON.stringify({ "seaport:42": { hash: "0x" + "11".repeat(32), until: 1_003_600_000 } }));
+  assert.equal(new PendingStore(dir).cooldownUntil("seaport:42"), 1_003_600_000);
+  writeFileSync(path, JSON.stringify({ "seaport:42": { hash: "0xbad", until: 1_003_600_000 } }));
+  assert.throws(() => new PendingStore(dir), /invalid keeper listing cooldowns/);
 });
 
 test("breaker: the threshold-th consecutive failure pauses the door; a success resets the count", () => {
@@ -189,4 +233,90 @@ test("errors: a URL with a key in an error message reaches neither the log line 
   assert.equal(bodies.length, 1);
   assert.ok(!bodies[0].includes(secret), "webhook payload");
   assert.ok(lines.length >= 2 && lines.every((l) => !l.includes(secret)), "log lines");
+});
+
+// promise: one refused webhook schedules delivery without another keeper tick invoking the alert
+test("alert retries a refused webhook without a second caller", async () => {
+  const realFetch = globalThis.fetch;
+  const realTimeout = globalThis.setTimeout;
+  let retryCall: (() => void) | undefined;
+  globalThis.setTimeout = ((cb: () => void, ms: number) => {
+    if (ms === 60_000) { retryCall = cb; return { unref() {} } as ReturnType<typeof setTimeout>; }
+    return realTimeout(cb, ms);
+  }) as typeof setTimeout;
+  const statuses: number[] = [];
+  globalThis.fetch = (async () => {
+    const status = statuses.length ? 200 : 500;
+    statuses.push(status);
+    return new Response(null, { status });
+  }) as typeof fetch;
+  try {
+    await alert("https://hooks.example.org/x", "retry-after-refusal", "keeper failed");
+    await alert("https://hooks.example.org/x", "retry-after-refusal", "keeper failed");
+    assert.deepEqual(statuses, [500], "the next tick does not wait for another POST");
+    assert.ok(retryCall, "the failed one-shot alert scheduled its own retry");
+    retryCall();
+    await new Promise<void>((resolve) => realTimeout(resolve, 0));
+    await alert("https://hooks.example.org/x", "retry-after-refusal", "keeper failed");
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realTimeout;
+  }
+  assert.deepEqual(statuses, [500, 200]);
+});
+
+// promise: a timed-out webhook has at most one in-flight request for its key and cannot trigger another every tick
+test("alert suppresses duplicate in-flight timeout", async () => {
+  const realFetch = globalThis.fetch;
+  const realTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((cb: () => void, ms: number) => {
+    if (ms === 60_000) return { unref() {} } as ReturnType<typeof setTimeout>;
+    return realTimeout(cb, ms);
+  }) as typeof setTimeout;
+  let rejectPending: ((error: Error) => void) | undefined;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Promise<Response>((_resolve, reject) => { rejectPending = reject; });
+  }) as typeof fetch;
+  try {
+    const pending = alert("https://hooks.example.org/x", "persistent-timeout", "keeper failed");
+    await alert("https://hooks.example.org/x", "persistent-timeout", "keeper failed");
+    assert.equal(calls, 1, "a later tick does not start a second timeout");
+    rejectPending!(new Error("timeout"));
+    await pending;
+    await alert("https://hooks.example.org/x", "persistent-timeout", "keeper failed");
+    assert.equal(calls, 1, "failure backoff starts after the timeout");
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realTimeout;
+  }
+});
+
+// promise: a slow low-balance webhook does not hold keeper startup before the first decision tick
+test("start checks do not await a slow balance webhook", async () => {
+  const realFetch = globalThis.fetch;
+  let release: ((response: Response) => void) | undefined;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Promise<Response>((resolve) => { release = resolve; });
+  }) as typeof fetch;
+  const signer = "0x00000000000000000000000000000000000000a5" as Address;
+  const cfg = loadConfig({
+    RECORD: "x", RPC_URLS: "http://127.0.0.1:8545", IMPERSONATE: signer,
+    LOW_BALANCE_ETH: "2", ALERT_WEBHOOK_URL: "https://hooks.example.org/x",
+  }, () => rec(31337));
+  const fixed = { factory: OWNER, escrow: OWNER, owner: "0x00000000000000000000000000000000000000ee" as Address };
+  try {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      startChecks(fakeClient(undefined), cfg, fixed, { address: signer }),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("startup waited for webhook")), 100); }),
+    ]).finally(() => clearTimeout(timer));
+    assert.equal(calls, 1);
+    release!(new Response(null, { status: 200 }));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

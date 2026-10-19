@@ -1823,6 +1823,19 @@ export const coreAbi = [
   },
   {
     "type": "function",
+    "name": "setOpeningRate",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setPaused",
     "inputs": [
       {
@@ -3731,6 +3744,11 @@ export const coreAbi = [
   {
     "type": "error",
     "name": "OnlyPoolManager",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OpeningRateClosed",
     "inputs": []
   },
   {

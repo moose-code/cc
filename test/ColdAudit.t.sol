@@ -154,7 +154,7 @@ contract ColdAuditTest is Fixture {
     }
 
     // promise: a keeper refresh books the pending fee income first and pays the caller from the pot share the keeper's
-    // gate predicted, and a later stale reference degrades the eth bid instead of reverting (decision 159, C02)
+    // gate predicted, and a later stale reference closes the ETH bid without reverting
     function test_refreshReferenceBooksPendingIncomeAndPays() public {
         _valuePool();
         autoBook = false;
@@ -175,9 +175,9 @@ contract ColdAuditTest is Fixture {
         assertGt(paid, 0, "the refresh booked the pending income and paid the caller from the pot share");
         assertLe(paid, pending, "the payment is at most the pending income it booked");
         assertGt(core.ethPot() + paid, 0, "the pending pot share is booked");
-        // a stale reference no longer reverts the eth bid: it falls back to the last good value rate
+        // a stale reference closes the ETH bid while the controller quote is unusable
         vm.warp(block.timestamp + 3_601);
-        assertGt(core.ethRate(), 0, "a stale reference degrades to the last good rate, not NoQuote");
+        assertEq(core.ethRate(), 0, "a stale reference closes the ETH bid");
         emit log_named_uint("pending income booked and paid from as pot", pending);
     }
 
@@ -631,7 +631,7 @@ contract ColdLaunchMatrixTest is Fixture {
     }
 
     function _fixtureRateStart() internal pure override returns (uint256) {
-        return 4_900_000_000_000_000;
+        return 4_650_000_000_000_000;
     }
 
     function _fixtureCreditSaleOn() internal pure override returns (bool) {
@@ -696,7 +696,7 @@ contract ColdLaunchMatrixTest is Fixture {
         autoBook = false;
         uint256 id = _credits(seller, 1)[0];
         _buyCoin(funder, 2 ether);
-        assertEq(core.RATE_START(), 4_900_000_000_000_000);
+        assertEq(core.RATE_START(), 4_650_000_000_000_000);
         assertEq(core.settings().reserveWei, 0.1 ether);
         assertTrue(ctl.creditSaleOn());
         assertEq(core.ethPot(), 0);

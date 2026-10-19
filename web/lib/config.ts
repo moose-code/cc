@@ -43,13 +43,12 @@ export const seaportAdapter = addr(process.env.NEXT_PUBLIC_SEAPORT_ADAPTER);
 // First block of the browser scan of CreditStrategy events (chain mode); the proxy deploy block.
 export const strategyStartBlock = BigInt(process.env.NEXT_PUBLIC_STRATEGY_START_BLOCK || 26037623);
 
-// The coin/eth v4 pool: the live skim hook, the dynamic-fee flag and the tick
-// spacing. The defaults are the mainnet launch params; the local record
-// overrides them (scripts/local-env.mjs). Native ETH is currency0.
-export const pool = {
-  hook: (addr(process.env.NEXT_PUBLIC_POOL_HOOK) ?? "0x2f7976bf73dE8e1D49D4c687404e527a75b0e8Cc") as Address,
-  fee: Number(process.env.NEXT_PUBLIC_POOL_FEE || 8388608), // 0x800000 dynamic
-  tickSpacing: Number(process.env.NEXT_PUBLIC_POOL_TICK_SPACING || 200),
+// Optional deployment-record values checked against the Core's immutable pool
+// settings before the CC market is exposed. Native ETH is currency0.
+export const expectedPool = {
+  hook: process.env.NEXT_PUBLIC_POOL_HOOK,
+  fee: process.env.NEXT_PUBLIC_POOL_FEE,
+  tickSpacing: process.env.NEXT_PUBLIC_POOL_TICK_SPACING,
 };
 
 // Chainlink ETH/USD feed (8 decimals).

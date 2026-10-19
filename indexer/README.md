@@ -26,7 +26,7 @@ Endpoints: `/graphql`, `/sql` (`@ponder/client`), `/health/parity` (503 when a r
 
 ## configuration
 
-`ponder.config.ts` reads addresses and the Core deploy block from `deployments/<chainId>.json` (`DEPLOYMENT_RECORD`) and refuses to start on a missing value. `.env.example` lists the variables. Chain 1 requires `DATABASE_URL`, `CREDITS_START_BLOCK`, `STATEMENTS_START_BLOCK` and `STRATEGY_START_BLOCK` (set in `env/mainnet.env`). A local fork reads the CreditStrategy events from 60000 blocks before the Core deploy block.
+`ponder.config.ts` reads addresses and the Core deploy block from `deployments/<chainId>.json` (`DEPLOYMENT_RECORD`) and refuses to start on a missing value. `.env.example` lists the variables. Chain 1 requires `DATABASE_URL`, `CREDITS_START_BLOCK`, `STATEMENTS_START_BLOCK` and `STRATEGY_START_BLOCK` (set in `env/mainnet.env`). A chain-id-1 fork also requires an explicit loopback `RPC_URL` matching the record's `rpcUrl`; it uses that endpoint alone. A local chain 31337 reads the CreditStrategy events from 60000 blocks before the Core deploy block.
 
 ## external ABIs (`abis/external.ts`)
 

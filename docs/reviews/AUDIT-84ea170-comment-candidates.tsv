@@ -1,0 +1,311 @@
+src/Core.sol	34	/// the balance module, the adapters and the successor door with a one way lock (docs/SPEC.md section 11). untracked
+src/ControllerV1.sol	110	    /// value false; the owner turns it on with the value switch (decision 155)
+src/ControllerV1.sol	113	    /// the reference price settings (decision 148)
+src/ControllerV1.sol	424	    /// value false; the owner turns it on with the value switch (decision 155)
+src/ControllerV1.sol	488	    /// the protected floor `valueOf(rating) * floorMultBps() / 10_000`, the cost term dropped (decision 150)
+src/lib/SettingsBounds.sol	6	/// the sanity bounds of every setting (docs/SPEC.md section 3). internal only: the Core reaches it through
+src/lib/SettingsBounds.sol	13	        // at most 9,999 and dropFloorBps at least 1 keep the post-fill rate above zero (decision 143).
+src/lib/CoreLib.sol	25	    /// one way locks of the owner (docs/SPEC.md section 11): once set, never cleared
+src/lib/CoreLib.sol	84	    /// (decision 164). the climb and drop are the eth bid's, shared through CoreLib
+src/lib/CoreLib.sol	101	/// Core keeps its runtime under the size limit. deployed once before the Core (docs/RUNBOOK.md)
+src/lib/CoreLib.sol	226	    /// left after both (decisions 163, 164)
+src/lib/CoreLib.sol	288	        // mode only: outside it no bid reads it (decision 164)
+src/lib/CoreLib.sol	400	    /// quote equals the budget the next purchase enforces (decision 147)
+src/lib/CoreLib.sol	498	    /// before forwarding here, so the payment comes from the pot share of that income (decision 159, C02). runs in the
+src/lib/CoreLib.sol	545	    /// `NoQuote`, so the engine keeps buying while the reference recovers (decision 159, C02)
+src/lib/CoreLib.sol	627	    /// shows is payable with its artist royalty on top (decision 163). the funded climb uses the same adjustment on
+src/lib/CoreLib.sol	702	    /// `climbMultiplierCapBps` / 10_000] (decision 128, variant d)
+src/lib/CoreLib.sol	722	        // pot between fills (decision 128, variant d)
+src/lib/CoreLib.sol	764	        // the per minute climb is unscaled (decision 128, variant d: the multiplier scales the ceiling loosening only)
+src/lib/CoreLib.sol	839	    /// recovered and nothing the engine accounts for can leave (decision 159, C06). the Core forwards its call here
+src/lib/CoreLib.sol	889	    /// so the sale floor matches a bought credit (decision 163). The price state is what the engine pays with a funded
+src/lib/CoreLib.sol	907	            // covers the royalty the eth bid would have paid (decision 163)
+src/lib/CoreLib.sol	1127	    /// runs only while `balanceBidOn`. the artist is paid `buyToArtistBps` of each payout on top (decision 163), in
+src/lib/CoreLib.sol	1239	    /// (decision 164). the Core forwards its `balanceRate()`
+src/lib/CoreLib.sol	1260	    /// (decision 159, C05). the Core forwards its `balanceBidOf(id)`
+src/interfaces/Interfaces.sol	167	/// `returnLockSeconds`, `valueModeOn`, `buyToArtistBps` and `balanceDiscountBps`. docs/SPEC.md section 3 has the
+src/interfaces/Interfaces.sol	281	/// bounds are enforced by the controller (docs/SPEC.md section 3). the controller keeps one more value, the anchor, which
+src/interfaces/Interfaces.sol	316	/// the reference price settings of the controller (decision 148), set at once by `setQuote`. the controller keeps a
+src/interfaces/Interfaces.sol	397	    /// the launch values of docs/SPEC.md section 3
+src/interfaces/Interfaces.sol	457	    /// hard cap (decision 155; the floor is 110 percent of the reference at the launch cap of 10_000, today's 1.1x; the
+test/ViewEqualsStored.t.sol	67	        // the exact launch stall state of decision 147: no door has booked, so ethPot is zero while the Core holds eth
+test/ViewEqualsStored.t.sol	110	    /// (decision 147: the spend view follows the same pending aware pot the climb clamp does)
+test/BalanceTokenReplacement.t.sol	163	    // balance bid is a posted price that never reads the instance, and a fill never moves it (decision 164)
+test/BalanceFlat.t.sol	8	/// the flat balance bid (decision 164): the balance route pays `score * unitPerPoint * (10_000 - balanceDiscountBps) /
+test/BalanceFlat.t.sol	10	/// `available()`, which the payouts plus the artist royalties (decision 163) must not pass. the discount is an owner
+test/BalanceFlat.t.sol	76	    // artist royalty stays in the module (paid to the artist later or recovered by the owner), and the credit piles (decision 163)
+test/BalanceFlat.t.sol	152	    // PotTooSmall there; one wei more and both run (decision 159, C05 kept)
+test/Flow.t.sol	15	/// @notice the flow rework (docs/DECISIONS.md) on the real stack: settings, the flat bid, statement sales through the
+test/Flow.t.sol	162	                // value mode requires the eth spend cap active (under 10,000, decision 157)
+test/Flow.t.sol	167	                // rather than reverting (decision 159, C02)
+test/Migrate.t.sol	486	    // promise: RUNBOOK a migrate batch of 160 credits fits the transaction cap
+test/SaleFloorStart.t.sol	9	/// decision 124: the sale floor can never be above the sale start. setSettings bounds `saleFloorBps` at or below the
+test/SaleFloorStart.t.sol	16	    // promise: decision 124 setSettings refuses a saleFloorBps above the controller's markupBps
+test/SaleFloorStart.t.sol	25	    // promise: decision 124 setSale refuses a markupBps below the core's saleFloorBps
+test/Config.t.sol	75	        // image and description are launch day inputs (FLOW decision 54): the file may hold them filled or empty
+test/Config.t.sol	91	        // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 186
+test/Config.t.sol	99	        // the owner's launch values of decision 119
+test/Config.t.sol	134	    /// of volume (decision 186). baseline skim 690 bps, skim = V * 690 / 10_000 = 0.069 ether.
+test/Config.t.sol	316	        // the payee share and the operator cut are forced pushes (decision 123), so the preflight no longer probes the
+test/Config.t.sol	909	    // promise: decision 186 pins the 90 percent anti sniper start and 1800 second window at launch
+test/Config.t.sol	926	    /// FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`. the Core and the deploy guard
+test/Config.t.sol	928	    // promise: FLOW decisions 46 and 69: preflight fails unless `settings.rateCap` is 3 times `rateStart`
+test/Lock.t.sol	50	/// the owner command that freezes the fee recipients (docs/RUNBOOK.md section 4) and the postflight rows around it
+test/LaunchDay.t.sol	116	    /// @dev the pot share of the pending income that the next `_book` folds into `ethPot` (decision 147): the payee
+test/ArtistRoyalty.t.sol	31	/// the artist royalty on every engine purchase (decision 163): whatever the engine pays for a credit, it pays
+test/ArtistRoyalty.t.sol	193	    // cut the keeper's gas refund: the keeper is still paid and the buy lands (decision 163)
+test/ArtistRoyalty.t.sol	214	    // matches a bought credit (decision 163)
+test/FeeShare.t.sol	27	/// (decision 123). it starts with the first book that has income at or after `launchedAt + SNIPER_SECONDS`, and that
+test/FeeShare.t.sol	30	    // promise: SPEC 1 the payee share starts after the anti sniper window (decision 109)
+test/FeeShare.t.sol	33	        // payeePpm is 0 at launch (decision 120); the owner raises it to observe the share crediting
+test/FeeShare.t.sol	109	    // promise: SPEC 1 the book pushes the payee its share (decision 123)
+test/FeeShare.t.sol	188	    // promise: SPEC 1 a failing payee never blocks the book, the forced push still delivers (decision 123)
+test/FeeShare.t.sol	219	    // promise: INTEGRATION the forced payee push gives the payee no reentry (decision 123)
+test/FeeShare.t.sol	349	    // promise: SPEC 1 decision 176: unbooked forced eth earns no bid climb, and the first door pays the quote
+test/CallerPay.t.sol	79	    // promise: SPEC 1 compose pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 138)
+test/BalanceCustody.t.sol	8	/// @notice balance custody in the module (decision 117): the module holds the balance token, the Core holds none. a
+test/Fees.t.sol	227	        // payeePpm is 0 at launch (decision 120); the owner raises it so the door's book credits the payee, the evidence here
+test/Fees.t.sol	297	        // the price and its artist royalty left the core (decision 163); the push arrived on top
+test/Fees.t.sol	442	            // the payee share is pushed out of the core, the rest stays in the pots (decision 123)
+test/Fees.t.sol	585	    // promise: SPEC 1 buyback slice parameter (decision 51): a sandwich around a slice loses
+test/Fees.t.sol	586	    // promise: SPEC 1 buyback slice parameter (decision 51): a sandwich around a buyback slice loses
+test/Fees.t.sol	793	    // promise: SPEC 1 the coin is restricted (decisions 53, 83)
+test/AuditDaylight.t.sol	51	    // passes: no climb while idle, no module read (decision 164)
+test/GasCap.t.sol	123	        // the launch caller settings pay the caller (decision 138), so the measure includes the payment path
+test/GasCap.t.sol	223	    // marginal cost is low enough that the batch no longer falls to 85 (decision 159, C08). the one-credit figure is a
+test/GasCap.t.sol	226	    // batch forced push (decision 163), so it is bounded, not restored to the pre-packet 482,000
+test/Adopt.t.sol	49	        // the price state scaled by score plus the artist royalty the eth bid would pay, at least 1 wei (decision 163)
+test/Adopt.t.sol	168	    // promise: inv 18 and decision 176 adopt moves no eth and checkpoints earned climb before changing the pile
+test/OnePile.t.sol	16	/// (decision 104), at least 1 wei, where the floor rate is the larger of the climbed price
+test/OnePile.t.sol	69	    // promise: SPEC 1 sellForBalance records the score scaled eth cost and reads no pool (decision 96)
+test/OnePile.t.sol	105	    // promise: SPEC 1 the recorded cost reads no pool price (decision 96)
+test/Launch.t.sol	52	    // promise: SPEC 1 decision 176: the first fill earns no climb from an unbooked hook fed pot
+test/Launch.t.sol	88	        // the fill spent the payout and its artist royalty (decision 163)
+test/BidRule.t.sol	37	        // these hand arithmetic tests predate the recovery climb (decision 74) and assert a single rate climb; match the
+test/BidRule.t.sol	76	    /// minute floor (dropFloorBps 1, decision 146)
+test/BidRule.t.sol	153	    /// the launch setting at a 1x pot: the anchor grows 6 percent per full 10 idle minutes (decision 128)
+test/BidRule.t.sol	254	    // promise: SPEC 1 an empty pot never raises the price (decision 44)
+test/BidRule.t.sol	297	    // promise: SPEC 1 decision 147: a payable door's own value is not pending income
+test/BidRule.t.sol	375	    // promise: decision 176 the minimum allowed rate and zero royalty have an exact one-wei funding boundary
+test/BidRule.t.sol	380	    // promise: decision 176 the high launch cap and maximum royalty have an exact one-wei funding boundary
+test/BidRule.t.sol	405	    // promise: decision 176 a seller cannot use empty hours or changing asks to bypass the bid, reserve, drop or cap
+test/BidRule.t.sol	538	    /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128 variant
+test/BidRule.t.sol	546	    // ------------------------------------------------------------------ decision 128: pot scaled climb
+test/BidRule.t.sol	568	    // promise: SPEC 4 decision 128 variant d: the per minute climb does not scale with the pot, only the loosening does
+test/BidRule.t.sol	595	    // promise: SPEC 4 decision 128 variant d: the ceiling's idle loosening scales with the pages the pot covers, clamped to [1x, the cap]
+test/BidRule.t.sol	605	    // promise: SPEC 4 decision 128: a full pot runs the idle loosening at the 4x cap
+test/BidRule.t.sol	607	    /// intervals of 600 * 4 bps, with no hourly cap (the hourly bound was rejected, decision 128)
+test/BidRule.t.sol	666	    // promise: SPEC 4 decision 128: pumping the pot to inflate the bid through the multiplier is unprofitable
+test/BidRule.t.sol	677	    // promise: SPEC 4 decision 128: a fund() pump is unprofitable
+test/BidRule.t.sol	687	    // promise: SPEC 4 decision 128: a pump during the sniper window is unprofitable
+test/BidRule.t.sol	696	    // ------------------------------------------------------------------ the unbooked drip (decision 147), launch settings
+test/BidRule.t.sol	749	        // the read rides the pot plus the pending pot share (decision 147), never above it
+test/Rehearsal.t.sol	331	        // payeePpm is 0 at launch (decision 120); the owner raises it, as it would later, to prove the push path
+test/Rehearsal.t.sol	370	            // the per-point payout: the rate scaled by the credit's score over RATE_SCORE plus the artist royalty (Core.bidOf, by hand; decision 163)
+test/CreditSale.t.sol	19	/// at `saleFloorBps` of the credit's cost. a buy pays the price, with the artist and operator cuts taken off it (decision 123). while
+test/CreditSale.t.sol	260	    /// (decision 115a, redundant under the per-point bid of decision 116) would have priced it at floorRate * floorMultBps, far above
+test/CreditSale.t.sol	334	    /// 11,000 of decision 152, 13,200 at 12,000 (launch spread 1,000, decision 155)
+test/CreditSale.t.sol	441	    // promise: SPEC 1 one pile: a balance bought credit sells at its recorded cost (decision 96)
+test/SetSettings.t.sol	98	    // promise: RUNBOOK the SetSettings owner command changes the fields it names
+test/SetSettings.t.sol	109	    // promise: RUNBOOK the SetSettings owner command keeps the other fields at their live value
+test/SetSettings.t.sol	125	    // promise: RUNBOOK the SetSettings owner command refuses an unknown field or a too wide value
+test/SetSettings.t.sol	137	    // promise: RUNBOOK the SetSettings owner command refuses a value outside the bounds
+test/SetSettings.t.sol	145	    // promise: RUNBOOK a dry run of an owner command sends nothing
+test/Redeem.t.sol	76	    /// turns the age only eligibility rule on or off (decision 155). launch is off, the reference curve rule
+test/Redeem.t.sol	304	    // promise: SPEC 1 redeem pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 138)
+test/Recovery.t.sol	9	/// @notice decision 74: after a large sale walks the bid down, the remembered peak keeps the ceiling high and the price
+test/Recovery.t.sol	32	        // practical floor (dropFloorBps 1, decision 146), so set the floor and drop the recovery tests read against
+test/Recovery.t.sol	64	    /// 36 minutes at the launch gap. at launch `climbPerMinBps` and `recoveryClimbPerMinBps` are both 200 (decision 155),
+test/Recovery.t.sol	189	    /// the dump that preceded it. the climb is unscaled by the pot multiplier (decision 128 variant d), so the raw climb
+test/RatingReference.t.sol	92	    // promise: SPEC 1 one pricing rule: pointRate and valueOf (decision 104)
+test/RatingReference.t.sol	141	    // promise: SPEC 1 one pile: equal ratings reference equally (decision 95)
+test/RatingReference.t.sol	142	    /// the bug decision 95 fixes: an eth bought statement and a balance token bought statement reference by the same
+test/RatingReference.t.sol	143	    /// per-rating amount once the rate term binds, whatever each credit cost. decision 90 scaled the redemption statement by
+test/RatingReference.t.sol	157	        // bases, where decision 90 scaled each statement by its own cost
+test/Seaport.t.sol	196	        // the artist royalty on the price rides on top and is part of the cost basis (decision 163)
+test/Seaport.t.sol	294	    // promise: SPEC 1 buyListing buys an adapter priced Seaport basic order (decision 100)
+test/Seaport.t.sol	380	        // the artist royalty on the price leaves the pot as well (decision 163)
+test/Seaport.t.sol	435	    /// the opening bid of docs/DECISIONS.md section 2, wei per credit
+test/Formats.t.sol	7	/// decision 113: statement formats. `compose()` derives the format from `prevrandao` and the first page id,
+test/Formats.t.sol	37	    // promise: SPEC 1 compose() derives the format from prevrandao and the head id (decision 113)
+test/Formats.t.sol	54	    // promise: SPEC 1 compose(format) composes with the given format (decision 113)
+test/Formats.t.sol	81	    // promise: SPEC 1 setHeldFormat sets the format of a held statement (decision 113)
+test/CoreUnit.t.sol	215	    /// a pot at or under the reserve reads a rate of 0: a sale reverts `PotTooSmall` (decision 156) and a purchase
+test/CoreUnit.t.sol	259	        // an unfunded pot is at or under the reserve, so the bid reads 0 and the sale names its cause (decision 156)
+test/CoreUnit.t.sol	289	    /// loosening does not slow as the rate rises (decision 128 variant d: pages counted at the current rate)
+test/CoreUnit.t.sol	939	    // promise: INTEGRATION BadModule: the unit is read live (decision 103)
+test/UpstreamBalance.t.sol	226	            // the module (decisions 163, 164)
+test/PostflightSlots.t.sol	10	///     docs/reviews/REVIEW-security.md),
+test/PostflightSlots.t.sol	138	        // the CORE immutable is read at 23 sites in the current ControllerV1 bytecode (decisions 168 and 170)
+test/ReviewDeploy.t.sol	277	        // launch day inputs (FLOW decision 54): empty or filled in the file
+test/ReviewDeploy.t.sol	353	        // with its artist royalty (decision 163)
+test/ChosenCompose.t.sol	9	/// decision 89: chosen composition. a caller names 80 pile credits and a format, gated by `chosenComposeOn`, a least
+test/ChosenCompose.t.sol	136	    // promise: SPEC 1 chosen composition records the cost and rating of the 80 credits (decision 89)
+test/ChosenCompose.t.sol	154	    // promise: SPEC 1 the Core stores the composer of every statement (decision 111)
+test/ChosenCompose.t.sol	178	    // promise: SPEC 1 compose and composeChosen run the same internal path (decision 113)
+test/Sale.t.sol	84	    /// decision 124 keeps the floor at or below the start. drops the floor to its minimum, moves the start
+test/Sale.t.sol	162	    /// (the launch before decision 154); the launch curve of 4 hours and the anchor off have their own tests
+test/Sale.t.sol	241	    // promise: SPEC 1 a raise of saleFloorBps reaches every held statement at once (decision 124 raises the start with it)
+test/Sale.t.sol	694	                // two wei: the bid's room is the pot over 1 + the royalty (decision 163), so a 2 wei pot reads a 1 wei bid
+test/Sale.t.sol	1111	        // the royalty on purchases keeps the artist required as well (decision 163)
+test/Reserve.t.sol	63	    // promise: decision 176 lowering the queued reserve starts a fresh funded clock without granting empty hours
+test/Reserve.t.sol	83	    // promise: decision 176 raising the queued reserve preserves the funded climb earned before the new page
+test/Reserve.t.sol	102	    // promise: decision 176 a controller credit sale cannot backdate a funded climb when the pile crosses a page boundary
+test/ReturnLock.t.sol	43	    // promise: SPEC 6 the launch return lock is six hours (decision 155)
+test/ValueMode.t.sol	19	/// the value switch (decisions 148, 150 to 154): the controller's rate limited reference of the balance token, its
+test/ValueMode.t.sol	62	        // margin 1,000 (decisions 153 and 157): a round trip through the reference band loses
+test/ValueMode.t.sol	138	        // value mode requires the eth spend cap active (under 10,000, decision 157); 9,999 keeps it effectively open
+test/ValueMode.t.sol	141	        // the switch turns on age only eligibility (decision 155). the credit spread stays at the fixture's 1,000: the
+test/ValueMode.t.sol	142	        // value mode spread of 200 (decision 153) does not close the loop at tol 450, so the switch config keeps a
+test/ValueMode.t.sol	143	        // spread that satisfies the loop closure bound (decision 157)
+test/ValueMode.t.sol	159	    // promise: decision 176 a paid refresh preserves earned funded climb before its payment empties the buying room
+test/ValueMode.t.sol	337	    // off min(sampledSpot, ref + tol), sales off max(sampledSpot, ref - tol) (decision 159, C01)
+test/ValueMode.t.sol	513	    // posted price and never reads the instance (decision 164); the posted rate never moves
+test/ValueMode.t.sol	533	    // only the switch resets it: a settings edit, a module set and the bid turning on leave it (decision 164)
+test/ValueMode.t.sol	556	    // promise: SPEC 4 an unusable quote degrades the eth bid to the last good rate instead of halting it (decision 159,
+test/ValueMode.t.sol	579	    // balance bid live (decision 159, C02)
+test/ValueMode.t.sol	712	        // the reference stale after the buy: the eth bid degrades to the last good rate (decision 159, C02), the balance
+test/ValueMode.t.sol	744	    // payout is worth at most the eth bid when the engine sells the tokens (decision 165). without the clamp a credit
+test/ValueMode.t.sol	949	    // promise: SPEC 10 outside value mode the balance payout is par, the clamp does not apply (decision 165). a usable
+test/V2Port.t.sol	385	    // promise: SPEC 1 the owner can remove the coin restriction (decision 83): coin sent to the Core is inert
+test/ModeOffDifferential.t.sol	210	/// the balance route and the activation order (docs/RUNBOOK.md, phase 2): `balanceBidOn` stays false until value mode is
+test/ModeOffDifferential.t.sol	261	    // see the activation order in docs/RUNBOOK.md: the balance bid opens after value mode, because with value mode off
+test/ColdAudit.t.sol	157	    // gate predicted, and a later stale reference degrades the eth bid instead of reverting (decision 159, C02)
+test/ColdAudit.t.sol	185	    // booked dust (decision 159, C02)
+test/ColdAudit.t.sol	284	    // promise: rescueToken recovers a stray ERC20 the Core holds and refuses the balance token (decision 159, C06)
+test/ColdAudit.t.sol	515	        // value mode with an unusable protected quote refuses the balance fill (decision 167)
+test/invariant/HandlerSale.sol	16	/// swapping the controller and the balance module in one go, the three one way locks and the two step handover. every call is checked against a model written from docs/DECISIONS.md: who may
+test/invariant/HandlerSale.sol	597	    /// the asking price of statement `sid` written out again from docs/SPEC.md section 8: the bps falls in a straight
+test/invariant/HandlerSale.sol	717	            // decision 124: the start can never be below the core's current saleFloorBps
+test/invariant/Invariants.t.sol	13	/// @notice SPEC section 10 as reworked by docs/DECISIONS.md, one `invariant_` function per item, against the real system on
+test/invariant/Invariants.t.sol	246	    /// 12. docs/DECISIONS.md 9.2: a statement leaves the core only by `sellTo` or by a redemption. every ever held statement has
+test/invariant/Invariants.t.sol	280	    /// 15. retired with the fee router (docs/DECISIONS.md decision 109): the pool pays the core directly, so there is no
+test/invariant/Invariants.t.sol	523	            // the bid's room is the pot less the reserve over 1 + buyToArtistBps / 10_000 (decision 163)
+test/invariant/Invariants.t.sol	581	    /// `sellForBalance` pays the seller in that block (decision 164). the posted bid does not climb
+test/invariant/Invariants.t.sol	631	    /// multiplier `m` per 10 idle minutes, capped by `rateCap` (decision 128)
+test/invariant/Invariants.t.sol	638	        // decision 128 variant d: the loosening scales by m, counted at the last fill rate, capped by climbMultiplierCapBps
+test/invariant/Invariants.t.sol	646	    /// last fill rate (decision 128 variant d, the loosening only)
+test/invariant/InvariantsValue.t.sol	31	    /// that a round trip is never profitable for the counterparty (decision 153); across a sampled-spot move the loss
+test/invariant/InvariantsValue.t.sol	32	    /// can be under the full spread (the accepted patient exposure, decision 149), but a round trip never gains
+test/invariant/InvariantsValue.t.sol	126	        // rounding. the spread covers the reference band on both sides (decision 157 loop closure), so even across a
+test/invariant/InvariantsValue.t.sol	127	        // sampled-spot move the counterparty never gains (decision 159, C01); the full-spread loss holds at one quote
+test/invariant/InvariantsValue.t.sol	149	            // the seller's payment and its artist royalty leave the core (decision 163)
+test/invariant/InvariantsValue.t.sol	257	/// @notice the value mode invariants (decision 148, SPEC-value-pricing-153 section 10): invariants 1, 2, 3, 7, 16 and 19
+test/invariant/HandlerBase.sol	124	    // a buy whose hook bounty is left unbooked, so the next action runs over pending fee income (decision 147)
+test/invariant/HandlerBase.sol	202	    /// its own account, so this dust stays with it (decision 143/144: no general sweep). keyed by token because a
+test/invariant/HandlerBase.sol	910	            // the recorded cost is the payout plus its artist royalty (decision 163)
+test/invariant/HandlerBase.sol	1218	    /// fee income waits above the pots without earning funded climb (decision 176). over the warp the read must stay
+test/invariant/HandlerBase.sol	1246	            // decision 147: the read rides the pot plus the pending pot share, never above it (the next fill's clamp)
+test/invariant/HandlerBase.sol	1549	            // the cost basis is the price plus the artist royalty (decision 163); the seller receives the price
+test/invariant/HandlerBase.sol	1714	        // the artist royalty on the listing price rides on top (decision 163)
+test/invariant/HandlerBase.sol	2473	            // the adopted basis is the price state scaled by score plus the artist royalty, as a bought credit (decision 163)
+test/invariant/HandlerBase.sol	2564	        // the book checkpointed the rate: with the pages multiplier read at the current rate (decision 128 variant d),
+test/invariant/HandlerBase.sol	2746	    /// balanceDiscountBps) / 10_000` per credit, flat (decision 164)
+test/invariant/HandlerBase.sol	2835	            // the royalty is buyToArtistBps of the posted payout, in balance token (decision 163)
+test/invariant/HandlerBase.sol	2843	        // the balance tokens paid are the posted payouts summed, flat (decision 164)
+test/invariant/HandlerOwner.sol	222	        // decision 124: keep the floor at or below the real controller's start so its setSale is never blocked. the core
+test/invariant/HandlerOwner.sol	262	    /// the bounds of docs/DECISIONS.md section 2, written out again. the name of the first field out of bounds, or zero
+test/invariant/HandlerOwner.sol	527	    /// the owner replaces the balance module at once (docs/DECISIONS.md section 8): a new module with the same
+test/invariant/HandlerOwner.sol	1054	            // the loop closure bound (decision 157): the spread must cover the reference band at the current tolerance,
+test/utils/Fixture.sol	154	        /// @dev the caller payment the compose sent from `ethPot` (decision 138)
+test/utils/Fixture.sol	170	    /// @notice the settings the fixture core is deployed with. the default is the launch values of docs/DECISIONS.md. a
+test/utils/Fixture.sol	602	    /// @notice sets the redeem burn pot share to 1,000 bps (phase 2 value, decision 155). launch is 0, so the
+test/utils/Fixture.sol	765	    /// can price its eth cost basis (decision 92). the pool sqrt price makes the balance token cheap in eth, so the
+test/utils/Fixture.sol	766	    /// decision 87 value floor is far below the sale curve and the balance bid's eth cost basis is the eth market bid.
+test/utils/BidModel.sol	35	    /// `pagesPot * 1_000_000 / (rate * pointsPerPage)`. only the ceiling's idle loosening scales by it (decision 128, variant d)
+test/utils/BidModel.sol	81	    /// payable with its artist royalty on top (decision 163). mirrors `CoreLib._bidRoom`
+test/utils/BidModel.sol	117	        // the eth instance climbs toward the room over `1 + buyToArtistBps / 10_000` (decision 163)
+test/utils/BidModel.sol	124	    /// is unscaled and the ceiling's loosening scales by the pot multiplier `m` at the current rate (decision 128, variant d)
+test/standins/StatementInfoStub.sol	48	        // a realistic bid margin so the controller's reference band bound (decision 157) accepts the launch quote
+script/Lock.s.sol	19	/// `--account <name>` to send). docs/RUNBOOK.md section 4
+script/SettingsFields.sol	7	/// docs/DECISIONS.md section 2, for the settings script and the config and deploy tests. recoveryClimbPerMinBps is
+script/Deploy.s.sol	14	/// the factory owner. the order of the transactions (docs/DECISIONS.md 10.4): both libraries, the Core, the controller, the
+script/Deploy.s.sol	18	/// postflight runs on the simulated result, both before anything is sent. the full runbook is docs/RUNBOOK.md
+script/PostflightV2.sol	12	/// @notice the safe readers and the coin side of the postflight (docs/DECISIONS.md 10.4): every read is a staticcall that
+script/Resume.s.sol	14	/// Deploy) or the coin is launched already. then runs postflight. the runbook is docs/RUNBOOK.md section 6
+script/Builder.sol	12	/// (docs/DECISIONS.md 10.4). shared by the deploy, the preflight, the postflight and the tests
+script/Builder.sol	46	    /// through the transfer allowance the hook grants for the swap (docs/DECISIONS.md decision 29). the coin's metadata
+script/Builder.sol	47	    /// renderer is the `CoinRenderer` of the config (decision 127)
+script/Postflight.s.sol	19	        // DEFER_LAUNCH=1: the system is deployed and the coin is not launched yet (docs/RUNBOOK.md, deferred launch)
+script/Checks.sol	67	    // the pinned launch rules (docs/RUNBOOK.md section 2). a value outside them fails preflight. the three overrides in
+script/Checks.sol	75	    /// codes. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
+script/Checks.sol	189	        // the reference price settings (decision 154): tolBps and referenceMinSeconds are launch values, the other three
+script/Checks.sol	233	    /// @dev the coin and payee values that are pinned or bounded (docs/DECISIONS.md 10.6): restricted with the Core as the only
+script/SetSettings.s.sol	22	/// unless SEND=1 and the run has `--broadcast` and a signer that is the Core owner. docs/RUNBOOK.md section 7.
+script/deploy.sh	171	# the stack the forge scripts read; STACK=master repoints them at the master stack fork (docs/RUNBOOK.md section 7)
+script/deploy.sh	246	  # forge build rewrites foundry.lock and lib/solady (docs/RUNBOOK.md section 0)
+script/PostflightChecks.sol	219	    /// and `deployer`, the address that sent the deploy. docs/RUNBOOK.md section 3
+script/LaunchConfig.sol	38	// key registry (`keyCount()` 0), so no registered key can act as the owner. docs/reviews/REVIEW-sandwich-delegate.md section 2
+script/LaunchConfig.sol	56	    /// the coin's image url and description, set in the launch transaction (docs/DECISIONS.md decision 54). bytes are capped
+script/LaunchConfig.sol	70	    /// until the balance token pool exists (decision 154). owner adjustable afterwards with `setQuote`
+script/LaunchConfig.sol	87	    /// the coin is launched restricted (docs/DECISIONS.md 18) and the extra allowlist entries beyond the factory's own seeds.
+script/LaunchConfig.sol	88	    /// the Core is not listed (docs/DECISIONS.md 29)
+script/LaunchConfig.sol	119	    /// docs/DECISIONS.md sections 10.1 and 10.6, with the v2 stack addresses, owner, creator, payees, name and salt left unset (the symbol is CC). tests fill them
+script/dev/Seed.s.sol	99	        // the balance bid opens after value mode (docs/RUNBOOK.md). ALLOW_MODE_OFF_BALANCE_BID=1 is the dev opt-in for
+script/dev/Scenario.s.sol	229	    /// and the first buyback funding. the artist and operator cuts are pushed off the price (decision 123)
+script/dev/Scenario.s.sol	260	        // the payee fee share is pushed by `_book`, not claimed (decision 123). payeePpm is 0 at launch (decision 120);
+script/dev/Scenario.s.sol	495	        // the dev seed leaves the balance bid closed while value mode is off (docs/RUNBOOK.md phase 2 order). this stage
+keeper/test/decide.test.ts	28	// launch values of script/config/mainnet.json (decisions 119 and 138)
+keeper/test/decide.test.ts	219	// passes the room, and the room caps the keeper payment at room - price - royalty (decision 163)
+keeper/test/decide.test.ts	232	// promise: a lapsed value quote degrades the eth bid instead of halting it, so the keeper still sweeps (decision 159, C02)
+keeper/test/decide.test.ts	264	// book-first-then-pay rule (decision 159, C02)
+keeper/test/decide.test.ts	307	// ------------------------------------------------------------------ compose and redeem (decision 138)
+keeper/src/alert.ts	1	// Alerts: a JSON POST to ALERT_WEBHOOK_URL (decision 139), also logged at error level. a failed post is logged and
+keeper/src/main.ts	29	  // the keeper runs on its own hot wallet, never the owner key (decision 57)
+keeper/src/decide.ts	18	// gas guesses used before a simulation measures the call (docs/INTEGRATION.md section 12, rounded up)
+keeper/src/decide.ts	40	  // the artist royalty on every purchase, bps of the price, paid on top from the pot (decision 163)
+keeper/src/decide.ts	76	  // the value switch (decision 148): the controller, the Core's valueModeOn, whether the controller's value quote is
+keeper/src/decide.ts	77	  // unusable now (informational: the eth bid falls back to the last good rate, decision 159, so it never halts a door), the
+keeper/src/decide.ts	158	// royalty is buyToArtistBps of the price, paid to the artist on top (decision 163). a listing whose price plus
+keeper/src/decide.ts	269	  // a lapsed value quote no longer halts the eth bid: it falls back to the last good rate (decision 159, C02), so a
+keeper/src/decide.ts	283	      // the pot pays the price plus its artist royalty, so the room bounds price + royalty (Core.buyListing, decision 163)
+keeper/src/config.ts	13	// the owner key never signs a keeper transaction (decision 57)
+keeper/src/config.ts	16	// launch default relays (decision 139): MEV Blocker first, Flashbots Protect as the fallback
+keeper/src/config.ts	18	// public mainnet read fallbacks behind RPC_URLS (docs/RUNBOOK.md section 0 and .env.example list archive capable ones)
+keeper/src/config.ts	51	  // a listing must be seen sweepable this long before the keeper sweeps it (decision 137)
+keeper/src/config.ts	117	// the deployment record of docs/RUNBOOK.md section 7 (`deployments/<chainId>.json`)
+keeper/src/config.ts	134	// `callerMaxBaseFee` (decision 138), the unpaid doors at 3 gwei. a door never sends above its ceiling
+keeper/test/e2e/seaport.e2e.ts	5	// (docs/RUNBOOK.md section 7, commit 25cf843). the seller is a key generated in memory for the run and never written
+indexer/ponder.config.ts	64	// Archive capable endpoints first (docs/INDEXER.md section 7.1). Caps are requests per second, overridable with
+indexer/ponder-env.d.ts	15	// See https://ponder.sh/docs/requirements#typescript for more information.
+indexer/ponder.schema.ts	5	// txHash and logIndex. docs/INDEXER.md section 6 is the contract for these tables.
+indexer/ponder.schema.ts	153	  // the reference price (decision 148): the reference price settings (QuoteSet) and the reference of the balance token
+indexer/ponder.schema.ts	336	/** Reconciliation result every 300 blocks (docs/INDEXER.md section 8.4). */
+indexer/src/state.ts	15	// (docs/INDEXER.md section 8.4). A false check is a handler bug; fix it and reindex.
+indexer/src/index.ts	104	// value mode (decision 148): an eth fill drops the shared balance instance and logs ValueRateFill in place of EthRateFill
+indexer/src/index.ts	114	  // toArtist is the royalty in the route's currency (decision 163)
+indexer/src/index.ts	129	  // paid is the seller's posted payout, toArtist the royalty, both in balance token (decisions 163, 164)
+indexer/src/index.ts	152	  // cost is the listing price, paid the keeper payment, toArtist the royalty on the price (decision 163); the pile
+indexer/src/index.ts	336	  // snapshot read (decision 164). record this under a separate shared-rate key so it does not conflate with that column
+indexer/src/index.ts	504	// the protected price (decision 148): the quote settings and the rate limited reference of the balance token
+web/next-env.d.ts	5	// see https://nextjs.org/docs/app/building-your-application/configuring/typescript for more information.
+web/scripts/climb-xcheck.ts	2	//   node --experimental-strip-types scripts/climb-xcheck.ts   (reads NEXT_PUBLIC_RPC_URL, NEXT_PUBLIC_CORE from .env.local)
+web/scripts/cap-selfcheck.ts	36	// promise: the balance bid is posted and flat: every credit of a batch pays score * unit * rate / 10000 (decision 164).
+web/scripts/v4-selfcheck.ts	2	//   node --experimental-strip-types scripts/v4-selfcheck.ts
+web/scripts/selfcheck.ts	45	// over 1 + buyToArtistBps / 10000 and a pot-bound quote equals what the seller receives (decision 163)
+web/scripts/selfcheck.ts	53	// balance: score * unit * rate / 10000 per credit, flat: the posted bid does not drop on a fill (decision 164)
+web/lib/indexer-schema.ts	1	// Read model of the indexer tables (indexer/ponder.schema.ts, docs/INDEXER.md section 6), as drizzle tables for
+web/lib/sell.ts	50	    // plus its royalty, so a pot-bound quote equals what the seller receives (decision 163)
+web/lib/sell.ts	92	// The posted bid does not drop on a fill and does not climb (decision 164), so the order does not matter. The
+web/lib/sell.ts	95	// payout (decision 163).
+web/lib/sell.ts	127	// Total eth sellForEth pays in value mode (decision 148) for the credits `scores` (in order) in one call. Each credit
+web/lib/sell.ts	145	    // plus its royalty, so a pot-bound quote equals what the seller receives (decision 163)
+web/lib/live.ts	4	// docs/INTEGRATION.md section 2. Hooks read nothing and return empty data while
+web/lib/indexer.ts	3	// Reads from the indexer (docs/INDEXER.md): history, lists and slow-moving state, over @ponder/client SQL with the
+web/lib/indexer.ts	7	// One app-wide mode decides the source of every indexer read (owner decision 133): "ix" while the indexer is
+web/lib/events.ts	162	        // the seller's posted payout; the artist royalty (a.toArtist) rides on top from the module (decisions 163, 164)
+web/lib/events.ts	175	        // cost is the pile cost basis: on the eth bid the price plus the artist royalty (decision 163)
+web/lib/events.ts	186	        // the price, the artist royalty on it and the keeper payment: the pile cost basis (decision 163)
+web/lib/acquire.ts	1	// Selection of the listing the header acquire button buys (owner decision 134). Pure: no chain or react imports, so
+web/lib/config.ts	35	// Fixed collections (docs/INTEGRATION.md section 1, packages/engine/src/addresses.ts).
+web/lib/config.ts	38	// Listing venues (docs/INDEXER.md section 9.1, owner decision 134): the CreditStrategy proxy, and the two adapters the
+web/lib/config.ts	62	// The indexer (docs/INDEXER.md): history, lists and slow-moving state. Unset, the pages render live state only.
+web/lib/useAcquire.ts	3	// The listing the header acquire button buys (owner decision 134). Candidates come from the CreditStrategy
+web/lib/useAcquire.ts	118	 * (decision 133: the chain scan when it is unconfigured or failing); OpenSea from the server route, unexpired only.
+web/app/balance/page.tsx	33	        // the protected price (decision 148): the controller's rate limited reference against the pool spot, eth per
+web/app/api/listings/route.ts	1	// OpenSea listings of the Credits collection that the Core can fill through SeaportBasicAdapter (owner decision 134).
+packages/engine/src/snapshot.ts	1	// The engine snapshot: one pinned multicall over the views of docs/INTEGRATION.md
+packages/engine/src/snapshot.ts	104	  // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
+packages/engine/src/snapshot.ts	175	  // the protected price (decision 148): the controller's reference of the balance token against the pool spot, both
+packages/engine/src/abis.ts	153	  // the protected price (decision 148): the rate limited reference of the balance token, the pool spot it follows, the
+packages/engine/src/addresses.ts	1	// Fixed mainnet contracts (docs/INTEGRATION.md section 1), the same on a mainnet fork.

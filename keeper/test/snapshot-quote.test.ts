@@ -1,4 +1,4 @@
-// promise: an unusable protected quote alerts the keeper while Core keeps its last good ETH bid.
+// promise: the snapshot preserves the zero ETH bid the Core returns for an unusable protected quote.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { zeroAddress, type PublicClient } from "viem";
@@ -22,7 +22,7 @@ function client(usable: boolean, valueModeOn: boolean) {
           case "heldStatements": return [];
           case "nextPage": return [false, [], 0];
           case "creditSaleOn": case "paused": case "retired": case "chosenComposeOn": case "payeeOn": return false;
-          case "ethRate": case "ethPrice": return bid;
+          case "ethRate": case "ethPrice": return valueModeOn && !usable ? 0n : bid;
           case "valuePerPoint": return [10n, usable];
           case "spotPrice": return [10n, true];
           case "quote": return [0, 0, 0, 0, 0, 0n];
@@ -34,10 +34,11 @@ function client(usable: boolean, valueModeOn: boolean) {
   } as unknown as Pick<PublicClient, "getBlockNumber" | "multicall">;
 }
 
-test("snapshot flags a lapsed quote without zeroing the fallback bid", async () => {
+test("snapshot flags a lapsed quote and preserves the Core's zero bid", async () => {
   const lapsed = await readSnapshot(client(false, true), core);
   assert.equal(lapsed.noQuote, true);
-  assert.equal(lapsed.ethRate, bid);
+  assert.equal(lapsed.ethRate, 0n);
+  assert.equal(lapsed.ethPrice, 0n);
   assert.equal(lapsed.value.usable, false);
 
   const restored = await readSnapshot(client(true, true), core);
@@ -46,4 +47,5 @@ test("snapshot flags a lapsed quote without zeroing the fallback bid", async () 
 
   const modeOff = await readSnapshot(client(false, false), core);
   assert.equal(modeOff.noQuote, false);
+  assert.equal(modeOff.ethRate, bid);
 });

@@ -7,14 +7,11 @@
   },
   "lib/solady": {
     "tag": {
-      "name": "v0.1.26",
-      "rev": "acd959aa4bd04720d640bf4e6a5c71037510cc4b"
+      "name": "v0.1.25",
+      "rev": "d07f92e3600600b2b9c0ca5bbf7dc88be5034952"
     }
   },
-  "lib/v4-core": {
-    "tag": {
-      "name": "v4.0.0",
-      "rev": "e50237c43811bd9b526eff40f26772152a42daba"
-    }
+  "lib/v4-periphery": {
+    "rev": "ad04c9f24a170accf5ea1b2836bbafd514537ca6"
   }
 }

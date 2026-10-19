@@ -69,8 +69,10 @@ check "the token runtime hash equals the pinned hash (immutables masked)" \
   "$([ "$(lc "$GOT_HASH")" = "$(lc "$WANT_HASH")" ] && echo 1 || echo 0)" "got $GOT_HASH"
 
 # 3. redeem and balance bid are on (settings struct, fields 12 and 13)
-SIG='settings()((uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool))'
+SIG='settings()((uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool,uint16,uint16))'
 SETTINGS_JSON="$(cast call "$CORE" "$SIG" --json --rpc-url "$RPC")"
+SETTINGS_FIELDS="$(echo "$SETTINGS_JSON" | jq -r '.[0] | length' 2>/dev/null)"
+check "settings tuple has all 39 fields" "$([ "$SETTINGS_FIELDS" = 39 ] && echo 1 || echo 0)" "fields $SETTINGS_FIELDS"
 REDEEM_ON="$(echo "$SETTINGS_JSON" | jq -r '.[0][11]' 2>/dev/null)"
 BALBID_ON="$(echo "$SETTINGS_JSON" | jq -r '.[0][12]' 2>/dev/null)"
 check "redeem is on" "$([ "$REDEEM_ON" = "true" ] && echo 1 || echo 0)" "redeemOn $REDEEM_ON"

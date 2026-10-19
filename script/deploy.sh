@@ -16,20 +16,22 @@
 # (docs/RUNBOOK.md, deferred launch).
 # DRY_RUN=1: a failed git guard is a warning, every other failed guard is collected and the run exits 1 after the
 # simulation. it needs no wallet, no broadcast rpc, no etherscan key and sends or verifies nothing.
-# RESUME=replay|state|record continues a stopped run (docs/RUNBOOK.md section 6). each needs CORE and FROM_BLOCK (the
-# block the first run printed as `start block`). replay is `forge script --resume --slow` of broadcast/Deploy.s.sol/1/run-latest.json
-# and refuses a signer nonce outside that run's nonces; state is script/Resume.s.sol, which sends what has no code on
+# RESUME=state|record continues a stopped run (docs/RUNBOOK.md section 6). each needs CORE and FROM_BLOCK (the
+# block the first run printed as `start block`). state computes missing transactions from the signed config and live
+# chain state, including when the Core has not yet been created. it rechecks the owner delegation before continuing.
+# state is script/Resume.s.sol, which sends what has no code on
 # chain; record sends nothing and runs postflight, the record write and verification for a launch that has landed.
 # the scripts require chain id 1 (Checks.sol), so forge runs with --chain-id 1; a local node keeps its own chain id
 # and the record carries it.
 # env rehearsal with REHEARSAL_DEPLOYER signs with a keystore on the anvil fork (docs/RUNBOOK.md section 6, signer drill).
-# secrets: the keystore and its password file are named in the env file and read by forge only. a private key on the
-# command line or in the environment of a keystore env is refused. API keys and the broadcast rpc come from the shell.
+# secrets: a keystore name comes from the shell. Direct use accepts a password file outside the repository;
+# TERMINAL_KEYSTORE=1 prompts in the terminal instead. A private key in the environment of a keystore env is refused.
+# API keys and the broadcast rpc come from the shell.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd -P)"
-USAGE="usage: [DRY_RUN=1] [DEFER_LAUNCH=1 | LAUNCH_ONLY=1] [RESUME=replay|state|record CORE=0x.. FROM_BLOCK=<n>] script/deploy.sh <local|rehearsal|mainnet>"
+USAGE="usage: [DRY_RUN=1] [DEFER_LAUNCH=1 | LAUNCH_ONLY=1] [RESUME=state|record CORE=0x.. FROM_BLOCK=<n>] script/deploy.sh <local|rehearsal|mainnet>"
 die() { echo "deploy.sh: $*" >&2; exit 1; }
 lc() { printf '%s' "$1" | tr 'A-F' 'a-f'; }
 
@@ -49,14 +51,25 @@ ENV_FILE="script/env/$ENV.env"
 DRY_RUN="${DRY_RUN:-0}"
 case "$DRY_RUN" in 0|1) ;; *) die "DRY_RUN is 0 or 1" ;; esac
 RESUME="${RESUME:-}"
-case "$RESUME" in ''|replay|state|record) ;; *) die "RESUME is replay, state or record" ;; esac
-[ -z "$RESUME" ] || [ "$DRY_RUN" = 0 ] || die "RESUME and DRY_RUN do not combine"
+case "$RESUME" in ''|state|record) ;; *) die "RESUME is state or record" ;; esac
+[ "$RESUME" != record ] || [ "$DRY_RUN" = 0 ] || die "RESUME=record has no transaction to preview"
 DEFER_LAUNCH="${DEFER_LAUNCH:-0}"
 LAUNCH_ONLY="${LAUNCH_ONLY:-0}"
 case "$DEFER_LAUNCH$LAUNCH_ONLY" in 00|01|10) ;; *) die "DEFER_LAUNCH and LAUNCH_ONLY are 0 or 1 and do not combine" ;; esac
-[ "$DEFER_LAUNCH" = 0 ] || [ "$RESUME" != state ] || die "DEFER_LAUNCH and RESUME=state do not combine: RESUME=state sends the launch"
 [ "$LAUNCH_ONLY" = 0 ] || [ -z "$RESUME" ] || die "LAUNCH_ONLY and RESUME do not combine: LAUNCH_ONLY reads the Core from the record"
 export DEFER_LAUNCH
+RATE_SUPPLIED="${PRELAUNCH_RATE+x}"
+PRELAUNCH_RATE="${PRELAUNCH_RATE:-0}"
+PRELAUNCH_RATE_HASH="${PRELAUNCH_RATE_HASH:-}"
+[[ "$PRELAUNCH_RATE" =~ ^[0-9]+$ ]] || die "PRELAUNCH_RATE must be an unsigned wei amount per 100 points"
+if [ "$PRELAUNCH_RATE" != 0 ]; then
+  case "$LAUNCH_ONLY:$RESUME" in 1:*|0:state|0:record) ;; *) die "PRELAUNCH_RATE applies only to LAUNCH_ONLY or launch recovery" ;; esac
+  [[ "$PRELAUNCH_RATE_HASH" =~ ^0x[0-9a-fA-F]{64}$ ]] || die "PRELAUNCH_RATE_HASH must sign the config, opening rate and 3x cap"
+elif [ -n "$PRELAUNCH_RATE_HASH" ]; then
+  die "PRELAUNCH_RATE_HASH requires PRELAUNCH_RATE"
+fi
+if [ -n "$RATE_SUPPLIED" ]; then export PRELAUNCH_RATE; else unset PRELAUNCH_RATE; fi
+if [ -n "$PRELAUNCH_RATE_HASH" ]; then export PRELAUNCH_RATE_HASH; else unset PRELAUNCH_RATE_HASH; fi
 
 # the shell may override the read rpc, the launch config and (anvil only) the chain id of a local node
 RPC_OVERRIDE="${RPC_URL:-}"
@@ -64,7 +77,10 @@ CONFIG_OVERRIDE="${LAUNCH_CONFIG:-}"
 CHAIN_OVERRIDE="${CHAIN_ID:-}"
 KEYSTORE_SHELL="${KEYSTORE_ACCOUNT:-}"
 PASSWORD_SHELL="${PASSWORD_FILE:-}"
+TERMINAL_KEYSTORE="${TERMINAL_KEYSTORE:-0}"
 RECORD_SHELL="${RECORD_FILE:-}"
+RECORD_RPC_SHELL="${RECORD_RPC_URL:-}"
+LOCK_DIR_SHELL="${CONFIG_LOCK_DIR:-}"
 REH_DEPLOYER="${REHEARSAL_DEPLOYER:-}"
 REH_SKIP_GIT="${REHEARSAL_SKIP_GIT:-}"
 set -a; . "$ENV_FILE"; set +a
@@ -72,6 +88,8 @@ set -a; . "$ENV_FILE"; set +a
 # shell, so a frozen checkout needs no edit
 if [ -z "${KEYSTORE_ACCOUNT:-}" ]; then KEYSTORE_ACCOUNT="$KEYSTORE_SHELL"; fi
 if [ -z "${PASSWORD_FILE:-}" ]; then PASSWORD_FILE="$PASSWORD_SHELL"; fi
+case "$TERMINAL_KEYSTORE" in 0|1) ;; *) die "TERMINAL_KEYSTORE is 0 or 1" ;; esac
+[ "$TERMINAL_KEYSTORE" = 0 ] || [ -z "$PASSWORD_FILE" ] || die "TERMINAL_KEYSTORE and PASSWORD_FILE do not combine"
 # env rehearsal only: REHEARSAL_DEPLOYER=<addr> makes <addr> the owner, signer and DEPLOYER and signs with the keystore
 # (script/dev/rehearse-signer.sh); REHEARSAL_SKIP_GIT=1 drops the git guards. both are refused in every other env
 if [ -n "$REH_DEPLOYER$REH_SKIP_GIT" ] && [ "$ENV" != rehearsal ]; then die "REHEARSAL_DEPLOYER and REHEARSAL_SKIP_GIT apply to env rehearsal only"; fi
@@ -86,7 +104,18 @@ if [ -n "$CHAIN_OVERRIDE" ]; then
   [ "$NODE" = anvil ] || die "CHAIN_ID in the shell applies to an anvil node only"
   CHAIN_ID="$CHAIN_OVERRIDE"
 fi
+if [ -n "$LOCK_DIR_SHELL" ] && [ "$NODE" != anvil ]; then die "CONFIG_LOCK_DIR applies to anvil only"; fi
+if [ -n "$RECORD_RPC_SHELL" ] && [ "$NODE" != anvil ]; then die "RECORD_RPC_URL applies to anvil only"; fi
+if [ -n "$RECORD_RPC_SHELL" ]; then
+  [[ "$RECORD_RPC_SHELL" =~ ^http://127[.]0[.]0[.]1:[0-9]+$ ]] || die "RECORD_RPC_URL must be a loopback anvil RPC with a numeric port"
+fi
+if [ -n "$LOCK_DIR_SHELL" ]; then
+  case "$LOCK_DIR_SHELL" in "$ROOT"/*) ;; *) die "CONFIG_LOCK_DIR must be inside the repository for Forge to read it" ;; esac
+fi
 case "$NODE:$WALLET" in anvil:unlocked|anvil:keystore|live:keystore) ;; *) die "NODE $NODE with WALLET $WALLET is not a supported pair in $ENV_FILE" ;; esac
+STACK="${STACK:-live}"
+[ "$NODE" != live ] || [ "$STACK" = live ] || die "a live deploy requires STACK=live so owner delegation checks cannot be skipped"
+export STACK
 RECORD="${RECORD_SHELL:-${RECORD_FILE:-deployments/$CHAIN_ID.json}}"
 
 NFAIL=0
@@ -124,6 +153,9 @@ if [ "$NODE" = anvil ]; then
   esac
 fi
 [ "$(cast chain-id --rpc-url "$RPC_URL")" = "$CHAIN_ID" ] || die "the rpc at $RPC_HOST is not chain $CHAIN_ID"
+if [ -n "$RECORD_RPC_SHELL" ]; then
+  [ "$(cast chain-id --rpc-url "$RECORD_RPC_SHELL")" = "$CHAIN_ID" ] || die "RECORD_RPC_URL is not chain $CHAIN_ID"
+fi
 
 SEND_RPC="$RPC_URL"
 if [ -n "${SEND_RPC_VAR:-}" ]; then
@@ -144,17 +176,20 @@ FACTORY="$(jq -r .stack.factory "$LAUNCH_CONFIG")"
 WALLET_FLAGS=()
 SIGNER="$DEPLOYER"
 if [ "$WALLET" = keystore ]; then
-  if [ -z "${KEYSTORE_ACCOUNT:-}" ] || [ -z "${PASSWORD_FILE:-}" ]; then
-    guard "KEYSTORE_ACCOUNT and PASSWORD_FILE are empty in $ENV_FILE and in the shell. set the foundry keystore name and a password file outside the repository"
-  elif [ ! -f "$PASSWORD_FILE" ]; then
+  if [ -z "${KEYSTORE_ACCOUNT:-}" ] || { [ "$TERMINAL_KEYSTORE" = 0 ] && [ -z "${PASSWORD_FILE:-}" ]; }; then
+    guard "KEYSTORE_ACCOUNT is required, with PASSWORD_FILE or TERMINAL_KEYSTORE=1"
+  elif [ "$TERMINAL_KEYSTORE" = 0 ] && [ ! -f "$PASSWORD_FILE" ]; then
     guard "PASSWORD_FILE $PASSWORD_FILE is not a file"
   else
-    case "$(cd "$(dirname "$PASSWORD_FILE")" && pwd -P)" in
-      "$ROOT"|"$ROOT"/*) guard "PASSWORD_FILE resolves inside the repository working tree. keep key material outside it" ;;
-    esac
-    WALLET_FLAGS=(--account "$KEYSTORE_ACCOUNT" --password-file "$PASSWORD_FILE")
+    WALLET_FLAGS=(--account "$KEYSTORE_ACCOUNT")
+    if [ "$TERMINAL_KEYSTORE" = 0 ]; then
+      case "$(cd "$(dirname "$PASSWORD_FILE")" && pwd -P)" in
+        "$ROOT"|"$ROOT"/*) guard "PASSWORD_FILE resolves inside the repository working tree. keep key material outside it" ;;
+      esac
+      WALLET_FLAGS+=(--password-file "$PASSWORD_FILE")
+    fi
     if [ "$DRY_RUN" = 0 ]; then
-      SIGNER="$(cast wallet address --account "$KEYSTORE_ACCOUNT" --password-file "$PASSWORD_FILE")"
+      SIGNER="$(cast wallet address "${WALLET_FLAGS[@]}")"
     fi
   fi
 else
@@ -168,9 +203,7 @@ case "$(cast code "$DEPLOYER" --rpc-url "$RPC_URL")" in
   0xef0100*) echo "deploy.sh: $DEPLOYER carries an EIP 7702 delegation: one transaction in flight, the broadcast waits for each receipt (--slow)" ;;
 esac
 
-# the stack the forge scripts read; STACK=master repoints them at the master stack fork (docs/RUNBOOK.md section 7)
-STACK="${STACK:-live}"
-export STACK
+# STACK=master repoints local or rehearsal scripts at the master stack fork (docs/RUNBOOK.md section 7).
 
 # LAUNCH_ONLY reads the Core and the start block from the deferred record and checks them against the chain. a dry run
 # collects every failure through guard. from here on it runs as RESUME=state with the extra Resume.s.sol rows (every step
@@ -270,11 +303,17 @@ PRE_RC=0
 PRE="$(DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" forge script script/Preflight.s.sol "${FLAGS[@]}" 2>&1)" || PRE_RC=$?
 PRE_HASH="$(printf '%s\n' "$PRE" | grep -oE 'CONFIG_HASH=0x[0-9a-fA-F]{64}' | tail -1 | cut -d= -f2 || true)"
 [ -n "$PRE_HASH" ] || { echo "$PRE" | tail -40; die "no CONFIG_HASH from preflight"; }
+echo "deploy.sh: CONFIG_HASH=$PRE_HASH"
 PRE_OK=1
-if [ "$PRE_RC" != 0 ] && [ -z "$RESUME" ]; then
+CORE_ABSENT=0
+if [ -n "$RESUME" ] && [ "$(cast code "$CORE" --rpc-url "$RPC_URL")" = 0x ]; then CORE_ABSENT=1; fi
+if [ "$PRE_RC" != 0 ] && { [ -z "$RESUME" ] || [ "$CORE_ABSENT" = 1 ]; }; then
   PRE_OK=0
   printf '%s\n' "$PRE" | grep -E '^ +(failed: |[0-9]+ of )' | sed 's/^ */  /' || true
   guard "preflight failed: $(printf '%s\n' "$PRE" | grep -E '^ +failed: ' | sed -E 's/^ +failed: //' | head -1)"
+fi
+if [ -n "$RESUME" ] && [ "$CORE_ABSENT" = 0 ]; then
+  OWNER_PRE="$(script/tools/check-resume-owner.sh "$PRE_RC" <<<"$PRE")" || guard "$OWNER_PRE"
 fi
 if [ "$SIGNOFF" = 1 ]; then
   if [ -z "${CONFIG_HASH:-}" ]; then
@@ -287,14 +326,32 @@ else
   CONFIG_HASH="$PRE_HASH"
 fi
 export CONFIG_HASH
+LOCK_DIR="${LOCK_DIR_SHELL:-broadcast/config-locks}"
+LOCK="$LOCK_DIR/${CHAIN_ID}-$(lc "$DEPLOYER").json"
+BACKUP="${CONFIG_LOCK_BACKUP:-}"
+if { [ "$NODE" = live ] || [ -n "$BACKUP" ]; } && { [ "$DRY_RUN" = 0 ] || [ -n "$RESUME" ] || [ "$LAUNCH_ONLY" = 1 ]; }; then
+  [ -n "$BACKUP" ] || late "CONFIG_LOCK_BACKUP must name a durable path outside this repository"
+  if [ -n "$BACKUP" ]; then
+    case "$BACKUP" in /*) ;; *) die "CONFIG_LOCK_BACKUP must be an absolute path" ;; esac
+    case "$(cd "$(dirname "$BACKUP")" && pwd -P)" in "$ROOT"|"$ROOT"/*) die "CONFIG_LOCK_BACKUP must be outside this repository" ;; esac
+    if [ ! -e "$LOCK" ] && [ -f "$BACKUP" ]; then mkdir -p "$LOCK_DIR"; cp "$BACKUP" "$LOCK"; fi
+  fi
+fi
+if [ "$DRY_RUN" = 1 ] && { [ "$LAUNCH_ONLY" = 1 ] || [ "$RESUME" = state ]; }; then
+  if [ ! -f "$LOCK" ]; then PRE_OK=0; guard "no original signed config lock $LOCK";
+  elif ! jq -e --arg hash "$(lc "$CONFIG_HASH")" '(.configHash | ascii_downcase) == $hash' "$LOCK" >/dev/null; then
+    PRE_OK=0; guard "the deferred config lock differs from the signed config"
+  fi
+fi
 
 # ---- dry run ends here --------------------------------------------------------------------------------------------
 if [ "$DRY_RUN" = 1 ]; then
   if [ "$PRE_OK" = 1 ]; then
     echo "deploy.sh: deploy simulation"
-    if [ "$LAUNCH_ONLY" = 1 ]; then SIM=script/Resume.s.sol; else SIM=script/Deploy.s.sol; fi
-    if DEP="$(CORE="${CORE:-}" LAUNCH_ONLY="$LAUNCH_ONLY" RECORD_TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" forge script "$SIM" "${FLAGS[@]}" 2>&1)"; then
-      printf '%s\n' "$DEP" | grep -E '^ +(core|coin|controller|seaport adapter|strategy adapter|renderer) 0x' || true
+    if [ "$LAUNCH_ONLY" = 1 ] || [ "$RESUME" = state ]; then SIM=script/Resume.s.sol; else SIM=script/Deploy.s.sol; fi
+    if DEP="$(CORE="${CORE:-}" LAUNCH_ONLY="$LAUNCH_ONLY" RECORD_TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER" CONFIG_LOCK="$LOCK" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" forge script "$SIM" "${FLAGS[@]}" 2>&1)"; then
+      printf '%s\n' "$DEP" | grep -E '^ +(core|coin|coin \(predicted, launch deferred\)|controller|seaport adapter|strategy adapter|renderer) 0x' || true
+      printf '%s\n' "$DEP" | grep -E '^ +gas of step [0-9]+ [0-9]+' || true
     else
       echo "$DEP" | tail -40; guard "the deploy simulation failed"
     fi
@@ -309,6 +366,34 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 # ---- broadcast ----------------------------------------------------------------------------------------------------
+# A recovery must use the exact config signed before the first transaction. Core's CREATE2 address does not include
+# every controller, adapter and coin input, so its address alone cannot prove this. Keep this lock across interruptions.
+if [ "$NODE" = live ]; then
+  [ -n "$BACKUP" ] || die "CONFIG_LOCK_BACKUP must name a durable path outside this repository before a live broadcast"
+fi
+if [ -e "$LOCK" ]; then
+  jq -e --arg chain "$CHAIN_ID" --arg owner "$(lc "$DEPLOYER")" --arg hash "$(lc "$CONFIG_HASH")" \
+    '(.chainId | tostring) == $chain and (.deployer | ascii_downcase) == $owner and (.configHash | ascii_downcase) == $hash' \
+    "$LOCK" >/dev/null || die "$LOCK belongs to another signed config, chain or deployer; inspect the interrupted deployment before another launch"
+elif [ -n "$RESUME" ] || [ "$LAUNCH_ONLY" = 1 ]; then
+  die "no $LOCK from the original deploy; state recovery needs the original signed config lock"
+else
+  mkdir -p "$(dirname "$LOCK")"
+  (set -C; jq -n --argjson chainId "$CHAIN_ID" --arg deployer "$DEPLOYER" --arg configHash "$CONFIG_HASH" \
+    '{chainId:$chainId,scriptChainId:1,deployer:$deployer,configHash:$configHash}' >"$LOCK") \
+    || die "could not create $LOCK without replacing an existing lock"
+fi
+if [ -n "$BACKUP" ]; then
+  if [ -e "$BACKUP" ]; then
+    cmp -s "$LOCK" "$BACKUP" || die "the durable config lock backup differs from $LOCK"
+  else
+    (set -C; cat "$LOCK" >"$BACKUP") || die "could not create durable config lock backup before broadcast"
+  fi
+fi
+if [ "$LAUNCH_ONLY" = 1 ]; then
+  [ "$(lc "$(jq -r '.configHash // ""' "$RECORD")")" = "$(lc "$CONFIG_HASH")" ] \
+    || die "the deferred record was signed for a different config"
+fi
 BFLAGS=(--rpc-url "$SEND_RPC" --chain-id 1 --sender "$DEPLOYER" ${WALLET_FLAGS[@]+"${WALLET_FLAGS[@]}"} --broadcast --slow)
 # the output of a live broadcast streams to the terminal; a local one is read from the log on failure
 run_script() {
@@ -316,36 +401,12 @@ run_script() {
   if [ "$NODE" = live ]; then "$@" 2>&1 | tee "$log"; else "$@" >"$log" 2>&1; fi
 }
 case "$RESUME" in
-  replay)
-    SAVED="broadcast/Deploy.s.sol/1/run-latest.json"
-    [ -f "$SAVED" ] || die "no $SAVED to replay. RESUME=state continues from the chain"
-    FIRST=$((16#$(jq -r '.transactions[0].transaction.nonce' "$SAVED" | sed 's/^0x//')))
-    COUNT="$(jq '.transactions | length' "$SAVED")"
-    NONCE="$(cast nonce "$SIGNER" --rpc-url "$RPC_URL")"
-    if [ "$NONCE" -lt "$FIRST" ] || [ "$NONCE" -gt $((FIRST + COUNT)) ]; then
-      die "the signer nonce $NONCE is outside the saved run's nonces $FIRST to $((FIRST + COUNT)). the saved run no longer applies; RESUME=state continues from the chain"
-    fi
-    # every nonce below the signer nonce must belong to a saved transaction that landed: a transaction from the signer
-    # that is not in the saved run (nonce taken by something else) makes the saved nonces stale
-    for ((i = 0; i < NONCE - FIRST; i++)); do
-      H="$(jq -r ".transactions[$i].hash // empty" "$SAVED")"
-      [ -n "$H" ] && [ "$(cast tx "$H" nonce --rpc-url "$RPC_URL" 2>/dev/null)" = "$((FIRST + i))" ] \
-        || die "the signer nonce $NONCE is past saved transaction $i (nonce $((FIRST + i))), which has no landed hash in $SAVED. another transaction took a nonce of the saved run; RESUME=state continues from the chain"
-    done
-    echo "deploy.sh: replay of $SAVED, signer nonce $NONCE of $FIRST..$((FIRST + COUNT))"
-    if [ "$NONCE" -eq $((FIRST + COUNT)) ]; then
-      echo "deploy.sh: every saved transaction has landed"
-    else
-      run_script "$T/deploy.log" env CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" \
-        forge script script/Deploy.s.sol "${BFLAGS[@]}" --resume || { tail -60 "$T/deploy.log"; die "replay failed"; }
-    fi
-    ;;
   record)
     echo "deploy.sh: no transaction is sent; postflight, record and verification for the launch at $CORE"
     ;;
   state)
     echo "deploy.sh: resume from the chain"
-    run_script "$T/deploy.log" env CORE="$CORE" LAUNCH_ONLY="$LAUNCH_ONLY" RECORD_TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" \
+    run_script "$T/deploy.log" env CORE="$CORE" LAUNCH_ONLY="$LAUNCH_ONLY" RECORD_TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER" CONFIG_LOCK="$LOCK" CONFIG_HASH="$CONFIG_HASH" DEPLOYER="$DEPLOYER" LAUNCH_CONFIG="$LAUNCH_CONFIG" \
       forge script script/Resume.s.sol "${BFLAGS[@]}" || { tail -60 "$T/deploy.log"; die "resume failed"; }
     ;;
   *)
@@ -408,7 +469,7 @@ if [ "$LAUNCH_ONLY" = 1 ]; then TOKEN_DEPLOYER="$RECORD_TOKEN_DEPLOYER"
 else TOKEN_DEPLOYER="$(cast call "$FACTORY" 'tokenDeployer()(address)' --rpc-url "$RPC_URL")"; fi
 
 # the rpc url of a live record stays out of the file (a url can carry a key)
-if [ "$NODE" = anvil ]; then RECORD_RPC="$RPC_URL"; else RECORD_RPC=""; fi
+if [ "$NODE" = anvil ]; then RECORD_RPC="${RECORD_RPC_SHELL:-$RPC_URL}"; else RECORD_RPC=""; fi
 mkdir -p "$(dirname "$RECORD")"
 TMPREC="$(mktemp "$(dirname "$RECORD")/.record.XXXXXX")"
 printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC" --argjson deployBlock "$lo" --arg launchBlock "$LAUNCH_BLOCK" --arg tokenDeployer "$TOKEN_DEPLOYER" '. as $r | {
@@ -417,6 +478,7 @@ printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC"
   strategyAdapter: $r.strategyAdapter, renderer: $r.renderer, library: $r.library, opsLibrary: $r.opsLibrary,
   credits: $r.credits, statements: $r.statements, poolManager: $r.poolManager, hook: $r.hook,
   poolFee: $r.poolFee, tickSpacing: $r.tickSpacing,
+  configHash: $r.configHash, openingRate: $r.openingRate, openingRateHash: $r.openingRateHash,
   balanceToken: null, balanceModule: null, balancePool: null, owner: $r.owner,
   coinLive: ($launchBlock != ""), tokenDeployer: $tokenDeployer
 } + (if $launchBlock != "" then {launchBlock: ($launchBlock | tonumber)} else {} end)' >"$TMPREC"
@@ -424,6 +486,7 @@ printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC"
 jq -e '
   def addr: type == "string" and test("^0x[0-9a-fA-F]{40}$") and (ascii_downcase != "0x0000000000000000000000000000000000000000");
   (keys | sort) == (["balanceModule","balancePool","balanceToken","chainId","coinLive","tokenDeployer","controller","coin","core","credits","deployBlock",
+    "configHash","openingRate","openingRateHash",
     "hook","library","opsLibrary","owner","poolFee","poolManager","renderer","rpcUrl","seaportAdapter","statements","strategyAdapter","tickSpacing"]
     + (if .coinLive == true then ["launchBlock"] else [] end) | sort)
   and (.coinLive | type == "boolean")
@@ -433,6 +496,8 @@ jq -e '
   and ([.core, .controller, .coin, .seaportAdapter, .strategyAdapter, .renderer, .library, .opsLibrary, .credits, .statements,
         .poolManager, .hook, .owner, .tokenDeployer] | all(addr))
   and (.poolFee | type == "number") and (.tickSpacing | type == "number")
+  and (.openingRate | type == "string" and test("^[0-9]+$"))
+  and ([.configHash, .openingRateHash] | all(type == "string" and test("^0x[0-9a-fA-F]{64}$")))
   and (.rpcUrl == null or (.rpcUrl | type == "string"))
 ' "$TMPREC" >/dev/null || die "the record failed the shape check; nothing was written"
 [ "$(jq -r .core "$TMPREC" | tr 'A-F' 'a-f')" = "$(lc "$CORE")" ] || die "the record Core differs from the deployed Core"

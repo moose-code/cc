@@ -27,18 +27,16 @@ contract ValueHandler is Test {
     /// the credits each actor holds, by actor index
     mapping(uint256 => uint256[]) internal held;
 
-    /// a credit an actor bought from the engine: what it paid and the spot epoch of the buy. the spread's guarantee is
-    /// that a round trip is never profitable for the counterparty (decision 153); across a sampled-spot move the loss
-    /// can be under the full spread (the accepted patient exposure, decision 149), but a round trip never gains
+    /// a credit an actor bought from the engine: what it paid and the executable quote at the buy. the spread closes
+    /// a round trip at one quote; later reference and spot samples may change the value of the credit
     struct Bought {
         uint256 paid;
-        uint256 epoch;
+        uint256 buyValue;
+        uint256 sellValue;
         bool open;
     }
 
     mapping(uint256 => Bought) public bought;
-    /// bumped by every spot move; a round trip inside one epoch faces no price move
-    uint256 public epoch;
 
     /// ghost counters: each is a broken promise, zero while the invariants hold
     uint256 public g1; // eth left the core other than as the seller's payment
@@ -46,7 +44,7 @@ contract ValueHandler is Test {
     uint256 public g3; // a statement sold below the hard floor
     uint256 public g7; // a payment above the pot less the reserve
     uint256 public gBalance; // a balance payout above score * unit * cap
-    uint256 public gTrip; // a round trip that was profitable for the counterparty (decision 153, never)
+    uint256 public gTrip; // a round trip that profited with the same executable quote
     uint256 public gRefusal; // a refusal with an unexpected selector
 
     mapping(bytes32 => uint256) public calls;
@@ -114,17 +112,15 @@ contract ValueHandler is Test {
         if (s != a && s != b && s != c) ++gRefusal;
     }
 
-    /// the round trip of a credit bought from the engine: what came back, valued at the spot for the balance token, is
-    /// at most what was paid (the trip is unprofitable), within a wei of the price's rounding
+    /// a round trip at the same executable quote cannot return more than the buyer paid, within one wei of rounding
     function _trip(uint256 id, uint256 back) internal {
         Bought memory b = bought[id];
         if (!b.open) return;
         delete bought[id];
-        if (b.epoch != epoch) return;
+        (uint256 buyValue, bool buyOk) = ctl.valuePerPoint(false);
+        (uint256 sellValue, bool sellOk) = ctl.valuePerPoint(true);
+        if (!buyOk || !sellOk || b.buyValue != buyValue || b.sellValue != sellValue) return;
         ++tripsChecked;
-        // the round trip is never profitable: what comes back is at most what was paid, within a wei of the price's
-        // rounding. the spread covers the reference band on both sides (decision 157 loop closure), so even across a
-        // sampled-spot move the counterparty never gains (decision 159, C01); the full-spread loss holds at one quote
         if (back > b.paid + 1) ++gTrip;
     }
 
@@ -146,7 +142,7 @@ contract ValueHandler is Test {
             uint256 paid = a.balance - before;
             if (paid > bid) ++g2;
             if (paid > room) ++g7;
-            // the seller's payment and its artist royalty leave the core (decision 163)
+            // the seller's payment and its artist royalty both leave the Core
             if (coreBefore - address(core).balance != paid + paid * core.settings().buyToArtistBps / 10_000) ++g1;
             ++ethFills;
             _trip(id, paid);
@@ -170,8 +166,7 @@ contract ValueHandler is Test {
             if (got > _score(id) * unit * cap / 10_000) ++gBalance;
             if (address(core).balance < coreBefore) ++g1;
             ++balanceFills;
-            // value the returned balance tokens at the engine's sampled sale spot (valuePerPoint(true)), not the live
-            // spot, so the round trip is measured at the quote basis the buy used, not a spot the actor just moved
+            // value returned balance tokens at the engine's sampled sale price, the basis for its payout clamp
             (uint256 vSell,) = ctl.valuePerPoint(true);
             uint256 denom = POINT_UNIT * unit;
             _trip(id, denom == 0 ? 0 : got * vSell / denom);
@@ -199,7 +194,10 @@ contract ValueHandler is Test {
         uint256 before = a.balance;
         vm.prank(a);
         try ctl.buyCredit{value: price}(id) {
-            bought[id] = Bought({paid: before - a.balance, epoch: epoch, open: true});
+            (uint256 buyValue, bool buyOk) = ctl.valuePerPoint(false);
+            (uint256 sellValue, bool sellOk) = ctl.valuePerPoint(true);
+            if (!buyOk || !sellOk) revert("successful buy lost its quote");
+            bought[id] = Bought({paid: before - a.balance, buyValue: buyValue, sellValue: sellValue, open: true});
             held[k].push(id);
             ++creditBuys;
         } catch (bytes memory why) {
@@ -231,7 +229,7 @@ contract ValueHandler is Test {
         }
     }
 
-    /// moves the pool spot to between half and twice its start, a new epoch
+    /// moves the pool spot to between half and twice its start without paying for a swap
     function moveSpot(uint256 seed) external {
         ++calls["moveSpot"];
         uint256 f = 5_000 + seed % 15_001; // bps of the start sqrt price, so 0.25x to 4x the start spot
@@ -239,7 +237,6 @@ contract ValueHandler is Test {
         bytes32 word = vm.load(address(Mainnet.POOL_MANAGER), slot0);
         uint256 rest = uint256(word) & ~uint256(type(uint160).max);
         vm.store(address(Mainnet.POOL_MANAGER), slot0, bytes32(rest | uint256(sp)));
-        ++epoch;
     }
 
     function refreshReference() external {
@@ -254,10 +251,9 @@ contract ValueHandler is Test {
     }
 }
 
-/// @notice the value mode invariants (decision 148, SPEC-value-pricing-153 section 10): invariants 1, 2, 3, 7, 16 and 19
-/// restated for an eth bid priced off the shared balance instance times the controller's protected value, and the
-/// round trip closed by the spread in either currency. the run starts in value mode at the switch values with a usable
-/// quote, a composed statement held, the return lock at 0 so round trips run inside one spot epoch, and four actors
+/// @notice value mode invariants for an ETH bid priced off the shared balance instance times the protected value, and the
+/// round trip closed by the spread at one quote in either currency. the run starts in value mode at the switch values
+/// with a usable quote, a composed statement held, the return lock at 0 to exercise short round trips, and four actors
 /// holding real credits
 contract InvariantsValue is ValueBase {
     ValueHandler internal h;
@@ -381,10 +377,10 @@ contract InvariantsValue is ValueBase {
         }
     }
 
-    /// a credit bought from the engine and sold straight back, in either currency, is never profitable for the
-    /// counterparty (the spread covers the reference band on both sides), and every refusal carries an expected selector
-    // promise: SPEC 10 round trips are unprofitable, in value mode
-    function invariant_v20_roundTripsLoseTheSpread() public view {
+    /// a credit bought from the engine and sold back in either currency at the same executable quote cannot profit;
+    /// the spread does not protect against a later change in the reference or sampled spot
+    // promise: value mode round trips at one executable quote are unprofitable
+    function invariant_v20_sameQuoteRoundTripsDoNotProfit() public view {
         assertEq(h.gTrip(), 0, "a round trip was profitable for the counterparty");
         assertEq(h.gRefusal(), 0, "a refusal carried an unexpected selector");
     }

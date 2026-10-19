@@ -10,14 +10,16 @@ import { describe, loadConfig, OWNER, type Config } from "./config.ts";
 import { readClient, readFixed, readState, type Fixed } from "./chain.ts";
 import { decide, type Intended, type Listing, type Policy, type Skip } from "./decide.ts";
 import { Executor, type Outcome, type Signer } from "./exec.ts";
-import { Breaker, Ledger } from "./ledger.ts";
+import { Breaker, Ledger, PendingStore } from "./ledger.ts";
 import { Sources } from "./listings.ts";
 import { readKeystore } from "./keystore.ts";
 import { alert } from "./alert.ts";
 import { log, safeError } from "./log.ts";
 
-// a listing whose simulation reverted waits this long before it is tried again
+// A decoded order-specific simulation failure suppresses that listing for this long.
 const LISTING_COOLDOWN_SEC = 300;
+// An included revert may reflect a changed order or state after simulation; wait longer before trying it again.
+const REVERTED_LISTING_COOLDOWN_SEC = 3_600;
 // the head is polled this often; a tick runs per new block, or per TICK_MS while the head holds
 const HEAD_POLL_MS = 4_000;
 // the same skip reason of a door is logged again after this long
@@ -40,7 +42,7 @@ export async function startChecks(client: PublicClient, cfg: Config, fixed: Fixe
   }
   const balance = await client.getBalance({ address: signer.address });
   log("info", "keeper start", { address: signer.address, balance, ...describe(cfg) });
-  if (!cfg.dryRun && balance < cfg.lowBalance) await alert(cfg.alertWebhook, "balance", "keeper balance low, top up", { balance, address: signer.address });
+  if (!cfg.dryRun && balance < cfg.lowBalance) void alert(cfg.alertWebhook, "balance", "keeper balance low, top up", { balance, address: signer.address });
 }
 
 function makeSigner(cfg: Config): Signer {
@@ -58,6 +60,23 @@ export interface TickResult {
   calls: Intended[];
   skips: Skip[];
   outcomes: { door: string; key: string; outcome: Outcome }[];
+}
+
+// Listing RPC failures suppress sweeps for this tick but leave independent Core doors available.
+export async function candidatesOrEmpty(sources: Pick<Sources, "candidates">, snap: Parameters<Sources["candidates"]>[0], blockNumber: bigint, webhook?: string): Promise<Listing[]> {
+  try {
+    return await sources.candidates(snap, blockNumber);
+  } catch (e) {
+    void alert(webhook, "listings", "listing discovery failed; non-listing doors remain active", { block: blockNumber, error: safeError(e) });
+    return [];
+  }
+}
+
+export function listingCooldown(outcome: Outcome, listing?: Listing): { key: string; seconds: number } | undefined {
+  if ((outcome.kind === "sent" || outcome.kind === "reconciled") && outcome.status === "reverted" && outcome.listingKey)
+    return { key: outcome.listingKey, seconds: REVERTED_LISTING_COOLDOWN_SEC };
+  if (outcome.kind === "failed" && outcome.listingFault && listing)
+    return { key: `${listing.venue}:${listing.id}`, seconds: LISTING_COOLDOWN_SEC };
 }
 
 export class Keeper {
@@ -90,7 +109,14 @@ export class Keeper {
     const read = await readState(this.client, this.cfg.record.core, this.fixed);
     const { snap } = read;
     const state = { ...read.state, lastBookAt: this.lastBookAt };
-    const listings: Listing[] = this.cfg.doorsOn.has("buyListing") && !state.retired && !state.paused ? await this.sources.candidates(snap, state.blockNumber) : [];
+    const pending = await this.exec.reconcile();
+    if (pending) {
+      log("info", "pending transaction", { block: state.blockNumber, outcome: pending });
+      return { block: state.blockNumber, calls: [], skips: [], outcomes: [{ door: "pending", key: "pending", outcome: pending }] };
+    }
+    const listings: Listing[] = this.cfg.doorsOn.has("buyListing") && !state.retired && !state.paused
+      ? await candidatesOrEmpty(this.sources, snap, state.blockNumber, this.cfg.alertWebhook)
+      : [];
     const d = decide(state, listings, { baseFee: state.baseFee }, this.policy, this.seen);
     this.seen = d.seen;
     const now = Date.now();
@@ -100,15 +126,15 @@ export class Keeper {
       this.skipLogged.set(k, now);
       log("info", "skip", { block: state.blockNumber, ...sk });
     }
-    // An unusable protected buy quote degrades the eth bid to its last good rate. Sale doors may recover on a
-    // projected reference refresh; the balance bid, compose and redemption keep running.
+    // An unusable protected quote makes the Core ETH bid zero. Sale doors wait for a usable quote; compose,
+    // redemption and buyback keep their own gates.
     if (state.valueModeOn && state.noQuote && !state.retired) {
-      await alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token reference price is unusable; the eth bid uses its last good rate", { referenceTime: state.referenceTime, referenceMaxStale: state.referenceMaxStale });
+      void alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token reference price is unusable; the Core ETH bid reads zero", { referenceTime: state.referenceTime, referenceMaxStale: state.referenceMaxStale });
     }
     // the reserve alert: a pot at or under the reserve halts every acquisition until fee income refills it; processing
     // (compose, redeem, buyback) keeps paying from the whole pot
     if (state.potRoom === 0n && !state.retired) {
-      await alert(this.cfg.alertWebhook, "reserve", "the pot is at or under the reserve, the bids read zero", { pot: state.potWithPending, reserve: state.reserve });
+      void alert(this.cfg.alertWebhook, "reserve", "the pot is at or under the reserve, the bids read zero", { pot: state.potWithPending, reserve: state.reserve });
     }
     const outcomes: TickResult["outcomes"] = [];
     for (const c of d.calls) {
@@ -116,10 +142,14 @@ export class Keeper {
       const outcome = await this.exec.run(c, state, listing);
       outcomes.push({ door: c.door, key: c.key, outcome });
       if (outcome.kind === "failed" || outcome.kind === "skipped") log("info", "not sent", { block: state.blockNumber, door: c.door, key: c.key, reason: outcome.reason });
-      if (outcome.kind === "failed" && listing) this.sources.coolDown(`${listing.venue}:${listing.id}`, LISTING_COOLDOWN_SEC);
+      const cooldown = listingCooldown(outcome, listing);
+      if (cooldown) {
+        if (outcome.kind === "failed") this.sources.coolDown(cooldown.key, cooldown.seconds);
+        this.seen.delete(c.key);
+      }
       // one transaction per tick: the next decision reads the state after it
-      if (outcome.kind === "sent") {
-        if (c.door === "book") this.lastBookAt = state.timestamp;
+      if (outcome.kind === "sent" || (outcome.kind === "failed" && this.exec.hasPending())) {
+        if (outcome.kind === "sent" && c.door === "book") this.lastBookAt = state.timestamp;
         break;
       }
     }
@@ -144,9 +174,10 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
   const signer = makeSigner(cfg);
   await startChecks(client, cfg, fixed, signer);
   const ledger = new Ledger(cfg.stateDir, cfg.dailyBudget);
+  const pending = new PendingStore(cfg.stateDir);
   const breaker = new Breaker(cfg.breakerThreshold, cfg.breakerPauseSec);
   const policy: Policy = { doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec };
-  const keeper = new Keeper(client, cfg, fixed, new Sources(client, cfg), new Executor(client, cfg, policy, signer, ledger, breaker), policy);
+  const keeper = new Keeper(client, cfg, fixed, new Sources(client, cfg, Date.now, pending), new Executor(client, cfg, policy, signer, ledger, breaker, pending), policy);
   return { cfg, client, keeper };
 }
 
@@ -171,7 +202,7 @@ async function main() {
     } catch (e) {
       failures++;
       log("error", "tick failed", { error: txError(e), failures });
-      if (failures === 5) await alert(cfg.alertWebhook, "tick", "five ticks in a row failed", { error: txError(e) });
+      if (failures === 5) void alert(cfg.alertWebhook, "tick", "five ticks in a row failed", { error: txError(e) });
     }
     await new Promise((r) => setTimeout(r, HEAD_POLL_MS));
   }

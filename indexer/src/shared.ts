@@ -4,7 +4,7 @@ import type { Hex } from "viem";
 
 import { CORE_ADDRESS } from "../ponder.config";
 import { activity, log, stats, statsHourly } from "../ponder.schema";
-import { addTokenPayment } from "./lib/balance-history";
+import { addTokenCommitment } from "./lib/balance-history";
 
 export type Ctx = Context;
 
@@ -33,7 +33,7 @@ export const posOf = (e: At) => ({
 export async function record(
   ctx: Ctx,
   e: At & { args?: unknown; log: { logIndex: number; address: Hex } },
-  contract: "core" | "controller" | "coin" | "balance_token" | "credits" | "statements" | "strategy",
+  contract: "core" | "controller" | "coin" | "credits" | "statements" | "strategy",
   event: string,
 ) {
   await ctx.db
@@ -55,7 +55,7 @@ export async function act(
     .onConflictDoNothing();
 }
 
-export type CounterKey = Exclude<keyof typeof stats.$inferInsert, "id" | "balancePaidByToken">;
+export type CounterKey = Exclude<keyof typeof stats.$inferInsert, "id" | "balanceCommittedByToken">;
 
 /** Adds `delta` to the singleton stats row and to the stats row of the event's hour. */
 export async function bump(ctx: Ctx, e: At, delta: Partial<Record<CounterKey, bigint>>) {
@@ -65,10 +65,12 @@ export async function bump(ctx: Ctx, e: At, delta: Partial<Record<CounterKey, bi
   await ctx.db.insert(statsHourly).values({ hour: e.block.timestamp / 3600n, ...delta }).onConflictDoUpdate(add);
 }
 
-/** Token units are comparable only within one currency, including hourly totals. */
-export async function bumpBalancePaid(ctx: Ctx, e: At, token: string, spent: bigint) {
-  const initial = addTokenPayment({}, token, spent);
-  const add = (row: { balancePaidByToken: Record<string, string> }) => ({ balancePaidByToken: addTokenPayment(row.balancePaidByToken, token, spent) });
-  await ctx.db.insert(stats).values({ id: CORE_ADDRESS, balancePaidByToken: initial }).onConflictDoUpdate(add);
-  await ctx.db.insert(statsHourly).values({ hour: e.block.timestamp / 3600n, balancePaidByToken: initial }).onConflictDoUpdate(add);
+/** Seller payouts plus artist obligations from BalanceFill, in separate token units. Artist debt is included. */
+export async function bumpBalanceCommitted(ctx: Ctx, e: At, token: string, committed: bigint) {
+  const initial = addTokenCommitment({}, token, committed);
+  const add = (row: { balanceCommittedByToken: Record<string, string> }) => ({
+    balanceCommittedByToken: addTokenCommitment(row.balanceCommittedByToken, token, committed),
+  });
+  await ctx.db.insert(stats).values({ id: CORE_ADDRESS, balanceCommittedByToken: initial }).onConflictDoUpdate(add);
+  await ctx.db.insert(statsHourly).values({ hour: e.block.timestamp / 3600n, balanceCommittedByToken: initial }).onConflictDoUpdate(add);
 }

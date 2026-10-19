@@ -3,14 +3,12 @@ pragma solidity ^0.8.28;
 
 import {Settings, RATE_START_MIN_WEI, RATE_START_MAX_WEI, BUYBACK_GAS} from "../interfaces/Interfaces.sol";
 
-/// the sanity bounds of every setting (docs/SPEC.md section 3). internal only: the Core reaches it through
-/// `CoreLib.setSettings`, and the deploy scripts inline it, so there is one definition. the bounds stop typos and keep
-/// the hard rule that settings cannot become a withdrawal path: every caller payment and keeper reward stays capped
+/// the bounds of every setting. CoreLib.setSettings and the deployment scripts use this definition. They cap caller
+/// payments and keeper rewards and require the BALANCE discount to cover the royalty and accepted redemption shortfall
 library SettingsBounds {
     /// @notice the name of the first field out of bounds, or zero when every field is inside its bounds
     function firstViolation(Settings memory s) internal pure returns (bytes32) {
-        // The climb raises the rate from its current value, so a rate driven to zero stays at zero. dropPer100PointsBps
-        // at most 9,999 and dropFloorBps at least 1 keep the post-fill rate above zero (decision 143).
+        // A post-fill floor of one wei keeps a rounded drop from making the climb's rate zero.
         if (s.dropPer100PointsBps < 1 || s.dropPer100PointsBps > 9_999) return "dropPer100PointsBps";
         if (s.dropFloorBps < 1 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1) return "climbPerMinBps";
@@ -41,10 +39,16 @@ library SettingsBounds {
         if (s.buyToArtistBps > 1_000) return "buyToArtistBps";
         // a 10,000 discount pays zero and every balance fill reverts ZeroAmount: the cap keeps the route live
         if (s.balanceDiscountBps > 9_999) return "balanceDiscountBps";
+        // For Credits composed into a Statement, the seller payouts plus artist royalties cannot exceed the minimum
+        // accepted redemption return for their total score under the same unit and settings.
+        if (
+            uint256(10_000 - s.balanceDiscountBps) * (10_000 + s.buyToArtistBps)
+                > uint256(10_000 - s.redeemSlippageBps) * 10_000
+        ) return "balanceDiscountBps";
         return bytes32(0);
     }
 
-    /// @notice the bounds of the eth rate, wei per 100 points. `setRate` and the constructor argument `rateStart`
+    /// @notice the bounds of the ETH rate, wei per 100 points, for `setRate`, `setOpeningRate` and the constructor
     function rateInBounds(uint256 r) internal pure returns (bool) {
         return r >= RATE_START_MIN_WEI && r <= RATE_START_MAX_WEI;
     }

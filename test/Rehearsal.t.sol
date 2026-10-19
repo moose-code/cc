@@ -25,7 +25,7 @@ interface IPermit2R {
     function approve(address token, address spender, uint160 amount, uint48 expiration) external;
 }
 
-/// @notice the launch rehearsal. forks mainnet at the LATEST block (read from the rpc, not the pinned one), runs the
+/// @notice the launch rehearsal. forks mainnet at the pinned live-stack block, runs the
 /// preflight, the real deploy path as the factory owner, the postflight, and a short smoke: a buy and a sell through the
 /// universal router, a book of the fees at the Core that pushes the payee share once the owner raises `payeePpm` (the `FeesAdded` amount) and a real credit sold into the bid. it skips cleanly unless the env var
 /// REHEARSAL is set, so the default suite stays pinned and fast. it reads the config file named by LAUNCH_CONFIG, like the
@@ -34,7 +34,7 @@ interface IPermit2R {
 /// after the owner command. a file with real values is rehearsed as it is and every row must pass. the launch goes through the live v2
 /// factory (the config owner is its owner, impersonated on the fork). it measures the gas of every transaction of the deploy and asserts each
 /// one fits under the per transaction gas cap
-/// `set -a; . ./.env; set +a; REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol -vv`
+/// `set -a; . ./.env; set +a; CANDIDATE_RUN=1 REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol -vv`
 contract RehearsalTest is Test, ProdDeployer {
     string internal constant REHEARSAL_CONFIG_FILE = "script/config/rehearsal.json";
 
@@ -51,7 +51,7 @@ contract RehearsalTest is Test, ProdDeployer {
     // promise: rehearsal
     function test_rehearsal() public {
         if (bytes(vm.envOr("REHEARSAL", string(""))).length == 0) vm.skip(true);
-        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envOr("FORK_BLOCK", uint256(26208025)));
         console.log("rehearsal at block", block.number, "timestamp", block.timestamp);
 
         // the exact file the operator will launch with: LAUNCH_CONFIG, as the scripts read it. a placeholder the file

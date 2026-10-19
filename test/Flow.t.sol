@@ -67,6 +67,11 @@ contract FlowTest is Fixture {
         return SettingsFields.names();
     }
 
+    function _minBalanceDiscount(Settings memory s) internal pure returns (uint256) {
+        uint256 backedPayoutBps = uint256(10_000 - s.redeemSlippageBps) * 10_000 / (10_000 + s.buyToArtistBps);
+        return 10_000 - backedPayoutBps;
+    }
+
     /// @dev a valid settings struct derived from a seed, inside every bound and the two orderings
     function _valid(uint256 seed) internal pure returns (Settings memory s) {
         uint256[39] memory lo = _lo();
@@ -84,6 +89,10 @@ contract FlowTest is Fixture {
         // the slice is at least twice the largest buyback payment (field 16 is `buybackSlice`)
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) _set(s, 16, minSlice);
+        // At the largest shortfall there is no nonzero payout that remains backed. Keep generated pairs feasible.
+        if (s.redeemSlippageBps > 9_998) s.redeemSlippageBps = 9_998;
+        uint256 minDiscount = _minBalanceDiscount(s);
+        if (s.balanceDiscountBps < minDiscount) s.balanceDiscountBps = uint16(minDiscount);
     }
 
     // ------------------------------------------------------------------ settings: values, bounds, access
@@ -111,7 +120,7 @@ contract FlowTest is Fixture {
         assertEq(s.redeemSlippageBps, 200);
         assertEq(s.balanceBidMarginBps, 1_000);
         assertEq(s.redeemBurnBps, 2_000);
-        assertEq(s.rateCap, 14_700_000_000_000_000);
+        assertEq(s.rateCap, 13_950_000_000_000_000);
         assertEq(s.feeToRedeemBurnBps, 0);
         assertEq(s.callerFee, 0.0003 ether);
         assertEq(s.callerMaxBaseFee, 3 gwei);
@@ -137,8 +146,8 @@ contract FlowTest is Fixture {
         assertEq(abi.encode(s).length, SettingsFields.N * 32, "SettingsFields.N equals the Settings field count");
     }
 
-    // promise: INTEGRATION BadSetting: bounds are inclusive
-    function test_settings_everyBoundEdgeIsAccepted() public {
+    // promise: individual settings edges work when the royalty/shortfall/discount relation is feasible
+    function test_settings_feasibleBoundEdgesAreAcceptedAndImpossibleEdgeRejected() public {
         uint256[39] memory lo = _lo();
         uint256[39] memory hi = _hi();
         _markupToTheBound();
@@ -157,14 +166,26 @@ contract FlowTest is Fixture {
                 if (i == 26) s.saleToOperatorBps = 0;
                 if (i == 27) s.saleToArtistBps = 0;
                 _set(s, i, v);
+                if (i == 13 && k == 1) {
+                    vm.prank(owner);
+                    vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("balanceDiscountBps")));
+                    core.setSettings(s);
+                    continue;
+                }
+                if (i == 38 && k == 0) {
+                    s.buyToArtistBps = 0;
+                    s.redeemSlippageBps = 0;
+                } else {
+                    uint256 minDiscount = _minBalanceDiscount(s);
+                    if (s.balanceDiscountBps < minDiscount) s.balanceDiscountBps = uint16(minDiscount);
+                }
                 uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
                 if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);
                 // value mode requires the eth spend cap active (under 10,000, decision 157)
                 if (s.valueModeOn && s.spendCapBps >= 10_000) s.spendCapBps = 9_999;
                 _owner(s);
                 vm.warp(block.timestamp + 61);
-                // the value switch with no usable quote degrades the eth bid to the last good rate, bounded by rateCap,
-                // rather than reverting (decision 159, C02)
+                // the value switch with no usable quote closes the ETH bid at zero without reverting
                 assertLe(core.ethRate(), s.rateCap, "rate stays inside its configured cap");
                 core.balanceRate();
                 core.climbMultiplier();

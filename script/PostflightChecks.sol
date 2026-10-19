@@ -22,6 +22,9 @@ import {PostflightPool} from "./PostflightPool.sol";
 /// the rows that the owner can change afterwards (settings, the coin) turn into warnings when the operator names the
 /// change: SETTINGS_CHANGED, COIN_CHANGED = 1
 abstract contract PostflightChecks is PostflightPool {
+    error PrelaunchRateSignoff(bytes32 want, bytes32 given);
+    error PrelaunchRateOutOfBounds(uint256 rate);
+
     /// @notice the deployer of the launch from the environment (DEPLOYER), zero when not given. a test overrides it
     function _deployerEnv() internal view virtual returns (address) {
         return vm.envOr("DEPLOYER", address(0));
@@ -60,6 +63,7 @@ abstract contract PostflightChecks is PostflightPool {
         if (core_.code.length == 0) return;
         ICore core = ICore(payable(core_));
         _postCore(c, core);
+        _check("deferred: no pending owner", core.pendingOwner() == address(0), "owner handover must be cleared before launch");
         address coin = core.COIN();
         _noCode("deferred: coin has no code", coin);
         (bool okr, bool recorded) = _bool(c.stack.factory, abi.encodeCall(IArtCoinsFactoryV2.isCoin, (coin)));
@@ -238,6 +242,12 @@ abstract contract PostflightChecks is PostflightPool {
 
     function _postCore(LaunchConfig memory c, ICore core) private {
         _eq("core: owner", core.owner(), c.owner);
+        uint256 openingRate = _approvedOpeningRate(c);
+        _check(
+            "core: opening rate equals the approved value",
+            core.RATE_START() == openingRate,
+            string.concat("live ", vm.toString(core.RATE_START()), " approved ", vm.toString(openingRate))
+        );
         Stack memory st = c.stack;
         _check(
             "core: stack equals the config",
@@ -275,6 +285,11 @@ abstract contract PostflightChecks is PostflightPool {
                 && core.balanceModule() == address(0),
             "launch state"
         );
+        _check(
+            "core: no successor or retirement at launch",
+            core.successor() == address(0) && !core.successorLocked() && !core.retired(),
+            "successor, successor lock, retirement"
+        );
         _warn("warn: no pending owner", core.pendingOwner() == address(0), "an owner handover is offered");
         _postSale(c, ctl);
         _check(
@@ -286,10 +301,10 @@ abstract contract PostflightChecks is PostflightPool {
         // `setRate`, so it is exact only at launch: a difference is a warning. the read `ethRate()` is zero while the pot is
         // empty
         _warn(
-            "warn: price state is rateStart",
-            core.ethPot() != 0 || core.rateAtCheckpoint() == c.rateStart,
+            "warn: price state is the opening rate",
+            core.ethPot() != 0 || core.rateAtCheckpoint() == openingRate,
             string.concat(
-                "rateAtCheckpoint ", vm.toString(core.rateAtCheckpoint()), " rateStart ", vm.toString(c.rateStart)
+                "rateAtCheckpoint ", vm.toString(core.rateAtCheckpoint()), " openingRate ", vm.toString(openingRate)
             )
         );
     }
@@ -339,6 +354,13 @@ abstract contract PostflightChecks is PostflightPool {
                 "creditSaleOn creditWindow creditSpreadBps creditStartBps"
             );
         }
+        // The controller constructor leaves age-only redemption eligibility off. An owner switch before launch would
+        // change the signed launch policy even if the other sale settings still matched the config.
+        if (_settingsChanged()) {
+            _warn("warn: age eligibility is off at launch", !k.ageEligibilityOn(), "SETTINGS_CHANGED=1, owner switched it after launch");
+        } else {
+            _check("controller: age eligibility is off at launch", !k.ageEligibilityOn(), "ageEligibilityOn");
+        }
         (uint32 rate, uint16 step, uint16 tol, uint32 stale, uint32 minSec, uint128 liq) = k.quote();
         bool quoteSame = rate == c.quote.referenceRateBpsPerHour && step == c.quote.referenceStepBps
             && tol == c.quote.tolBps && stale == c.quote.referenceMaxStale && minSec == c.quote.referenceMinSeconds
@@ -359,6 +381,27 @@ abstract contract PostflightChecks is PostflightPool {
         return vm.envOr("SETTINGS_CHANGED", uint256(0)) == 1;
     }
 
+    /// A reset keeps the original constructor config and Core address. Its separate hash approves exactly one
+    /// opening rate and the associated 3x cap for the deferred launch.
+    function _openingRateHash(LaunchConfig memory c, uint256 rate) internal pure returns (bytes32) {
+        return keccak256(abi.encode(keccak256("credits.prelaunchRate.v1"), configHash(c), rate, rate * 3));
+    }
+
+    function _approvedOpeningRate(LaunchConfig memory c) internal view virtual returns (uint256 rate) {
+        uint256 changed = vm.envOr("PRELAUNCH_RATE", uint256(0));
+        bytes32 given = vm.envOr("PRELAUNCH_RATE_HASH", bytes32(0));
+        if (changed == 0) {
+            if (given != bytes32(0)) revert PrelaunchRateSignoff(bytes32(0), given);
+            return c.rateStart;
+        }
+        if (!SettingsBounds.rateInBounds(changed) || changed > type(uint64).max / 3) {
+            revert PrelaunchRateOutOfBounds(changed);
+        }
+        bytes32 want = _openingRateHash(c, changed);
+        if (given != want) revert PrelaunchRateSignoff(want, given);
+        return changed;
+    }
+
     /// @dev the settings are owner adjustable after launch. right after the deploy they must equal the config field by
     /// field, so a Core built with other values fails. once the owner has called `setSettings` the live values differ
     /// on purpose: run with SETTINGS_CHANGED=1 and the row turns into a warning that prints the difference
@@ -366,14 +409,17 @@ abstract contract PostflightChecks is PostflightPool {
         Settings memory live = core.settings();
         bytes32 bad = SettingsBounds.firstViolation(live);
         _check("core: settings inside the bounds", bad == 0, bad == 0 ? "all fields" : string(abi.encodePacked(bad)));
-        bool same = keccak256(abi.encode(live)) == keccak256(abi.encode(c.settings));
+        Settings memory expected = abi.decode(abi.encode(c.settings), (Settings));
+        uint256 openingRate = _approvedOpeningRate(c);
+        if (openingRate != c.rateStart) expected.rateCap = uint64(openingRate * 3);
+        bool same = keccak256(abi.encode(live)) == keccak256(abi.encode(expected));
         if (_settingsChanged()) {
             _warn("warn: settings equal the config", same, "SETTINGS_CHANGED=1, the owner changed them since launch");
         } else {
             _check(
-                "core: settings equal the config",
+                "core: settings equal the approved launch values",
                 same,
-                "set SETTINGS_CHANGED=1 only after the owner called setSettings"
+                "only rateCap may differ from the constructor config after an approved opening-rate reset"
             );
         }
         bool creditSame = core.creditCostToPotBps() == c.credit.costToPotBps
@@ -421,16 +467,15 @@ abstract contract PostflightChecks is PostflightPool {
             ops == opsLibraryAddress(),
             string.concat("ops library at ", vm.toString(ops))
         );
-        uint256[] memory want = new uint256[](9);
+        uint256[] memory want = new uint256[](8);
         want[0] = uint256(uint160(core.COIN()));
-        want[1] = core.RATE_START();
-        want[2] = uint256(uint160(address(core.MANAGER())));
-        want[3] = uint256(uint160(core.HOOK()));
-        want[4] = uint256(int256(core.TICK_SPACING()));
-        want[5] = uint256(core.POOL_FEE());
-        want[6] = uint256(uint160(core.FACTORY()));
-        want[7] = uint256(uint160(core.LOCKER()));
-        want[8] = uint256(uint160(core.ESCROW()));
+        want[1] = uint256(uint160(address(core.MANAGER())));
+        want[2] = uint256(uint160(core.HOOK()));
+        want[3] = uint256(int256(core.TICK_SPACING()));
+        want[4] = uint256(core.POOL_FEE());
+        want[5] = uint256(uint160(core.FACTORY()));
+        want[6] = uint256(uint160(core.LOCKER()));
+        want[7] = uint256(uint160(core.ESCROW()));
         address[] memory libs = new address[](2);
         libs[0] = found;
         libs[1] = ops;

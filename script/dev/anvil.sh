@@ -14,7 +14,8 @@ set -euo pipefail
 # STACK=master loads the fixture of launcher commit 6d099486, not the deployed hook
 STACK="${STACK:-live}"
 FORK_URL="${FORK_URL:-https://gateway.tenderly.co/public/mainnet}"
-FORK_BLOCK="${FORK_BLOCK:-26158000}"
+if [ "$STACK" = master ]; then DEFAULT_FORK_BLOCK=26158000; else DEFAULT_FORK_BLOCK=26208025; fi
+FORK_BLOCK="${FORK_BLOCK:-$DEFAULT_FORK_BLOCK}"
 PORT="${PORT:-8545}"
 STATE_FILE="${STATE_FILE:-script/dev/.anvil-state.json}"
 MASTER_DUMP="${MASTER_DUMP:-script/config/stack-master-26158000.hex}"

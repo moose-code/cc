@@ -23,13 +23,13 @@ interface IController {
     /// 10_000)` for `forSale` false, rounded down, the sale price `max(spot, reference * (10_000 - tolBps) /
     /// 10_000)` for true, rounded up. `ok` is false, and `value` 0, while the quote is unusable (no pool key or
     /// module, a stale reference, pool liquidity samples under the minimum, a failed unit read). `spot` is the
-    /// prior-block refresh sample. the Core reads it with a gas bound and falls back to its last good value rate on
-    /// an unusable answer
+    /// prior-block refresh sample. the Core reads it with a gas bound and closes its ETH bid at zero on an unusable
+    /// answer; the last good rate remains stored for a later switch out of value mode
     function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
     /// the `posted` balance payout for a credit of `score` stored units lowered to its value mode cap, balance base
     /// units: the smaller of `posted` and `ethPrice() * score / RATE_SCORE` converted at the protected sale price,
     /// before the ETH pot clamp. an unusable reference returns `(0, true)`, refusing the payout. a failed bounded
-    /// controller call or `ok` false leaves `posted` unchanged
+    /// controller call or `ok` false also refuses the payout
     function balanceClampFor(uint256 score, uint256 posted) external view returns (uint256 paid, bool ok);
     /// moves the reference toward the pool spot under its cadence, rate and step gates; true when it updated the
     /// reference. the Core's `refreshReference` door forwards to it and pays the caller only when it returns true
@@ -261,8 +261,7 @@ struct Settings {
     /// and redeem caller payments; the bids and `ethRate` read `ethPot` less the reserve, the caller payments, the buyback
     /// and the pushes pay from the whole pot
     uint64 reserveWei;
-    /// seconds intake doors refuse a credit returned by the same buyer after `sellCreditTo`. a secondary holder is
-    /// not locked; 0 disables the lock
+    /// seconds intake doors refuse a credit after `sellCreditTo`, including from a secondary holder; 0 disables the lock
     uint32 returnLockSeconds;
     /// value mode prices the ETH bid from the shared instance and protected buy value; ETH fills drop that
     /// instance. sale references use protected sale value without cost or floor-rate terms; final quotes retain the
@@ -271,9 +270,9 @@ struct Settings {
     /// the artist royalty on every engine purchase, bps of the amount the engine pays for a credit, paid on top in the
     /// same currency: the seller receives the bid whole, the artist `pay * this / 10,000`. 0 to 1,000
     uint16 buyToArtistBps;
-    /// the balance bid's discount to par, bps: the balance route pays `score * unitPerPoint * (10,000 - this) /
-    /// 10,000` per credit before the value-mode cap. 0 to 9,999 keeps the discount below 100 percent; rounding or
-    /// the cap may pay 0
+    /// the BALANCE bid's discount to par, bps: the route pays `score * unitPerPoint * (10,000 - this) / 10,000` per
+    /// Credit before the value-mode cap. SettingsBounds requires the discount to cover the purchase royalty and the
+    /// accepted redemption shortfall. The upper bound of 9,999 keeps the posted bid above zero before rounding
     uint16 balanceDiscountBps;
 }
 
@@ -416,7 +415,7 @@ library Mainnet {
             buybackSlice: 0.5 ether,
             keeperFee: 0.0003 ether,
             keeperMaxBaseFee: 5 gwei,
-            rateCap: 14_700_000_000_000_000,
+            rateCap: 13_950_000_000_000_000,
             callerFee: 0.0003 ether,
             callerMaxBaseFee: 3 gwei,
             feeToRedeemBurnBps: 0,

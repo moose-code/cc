@@ -73,7 +73,7 @@ abstract contract SystemDeployer is LaunchChecks {
     /// with `STRATEGY_ADAPTER_SALT`
     function _newStrategyAdapter() internal virtual returns (address);
 
-    /// @notice creates `CoinRenderer` at `rendererAddress(c)`: CREATE2 through the deterministic deployer with
+    /// @notice creates `LogoCoinRenderer` at `rendererAddress(c)`: CREATE2 through the deterministic deployer with
     /// `rendererSalt(c)`
     function _newRenderer(LaunchConfig memory c) internal virtual returns (address);
 

@@ -1,5 +1,6 @@
 // Exercises app/api/listings/route.ts with a stubbed fetch: fulfill only for hashes in the listings snapshot, a global
-// in-flight limit, a per-client token bucket and a bounded fulfill cache. "@/" imports resolve through a registered hook.
+// in-flight limit, a per-client token bucket, a bounded fulfill cache and a maximum upstream GET scan.
+// "@/" imports resolve through a registered hook.
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import { dirname, join } from "node:path";
@@ -24,6 +25,7 @@ export async function resolve(spec, ctx, next) {
 register("data:text/javascript," + encodeURIComponent(hook));
 
 process.env.OPENSEA_API_KEY = "test";
+process.env.TRUSTED_PROXY_HOPS = "1";
 process.env.NEXT_PUBLIC_CORE = "0x" + "1".repeat(40);
 process.env.NEXT_PUBLIC_SEAPORT_ADAPTER = "0x" + "2".repeat(40);
 
@@ -32,11 +34,19 @@ const KNOWN = [h(1), h(2), h(3)];
 const MANY = 250; // more listings than the cap; the route keeps the cheapest 200
 const ALL = Array.from({ length: MANY }, (_, i) => h(5000 + i));
 let posts = 0;
+let listingGets = 0;
+let hangPosts = false;
 globalThis.fetch = async (url, init) => {
   if (init?.method === "POST") {
     posts++;
+    if (hangPosts) return new Promise((_, reject) => {
+      if (init.signal.aborted) reject(init.signal.reason);
+      else init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    });
     return Response.json({}); // not a fulfillBasicOrder call: the route answers "skipped"
   }
+  listingGets++;
+  if (globalThis.INVALID_PAGE_MODE) return Response.json({ next: "more", listings: [] });
   return Response.json({
     next: "",
     listings: (globalThis.MANY_MODE ? ALL : KNOWN).map((order_hash, i) => ({
@@ -49,8 +59,8 @@ globalThis.fetch = async (url, init) => {
 };
 
 const { GET } = await import(pathToFileURL(join(web, "app/api/listings/route.ts")).href);
-const call = (hash, ip = "1.1.1.1") =>
-  GET(new Request(`http://x/api/listings?fulfill=${hash}`, { headers: { "x-forwarded-for": `${ip}, 9.9.9.9` } }));
+const call = (hash, ip = "1.1.1.1", supplied = "9.9.9.9") =>
+  GET(new Request(`http://x/api/listings?fulfill=${hash}`, { headers: { "x-forwarded-for": `${supplied}, ${ip}` } }));
 
 // unknown hash: rejected, no upstream POST
 let r = await call(h(999));
@@ -69,7 +79,7 @@ assert.equal(posts, 1);
 
 // burst over the per-client limit is rejected
 const codes = [];
-for (let i = 0; i < 15; i++) codes.push((await call(KNOWN[1], "3.3.3.3")).status);
+for (let i = 0; i < 15; i++) codes.push((await call(KNOWN[1], "3.3.3.3", `198.51.100.${i}`)).status);
 assert.ok(codes.includes(429), "burst must hit the client limit");
 assert.equal(codes.indexOf(429), 10);
 assert.equal(posts, 2); // KNOWN[1] fetched once, cached for the rest
@@ -104,5 +114,48 @@ assert.equal(posts, 12);
 // the cache serves repeats without a POST or a token
 for (let i = 0; i < 12; i++) assert.equal((await call(ALL[i], `30.0.${i >> 8}.${i & 255}`)).status, 200);
 assert.equal(posts, 12);
+
+// promise: absent a verified proxy chain, arbitrary forwarding headers cannot select a client bucket;
+// the global upstream budget still bounds uncached requests.
+process.env.TRUSTED_PROXY_HOPS = "0";
+for (let i = 0; i < 15; i++) assert.equal((await call(ALL[0], "3.3.3.3", `203.0.113.${i}`)).status, 200);
+assert.equal(posts, 12);
+process.env.TRUSTED_PROXY_HOPS = "1";
+
+// promise: ineligible upstream pages cannot keep one website request fetching without a bound.
+clock += 60_000;
+globalThis.INVALID_PAGE_MODE = true;
+listingGets = 0;
+const capped = await GET(new Request("http://x/api/listings"));
+assert.equal(capped.status, 200);
+assert.deepEqual((await capped.json()).listings, []);
+assert.equal(listingGets, 5);
+
+// promise: four stalled fulfillment POSTs occupy the slots only until their deadline, then a fresh order proceeds.
+clock += 60_000;
+globalThis.INVALID_PAGE_MODE = false;
+await GET(new Request("http://x/api/listings"));
+const realTimeout = AbortSignal.timeout;
+AbortSignal.timeout = (ms) => realTimeout(Math.min(ms, 50));
+hangPosts = true;
+try {
+  const stalled = Array.from({ length: 4 }, (_, i) => call(ALL[30 + i], `40.0.0.${i + 1}`));
+  await new Promise((resolve) => setImmediate(resolve));
+  const saturated = await call(ALL[34], "40.0.0.5");
+  assert.equal(saturated.status, 503, "all four fulfillment slots are occupied");
+  let guard;
+  const settled = await Promise.race([
+    Promise.all(stalled),
+    new Promise((_, reject) => { guard = setTimeout(() => reject(new Error("fulfillment slots did not time out")), 1_000); }),
+  ]).finally(() => clearTimeout(guard));
+  for (const response of settled) {
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { skipped: "fulfillment data failed" });
+  }
+} finally {
+  hangPosts = false;
+  AbortSignal.timeout = realTimeout;
+}
+assert.equal((await call(ALL[35], "40.0.0.6")).status, 200, "a new order can use a released slot");
 
 console.log("listings-route test ok");

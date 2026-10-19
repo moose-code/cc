@@ -47,6 +47,7 @@ contract StatementBalanceModule is IBalanceModule {
     error OnlyCore();
     error InsufficientAvailable();
     error CoreNotRetired();
+    error CoreRetired();
     error InvalidSuccessor();
     error RedeemedBelowRating();
 
@@ -57,7 +58,7 @@ contract StatementBalanceModule is IBalanceModule {
     mapping(address => uint256) public owed;
     uint256 public totalOwed;
 
-    event ReserveMigrated(address indexed successor, address indexed module, uint256 amount);
+    event ReserveMigrated(address indexed targetCore, address indexed module, uint256 amount);
     event PaymentAccrued(address indexed to, uint256 amount);
     event OwedClaimed(address indexed to, uint256 amount);
 
@@ -138,6 +139,23 @@ contract StatementBalanceModule is IBalanceModule {
             SafeTransferLib.safeTransfer(balanceToken, to, amount);
             emit OwedClaimed(to, amount);
         }
+    }
+
+    /// Anyone may move an inactive module's unowed reserve to the live Core's selected module for the same token.
+    /// Artist debt remains claimable here. Different-token replacement needs a separate owner conversion.
+    function migrateInactiveReserve() external returns (uint256 amount) {
+        IStatementBalanceCore source = IStatementBalanceCore(core);
+        if (source.retired()) revert CoreRetired();
+        address destination = source.balanceModule();
+        if (destination == address(this) || destination.code.length == 0 || source.balanceToken() != balanceToken) {
+            revert InvalidSuccessor();
+        }
+        IStatementBalanceBinding target = IStatementBalanceBinding(destination);
+        if (target.core() != core || target.balanceToken() != balanceToken) revert InvalidSuccessor();
+        amount = _unowedBalance();
+        if (amount > available()) revert InsufficientAvailable();
+        if (amount != 0) SafeTransferLib.safeTransfer(balanceToken, destination, amount);
+        emit ReserveMigrated(core, destination, amount);
     }
 
     /// anyone may move the retired Core's reserve to its successor's currently bound module, including later proceeds.

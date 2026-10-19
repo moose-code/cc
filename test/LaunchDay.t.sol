@@ -23,7 +23,7 @@ import {OrderComponents} from "./utils/SeaportTypes.sol";
 abstract contract LaunchDayBase is SeaportBase {
     using FixedPointMathLib for uint256;
 
-    uint256 internal constant LAUNCH_RATE = 4_900_000_000_000_000;
+    uint256 internal constant LAUNCH_RATE = 4_650_000_000_000_000;
 
     function _fixtureRateStart() internal pure override returns (uint256) {
         return LAUNCH_RATE;

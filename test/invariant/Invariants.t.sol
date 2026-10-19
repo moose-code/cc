@@ -294,7 +294,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// 16. the eth bid stays open while the core has not migrated or paused. when a held credit's bid (`bidOf`) is not
-    /// zero and the pot less the reserve covers it, a one credit `sellForEth` by its holder succeeds after every action
+    /// zero and the pot less the reserve covers both seller payment and artist royalty, a one credit `sellForEth` succeeds
     /// under a snapshot that is reverted, so the state is unchanged. it starts with the book of the fee income that
     /// every `sellForEth` makes first, so the price is the one the sale itself reads.
     // promise: 16 the bid never closes
@@ -314,7 +314,8 @@ abstract contract InvariantsBase is InvariantFixture {
         uint256 budget =
             active ? handler.gSpendSnapshot() * cfg.spendCapBps / 10_000 : core.ethPot() * cfg.spendCapBps / 10_000;
         uint256 spent = active ? handler.gSpent() : 0;
-        bool capRefusal = cfg.spendCapBps != 10_000 && spent != 0 && spent + core.bidOf(id) > budget;
+        bool capRefusal = cfg.spendCapBps != 10_000 && spent != 0
+            && spent + _purchaseCost(core.bidOf(id), cfg.buyToArtistBps) > budget;
         uint256[] memory ids = new uint256[](1);
         ids[0] = id;
         vm.startPrank(holder);
@@ -326,7 +327,7 @@ abstract contract InvariantsBase is InvariantFixture {
         assertTrue(
             ok || bytes4(why) == ICore.ReturnLocked.selector
                 || (bytes4(why) == ICore.SpendCapReached.selector && capRefusal),
-            string.concat("sellForEth refused a credit whose price the pot covers, selector ", vm.toString(bytes4(why)))
+            string.concat("sellForEth refused a credit whose payment and royalty fit, selector ", vm.toString(bytes4(why)))
         );
     }
 
@@ -366,17 +367,22 @@ abstract contract InvariantsBase is InvariantFixture {
         invariant_16_theBidNeverCloses();
     }
 
-    /// the first credit among the first four of each actor whose price is above zero and at most `afford`
+    /// the first credit among the first four of each actor whose seller payment and artist royalty fit `afford`
     function _sellable(uint256 afford) internal view returns (address holder, uint256 id) {
+        uint256 royaltyBps = core.settings().buyToArtistBps;
         uint256 n = handler.actorCount();
         for (uint256 a; a < n; ++a) {
             address actor = handler.actors(a);
             uint256[] memory held = CREDITS.tokensOf(actor);
             for (uint256 j; j < held.length && j < 4; ++j) {
                 uint256 price = core.bidOf(held[j]);
-                if (price != 0 && price <= afford) return (actor, held[j]);
+                if (price != 0 && _purchaseCost(price, royaltyBps) <= afford) return (actor, held[j]);
             }
         }
+    }
+
+    function _purchaseCost(uint256 bid, uint256 royaltyBps) internal pure returns (uint256 cost) {
+        cost = bid + bid * royaltyBps / 10_000;
     }
 
     /// 17. every credit the core owns is in exactly one place. a credit in the pile is reached by walking it from
@@ -633,8 +639,9 @@ abstract contract InvariantsBase is InvariantFixture {
         Settings memory st = core.settings();
         (uint256 lastFillRate,,) = _anchor();
         (uint256 peakRate, uint256 peakTime) = _peak();
-        uint256 anchor = _anchorNow(lastFillRate, peakRate, peakTime, st.peakHalfLife);
-        uint256 idle = block.timestamp > core.lastFillTime() ? block.timestamp - core.lastFillTime() : 0;
+        uint256 growthNow = core.paused() ? core.pausedSince() : block.timestamp;
+        uint256 anchor = _anchorNow(lastFillRate, peakRate, peakTime, st.peakHalfLife, growthNow);
+        uint256 idle = growthNow > core.lastFillTime() ? growthNow - core.lastFillTime() : 0;
         // decision 128 variant d: the loosening scales by m, counted at the last fill rate, capped by climbMultiplierCapBps
         uint256 m = _climbMulBps(pagesPot, lastFillRate, st.pointsPerPage, st.climbMultiplierCapBps);
         uint256 ceiling =
@@ -655,12 +662,12 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// the larger of the fill rate and the remembered peak decayed to now
-    function _anchorNow(uint256 fillRate, uint256 peakRate, uint256 peakTime, uint256 halfLife)
+    function _anchorNow(uint256 fillRate, uint256 peakRate, uint256 peakTime, uint256 halfLife, uint256 growthNow)
         internal
         view
         returns (uint256)
     {
-        uint256 peakNow = Halving.halve(peakRate, block.timestamp > peakTime ? block.timestamp - peakTime : 0, halfLife);
+        uint256 peakNow = Halving.halve(peakRate, growthNow > peakTime ? growthNow - peakTime : 0, halfLife);
         return fillRate > peakNow ? fillRate : peakNow;
     }
 
@@ -1067,6 +1074,16 @@ abstract contract InvariantsBase is InvariantFixture {
 contract InvariantsPhase1 is InvariantsBase {
     function setUp() public virtual override {
         _build(false, false, true, false, "p1");
+    }
+
+    // promise: the bid ceiling model excludes elapsed pause time, as the price state does
+    function test_bidCeilingModelFreezesDuringPause() public {
+        vm.prank(owner);
+        core.setPaused(true);
+        uint256 ceiling = _ethCap(core.ethPot());
+        vm.warp(block.timestamp + 76);
+        assertEq(_ethCap(core.ethPot()), ceiling, "the modeled ceiling changed during pause");
+        assertLe(core.ethPrice(), ceiling, "the price exceeded the frozen ceiling");
     }
 
     // promise: inv 5 the handler reads the Core storage slots

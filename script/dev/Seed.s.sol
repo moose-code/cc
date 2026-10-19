@@ -45,9 +45,9 @@ interface IUpstreamStatements {
 ///
 /// pool price: the balance token is currency1, so the pool price is balance token base units per wei and
 /// `sqrtPriceX96 = sqrt(price) * 2^96`. 100 points is 1,000,000 stored units, worth
-/// `1,000,000 * dev.balanceUnitPerPoint` = 1e20 base units. At the opening bid `rateStart` = 4.9e15 wei,
-/// `price = 1e20 / 4.9e15` = 20,408 and `sqrtPriceX96` = 11318308930609191084791992905142, so `valueOf` of a
-/// 100 point credit equals the bid.
+/// `1,000,000 * dev.balanceUnitPerPoint` = 1e20 base units. At the opening bid `rateStart` = 4.65e15 wei,
+/// `price = 1e20 / 4.65e15` is about 21,505 and `sqrtPriceX96` = 11618581461159793320010313039067, so `valueOf` of a
+/// 100 point credit is approximately the bid.
 ///
 /// the dev wallet `dev.wallet` of the launch config also receives `dev.walletCredits` credits from the strategy in both
 /// phases. its eth (`dev.walletEth`) is set by `script/dev/e2e.sh` and its coin comes from the Scenario stage

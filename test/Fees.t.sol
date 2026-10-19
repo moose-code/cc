@@ -582,9 +582,9 @@ contract BuybackTest is FeeBase {
         vm.store(address(core), bytes32(slot), bytes32(core.ethToBuyback() + eth));
     }
 
-    // promise: SPEC 1 buyback slice parameter (decision 51): a sandwich around a slice loses
-    // promise: SPEC 1 buyback slice parameter (decision 51): a sandwich around a buyback slice loses
-    function test_sandwichOfTheSliceLoses() public {
+    // promise: SPEC 1 with 1 ETH seeded in the buyback pot and a buyback 30 blocks after the buy, selling returns
+    // less ETH than spent at 5, 20 and 100 ETH
+    function test_buyThirtyBlocksBeforeBuybackThenSellReturnsLessEthAtThreeSizes() public {
         _skipSniperWindow();
         _buyCoin(_user("trader"), 20 ether);
         vm.deal(address(core), address(core).balance + 1 ether);
@@ -601,7 +601,7 @@ contract BuybackTest is FeeBase {
             vm.roll(block.number + 30);
             vm.prank(keeper);
             core.buyback();
-            assertLt(_sellCoin(attacker, coinGot), xs[i], "sandwich loses");
+            assertLt(_sellCoin(attacker, coinGot), xs[i], "sale returns less ETH than the earlier buy spent");
             vm.revertToState(snap);
         }
     }

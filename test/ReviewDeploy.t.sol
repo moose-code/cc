@@ -62,6 +62,49 @@ contract ReviewDeployTest is ReviewHarness {
         core.sellCreditTo(1, makeAddr("review.buyer"));
     }
 
+    // promise: a deferred Core owner can reset the opening rate and its 3x cap without carrying prior idle climb
+    function test_prelaunchOpeningRateResetAndBounds() public {
+        _etchLibrary();
+        vm.prank(deployer);
+        ICore core = ICore(payable(_newCore(base, deployer)));
+        vm.prank(deployer);
+        core.fund{value: 1 ether}();
+        vm.warp(block.timestamp + 2 hours);
+        assertGt(core.ethPrice(), base.rateStart, "the funded rate climbed before reset");
+        vm.prank(deployer);
+        core.setOpeningRate(2e16);
+        assertEq(core.RATE_START(), 2e16);
+        assertEq(core.settings().rateCap, 6e16);
+        assertEq(core.ethPrice(), 2e16, "the reset starts a new rate clock");
+        vm.prank(deployer);
+        core.setOpeningRate(3e15);
+        assertEq(core.RATE_START(), 3e15);
+        assertEq(core.settings().rateCap, 9e15);
+        assertEq(core.ethPrice(), 3e15, "a downward reset takes effect at once");
+        vm.prank(creator);
+        vm.expectRevert(ICore.OnlyOwner.selector);
+        core.setOpeningRate(base.rateStart);
+        vm.startPrank(deployer);
+        vm.expectRevert(ICore.BadRate.selector);
+        core.setOpeningRate(0);
+        vm.expectRevert(ICore.BadRate.selector);
+        core.setOpeningRate(type(uint64).max / 3 + 1);
+        vm.stopPrank();
+        assertEq(core.RATE_START(), 3e15, "bad edits leave the previous opening rate");
+    }
+
+    // promise: the opening rate can only change before the predicted coin has code
+    function test_prelaunchOpeningRateClosesWhenCoinExists() public {
+        _etchLibrary();
+        vm.prank(deployer);
+        ICore core = ICore(payable(_newCore(base, deployer)));
+        assertEq(core.COIN().code.length, 0, "the predicted coin is not deployed");
+        vm.etch(core.COIN(), hex"00");
+        vm.prank(deployer);
+        vm.expectRevert(ICore.OpeningRateClosed.selector);
+        core.setOpeningRate(base.rateStart);
+    }
+
     function _etchLibrary() internal {
         address[2] memory libs = [libraryAddress(), opsLibraryAddress()];
         string[2] memory names = ["CoreLib", "CoreOpsLib"];

@@ -51,7 +51,7 @@ library BidModel {
 
     /// @dev the rate after one credit of score `score` bought with the price state `fillState`, where `minuteStart` is
     /// the price state at the first fill of the same minute bucket. the fall is `dropPer100PointsBps * score / RATE_SCORE`,
-    /// bounded at 10_000, the same as `CoreLib.drop`
+    /// bounded at 10_000 and floored at one wei, the same as `CoreLib._drop`
     function dropOnce(Settings memory s, uint256 fillState, uint256 minuteStart, uint256 score)
         internal
         pure
@@ -74,7 +74,7 @@ library BidModel {
         uint256 denom = 10_000 * RATE_SCORE;
         uint256 dropped = fallNum >= denom ? 0 : FixedPointMathLib.mulDiv(fillState, denom - fallNum, denom);
         uint256 lo = FixedPointMathLib.max(dropped, minuteStart * s.dropFloorBps / 10_000);
-        return FixedPointMathLib.max(lo, absFloor);
+        return FixedPointMathLib.max(FixedPointMathLib.max(lo, absFloor), 1);
     }
 
     /// @dev the eth bid's room: the pot less the reserve over `1 + buyToArtistBps / 10_000`, so a bid the read shows is

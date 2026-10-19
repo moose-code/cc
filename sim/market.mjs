@@ -244,7 +244,7 @@ export function runSpendCapStudy() {
     blockSeconds: 12, sellingHorizonSeconds: 21600, totalHorizonSeconds: 86400,
     capBps: [50, 100, 200], startBucketOffsetsSeconds: [0, 48], bucketSeconds: DEFAULTS.bucketSeconds,
     feesDepositsSalesOrBalancePurchases: false,
-    sellerRule: 'Seeded inventory order; each block repeatedly sells the first credit whose score-scaled bid covers its flat per-credit ask. Purchases pay the direct bid, not the ask. Stops at inventory exhaustion or selling horizon.',
+    sellerRule: 'Seeded inventory order; each block repeatedly sells the first credit whose score-scaled bid covers its flat per-credit ask. Purchases pay the direct bid plus the artist royalty, not the ask. Stops at inventory exhaustion or selling horizon.',
     crossingRule: 'First modeled block or fill with the reference-score bid strictly below the flat ask. In the collapse case measure only at or after 600 seconds, below the final market ask; mixed-score credits can still clear after crossing.',
     recoveryRule: 'After a downward crossing, first modeled block after selling stops with the reference-score bid at least the final market ask, 0.005 ETH. Null without a crossing means N/A; null after a crossing means recovery was not observed by the total horizon.',
     arithmetic: 'Number price trajectory and integer-wei bucket accounting; synthetic economic model, not an EVM differential test.',
@@ -272,7 +272,7 @@ export function runSpendCapStudy() {
       let filled = 0;
       for (;;) {
         const bid = core.ethRate(t + offset) / W;
-        const index = inventory.findIndex((score) => bid * score * 1e4 / core.s.refScore >= askAt(t));
+        const index = inventory.findIndex((score) => bid * core.scoreRatio(score) >= askAt(t));
         if (index < 0) { if (!filled) unmarketableBlocks++; break; }
         const paid = core.sellForEth(t + offset, inventory[index]);
         if (!(paid > 0)) { budgetStallBlocks++; break; }
@@ -284,7 +284,7 @@ export function runSpendCapStudy() {
         if (core.ethRate(t + offset) >= DEFAULTS.rateStart) initialRecovery = 0;
       }
     }
-    rows.push({ scenario, capBps: cap, startBucketOffsetSeconds: offset, crossing, stopped, recoverySecondsAfterStop: recovery, initialBidRecoverySecondsAfterStop: initialRecovery, remainingCredits: inventory.length, pointsBought, remainingPoints: inventory.reduce((sum, score) => sum + score, 0), budgetStallBlocks, unmarketableBlocks, finalPotEth: core.ethPot, finalReferenceBidEth: core.ethRate(assumptions.totalHorizonSeconds + offset) / W });
+    rows.push({ scenario, capBps: cap, startBucketOffsetSeconds: offset, crossing, stopped, recoverySecondsAfterStop: recovery, initialBidRecoverySecondsAfterStop: initialRecovery, remainingCredits: inventory.length, pointsBought, remainingPoints: inventory.reduce((sum, score) => sum + score, 0), budgetStallBlocks, unmarketableBlocks, artistPaidEth: core.royaltyPaid, finalPotEth: core.ethPot, finalReferenceBidEth: core.ethRate(assumptions.totalHorizonSeconds + offset) / W });
   }
   return { assumptions, rows };
 }

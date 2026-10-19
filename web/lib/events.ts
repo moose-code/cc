@@ -38,7 +38,7 @@ export interface Stats {
   sold: number;
   redeemed: number;
   buybacks: number;
-  ethIntoCredits: number; // sum of EthRateFill.spent
+  ethIntoCredits: number; // sum of EthRateFill.spent and ValueRateFill.spent
   ccBurned: number;
   feesBooked: number; // sum of FeesAdded, eth
   artistReceived: number; // sum of the artist cut (StatementSoldTo and CreditSold toArtist), eth
@@ -56,7 +56,7 @@ export type CreditEvt =
       from?: string; // seller (bids) or caller (listing)
       paid?: bigint; // listing: paid to the caller on top of the listing cost
       adapter?: string; // listing: the adapter that priced it
-      rate?: bigint; // eth bid and listing: rate state after the fill
+      rate?: bigint; // mode-off eth bid and listing: wei rate state after the fill
       pot?: bigint; // eth bid: pot after the fill
       block?: bigint;
       ts?: number;
@@ -135,8 +135,8 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
   const soldKeys = new Set<string>();
   for (const l of logs) if (l.eventName === "StatementSoldTo") soldKeys.add(`${l.transactionHash}:${l.args.sid}`);
 
-  // An EthRateFill is emitted just before the CreditBought it pays for.
-  let fill: { tx: string; rate: bigint; pot: bigint } | undefined;
+  // An EthRateFill or ValueRateFill is emitted just before the CreditBought it pays for.
+  let fill: { tx: string; rate?: bigint; pot: bigint } | undefined;
   let token: string | undefined;
   let balanceBuy: { tx: string; row: FeedEvent } | undefined;
 
@@ -167,6 +167,11 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
       case "EthRateFill":
         stats.ethIntoCredits += Number(formatUnits(a.spent, 18));
         fill = { tx, rate: a.rate, pot: a.pot };
+        break;
+      case "ValueRateFill":
+        stats.ethIntoCredits += Number(formatUnits(a.spent, 18));
+        // rateBps is a shared multiplier, not an ETH rate; keep the rate field empty.
+        fill = { tx, pot: a.pot };
         break;
       case "CreditBought": {
         const id = Number(a.id);
@@ -279,7 +284,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const sid = Number(a.sid);
         st(sid).redeemed = { received: a.received, token, block, tx };
         stats.redeemed++;
-        row({ kind: "redeemed", label: "statement redeemed", link: stmtLink(sid), detail: `· received ${formatHistoricalBalance(a.received, token, inp.balanceToken)}`, tile: { kind: "statement", id: sid } });
+        row({ kind: "redeemed", label: "statement redeemed", link: stmtLink(sid), detail: `· module received ${formatHistoricalBalance(a.received, token, inp.balanceToken)}`, tile: { kind: "statement", id: sid } });
         break;
       }
 

@@ -176,7 +176,7 @@ contract GasCapTest is SeaportBase {
 
     /// @dev the core does not bound the batch. the largest `n` whose transaction stays under the cap is found by a
     /// linear fit on three sizes, then walked to the exact edge
-    function _searchBatch(string memory label, bool balance_) internal {
+    function _searchBatch(string memory label, bool balance_) internal returns (uint256 n) {
         (uint256 g1, uint256 t1) = _sellBatch(balance_, 1);
         _row(string.concat(label, ", 1 credit, cold"), g1, abi.encodeWithSignature("sellForEth(uint256[])", _one(1)));
         (uint256 g10,) = _sellBatch(balance_, 10);
@@ -184,7 +184,7 @@ contract GasCapTest is SeaportBase {
         uint256 slope = (t40 - t1) / 39;
         console.log(string.concat(label, ": marginal tx gas per credit (fit 1 to 40)"), slope);
         console.log(string.concat(label, ": exec gas for 10 credits"), g10);
-        uint256 n = (CAP - t1) / slope + 1;
+        n = (CAP - t1) / slope + 1;
         while (n > 1) {
             (, uint256 t) = _sellBatch(balance_, n);
             if (t < CAP) break;
@@ -212,11 +212,11 @@ contract GasCapTest is SeaportBase {
         assertGt(g40, g10);
     }
 
-    // promise: SPEC 1 a batch of about 91 credits fits the transaction cap (per point: each credit reads its score)
+    // promise: SPEC 1 at least 86 credits fit the launch ETH transaction cap; measure the exact edge on the pinned fork
     function test_gas_sellForEth_batch_launchSettings() public {
         _fundPot(30 ether);
         _warp(1 hours + 1);
-        _searchBatch("sellForEth (launch)", false);
+        assertGe(_searchBatch("sellForEth (launch)", false), 86, "the launch ETH batch fits at least 86 credits");
     }
 
     // promise: mode-off value pricing keeps the pre-packet 86-credit ETH batch within the mainnet cap; the per-credit

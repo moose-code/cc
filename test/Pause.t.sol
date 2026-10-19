@@ -247,6 +247,22 @@ contract PauseTest is SaleShapeBase {
         assertGt(core.ethPrice(), earned, "climb resumes after the pause");
     }
 
+    // promise: paused seconds do not loosen the ETH fill ceiling after intake resumes
+    function test_lastFillIdleClockExcludesPause() public {
+        _liftRateCap();
+        _fundPot(20 ether);
+        uint256 id = _credits(seller, 1)[0];
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+        uint256 before = core.ethPrice();
+        uint256 fillTime = core.lastFillTime();
+        _setPaused(true);
+        vm.warp(block.timestamp + 6 hours);
+        _setPaused(false);
+        assertEq(core.lastFillTime(), fillTime + 6 hours, "the fill clock moves past the pause");
+        assertEq(core.ethPrice(), before, "the pause earned no extra ceiling room");
+    }
+
     // promise: repeated pauses exclude only paused time and an owner rate reset remains usable during a pause
     function test_rateResetAndSecondPauseDoNotLoseEarnedBid() public {
         _liftRateCap();

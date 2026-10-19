@@ -4,9 +4,10 @@
 //   the strategy); a fixed id list (STRATEGY_IDS) is read in full. Scores never change and are cached.
 // - Seaport 1.6 basic orders from the OpenSea API v2 (packages/engine/src/opensea.mjs), or a file of the same shape,
 //   refreshed every OPENSEA_REFRESH_SEC.
-// Each block the candidates whose price is under the bid scaled by score are read in full at that block: `bidOf(id)`,
-// the adapter's quote (the exact value the Core pays, and the adapter's own order checks), the holder of the credit
-// and, for Seaport, the order status. The simulation stays the final check.
+// Each tick a bounded window of candidates whose price is under the bid scaled by score is read in full:
+// `bidOf(id)`, the adapter's quote (the exact value the Core pays, and the adapter's own order checks), the holder
+// and, for Seaport, the order status. The window advances so stale high-ranked listings cannot hide later ones.
+// The simulation stays the final check.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,10 +21,11 @@ import type { Listing } from "./decide.ts";
 import type { Snapshot } from "@cc/engine/snapshot";
 import { log, safeError } from "./log.ts";
 import { indexerSeed, StrategyBook, type BookChain, type Move } from "./inventory.ts";
+import type { PendingStore } from "./ledger.ts";
 
 // the ids read per multicall when indexing the strategy scores
 const SCORE_READ = 1500;
-// the most candidates per venue read in full each block, best ratio of bid to price first
+// the most candidates per venue read in full each tick
 const MAX_CANDIDATES = 40;
 
 // `abi.encode(BasicOrderParameters)`, the `params` of SeaportBasicAdapter
@@ -75,20 +77,24 @@ export class Sources {
   private book?: StrategyBook;
   private seaport: Watched[] = [];
   private seaportAt = 0;
-  // listings whose simulation reverted, skipped until the time stored
+  // Decoded simulation faults have a short in-memory wait; receipt reverts also have a durable wait.
   private cooldown = new Map<string, number>();
+  private nextCandidate = { strategy: 0, seaport: 0 };
 
   private client: PublicClient;
   private cfg: Config;
   private now: () => number;
+  private pending?: PendingStore;
   constructor(
     client: PublicClient,
     cfg: Config,
     now: () => number = Date.now,
+    pending?: PendingStore,
   ) {
     this.client = client;
     this.cfg = cfg;
     this.now = now;
+    this.pending = pending;
   }
 
   coolDown(key: string, sec: number) {
@@ -192,48 +198,66 @@ export class Sources {
         orders = r.orders;
         log("info", "opensea listings fetched", { fetched: r.fetched, fit: r.fit, signed: r.orders.length, dropped: r.dropped });
       }
+      if (!Array.isArray(orders)) throw new Error("orders is not an array");
     } catch (e) {
       log("warn", "opensea fetch failed, keeping the cached orders", { error: safeError(e) });
       return;
     }
-    // the order status read needs the hash; an order without one cannot be checked and is not watched
-    orders = orders.filter((x) => {
-      if (!x.hash) {
-        log("warn", "seaport order has no hash, skipped", { id: String(x.id), offerer: x.params.offerer });
-        return false;
+    // A malformed cached or API order must not block the other signed orders or the rest of the tick.
+    const watched: Watched[] = [];
+    for (const x of orders) {
+      try {
+        if (!x.hash) {
+          log("warn", "seaport order has no hash, skipped", { id: String(x.id), offerer: x.params.offerer });
+          continue;
+        }
+        if (!/^0x[0-9a-fA-F]{64}$/.test(x.hash)) throw new Error("invalid order hash");
+        if (BigInt(x.price) <= 0n) {
+          log("warn", "seaport order has no positive price, skipped", { id: String(x.id) });
+          continue;
+        }
+        watched.push({
+          venue: "seaport",
+          adapter: this.cfg.record.seaportAdapter,
+          id: BigInt(x.id),
+          price: BigInt(x.price),
+          params: encodeBasicOrder(x.params),
+          hash: x.hash as Hex,
+          offerer: getAddress(x.params.offerer),
+        });
+      } catch {
+        log("warn", "malformed seaport order skipped", { id: String(x?.id ?? "unknown") });
       }
-      if (BigInt(x.price) <= 0n) {
-        log("warn", "seaport order has no positive price, skipped", { id: String(x.id) });
-        return false;
-      }
-      return true;
-    });
-    this.seaport = orders.map((x) => ({
-      venue: "seaport" as const,
-      adapter: this.cfg.record.seaportAdapter,
-      id: BigInt(x.id),
-      price: BigInt(x.price),
-      params: encodeBasicOrder(x.params),
-      hash: x.hash as Hex | undefined,
-      offerer: getAddress(x.params.offerer),
-    }));
+    }
+    this.seaport = watched;
     await this.scoresOf(this.seaport.map((w) => w.id));
   }
 
-  // the candidates of this block: every watched listing under the bid scaled by its score, read in full
+  // Read one rotating window per venue at the block. The cap bounds RPC work per tick and every ranked listing gets a turn.
   async candidates(snap: Snapshot, blockNumber: bigint): Promise<Listing[]> {
     await Promise.all([this.refreshStrategy(), this.refreshSeaport()]);
     const ref = 1_000_000n;
     const t = this.now();
-    const pick = (ws: Watched[]) =>
-      ws
-        .filter((w) => w.price > 0n && (this.cooldown.get(`${w.venue}:${w.id}`) ?? 0) <= t)
+    const pick = (venue: "strategy" | "seaport", ws: Watched[]) => {
+      const ranked = ws
+        .filter((w) => {
+          const key = `${w.venue}:${w.id}`;
+          return w.price > 0n && Math.max(this.cooldown.get(key) ?? 0, this.pending?.cooldownUntil(key) ?? 0) <= t;
+        })
         .map((w) => ({ w, bid: ((this.scores.get(w.id) ?? 0n) * snap.ethRate) / ref }))
         .filter((x) => x.bid >= x.w.price)
-        .sort((a, b) => Number((b.bid * 10_000n) / b.w.price - (a.bid * 10_000n) / a.w.price))
-        .slice(0, MAX_CANDIDATES)
-        .map((x) => x.w);
-    const ws = [...pick(this.strategy), ...pick(this.seaport)];
+        .sort((a, b) => {
+          const ar = (a.bid * 10_000n) / a.w.price;
+          const br = (b.bid * 10_000n) / b.w.price;
+          return ar === br ? (a.w.id < b.w.id ? -1 : a.w.id > b.w.id ? 1 : 0) : ar > br ? -1 : 1;
+        });
+      if (!ranked.length) return [];
+      const start = this.nextCandidate[venue] % ranked.length;
+      const count = Math.min(MAX_CANDIDATES, ranked.length);
+      this.nextCandidate[venue] = (start + count) % ranked.length;
+      return Array.from({ length: count }, (_, i) => ranked[(start + i) % ranked.length].w);
+    };
+    const ws = [...pick("strategy", this.strategy), ...pick("seaport", this.seaport)];
     if (ws.length === 0) return [];
     const core = this.cfg.record.core;
     // three reads per listing plus the order status of a hashed one, typed loosely: the mixed abis exceed the

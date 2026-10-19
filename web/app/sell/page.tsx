@@ -45,7 +45,7 @@ export default function SellPage() {
   const [anchor, setAnchor] = useState<number>();
 
   const bid = snap?.ethRate ?? 0n; // wei per 100 points
-  const pot = snap?.ethPot ?? 0n;
+  const pot = snap?.potRoom ?? 0n;
   // the module reads can fail; the balance side is then unavailable and the eth side renders alone
   const balanceBid = Boolean(snap?.balanceOn && snap.settings.balanceBidOn && snap.balanceUnit !== undefined);
   const isBal = cur === "bal" && balanceBid;
@@ -150,7 +150,7 @@ export default function SellPage() {
   if (!engineDeployed) return <NotDeployed />;
 
   const meta = snap
-    ? `bid ${eth(bid, 5)} ETH / 100 pts · pot ${eth(pot, 2)} ETH · covers ~${commas(potPoints(pot, bid))} pts`
+    ? `bid ${eth(bid, 5)} ETH / 100 pts · buying room ${eth(pot, 2)} ETH · ~${commas(potPoints(pot, bid))} pts at this bid before royalty`
     : "reading the engine…";
   const plural = (k: number) => `${k} credit${k === 1 ? "" : "s"}`;
   const spendCap = snap && snap.settings.spendCapBps < 10000 && !isBal;

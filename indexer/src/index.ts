@@ -13,21 +13,14 @@ import {
   statementCredit,
   statementFormat,
   strategyListing,
+  transactionFact,
 } from "../ponder.schema";
 import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, refreshStatementArt, settingsColumns, snapshot } from "./chain";
 import { composeModeOf } from "./lib/mode";
 import { creditSaleSplit, statementPot } from "./lib/split";
-import { act, bump, bumpBalancePaid, idOf, lc, posOf, record, toJson, type At, type Ctx } from "./shared";
+import { act, bump, bumpBalanceCommitted, idOf, lc, posOf, record, toJson, type At, type Ctx } from "./shared";
 
-// ---- per-transaction memory ----------------------------------------------------------------------------------
-// Handlers run in log order, so facts that arrive earlier in a transaction are kept for the later event.
-
-/** The transaction of the latest EthRateFill or ValueRateFill. Each eth bid credit is preceded by one in its transaction. */
-let ethFill: string | null = null;
-/** The credit of the latest balance bid CreditBought, completed by the BalanceFill that follows it. */
-let balanceBuy: { tx: string; id: bigint; activityId: string } | null = null;
-/** $CC burned by the Core, per transaction; the Buyback event that follows reports it. */
-const coreBurn = new Map<string, bigint>();
+// Ordered events in one transaction share transactionFact rows so retries and chain rollbacks restore the facts.
 
 // ---- shared steps ---------------------------------------------------------------------------------------------
 
@@ -97,14 +90,14 @@ async function enterPile(
 
 ponder.on("Core:EthRateFill", async ({ event, context }) => {
   await coreEvent(context, event, "EthRateFill");
-  ethFill = event.transaction.hash;
+  await context.db.insert(transactionFact).values({ id: event.transaction.hash, ethFillPending: true }).onConflictDoUpdate({ ethFillPending: true });
   await bump(context, event, { ethIntoCredits: event.args.spent });
 });
 
 // value mode (decision 148): an eth fill drops the shared balance instance and logs ValueRateFill in place of EthRateFill
 ponder.on("Core:ValueRateFill", async ({ event, context }) => {
   await coreEvent(context, event, "ValueRateFill");
-  ethFill = event.transaction.hash;
+  await context.db.insert(transactionFact).values({ id: event.transaction.hash, ethFillPending: true }).onConflictDoUpdate({ ethFillPending: true });
   await bump(context, event, { ethIntoCredits: event.args.spent });
 });
 
@@ -113,11 +106,15 @@ ponder.on("Core:CreditBought", async ({ event, context }) => {
   // cost is the pile cost basis (eth bid: the price plus the artist royalty; balance bid: the eth floor basis);
   // toArtist is the royalty in the route's currency (decision 163)
   const { id, from, cost, toArtist } = event.args;
-  const how = ethFill === event.transaction.hash ? "eth_bid" : "balance_bid";
-  ethFill = null;
+  const fact = await context.db.find(transactionFact, { id: event.transaction.hash });
+  const how = fact?.ethFillPending ? "eth_bid" : "balance_bid";
+  await context.db.insert(transactionFact).values({ id: event.transaction.hash }).onConflictDoUpdate({
+    ethFillPending: false,
+    balanceBuyId: how === "balance_bid" ? id : null,
+    balanceBuyActivityId: how === "balance_bid" ? idOf(event) : null,
+  });
   await enterPile(context, event, id, how, cost, lc(from), how === "eth_bid" ? toArtist : null);
   await act(context, event, { kind: "credit_bought", creditId: id, account: lc(from), amount: cost, amount2: 0n });
-  if (how === "balance_bid") balanceBuy = { tx: event.transaction.hash, id, activityId: idOf(event) };
   await bump(context, event, {
     creditsBought: 1n,
     ...(how === "eth_bid" ? { creditsEth: 1n, toArtistBuys: toArtist } : { creditsBalance: 1n }),
@@ -126,23 +123,23 @@ ponder.on("Core:CreditBought", async ({ event, context }) => {
 
 ponder.on("Core:BalanceFill", async ({ event, context }) => {
   await coreEvent(context, event, "BalanceFill");
-  // paid is the seller's posted payout, toArtist the royalty, both in balance token (decisions 163, 164)
+  // paid reaches the seller; toArtist is requested from the module, which may record debt instead of transferring.
   const { paid, toArtist } = event.args;
   // This column follows earlier BalanceModuleSet logs, never a latest-state RPC read.
   const { balanceToken } = await ensureEngine(context);
-  if (balanceBuy?.tx === event.transaction.hash) {
+  const fact = await context.db.find(transactionFact, { id: event.transaction.hash });
+  if (fact?.balanceBuyId != null && fact.balanceBuyActivityId != null) {
     await context.db
-      .update(credit, { id: balanceBuy.id })
+      .update(credit, { id: fact.balanceBuyId })
       .set({ balancePaid: paid, balancePaidToken: balanceToken, royalty: toArtist });
-    await context.db.update(activity, { id: balanceBuy.activityId }).set({ amount2: paid, balanceToken });
+    await context.db.update(activity, { id: fact.balanceBuyActivityId }).set({ amount2: paid, balanceToken });
   }
-  balanceBuy = null;
+  if (fact) await context.db.update(transactionFact, { id: event.transaction.hash }).set({ balanceBuyId: null, balanceBuyActivityId: null });
   if (balanceToken) {
-    // the module's outflow: the payout and the royalty, raw units of the token
-    await bumpBalancePaid(context, event, balanceToken, paid + toArtist);
+    await bumpBalanceCommitted(context, event, balanceToken, paid + toArtist);
   } else {
     console.error(
-      `BalanceFill at ${event.transaction.hash} paid ${paid} while engine.balanceToken is null; the payout is credited to no token`,
+      `BalanceFill at ${event.transaction.hash} paid ${paid} while engine.balanceToken is null; the commitment is credited to no token`,
     );
   }
 });
@@ -152,7 +149,8 @@ ponder.on("Core:ListingBought", async ({ event, context }) => {
   // cost is the listing price, paid the keeper payment, toArtist the royalty on the price (decision 163); the pile
   // cost basis is the three summed
   const { id, caller, cost, paid, toArtist } = event.args;
-  ethFill = null;
+  const fact = await context.db.find(transactionFact, { id: event.transaction.hash });
+  if (fact) await context.db.update(transactionFact, { id: event.transaction.hash }).set({ ethFillPending: false });
   await enterPile(context, event, id, "listing", cost + toArtist + paid, null, toArtist);
   await act(context, event, {
     kind: "listing_bought",
@@ -292,8 +290,9 @@ ponder.on("Core:StatementRedeemed", async ({ event, context }) => {
 ponder.on("Core:Buyback", async ({ event, context }) => {
   await coreEvent(context, event, "Buyback");
   const { caller, amountIn } = event.args;
-  const burned = coreBurn.get(event.transaction.hash) ?? 0n;
-  coreBurn.delete(event.transaction.hash);
+  const fact = await context.db.find(transactionFact, { id: event.transaction.hash });
+  const burned = fact?.coreBurn ?? 0n;
+  if (fact) await context.db.update(transactionFact, { id: event.transaction.hash }).set({ coreBurn: 0n });
   await context.db.update(engine, { id: CORE_ADDRESS }).set({ lastBuybackBlock: event.block.number });
   await act(context, event, { kind: "buyback", account: lc(caller), amount: amountIn, amount2: burned });
   await bump(context, event, { buybacks: 1n, ethToBuybackSpent: amountIn });
@@ -426,7 +425,7 @@ ponder.on("Core:OwnershipTransferred", async ({ event, context }) => {
 });
 
 // Events logged without a projection. Pot and buyback balances come from the snapshot.
-for (const name of ["RedeemBurnReleased", "CoinRescued", "NftRescued", "Migrated"] as const) {
+for (const name of ["RedeemBurnReleased", "CoinRescued", "NftRescued", "TokenRescued", "Migrated"] as const) {
   ponder.on(`Core:${name}`, async ({ event, context }) => {
     await coreEvent(context, event, name);
     await settingValue(context, event, "core", name, null, event.args);
@@ -483,6 +482,11 @@ ponder.on("Controller:CreditSaleSet", async ({ event, context }) => {
   });
 });
 
+ponder.on("Controller:AgeEligibilitySet", async ({ event, context }) => {
+  await record(context, event, "controller", "AgeEligibilitySet");
+  await controllerSetting(context, event, "AgeEligibilitySet", { ageEligibilityOn: event.args.on });
+});
+
 ponder.on("Controller:AnchorBpsSet", async ({ event, context }) => {
   await record(context, event, "controller", "AnchorBpsSet");
   await controllerSetting(context, event, "AnchorBpsSet", { anchorBps: BigInt(event.args.anchorBps), anchorBlock: event.block.number });
@@ -528,13 +532,10 @@ ponder.on("Controller:ReferenceRefreshed", async ({ event, context }) => {
 ponder.on("Coin:Transfer", async ({ event, context }) => {
   await record(context, event, "coin", "Transfer");
   if (lc(event.args.from) === CORE_ADDRESS) {
-    coreBurn.set(event.transaction.hash, (coreBurn.get(event.transaction.hash) ?? 0n) + event.args.value);
+    await context.db.insert(transactionFact).values({ id: event.transaction.hash, coreBurn: event.args.value })
+      .onConflictDoUpdate((row) => ({ coreBurn: row.coreBurn + event.args.value }));
     await bump(context, event, { ccBurned: event.args.value });
   }
-});
-
-ponder.on("BalanceToken:Transfer", async ({ event, context }) => {
-  await record(context, event, "balance_token", "Transfer");
 });
 
 // Owner follows every Transfer. A transfer from the Core to the successor moves a held credit out of the pile

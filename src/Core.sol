@@ -103,6 +103,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NothingBought();
     error TooSoon();
     error BadRate();
+    /// an opening-rate reset after the coin exists or the Core retires
+    error OpeningRateClosed();
     error BadStack();
     /// a setting is out of its bounds. `field` is its name
     error BadSetting(bytes32 field);
@@ -126,12 +128,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error Retired();
     /// `swapCredit`: the incoming credit's score is below the pile credit's score
     error ScoreTooLow(uint256 inId, uint256 outId);
-    // `ReturnLocked(id, until)`, a credit the engine sold through `sellCreditTo` offered back to an intake door by its
-    // buyer before the sale time plus `returnLockSeconds`, is `CoreLib.ReturnLocked`, raised by `CoreLib.checkReturn`
+    // `ReturnLocked(id, until)`, a credit the engine sold through `sellCreditTo` offered back to an intake door before
+    // the sale time plus `returnLockSeconds`, is `CoreLib.ReturnLocked`, raised by `CoreLib.checkReturn`
     // inside the Core
     /// `setSuccessor` with the core or a contract the core works with
     error BadSuccessor(address who);
-    /// retained for ABI compatibility; ETH quote failures now fall back to the last good value rate
+    /// adoption has no safe value-mode basis when both the live quote and stored rate are zero
     error NoQuote();
 
     /*//////////////////////////////////////////////////////////////
@@ -271,8 +273,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     IStatements private constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
 
     address public immutable COIN;
-    /// opening eth rate, wei per 100 points, fixed at deploy
-    uint256 public immutable RATE_START;
     /// the artcoins v2 stack this core launched on, fixed at deploy. `receive` accepts eth from HOOK and ESCROW only
     IPoolManager public immutable MANAGER;
     address public immutable HOOK;
@@ -288,6 +288,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// every state variable of the Core (`State` in src/lib/CoreLib.sol), at slot 0. both libraries use the same type
     State internal s;
+
+    /// opening ETH rate, wei per 100 points. the owner may reset it while the coin has no code
+    function RATE_START() external view returns (uint256) {
+        return s.openingRate;
+    }
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -345,7 +350,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (artist_ != address(0) && _forbidden(artist_)) revert ForbiddenTarget();
         s.artist = artist_;
         COIN = coin;
-        RATE_START = rateStart_;
+        s.openingRate = rateStart_;
         MANAGER = IPoolManager(stack_.poolManager);
         HOOK = stack_.hook;
         TICK_SPACING = stack_.tickSpacing;
@@ -518,7 +523,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     }
 
     /// ETH price state before the pot clamp, wei per 100 points. mode off uses the climbed ETH instance; value mode
-    /// uses the shared instance times protected buy value, or the last good value rate on quote failure. adopted
+    /// uses the shared instance times protected buy value, or zero on quote failure. adopted
     /// cost basis scales this price by score and adds the artist purchase royalty
     function ethPrice() external view returns (uint256) {
         return CoreLib.ethPrice();
@@ -692,7 +697,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];
             _owned(id);
-            CoreLib.checkReturn(s, id, msg.sender);
+            CoreLib.checkReturn(s, id);
             uint256 score = _scoreOf(id);
             uint256 bid = _bid();
             // the pot is at or under the reserve, so the bid reads zero: a named refusal, not ZeroAmount from the spend
@@ -727,9 +732,9 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (!s.allowedAdapter[adapter]) revert AdapterNotAllowed();
         if (id == 0) revert ZeroId();
         if (CREDITS.ownerOf(id) == address(this)) revert AlreadyOwned();
-        (address target, uint256 value, bytes memory data, address offerer) = _quote(adapter, id, params);
-        // the return lock reads the listing offerer: a credit the engine sold is refused while its buyer offers it back
-        CoreLib.checkReturn(s, id, offerer);
+        (address target, uint256 value, bytes memory data,) = _quote(adapter, id, params);
+        // the return lock follows the credit through transfers, including a listing offered by a secondary holder
+        CoreLib.checkReturn(s, id);
         if (_forbidden(target)) revert ForbiddenTarget();
         uint256 score = _scoreOf(id);
         uint256 bid = _bid().mulDiv(score, RATE_SCORE);
@@ -1015,9 +1020,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         // Removing the last Credit in a page can lower the processing reserve.
         _checkpoint();
         _pull(id);
-        // record the buyer in the high 160 bits and the sale time in the low 96, so every intake door refuses this
-        // credit while the same buyer offers it back within the return lock (no round trip into a bid)
-        s.creditSoldAt[id] = (uint256(uint160(buyer)) << 96) | uint96(block.timestamp);
+        // every intake door refuses this credit until its return lock ends, including after a transfer
+        s.creditSoldAt[id] = block.timestamp;
         CREDITS.transferFrom(address(this), buyer, id);
         // the artist and operator cuts come off the payment; the credit cost basis share of the rest goes to the pot,
         // the remainder to the buyback. the pot share is at most the rest
@@ -1304,13 +1308,14 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// puts credits the core holds without a record into the pile, anyone may call. the fee income is booked first,
     /// like at every door that reads the pot, so it is in the pot before the price is read. the cost basis of each
-    /// credit is `ethPrice * score / RATE_SCORE` plus its on-top artist royalty, at least 1 wei. the price state is
-    /// the figure the engine pays with a funded pot, so a statement built from adopted credits is priced at that
-    /// level; the clamp of a thin pot would book a basis of 1 wei. the basis is booked and the pile grows: eth and the
-    /// pots keep their values. the bid checkpoints before the pile changes, preserving earned climb under the old
-    /// reserve without changing the live price. a donor who inflates the basis of a statement gives credits away.
-    /// reverts `Retired` after `migrate`, `InPile`, `NotHolder`, `ZeroId` and `Empty`. logs `CreditAdopted`. the
-    /// body is `CoreLib.adopt`, called with the calldata untouched
+    /// credit is the mode-off price state or value-mode accounting rate times `score / RATE_SCORE`, plus its on-top
+    /// artist royalty, at least 1 wei. a failed value quote uses the last good stored rate; if none exists, adoption
+    /// reverts `NoQuote`. the clamp of a thin pot does not lower the booked basis. the basis is booked and the pile
+    /// grows; eth and the pots keep their values. the bid checkpoints before the pile changes, preserving earned
+    /// climb under the old reserve without changing the live price. a donor who inflates the basis of a statement
+    /// gives credits away.
+    /// reverts `Retired` after `migrate`, `NoQuote` without an accounting rate, `InPile`, `NotHolder`, `ZeroId` and
+    /// `Empty`. logs `CreditAdopted`. the body is `CoreLib.adopt`, called with the calldata untouched
     function adopt(uint256[] calldata) external nonReentrant {
         _openDoor();
         _toLib();
@@ -1388,6 +1393,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// last fill rate and the remembered peak are all `rate`; the actual last fill time stays and the funded ceiling
     /// clock restarts. the clamp and the ceiling still bound the rate on read
     function setRate(uint256) external onlyOwner nonReentrant {
+        _toOps();
+    }
+
+    /// resets the opening ETH rate, its 3x hard cap and the live ETH bid together before the coin exists
+    function setOpeningRate(uint256) external onlyOwner nonReentrant {
+        if (COIN.code.length != 0 || s.retired || s.settings.valueModeOn) revert OpeningRateClosed();
         _toOps();
     }
 

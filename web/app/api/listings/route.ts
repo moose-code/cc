@@ -1,9 +1,10 @@
-// OpenSea listings of the Credits collection that the Core can fill through SeaportBasicAdapter (owner decision 134).
+// OpenSea listings of the Credits collection that the Core can fill through SeaportBasicAdapter.
 // Server only: OPENSEA_API_KEY never reaches the browser. The response is the cheapest listings that pass the
 // adapter's checks. The list (no fulfillment data) is cached for CACHE_MS so every browser shares one OpenSea round of
 // requests; `?fulfill=<orderHash>` returns the encoded `params` for Core.buyListing of one order, cached per order.
 
 import { createPublicClient, encodeAbiParameters, getAddress, http, zeroAddress, type Address, type Hex } from "viem";
+import { isIP } from "node:net";
 import { core, credits, rpcUrl, seaportAdapter } from "@/lib/config";
 import { basicOrderParameters, seaportAdapterAbi } from "@/lib/abis";
 
@@ -13,7 +14,10 @@ const OS = "https://api.opensea.io/api/v2";
 const SLUG = "credits";
 const SEAPORT_1_6 = "0x0000000000000068f116a894984e2db1123eb395";
 const PAGE = 100; // OpenSea's maximum page size
-const MAX_LISTINGS = 200; // the cheapest listings kept per cache window (two pages); sent as `max` for the listings page caption
+const MAX_LISTINGS = 200; // the cheapest listings kept per cache window; sent as `max` for the listings page caption
+const MAX_PAGES = 5; // upstream GET limit even when every returned order is ineligible
+const LISTINGS_TIMEOUT_MS = 10_000; // one deadline for the full paged snapshot
+const FULFILL_TIMEOUT_MS = 10_000; // release a fulfillment slot when OpenSea stalls
 const CACHE_MS = 20_000;
 const FULFILL_CACHE_MS = 10_000;
 const MAX_FULFILL_INFLIGHT = 4; // concurrent OpenSea fulfillment POSTs across all clients
@@ -74,6 +78,16 @@ function allow(key: string): boolean {
   return true;
 }
 
+// A proxy must append one address per configured trusted hop. Ignore untrusted left-hand entries and malformed
+// chains. Without that deployment guarantee the global upstream budget remains the request bound.
+function clientKey(req: Request): string | undefined {
+  const hops = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
+  if (!Number.isInteger(hops) || hops < 1 || hops > 8) return undefined;
+  const chain = req.headers.get("x-forwarded-for")?.split(",").map((s) => s.trim()) ?? [];
+  const candidate = chain.at(-hops);
+  return candidate && isIP(candidate) ? candidate : undefined;
+}
+
 const lc = (a: string) => a.toLowerCase();
 
 async function os(path: string, init?: RequestInit) {
@@ -90,8 +104,9 @@ async function os(path: string, init?: RequestInit) {
 async function build(): Promise<Out> {
   const rows: Out["listings"] = [];
   let next = "";
-  while (rows.length < MAX_LISTINGS) {
-    const page = await os(`/listings/collection/${SLUG}/best?limit=${PAGE}${next ? `&next=${encodeURIComponent(next)}` : ""}`);
+  const signal = AbortSignal.timeout(LISTINGS_TIMEOUT_MS);
+  for (let pages = 0; pages < MAX_PAGES && rows.length < MAX_LISTINGS; pages++) {
+    const page = await os(`/listings/collection/${SLUG}/best?limit=${PAGE}${next ? `&next=${encodeURIComponent(next)}` : ""}`, { signal });
     for (const l of page.listings as any[]) {
       const p = l.protocol_data?.parameters;
       const id = p?.offer?.[0]?.identifierOrCriteria;
@@ -109,7 +124,7 @@ async function build(): Promise<Out> {
 async function fulfill(orderHash: string): Promise<Fulfill> {
   try {
     const body = { listing: { hash: orderHash, chain: "ethereum", protocol_address: SEAPORT_1_6 }, fulfiller: { address: core } };
-    const f = (await os("/listings/fulfillment_data", { method: "POST", body: JSON.stringify(body) })).fulfillment_data?.transaction;
+    const f = (await os("/listings/fulfillment_data", { method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(FULFILL_TIMEOUT_MS) })).fulfillment_data?.transaction;
     const p = f?.input_data?.parameters;
     if (!p || !String(f.function).startsWith("fulfillBasicOrder_efficient_6GL6yc") || lc(f.to) !== SEAPORT_1_6) return { skipped: "not a fulfillBasicOrder call" };
     if (lc(p.offerToken) !== lc(credits) || p.offerAmount !== "1") return { skipped: "not one credit" };
@@ -173,8 +188,8 @@ export async function GET(req: Request) {
   const hash = new URL(req.url).searchParams.get("fulfill");
   if (hash) {
     if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) return Response.json({ skipped: "bad order hash" } satisfies Fulfill, { status: 400 });
-    const client = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
-    if (!allow(client)) return Response.json({ skipped: "rate limited" } satisfies Fulfill, { status: 429 });
+    const client = clientKey(req);
+    if (client && !allow(client)) return Response.json({ skipped: "rate limited" } satisfies Fulfill, { status: 429 });
     const key = hash.toLowerCase();
     if (!(await snapshot()).listings.some((l) => lc(l.orderHash) === key)) return Response.json({ skipped: "order not in the current listings" } satisfies Fulfill, { status: 404 });
     const hit = fulfilled.get(key);

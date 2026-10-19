@@ -6,7 +6,7 @@ import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
 import { formatUnits, parseAbi, zeroAddress, type Address } from "viem";
-import { core, ethUsdFeed } from "./config";
+import { chain, core, ethUsdFeed, expectedPool } from "./config";
 import { chainlinkAbi, controllerAbi, erc20Abi, hookAbi, mevAbi, quoterAbi, stateViewAbi } from "./abis";
 import { useCoinLive, useHead, useSnapshot } from "./live";
 import { SCOPE, lsGet, lsSet } from "./cache";
@@ -18,11 +18,39 @@ const BUCKET = 300n; // the 24h reference block moves once per hour, so the cach
 // An eth/token v4 pool the swap panel trades: the token (currency1) and its pool key.
 export type Market = { token: Address; symbol: string; decimals: number; key: PoolKey };
 
-// The coin market. undefined until the Core snapshot has the coin and while the coin is not launched (live.useCoinLive: the coin has no code).
-export function useCcMarket(): Market | undefined {
+const corePoolAbi = parseAbi([
+  "function HOOK() view returns (address)",
+  "function POOL_FEE() view returns (uint24)",
+  "function TICK_SPACING() view returns (int24)",
+]);
+
+// The CC pool key comes from the Core's immutable values after the coin launches.
+// The one pool read is cached; a configured tuple that disagrees leaves the market unavailable.
+export function useCcMarket(): { market?: Market; error?: string } {
+  const client = usePublicClient();
   const coin = useSnapshot().data?.coin;
   const live = useCoinLive();
-  return useMemo(() => (coin && live ? { token: coin, symbol: "cc", decimals: 18, key: poolKey(coin) } : undefined), [coin, live]);
+  const key = useQuery<PoolKey>({
+    queryKey: ["cc-pool", chain.id, core, coin],
+    enabled: Boolean(client && core && coin && live),
+    staleTime: Infinity,
+    retry: false,
+    queryFn: async () => {
+      const [hook, fee, tickSpacing] = await client!.multicall({
+        allowFailure: false,
+        contracts: [
+          { address: core!, abi: corePoolAbi, functionName: "HOOK" },
+          { address: core!, abi: corePoolAbi, functionName: "POOL_FEE" },
+          { address: core!, abi: corePoolAbi, functionName: "TICK_SPACING" },
+        ],
+      }).catch(() => {
+        throw new Error("Could not read CC pool settings from the configured Core. Check the Core address and RPC.");
+      });
+      return poolKey(coin!, { hook, fee, tickSpacing }, expectedPool);
+    },
+  });
+  const market = useMemo(() => (coin && live && key.data ? { token: coin, symbol: "cc", decimals: 18, key: key.data } : undefined), [coin, live, key.data]);
+  return { market, error: key.isError ? key.error.message : undefined };
 }
 
 // The balance token market from the controller's balancePoolKey. `loading`

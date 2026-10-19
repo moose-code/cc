@@ -83,16 +83,17 @@ struct State {
     /// pages multiplier, not its clamp. `sharedRate()` reads it. the posted balance bid does not read or move it
     /// (decision 164). the climb and drop are the eth bid's, shared through CoreLib
     CoreLib.Rate balance;
-    /// the last `sellCreditTo` per credit id, the buyer packed in the high 160 bits and the sale time in the low 96,
-    /// kept after the credit leaves the pile. every intake door (`sellForEth`, `sellForBalance`, `buyListing`,
-    /// `swapCredit` as `inId`) refuses the credit for `returnLockSeconds` from the sale when the counterparty returning
-    /// it is that buyer (`checkReturn`); a secondary holder is not the buyer and is not locked
+    /// the last `sellCreditTo` time per credit id, kept after the credit leaves the pile. every intake door
+    /// (`sellForEth`, `sellForBalance`, `buyListing`, `swapCredit` as `inId`) refuses the credit for
+    /// `returnLockSeconds` after the sale, including when it has moved to another holder
     mapping(uint256 => uint256) creditSoldAt;
     /// the ETH purchase budget of the current bucket, charged by every ETH purchase door
     CoreLib.Spend spend;
     /// every module and token a `setBalanceModule` has ever selected. a replaced module or token stays here, so it
     /// remains a forbidden target after it stops being the live module or token
     mapping(address => bool) everBalanceTarget;
+    /// opening ETH rate in wei per 100 points; the owner may reset it before the coin exists
+    uint256 openingRate;
 }
 
 /// the Core's pricing and accounting library: settings validation and writes, the eth bid and its ceiling, and the
@@ -206,9 +207,9 @@ library CoreLib {
     error BalanceBidOff();
     /// `sellForBalance(ids, minOut, expectedToken)` when `balanceToken()` differs from `expectedToken`
     error BalanceTokenChanged();
-    /// a credit the engine sold through `sellCreditTo` is offered back to an intake door by its buyer before `until`
+    /// a credit the engine sold through `sellCreditTo` is offered back to an intake door before `until`
     error ReturnLocked(uint256 id, uint256 until);
-    /// retained for ABI compatibility; ETH quote failures now fall back to the last good value rate
+    /// adoption has no safe value-mode basis when both the live quote and stored rate are zero
     error NoQuote();
     /// one eth fill in value mode: the eth paid, the shared instance rate (bps of par) after this credit's drop, and the
     /// pot left. mirrors `EthRateFill`
@@ -515,8 +516,8 @@ library CoreLib {
     }
 
     /// @notice the eth bid rate now, wei per 100 points: the price state lowered to the royalty-adjusted room from
-    /// `ethPot` plus the pending pot share less the reserve. in value mode the price state is `_valueRate`, falling back to the last good value
-    /// rate while the quote is unusable. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint` and `bidOf` and its
+    /// `ethPot` plus the pending pot share less the reserve. in value mode an unusable quote closes the ETH bid at zero.
+    /// the Core forwards `ethRate`, `bidForScore`, `ethPerPoint` and `bidOf` and its
     /// doors read it
     function ethRate() external view returns (uint256 read) {
         State storage c = state();
@@ -525,28 +526,26 @@ library CoreLib {
             read = price.min(_bidRoom(c));
             return read;
         }
-        return _valueRateOrLast(c).min(_bidRoom(c));
+        return _valueRateOrZero(c).min(_bidRoom(c));
     }
 
-    /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode the value rate, falling back
-    /// to the last good value rate while the quote is unusable. the Core forwards its `ethPrice()`
+    /// @notice the eth price state now, wei per 100 points, before the clamp; in value mode an unusable quote returns
+    /// zero. the Core forwards its `ethPrice()`
     function ethPrice() external view returns (uint256) {
         return _ethPrice(state());
     }
 
-    /// the eth price state now: the eth instance outside value mode, the value rate (or the last good one) in value mode
+    /// the eth price state now: the eth instance outside value mode, the usable value rate or zero in value mode
     function _ethPrice(State storage c) private view returns (uint256 price) {
-        if (c.settings.valueModeOn) return _valueRateOrLast(c);
+        if (c.settings.valueModeOn) return _valueRateOrZero(c);
         (price,,) = _ethClimb(c);
     }
 
-    /// the value mode eth price state now: the controller's value read when usable, else the last good value mode eth
-    /// rate kept in the eth instance checkpoint. a lapsed or unusable quote degrades the eth bid instead of reverting
-    /// `NoQuote`, so the engine keeps buying while the reference recovers (decision 159, C02)
-    function _valueRateOrLast(State storage c) private view returns (uint256) {
+    /// the value mode ETH price state now: a usable controller quote or zero. the last good rate remains stored for
+    /// balance acquisition basis and for leaving value mode, but cannot fund an ETH acquisition during an outage
+    function _valueRateOrZero(State storage c) private view returns (uint256) {
         (uint256 rate, bool ok) = _valueRate(c);
-        // the fallback is the last good value rate, itself stored at or under `rateCap` by `_valueRate`
-        return ok ? rate : c.rateAtCheckpoint;
+        return ok ? rate : 0;
     }
 
     /// the value mode eth rate, wei per 100 points: the shared instance climbed to now (clamped to the cap, not to the
@@ -579,13 +578,12 @@ library CoreLib {
     /// the posted balance payout `pay` for `score` stored units lowered to the controller's `balanceClampFor`: the eth
     /// bid for the score valued in tokens at the protected sale price, so a filled payout is worth at most the eth bid
     /// when the engine sells the tokens and a round trip cannot extract a spot that leads the reference.
-    /// returns `pay` outside value mode. in value mode the controller's answer is used as given; while the reference is
-    /// unusable the controller answers a zero payout, so the fill reverts `ZeroAmount`. a failed or malformed
-    /// controller call keeps `pay`
+    /// returns `pay` outside value mode. in value mode a failed or malformed bounded read returns zero, so the fill
+    /// reverts `ZeroAmount`; a successful answer cannot raise the posted payout
     function _clampPayout(uint256 score, uint256 pay) private view returns (uint256) {
         if (!state().settings.valueModeOn) return pay;
         (uint256 out, bool ok) = _quoteRead(abi.encodeCall(IController.balanceClampFor, (score, pay)));
-        return ok ? out : pay;
+        return ok ? out.min(pay) : 0;
     }
 
     /// @notice the eth the pot keeps for processing now, wei. the Core forwards its `reserve()`
@@ -647,19 +645,14 @@ library CoreLib {
         return uint256(s.reserveWei).max(queued * 15 / 10);
     }
 
-    /// reverts `ReturnLocked` while credit `id` is offered back by the buyer the engine sold it to, before
-    /// `soldAt + returnLockSeconds`. `creditSoldAt[id]` packs that buyer in the high 160 bits and the sale time in the
-    /// low 96. the lock binds only when `counterparty` is the stored buyer, so a secondary holder who bought the credit
-    /// from the engine's buyer sells at once. a `returnLockSeconds` of 0, a word of 0 (never sold), or a counterparty
-    /// other than the buyer passes at any clock. every intake door calls it per credit with the counterparty:
-    /// `msg.sender` for `sellForEth`, `sellForBalance` and `swapCredit`, the listing offerer for `buyListing`
-    function checkReturn(State storage c, uint256 id, address counterparty) internal view {
+    /// reverts `ReturnLocked` while credit `id` is offered back before `soldAt + returnLockSeconds`, regardless of
+    /// its current holder. a zero lock or a zero sale time (never sold) passes. every intake door calls this per credit
+    function checkReturn(State storage c, uint256 id) internal view {
         uint256 lock = c.settings.returnLockSeconds;
         if (lock == 0) return;
-        uint256 word = c.creditSoldAt[id];
-        if (word == 0) return;
-        if (counterparty != address(uint160(word >> 96))) return;
-        uint256 until = uint96(word) + lock;
+        uint256 soldAt = c.creditSoldAt[id];
+        if (soldAt == 0) return;
+        uint256 until = soldAt + lock;
         if (block.timestamp < until) revert ReturnLocked(id, until);
     }
 
@@ -818,7 +811,7 @@ library CoreLib {
         uint256 fallNum = uint256(s.dropPer100PointsBps) * score;
         uint256 denom = 10_000 * RATE_SCORE;
         uint256 dropped = fallNum >= denom ? 0 : price.mulDiv(denom - fallNum, denom);
-        return dropped.max(a.minuteStartRate * s.dropFloorBps / 10_000).max(absFloor);
+        return dropped.max(a.minuteStartRate * s.dropFloorBps / 10_000).max(absFloor).max(1);
     }
 
     /// @notice sends coin the Core holds to `to`. the Core's `rescueCoin` forwards its call here untouched, so the owner
@@ -884,19 +877,21 @@ library CoreLib {
     }
 
     /// @notice puts credits the Core holds without a record into the eth pile, anyone may call. The cost basis of a
-    /// credit is the price state at `block.timestamp` (`climb`, before the clamp) times the
+    /// credit is the mode-off price state or the value-mode accounting rate before the clamp, times the
     /// credit's score over 100 points, plus the artist royalty `buyToArtistBps` the eth bid would pay, at least 1 wei,
-    /// so the sale floor matches a bought credit (decision 163). The price state is what the engine pays with a funded
-    /// pot, so statements built from adopted credits are priced at that level; the clamp of a thin pot would book a
-    /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
-    /// eth pile grows; the Core checkpoints before the reserve may rise. `acquiredAt` is the current
-    /// time. Reverts `Empty` for an empty list, `ZeroId` for id zero, `InPile` for a credit that is in a pile (the same
-    /// id twice included), and `NotHolder` for a credit the Core does not hold. The Core books the fee income, then
+    /// so the sale floor matches a bought credit. In value mode an unusable quote uses the stored last good rate;
+    /// adoption reverts if no basis is available. The clamp of a thin pot does not lower the booked basis. A donor who
+    /// inflates the basis of a statement gives credits away. The basis is booked and the eth pile grows; the Core
+    /// checkpoints before the reserve may rise. `acquiredAt` is the current time. Reverts `Empty` for an empty list,
+    /// `NoQuote` without an accounting rate, `ZeroId` for id zero, `InPile`
+    /// for a credit that is in a pile (the same id twice included), and `NotHolder` for a credit the Core does not hold.
+    /// The Core books the fee income, then
     /// forwards its call here untouched, under its own reentrancy guard
     function adopt(uint256[] calldata ids) external {
         if (ids.length == 0) revert Empty();
         State storage c = state();
-        uint256 price = _ethPrice(c);
+        uint256 price = c.settings.valueModeOn ? _ethFloorNow(c) : _ethPrice(c);
+        if (price == 0) revert NoQuote();
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];
             if (id == 0) revert ZeroId();
@@ -917,13 +912,13 @@ library CoreLib {
     /// pile size and the credit sale window of the slot do not change. `inId` is pulled in before `outId` is sent
     /// out. the Core forwards its `swapCredit` call here untouched, under its own reentrancy guard. reverts
     /// `Retired` after `migrate`, `Paused` while paused, and for a bad id, a non-pile `outId`, an `inId` not owned
-    /// by the caller or already piled, a lower incoming score, or the buyer-specific return lock
+    /// by the caller or already piled, a lower incoming score, or the credit-wide return lock
     function swapCredit(uint256 inId, uint256 outId) external {
         State storage c = state();
         if (c.retired) revert Retired();
         if (c.paused) revert Paused();
         if (inId == 0) revert ZeroId();
-        checkReturn(c, inId, msg.sender);
+        checkReturn(c, inId);
         Credit storage out = c.credits[outId];
         if (!out.inPile) revert NotInPile(outId);
         if (c.credits[inId].inPile) revert InPile();
@@ -1128,9 +1123,9 @@ library CoreLib {
     /// balance token through a second module `pay`. the module holds the balance token: the running total of the
     /// payouts and the royalties must not exceed the module's live `available()` (`PotTooSmall`), so the funds for
     /// both are present. the module pays the seller with one `pay(seller, total)`, and the seller's holding must
-    /// rise by at least `total` (`BadModule`). the artist `pay` is gas bounded and non-blocking. the production
-    /// module reserves token transfer shortfalls as `owed[artist]`, claimable later. a reverted whole module call
-    /// cannot persist an accrual. the credit enters the pile at `_ethFloorNow() * score / RATE_SCORE`, at least 1
+    /// rise by at least `total` (`BadModule`). the artist `pay` is gas bounded; a failed whole call reverts the sale
+    /// because it cannot record a liability. the production module reserves token transfer shortfalls as
+    /// `owed[artist]`, claimable later. the credit enters the pile at `_ethFloorNow() * score / RATE_SCORE`, at least 1
     /// wei. a failing, short or zero live unit read reverts the whole bid (`BadModule`)
     function _sellForBalance(uint256[] calldata ids, uint256 minOut) private {
         State storage c = state();
@@ -1147,13 +1142,11 @@ library CoreLib {
         uint256 heldBefore = SafeTransferLib.balanceOf(token, msg.sender);
         IBalanceModule(module).pay(msg.sender, total);
         if (SafeTransferLib.balanceOf(token, msg.sender).zeroFloorSub(heldBefore) < total) revert BadModule();
-        // the artist royalty call is gas bounded by ARTIST_PAY_GAS and its result is not checked. a transfer the module
-        // cannot complete inside that bound is recorded by the module as a liability that `available()` excludes, and
-        // anyone may settle it later through the module's `claim`. a hostile artist or token cannot block the sale.
+        // The module may record a failed token transfer as debt. A failed whole module call cannot persist that debt.
         if (artistTotal != 0) {
             (bool okPay,) =
                 module.call{gas: ARTIST_PAY_GAS}(abi.encodeCall(IBalanceModule.pay, (c.artist, artistTotal)));
-            okPay;
+            if (!okPay) revert BadModule();
         }
     }
 
@@ -1211,7 +1204,7 @@ library CoreLib {
     function _fillOne(uint256 id, uint256 unit, uint256 floor) private returns (uint256 paid, uint256 toArtist) {
         State storage c = state();
         owned(id);
-        checkReturn(c, id, msg.sender);
+        checkReturn(c, id);
         uint256 score = scoreOf(id);
         // value mode: lower the posted payout to the eth bid for the score at the protected sale price; the royalty
         // and the `avail` bound follow the converted payout

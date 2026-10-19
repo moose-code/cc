@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ICore} from "../src/interfaces/ICore.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
@@ -12,22 +13,41 @@ import {SystemDeployer, Deployed} from "./SystemDeployer.sol";
 abstract contract SystemResumer is SystemDeployer {
     /// @notice the Core at `got` is not the Core `coreAddress(c, deployer)` of this config and deployer
     error CoreMismatch(address want, address got);
-    /// @notice the Core of this config and deployer has no code: run `Deploy`
-    error NotStarted();
     /// @notice the coin is launched already: nothing to resume
     error AlreadyLaunched();
 
     /// @notice everything the resume checks before it sends: that `core_` is the Core of this config and deployer, that
-    /// it exists and has no coin yet, and the preflight rows that still apply. reverts on any failure. the script runs it
+    /// it has no coin yet if it exists, and the preflight rows that still apply. reverts on any failure. the script runs it
     /// outside the broadcast
     function resumeChecks(address deployer, LaunchConfig memory c, address core_) internal {
         _requireConfig(c);
         address want = coreAddress(c, deployer);
         if (core_ != want) revert CoreMismatch(want, core_);
-        if (want.code.length == 0) revert NotStarted();
-        if (ICore(payable(want)).COIN().code.length != 0) revert AlreadyLaunched();
-        preflightResume(c, deployer);
+        bool started = want.code.length != 0;
+        if (started) {
+            ICore core = ICore(payable(want));
+            if (core.COIN().code.length != 0) revert AlreadyLaunched();
+            _prelaunchPriceChecks(c, core);
+            if (core.owner() != c.owner) revert NotDeferred("core owner");
+            if (core.payee() != c.payee) revert NotDeferred("core payee");
+        }
+        if (started) preflightResume(c, deployer);
+        else preflight(c, deployer);
         _require();
+    }
+
+    /// A deferred launch accepts a reset only with its separate signoff and refuses other settings edits.
+    function _prelaunchPriceChecks(LaunchConfig memory c, ICore core) private {
+        uint256 rate = _approvedOpeningRate(c);
+        if (!runtimeMatchesArtifact(address(core), "Core")) revert NotDeferred("core runtime");
+        if (core.RATE_START() != rate) revert NotDeferred("opening rate");
+        if (core.rateAtCheckpoint() != rate) revert NotDeferred("opening price state");
+        if (core.ethPrice() != rate) revert NotDeferred("opening live price");
+        Settings memory expected = abi.decode(abi.encode(c.settings), (Settings));
+        if (rate != c.rateStart) {
+            expected.rateCap = uint64(rate * 3);
+        }
+        if (keccak256(abi.encode(core.settings())) != keccak256(abi.encode(expected))) revert NotDeferred("core settings");
     }
 
     /// @notice a step before the launch is not on chain, so the run is not a deferred deploy awaiting its launch
@@ -83,9 +103,19 @@ abstract contract SystemResumer is SystemDeployer {
         d = deploySystem(deployer, c);
     }
 
+    /// @notice completes missing prelaunch steps without creating the coin
+    function resumeSendUntilLaunch(address deployer, LaunchConfig memory c) internal returns (Deployed memory d) {
+        d = deploySystemUntilLaunch(deployer, c);
+    }
+
     /// @notice the postflight of a resumed deploy, reverting on any failed row
     function resumePostflight(address deployer, LaunchConfig memory c, Deployed memory d) internal {
         postflightAs(c, d.core, deployer);
+        _require();
+    }
+
+    function resumeDeferredPostflight(address deployer, LaunchConfig memory c, Deployed memory d) internal {
+        postflightDeferred(c, d.core, deployer);
         _require();
     }
 }

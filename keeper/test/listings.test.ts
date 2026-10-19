@@ -5,7 +5,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Sources } from "../src/listings.ts";
+import { PendingStore } from "../src/ledger.ts";
+import { listingCooldown } from "../src/main.ts";
 import { setSink } from "../src/log.ts";
+import { CREDIT_STRATEGY } from "@cc/engine/addresses";
 
 const offerer = "0x00000000000000000000000000000000000000f1";
 const params = {
@@ -74,4 +77,93 @@ test("seaport: hashless and zero-price orders are skipped while a valid order is
   } finally {
     setSink((l) => process.stdout.write(l + "\n"));
   }
+});
+
+// promise: one malformed signed order cannot discard a valid cached order or stop the keeper's listing tick
+test("seaport: malformed signed order is isolated from a valid order", async () => {
+  const file = join(mkdtempSync(join(tmpdir(), "keeper-orders-")), "orders.json");
+  const hash = "0x" + "11".repeat(32);
+  writeFileSync(file, JSON.stringify({ orders: [
+    { id: "bad", price: "wat", params: null, hash },
+    { id: "44", price: "1000", params, hash: "0xbad" },
+    { id: "42", price: "1000", params, hash },
+  ] }));
+  const cfg: any = {
+    record: { core: "0x00000000000000000000000000000000000000c0", seaportAdapter: "0x00000000000000000000000000000000000000a1" },
+    strategy: { mode: "off" }, opensea: { file, refreshSec: 60, pages: 1, sign: 0 },
+  };
+  const client: any = { multicall: async ({ contracts }: any) => contracts.map((c: any) => ({ status: "success", result:
+    c.functionName === "bidOf" ? 2000n : c.functionName === "price" ? ["0x0", 1000n, "0x"] : c.functionName === "ownerOf" ? offerer : [true, false, 0n, 0n] })) };
+  const lines: any[] = [];
+  setSink((l) => lines.push(JSON.parse(l)));
+  try {
+    const source = new Sources(client, cfg, () => 1_000_000_000);
+    (source as any).scores = new Map([[42n, 2000n]]);
+    const out = await source.candidates({ ethRate: 1_000_000n } as any, 1n);
+    assert.deepEqual(out.map((l) => l.id), [42n]);
+    assert.deepEqual(lines.filter((l) => l.msg === "malformed seaport order skipped").map((l) => l.id), ["bad", "44"]);
+  } finally {
+    setSink((l) => process.stdout.write(l + "\n"));
+  }
+});
+
+// promise: after a keeper restart, a reverted listing waits one hour while another listing remains eligible
+test("seaport: a durable reverted listing wait survives restart and yields the next candidate", async () => {
+  let now = 1_000_000_000;
+  const dir = mkdtempSync(join(tmpdir(), "keeper-listing-wait-"));
+  const cfg: any = {
+    record: { core: "0x00000000000000000000000000000000000000c0", seaportAdapter: "0x00000000000000000000000000000000000000a1" },
+    strategy: { mode: "off" }, opensea: { refreshSec: 60 },
+  };
+  const client: any = { multicall: async ({ contracts }: any) => contracts.map((c: any) => ({ status: "success", result:
+    c.functionName === "bidOf" ? 2000n : c.functionName === "price" ? ["0x0", 1000n, "0x"] : c.functionName === "ownerOf" ? offerer : [true, false, 0n, 0n] })) };
+  const outcome = { kind: "sent", hash: ("0x" + "11".repeat(32)) as `0x${string}`, status: "reverted", spent: 1n, received: 0n, listingKey: "seaport:42" } as const;
+  const cooldown = listingCooldown(outcome);
+  assert.ok(cooldown);
+  new PendingStore(dir, () => now).recordListingRevert(cooldown.key, outcome.hash);
+  const source = new Sources(client, cfg, () => now, new PendingStore(dir));
+  (source as any).scores = new Map([[42n, 2000n], [43n, 2000n]]);
+  (source as any).seaport = [42n, 43n].map((id) => ({
+    venue: "seaport", adapter: cfg.record.seaportAdapter, id, price: 1000n,
+    params: "0x", hash: "0x" + "11".repeat(32), offerer,
+  }));
+  assert.equal(cooldown.seconds, 3_600);
+  assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 1n)).map((l) => l.id), [43n]);
+  now += 3_599_999;
+  assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 2n)).map((l) => l.id), [43n]);
+  now += 1;
+  assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 2n)).map((l) => l.id), [42n, 43n]);
+});
+
+// promise: stale top-ranked listings cannot hide a valid 41st listing from the keeper indefinitely.
+test("a valid 41st listing is checked on the next block after 40 stale listings", async () => {
+  const cfg: any = {
+    record: { core: "0x00000000000000000000000000000000000000c0", strategyAdapter: "0x00000000000000000000000000000000000000a1" },
+    strategy: { mode: "off" },
+    opensea: { refreshSec: 60 },
+  };
+  const checked: bigint[] = [];
+  const client: any = {
+    multicall: async ({ contracts }: { contracts: { functionName: string; args: bigint[] }[] }) =>
+      contracts.map((c) => {
+        if (c.functionName === "bidOf") checked.push(c.args[0]);
+        if (c.functionName === "price" && c.args[0] < 41n) return { status: "failure" };
+        const result = c.functionName === "bidOf" ? 2_000n : c.functionName === "price" ? ["0x0", 1_000n, "0x"] : CREDIT_STRATEGY;
+        return { status: "success", result };
+      }),
+  };
+  const s = new Sources(client, cfg, () => 1_000_000_000);
+  const watched = Array.from({ length: 41 }, (_, i) => ({
+    venue: "strategy", adapter: cfg.record.strategyAdapter, id: BigInt(i + 1), price: 1_000n, params: "0x",
+  }));
+  (s as any).strategy = watched;
+  (s as any).scores = new Map(watched.map((w) => [w.id, 2_000n]));
+  const first = await s.candidates({ ethRate: 1_000_000n } as any, 1n);
+  assert.equal(first.length, 40);
+  assert.ok(first.every((l) => !l.valid));
+  assert.ok(!checked.includes(41n));
+  (s as any).strategy = [...watched]; // refresh does not reset the scan window
+  const second = await s.candidates({ ethRate: 1_000_000n } as any, 2n);
+  assert.ok(second.some((l) => l.id === 41n && l.valid));
+  assert.equal(checked.length, 80, "at most 40 full reads per block");
 });

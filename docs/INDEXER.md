@@ -76,16 +76,14 @@ All addresses and start blocks come from `deployments/<chainId>.json`. The confi
 | Core | record `core` (CoreLib events are emitted under the Core address) | all events | record `deployBlock` | every Core and CoreLib event (inventory B1, about 35) |
 | Controller | factory over Core `ControllerSet(address controller)` | all events | block of each `ControllerSet` | `Bought`, `AnchorMoved`, `SaleSet`, `CreditSaleSet`, `AnchorBpsSet`, `BalancePoolKeySet`, `QuoteSet`, `ReferenceRefreshed` |
 | CC burns | record `coin` | `Transfer` with `to = 0x0` | record `deployBlock` | all burns; attribution to the engine via the tx (Buyback tx, `CreditSwapped.fee`) |
-| $BALANCE paid | Core | `BalanceFill.paid` (the seller's posted payout) and `BalanceFill.toArtist` (the artist royalty, decision 163), associated with preceding `CreditBought` and latest prior `BalanceModuleSet` | Core deployment | module custody, per-credit payment in log order |
+| $BALANCE acquisition commitments | Core | `BalanceFill.paid` (seller payout) and `BalanceFill.toArtist` (amount requested from the module for the artist), associated with preceding `CreditBought` and latest prior `BalanceModuleSet` | Core deployment | event-time token, per-credit commitment in log order; no module ERC-20 transfer ledger |
 | Credits | `0x97630aA70AB14ed9883B41dAfccBc11349723043` | `Transfer` | collection deploy block (to be read) | owners for every credit, engine ins and outs, migrate moves |
 | Statements | `0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b` | `Transfer` | collection deploy block (to be read) | statement owners after sale |
 | CreditStrategy | `0x8e607209899b5d12Bd3167a6CD0E8E11FEB053d6` (proxy) | `NFTBoughtByProtocol`, `NFTSoldByProtocol` | env `STRATEGY_START_BLOCK`; chain 1 requires it (`26037623`, the first block with code); local fork: 60000 blocks before the Core deploy block | strategy listings (6.11) |
-| CC pool swaps (phase 2) | PoolManager `0x000000000004444c5dc75cB358380D2e3dE08A90` | `Swap` with topic `id = ccPoolId` | record `deployBlock` | price history, volume, 24 h change; replaces the archive `getSlot0` read |
-| $BALANCE pool swaps (phase 2) | PoolManager | `Swap` with topic `id = balancePoolId` | first `BalancePoolKeySet` | price history for `valueOf` inputs |
 
 The Credits and Statements event lists must be confirmed against the deployed contracts before build. Their source is outside this repo.
 
-The PoolManager sources filter on the indexed pool id topic, so the endpoint returns only this pool's swaps. The artcoins indexer dropped an unfiltered PoolManager source as too heavy for public RPCs; the topic filter is the difference.
+PoolManager swap sources are planned for phase 2 and are absent from the current config. They will need indexed pool-id filters before use; the current indexer does not ingest swap history or populate hourly pool prices.
 
 ### 5.2 call sources
 
@@ -105,7 +103,7 @@ Conventions: addresses lowercase hex; amounts `bigint` in base units; every row 
 
 ### 6.1 `log` (every event)
 
-`id` (`txHash:logIndex`), `address`, `contract` (core, controller, coin, balance_token, credits, statements, pool_manager), `event` (name), `args` (json, bigints as strings), block and tx fields. Index on (`contract`, `event`, `blockNumber`).
+`id` (`txHash:logIndex`), `address`, `contract` (core, controller, coin, credits, statements, strategy), `event` (name), `args` (json, bigints as strings), block and tx fields. Index on (`contract`, `event`, `blockNumber`). BALANCE token transfers from modules are not indexed as raw logs; `BalanceFill` records acquisition obligations, not observed ERC-20 outflow.
 
 ### 6.2 `engine` (one row per Core)
 
@@ -137,7 +135,7 @@ One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCos
 | `costBasis`, `acquiredAt`, `acquiredBlock`, `acquiredTx`, `acquiredHow` | `eth_bid`, `balance_bid`, `listing`, `adopted`, `swap_in`; a swap-in copies the swapped-out credit's cost and time (the event omits them) |
 | `seller` | `CreditBought.from` or listing seller |
 | `balancePaid` | `BalanceFill.paid` for a balance bid, the seller's posted payout |
-| `royalty` | the artist royalty paid at acquisition (decision 163): `CreditBought.toArtist` for an eth bid (wei), `ListingBought.toArtist` for a listing (wei), `BalanceFill.toArtist` for a balance bid (`balancePaidToken` units); null for an adopted or swapped-in credit |
+| `royalty` | the artist royalty assigned at acquisition: `CreditBought.toArtist` for an ETH bid (wei), `ListingBought.toArtist` for a listing (wei), `BalanceFill.toArtist` for a BALANCE bid (`balancePaidToken` units, paid or recorded as claimable debt); null for an adopted or swapped-in credit |
 | `pileOrder` | sort key for pile order: insertion sequence; a swap-in takes the out credit's key; `Migrated` removes from the head |
 | `statementId`, `pagePosition` | after `Composed` |
 | `salePrice`, `buyer`, `toArtist`, `toOperator`, `toPot`, `toBuyback`, `costToPotBps` | after `CreditSold`, split computed with the bps in force at that block |
@@ -159,11 +157,11 @@ One row per user-visible event, newest first by (`blockNumber`, `logIndex`): `ki
 
 ### 6.9 aggregates
 
-`stats` (singleton per Core): counts per activity kind, `ethIntoCredits`, `feesBooked`, `toPayee`, `toArtist` (the artist cut of sales), `toArtistBuys` (the artist royalty on eth bid and listing purchases, wei, decision 163; balance bid royalties are inside `balancePaidByToken`), `toOperator`, `ccBurned` (Buyback burns plus swap-fee burns), `ethToBuybackSpent`, `balancePaidByToken` (raw-unit decimal strings keyed by lowercase token address, also hourly; currencies are never summed).
+`stats` (singleton per Core): counts per activity kind, `ethIntoCredits`, `feesBooked`, `toPayee`, `toArtist` (the artist cut of sales), `toArtistBuys` (the artist royalty on ETH bid and listing purchases, wei; BALANCE bid royalties are inside `balanceCommittedByToken`), `toOperator`, `ccBurned` (Buyback burns plus swap-fee burns), `ethToBuybackSpent`, `balanceCommittedByToken` (seller payouts plus Core-requested artist amounts, raw-unit decimal strings keyed by lowercase token address, also hourly; currencies are never summed). The production module may pay the artist or record claimable debt. This counter does not prove that an owner-supplied module fulfilled the request. The schema rename requires an indexer replay before any persisted stats are used.
 
 `stats_hourly`: the same counters per hour bucket, plus `creditsBought`. The buy rate for compose estimates reads the last 24 rows.
 
-`price_hourly` (phase 2): open, high, low, close and volume for the CC pool and the $BALANCE pool, from `Swap`.
+`price_hourly` is planned for phase 2. The current schema has no such table or `Swap` handler.
 
 ### 6.10 `account`
 
@@ -286,7 +284,7 @@ Source key: **I** indexer table.column, **L** live browser read, **D** derived i
 | $CC burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
 | explainer fee wording | L hook skim and bounty (`useHookFeeBps`); D engine share |
 | statement sale split | D from I `engine.settings` |
-| ledger rows | Currency is I `activity.balanceToken` for balance purchases/redemptions (chain mode: prior `BalanceModuleSet` in log order); amount is `BalanceFill.paid` per credit (the seller's posted payout; the artist royalty `BalanceFill.toArtist` is the module's extra outflow) or `StatementRedeemed.received`. Historical metadata is used only for the matching token, otherwise show exact raw units and token address. I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
+| ledger rows | Currency is I `activity.balanceToken` for BALANCE purchases/redemptions (chain mode: prior `BalanceModuleSet` in log order); amount is `BalanceFill.paid` per credit (the seller's posted payout; the artist royalty `BalanceFill.toArtist` is an additional obligation that may remain claimable debt) or `StatementRedeemed.received`. Historical metadata is used only for the matching token, otherwise show exact raw units and token address. I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
 | next credit progress | D pot over bid from L snapshot |
 | next statement progress | L snapshot `pileSize` mod 80 |
 
@@ -390,7 +388,7 @@ A chain 1 run with Postgres reads three values the local PGlite path supplies on
 - `DATABASE_SCHEMA`, the schema name. `ponder start` with Postgres requires it; the Fly path passes it from `indexer/env/mainnet.env`, and a direct `ponder start` sets it in the environment or with `--schema`.
 - the collection and strategy start blocks `CREDITS_START_BLOCK` (26037292), `STATEMENTS_START_BLOCK` (26100733) and `STRATEGY_START_BLOCK` (26037623). Chain 1 requires each; the local path defaults them from the Core deploy block.
 
-The chain 1 transport is the public endpoint list of section 7.1 through `fallbackTransport`. The record's `rpcUrl` and `RPC_URL` apply to the local chain (id 31337) through `guardedHttp`, so a fork is indexed through the local path at chain id 31337. `PONDER_RPC_URL_1` joins the chain 1 list as the last reserve, after every public endpoint. A full history backfill from block 26037292 is bounded by the public endpoint rate caps: the Ponder log reports `Unable to find available JSON-RPC provider` and the fetch of each 5000 block window grows to tens of seconds, so the full backfill wants an archive endpoint with headroom above the section 7.1 caps.
+Live chain 1 uses the public endpoint list of section 7.1 through `fallbackTransport`; `PONDER_RPC_URL_1` joins last as a reserve. Chain 31337 uses the record's `rpcUrl` or `RPC_URL` through `guardedHttp`. A chain-id-1 fork requires an explicit loopback `RPC_URL` matching the record's `rpcUrl` and uses that single transport with no public fallback. A full history backfill from block 26037292 is bounded by the public endpoint rate caps: the Ponder log reports `Unable to find available JSON-RPC provider` and the fetch of each 5000 block window grows to tens of seconds, so the full backfill wants an archive endpoint with headroom above the section 7.1 caps.
 
 A direct run against a fresh database:
 

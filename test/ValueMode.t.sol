@@ -19,7 +19,7 @@ import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 /// the value switch (decisions 148, 150 to 154): the controller's rate limited reference of the balance token, its
 /// protected buy and sale prices, `valuePerPoint`, and the Core in value mode: the eth bid is the shared balance instance
 /// times the protected buy value per point. ETH fills drop the shared instance; flat balance fills leave it alone.
-/// Unusable quotes use the last good ETH value rate and refuse balance payouts. Sale references exclude cost;
+/// Unusable quotes close ETH and balance payouts. Sale references exclude cost;
 /// final quotes still cover the Core's historical cost floor.
 abstract contract ValueBase is Fixture {
     /// wei per balance token base unit is 0.49, so one point (`POINT_UNIT * UNIT` base units) is worth 4.9e13 wei, the
@@ -467,6 +467,7 @@ contract ValueReferenceTest is ValueBase {
 }
 
 contract ValueModeTest is ValueBase {
+    using stdStorage for StdStorage;
     // promise: an owner pause freezes the shared value-mode climb through booking, funding and half-life edits
     function test_pauseFreezesSharedBidAndResumesEarnedClimb() public {
         _valueOn();
@@ -553,19 +554,20 @@ contract ValueModeTest is ValueBase {
         assertEq(core.balanceRate(), 9_000, "the posted balance rate throughout");
     }
 
-    // promise: SPEC 4 an unusable quote degrades the eth bid to the last good rate instead of halting it (decision 159,
-    // C02): sellForEth and ethRate stay live on the fallback; sellForBalance, redeemStatement and book also stay live
-    function test_staleQuoteDegradesTheEthRoutes() public {
+    // promise: a stale value quote closes acquisitions while fee booking and age-only redemption stay live
+    function test_staleQuoteClosesAcquisitions() public {
         Composed memory c = _composeOnce();
         _valueOn();
         _fundPot(20 ether);
         vm.warp(block.timestamp + 1 days + 1); // the reference is stale
-        assertGt(core.ethRate(), 0, "the eth bid falls back to the last good rate, not NoQuote");
+        assertEq(core.ethRate(), 0, "the eth bid closes when the quote is stale");
+        assertEq(core.ethPrice(), 0, "the unclamped value rate closes too");
         uint256[] memory ids = _credits(seller, 2);
         uint256 before = seller.balance;
         vm.prank(seller);
+        vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForEth(_one(ids[0]));
-        assertGt(seller.balance, before, "the eth sell pays at the fallback rate");
+        assertEq(seller.balance, before, "a stale quote spends no ETH");
         vm.prank(seller);
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         core.sellForBalance(_one(ids[1]));
@@ -574,9 +576,56 @@ contract ValueModeTest is ValueBase {
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "conversion runs by age, no quote read");
     }
 
-    // promise: SPEC 1 a hostile controller quoting a huge value pays at most rateCap and cannot move the balance bid; a
-    // zero or not-ok quote degrades the eth bid to the last good rate (bounded by rateCap) and leaves conversion and the
-    // balance bid live (decision 159, C02)
+    // promise: a stale value quote cannot book donated Credits at a 1 wei basis, and composition preserves their costs
+    function test_staleQuoteAdoptKeepsLastGoodBasisThroughComposition() public {
+        _valueOn();
+        _fundPot(1 ether);
+        core.book();
+        uint256 lastGood = core.rateAtCheckpoint();
+        assertEq(lastGood, core.ethPrice(), "a usable quote established the accounting rate");
+        uint256[] memory ids = _credits(seller, 80);
+        for (uint256 i; i < ids.length; ++i) {
+            vm.prank(seller);
+            CREDITS.transferFrom(seller, address(core), ids[i]);
+        }
+        vm.warp(block.timestamp + 1 days + 1);
+        assertEq(core.ethRate(), 0, "the stale quote still closes ETH acquisition");
+        assertEq(core.ethPrice(), 0, "the live value price does not fall back");
+        vm.prank(seller);
+        core.adopt(ids);
+        uint256 sum;
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 pay = lastGood * _scoreOf(ids[i]) / RATE_SCORE;
+            uint256 expected = pay + pay * core.settings().buyToArtistBps / 10_000;
+            (, uint256 cost,) = core.creditInfo(ids[i]);
+            assertEq(cost, expected, "adoption uses the stored accounting rate");
+            assertGt(cost, 1, "the quote outage cannot erase cost");
+            sum += cost;
+        }
+        uint256 sid = STATEMENTS.supply() + 1;
+        vm.fee(composeBasefee);
+        vm.prank(keeper);
+        core.compose();
+        (bool held, uint256 statementCost,) = core.statementInfo(sid);
+        assertTrue(held, "the page composed");
+        assertEq(statementCost, sum, "composition preserves every adopted cost");
+    }
+
+    // promise: adoption refuses a missing accounting rate while a value quote is unusable
+    function test_staleQuoteAdoptWithoutStoredBasisReverts() public {
+        _valueOn();
+        uint256[] memory ids = _credits(seller, 1);
+        vm.prank(seller);
+        CREDITS.transferFrom(seller, address(core), ids[0]);
+        vm.warp(block.timestamp + 1 days + 1);
+        stdstore.target(address(core)).sig("rateAtCheckpoint()").checked_write(uint256(0));
+        assertEq(core.ethPrice(), 0, "the quote is stale");
+        vm.expectRevert(ICore.NoQuote.selector);
+        core.adopt(ids);
+        assertEq(core.pileSize(), 0, "a failed adoption leaves the pile unchanged");
+    }
+
+    // promise: a hostile value quote cannot lift the ETH bid above rateCap; an unusable quote closes acquisitions
     function test_hostileQuoteIsBounded() public {
         _valueOn();
         _fundPot(20 ether);
@@ -586,13 +635,49 @@ contract ValueModeTest is ValueBase {
         assertEq(core.ethRate(), core.settings().rateCap, "a huge quote pays the rate cap");
         uint256 bal0 = core.balanceRate();
         q.setValue(0, true);
-        assertLe(core.ethRate(), core.settings().rateCap, "a zero quote degrades to the bounded fallback, not NoQuote");
+        assertEq(core.ethRate(), 0, "a zero quote closes the ETH bid");
         q.setValue(1e13, false);
-        assertLe(core.ethRate(), core.settings().rateCap, "a not-ok quote degrades to the bounded fallback");
+        assertEq(core.ethRate(), 0, "a not-ok quote closes the ETH bid");
         assertEq(core.balanceRate(), bal0, "the quote never moves the balance bid");
         uint256[] memory ids = _credits(seller, 1);
+        assertEq(core.balanceBidOf(ids[0]), 0, "missing clamp disables the quoted BALANCE bid");
+        assertEq(core.balanceBidForScore(_scoreOf(ids[0])), 0, "score quote shares the failed clamp");
+        vm.prank(seller);
+        vm.expectRevert(ICore.ZeroAmount.selector);
+        core.sellForBalance(ids);
+        assertEq(CREDITS.ownerOf(ids[0]), seller, "failed clamp did not take the Credit");
+    }
+
+    // promise: outside value mode a controller without balanceClampFor cannot silence the flat BALANCE bid
+    function test_missingClampKeepsModeOffBalanceBid() public {
+        QuoteController q = new QuoteController(address(core), address(ctl));
+        _setController(address(q));
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 bid = core.balanceBidOf(ids[0]);
+        assertGt(bid, 0, "the posted bid is available outside value mode");
+        uint256 before = xt.balanceOf(seller);
         vm.prank(seller);
         core.sellForBalance(ids);
+        assertEq(xt.balanceOf(seller) - before, bid, "the seller receives the posted payout");
+    }
+
+    // promise: a hostile clamp cannot raise the posted payout or turn a failed quote into a BALANCE fill
+    function test_hostileClampCannotRaiseThePostedPayout() public {
+        _valueOn();
+        QuoteController q = new QuoteController(address(core), address(ctl));
+        _setController(address(q));
+        uint256[] memory ids = _credits(seller, 1);
+        bytes memory request = abi.encodeWithSelector(IControllerV1.balanceClampFor.selector);
+        vm.mockCall(address(q), request, abi.encode(type(uint256).max, true));
+        uint256 posted = _scoreOf(ids[0]) * UNIT * (10_000 - core.settings().balanceDiscountBps) / 10_000;
+        assertEq(core.balanceBidOf(ids[0]), posted, "oversized clamp is limited to the posted bid");
+        vm.clearMockedCalls();
+        vm.mockCall(address(q), request, abi.encode(type(uint256).max, false));
+        assertEq(core.balanceBidOf(ids[0]), 0, "false status refuses the BALANCE bid");
+        vm.clearMockedCalls();
+        vm.mockCall(address(q), request, hex"1234");
+        assertEq(core.balanceBidOf(ids[0]), 0, "short answer refuses the BALANCE bid");
+        assertEq(CREDITS.ownerOf(ids[0]), seller, "the Credit remains with the seller");
     }
 
     // promise: SPEC 8 in value mode a credit's floor is valueOf(score) times floorMultBps with the cost dropped, and a
@@ -709,8 +794,7 @@ contract ValueModeTest is ValueBase {
             (paid, back) = _trip(ids[k++], true);
             _assertLoses(paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference");
         }
-        // the reference stale after the buy: the eth bid degrades to the last good rate (decision 159, C02), the balance
-        // door refuses: no cap can be computed
+        // the reference stale after the buy: both bids close until a usable quote returns
         _swapToSpot(ctl.referencePrice());
         _settleReference();
         uint256 id = ids[k++];
@@ -719,9 +803,61 @@ contract ValueModeTest is ValueBase {
         vm.prank(TRIPPER);
         ctl.buyCredit{value: price}(id);
         _warp(1 days + 1);
-        assertGt(core.ethRate(), 0, "the eth bid degrades to the last good rate, not NoQuote");
+        assertEq(core.ethRate(), 0, "the stale quote closes the ETH bid");
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         this.tripBackExternal(id);
+    }
+
+    // promise: a real pool move can leave the prior-block Credit ask below a later ETH bid after the production lock
+    function test_persistentRealPoolRiseCanOutrunTheAskAfterReturnLock() public {
+        uint256[] memory ids = _fillEthPile(1);
+        _valueOn();
+        _setCreditSaleOn(true);
+        _setReturnLock(6 hours);
+        _setQuote(Quote({
+            referenceRateBpsPerHour: 1_200,
+            referenceStepBps: 200,
+            tolBps: 100,
+            referenceMaxStale: 1 days,
+            referenceMinSeconds: 600,
+            minLiquidity: 1e18
+        }));
+        CreditSale memory sale = _creditSale();
+        sale.spreadBps = 203;
+        vm.prank(owner);
+        ctl.setCredit(sale);
+        _warp(ctl.creditWindow());
+        vm.roll(block.number + 1);
+        _fundPot(50 ether);
+
+        // The pool swap executes through the real v4 manager with test-funded ETH. The Credit buyer pays only the
+        // Credit ask, so a positive Credit round trip here is not a net swap, gas or MEV profit calculation.
+        uint256 beforeSpot = _spotNow();
+        uint256 movedSpot = _swapSpot(3_000);
+        assertGt(movedSpot, beforeSpot * 12 / 10, "the real pool move did not reach the test band");
+        uint256 price = ctl.creditPrice(ids[0]);
+        vm.deal(TRIPPER, price);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price}(ids[0]);
+        vm.prank(TRIPPER);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.expectPartialRevert(ICore.ReturnLocked.selector);
+        vm.prank(TRIPPER);
+        core.sellForEth(_one(ids[0]));
+
+        for (uint256 i; i < 36; ++i) {
+            _warp(10 minutes);
+            vm.roll(block.number + 1);
+            ctl.refreshReference();
+        }
+        uint256 beforeEth = TRIPPER.balance;
+        vm.prank(TRIPPER);
+        core.sellForEth(_one(ids[0]));
+        uint256 back = TRIPPER.balance - beforeEth;
+        emit log_named_uint("real swap spot wei per balance token", movedSpot);
+        emit log_named_uint("credit purchase wei", price);
+        emit log_named_uint("credit resale wei after six-hour lock", back);
+        assertGt(back, price, "the later bid did not outrun the stale ask");
     }
 
     /// refreshes the reference, a step and a block at a time, until it is within 0.1 percent of the pool spot, so a round
@@ -768,10 +904,7 @@ contract ValueModeTest is ValueBase {
         _assertLoses(paid, back, "balance with the spot far above the reference");
     }
 
-    // promise: SPEC 10 in value mode an unusable reference refuses the balance fill instead of paying the posted amount.
-    // the return lock (21,600 s) blocks the engine buyer from selling the credit back, but a credit moved to a second
-    // wallet is not tracked by it. with the pool drained for two samples the buyer reverts ReturnLocked and the second
-    // wallet reaches the balance fill, which reverts ZeroAmount; the payout view reports 0
+    // promise: an unusable value reference pays no balance tokens, and a transfer cannot bypass the return lock
     function test_balanceFillRefusesWhileTheReferenceIsUnusable() public {
         uint256[] memory ids = _fillEthPile(4);
         _valueOn();
@@ -809,6 +942,11 @@ contract ValueModeTest is ValueBase {
         vm.stopPrank();
         vm.startPrank(second);
         CREDITS.setApprovalForAll(address(core), true);
+        vm.expectPartialRevert(ICore.ReturnLocked.selector);
+        core.sellForBalance(_one(id));
+        vm.stopPrank();
+        _setReturnLock(0);
+        vm.startPrank(second);
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         core.sellForBalance(_one(id));
         vm.stopPrank();

@@ -6,9 +6,9 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 
 /// the flat balance bid (decision 164): the balance route pays `score * unitPerPoint * (10_000 - balanceDiscountBps) /
-/// 10_000` per credit, posted, with no climb while idle and no drop on a fill. the only bound is the module's
-/// `available()`, which the payouts plus the artist royalties (decision 163) must not pass. the discount is an owner
-/// setting, editable after deployment, effective for the next fill
+/// 10_000` per credit, posted, with no climb while idle and no drop on a fill. the live reserve bound is the module's
+/// `available()`, which the payouts plus the artist royalties must not pass. SettingsBounds also requires the discount
+/// to cover the royalty and accepted redemption shortfall. the discount is editable and effective for the next fill
 contract BalanceFlatTest is Fixture {
     address internal user;
 
@@ -72,12 +72,11 @@ contract BalanceFlatTest is Fixture {
         assertGt(cost, 0, "with an eth cost basis");
     }
 
-    // promise: SPEC 9 a reverting artist or a blacklisting token does not block the sale: the seller is paid, the
-    // artist royalty stays in the module (paid to the artist later or recovered by the owner), and the credit piles (decision 163)
-    function test_hostileArtistDoesNotBlockTheSale() public {
+    // promise: a whole-module artist payment failure rolls back the seller payment and Credit transfer
+    function test_wholeArtistPayFailureRollsBackTheSale() public {
         address hostile = _user("flat.hostileArtist");
         _setArtist(hostile);
-        xt.setBanned(hostile); // the token refuses the artist, so module.pay(artist) reverts
+        xt.setBanned(hostile);
         uint256[] memory ids = _credits(user, 1);
         uint256 pay = _payout(ids[0]);
         uint256 royalty = _royalty(pay);
@@ -85,12 +84,14 @@ contract BalanceFlatTest is Fixture {
         uint256 userBefore = xt.balanceOf(user);
         uint256 moduleBefore = _moduleHolding();
         vm.prank(user);
+        vm.expectRevert(ICore.BadModule.selector);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(user) - userBefore, pay, "the seller is paid the posted payout");
+        assertEq(xt.balanceOf(user), userBefore, "the seller payment rolled back");
         assertEq(xt.balanceOf(hostile), 0, "the blacklisted artist received nothing");
-        assertEq(moduleBefore - _moduleHolding(), pay, "only the payout left the module; the royalty stays");
+        assertEq(_moduleHolding(), moduleBefore, "the module reserve is unchanged");
         (bool inPile,,) = core.creditInfo(ids[0]);
-        assertTrue(inPile, "the credit still entered the pile");
+        assertFalse(inPile, "the credit did not enter the pile");
+        assertEq(CREDITS.ownerOf(ids[0]), user, "the seller kept the Credit");
     }
 
     // promise: SPEC 9 the posted rate does not climb while idle and does not drop on a fill: a day idle and a batch
@@ -117,18 +118,25 @@ contract BalanceFlatTest is Fixture {
         assertEq(core.balanceRate(), r0, "still no climb");
     }
 
-    // promise: SPEC 3 balanceDiscountBps is editable through setSettings with no lock, effective at once: 0 pays par,
-    // 9_999 pays 1 bps of par, and 10_000 is refused so the payout is never zero
+    // promise: SPEC 3 the exact solvent discount floor is accepted, its predecessor is refused, and edits apply at once
     function test_discountIsEditableAndBounded() public {
         uint256[] memory ids = _credits(user, 3);
-        _setDiscount(0);
-        assertEq(core.balanceRate(), 10_000, "no discount reads par");
-        uint256 par = _score(ids[0]) * UNIT;
-        assertEq(core.balanceBidOf(ids[0]), par, "pays par");
+        Settings memory s = core.settings();
+        s.balanceDiscountBps = 439;
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("balanceDiscountBps")));
+        core.setSettings(s);
+        _setDiscount(440);
+        assertEq(core.balanceRate(), 9_560, "250-bps royalty and 200-bps shortfall require 440 discount");
+        uint256 pay = _score(ids[0]) * UNIT * 9_560 / 10_000;
+        assertEq(core.balanceBidOf(ids[0]), pay, "quotes the new discount");
+        uint256 royalty = pay * s.buyToArtistBps / 10_000;
+        uint256 minimumReturn = _score(ids[0]) * UNIT * (10_000 - s.redeemSlippageBps) / 10_000;
+        assertLe(pay + royalty, minimumReturn, "the boundary covers the accepted redemption shortfall");
         uint256 before = xt.balanceOf(user);
         vm.prank(user);
         core.sellForBalance(_one(ids[0]));
-        assertEq(xt.balanceOf(user) - before, par, "the next fill pays the new rate");
+        assertEq(xt.balanceOf(user) - before, pay, "the next fill pays the new rate");
 
         _setDiscount(9_999);
         assertEq(core.balanceRate(), 1, "the largest discount reads 1 bps of par");
@@ -138,7 +146,7 @@ contract BalanceFlatTest is Fixture {
         core.sellForBalance(_one(ids[1]));
         assertEq(xt.balanceOf(user) - before, _score(ids[1]) * UNIT / 10_000, "paid at once");
 
-        Settings memory s = core.settings();
+        s = core.settings();
         s.balanceDiscountBps = 10_000;
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("balanceDiscountBps")));

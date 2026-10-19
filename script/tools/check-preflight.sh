@@ -11,7 +11,7 @@
 # the row `rule: image and description are empty or real values, not placeholders` is expected to fail only when the
 # config holds the text PLACEHOLDER in `image` or `description` (the rehearsal file, by design). an empty value passes:
 # the coin renderer draws the image and reads the description from the coin.
-# env:   MAINNET_RPC_URL (default: the Tenderly public gateway, archive state), FORK_BLOCK (default 26158000),
+# env:   MAINNET_RPC_URL (default: the Tenderly public gateway, archive state), FORK_BLOCK (default 26208025),
 #        DEPLOYER (default: the config owner), EXPECT_FAIL (comma separated failed rows; default: the two factory rows of
 #        DEPLOY step 3, and the metadata row for a config holding PLACEHOLDER). the balance row
 #        `deployer: balance covers the deploy fee and the gas` is compared. the default pin block run fails on it
@@ -33,7 +33,7 @@ else
   echo "ok: git tree clean, HEAD $(git rev-parse --short HEAD) contains the frozen candidate ${candidate:0:7}"
 fi
 rpc="${MAINNET_RPC_URL:-https://mainnet.gateway.tenderly.co}"
-block="${FORK_BLOCK:-26158000}"
+block="${FORK_BLOCK:-26208025}"
 deployer="${DEPLOYER:-$(jq -r .owner "$cfg")}"
 imgrow="rule: image and description are empty or real values, not placeholders"
 balrow="deployer: balance covers the deploy fee and the gas"

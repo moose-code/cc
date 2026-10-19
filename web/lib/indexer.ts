@@ -541,7 +541,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         kind: "redeemed",
         label: "statement redeemed",
         link: stmtLink(sid!),
-        detail: `· received ${formatHistoricalBalance(amount, r.balanceToken ?? undefined, balance)}`,
+        detail: `· module received ${formatHistoricalBalance(amount, r.balanceToken ?? undefined, balance)}`,
         tile: { kind: "statement", id: sid! },
         rating: r.rating ?? undefined,
       };

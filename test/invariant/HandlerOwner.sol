@@ -64,6 +64,7 @@ abstract contract HandlerOwner is HandlerBase {
         s.redeemOn = _f(_r(seed, 20), 0, 1, c.redeemOn ? 1 : 0) == 1;
         s.balanceBidOn = _f(_r(seed, 34), 0, 1, c.balanceBidOn ? 1 : 0) == 1;
         s.redeemSlippageBps = uint16(_f(_r(seed, 21), 0, 1_000, c.redeemSlippageBps));
+        s.buyToArtistBps = uint16(_f(_r(seed, 49), 0, 1_000, c.buyToArtistBps));
         s.balanceBidMarginBps = uint16(_f(_r(seed, 22), 0, 9_000, c.balanceBidMarginBps));
         s.redeemBurnBps = uint16(_f(_r(seed, 23), 0, 10_000, c.redeemBurnBps));
         s.rateCap = uint64(_f(_r(seed, 26), RATE_START_MIN_WEI, RATE_START_MAX_WEI, c.rateCap));
@@ -79,11 +80,19 @@ abstract contract HandlerOwner is HandlerBase {
         s.balanceBidCapBps = uint32(_f(_r(seed, 46), 10_000, 30_000, c.balanceBidCapBps));
         s.idleStepSeconds = uint32(_f(_r(seed, 47), 1, 3600, c.idleStepSeconds));
         s.sniperSeconds = uint32(_f(_r(seed, 48), 0, 3600, c.sniperSeconds));
+        s.reserveWei = uint64(_f(_r(seed, 50), 0, 1 ether, c.reserveWei));
+        s.returnLockSeconds = uint32(_f(_r(seed, 51), 0, 86_400, c.returnLockSeconds));
+        // The generic owner campaigns have no balance pool. Keep their phase's value-mode switch, including true in a
+        // value-mode campaign, so a missing quote does not replace the property under test with a deliberate shutdown.
+        s.valueModeOn = c.valueModeOn;
         _corner(s, corner);
         // recoveryClimbPerMinBps is at least the final climbPerMinBps, set after the corners so it stays valid
         s.recoveryClimbPerMinBps = uint16(_f(_r(seed, 31), s.climbPerMinBps, 1_000, c.recoveryClimbPerMinBps));
         s.peakHalfLife = uint32(_f(_r(seed, 32), 600, 604_800, c.peakHalfLife));
         s.recoveryGapBps = uint16(_f(_r(seed, 33), 0, 5_000, c.recoveryGapBps));
+        uint256 maxPayoutBps = uint256(10_000 - s.redeemSlippageBps) * 10_000 / (10_000 + s.buyToArtistBps);
+        uint256 minDiscountBps = 10_000 - maxPayoutBps;
+        s.balanceDiscountBps = uint16(_f(_r(seed, 52), minDiscountBps, 9_999, c.balanceDiscountBps));
         // the slice stays at or above twice the largest buyback payment
         uint256 minSlice = 2 * (BUYBACK_GAS * s.keeperMaxBaseFee + s.keeperFee);
         if (s.buybackSlice < minSlice) s.buybackSlice = uint128(minSlice);
@@ -261,8 +270,8 @@ abstract contract HandlerOwner is HandlerBase {
 
     /// the bounds of docs/DECISIONS.md section 2, written out again. the name of the first field out of bounds, or zero
     function _firstViolation(Settings memory s) internal pure returns (bytes32) {
-        if (s.dropPer100PointsBps < 1 || s.dropPer100PointsBps > 10_000) return "dropPer100PointsBps";
-        if (s.dropFloorBps > 10_000) return "dropFloorBps";
+        if (s.dropPer100PointsBps < 1 || s.dropPer100PointsBps > 9_999) return "dropPer100PointsBps";
+        if (s.dropFloorBps < 1 || s.dropFloorBps > 10_000) return "dropFloorBps";
         if (s.climbPerMinBps < 1) return "climbPerMinBps";
         if (s.ceilBps < 10_000) return "ceilBps";
         if (s.idleLoosenBps < 1) return "idleLoosenBps";
@@ -278,7 +287,7 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.rateCap < RATE_START_MIN_WEI || s.rateCap > RATE_START_MAX_WEI) return "rateCap";
         if (s.feeToRedeemBurnBps > 10_000) return "feeToRedeemBurnBps";
         if (s.redeemSlippageBps > 10_000) return "redeemSlippageBps";
-        if (s.balanceBidMarginBps > 10_000) return "balanceBidMarginBps";
+        if (s.balanceBidMarginBps > 9_999) return "balanceBidMarginBps";
         if (s.redeemBurnBps > 10_000) return "redeemBurnBps";
         if (s.payeePpm > 1_000_000) return "payeePpm";
         if (s.pointsPerPage < 1) return "pointsPerPage";
@@ -287,6 +296,12 @@ abstract contract HandlerOwner is HandlerBase {
         if (s.bucketSeconds < 1) return "bucketSeconds";
         if (s.balanceBidCapBps < 10_000) return "balanceBidCapBps";
         if (s.idleStepSeconds < 1) return "idleStepSeconds";
+        if (s.buyToArtistBps > 1_000) return "buyToArtistBps";
+        if (s.balanceDiscountBps > 9_999) return "balanceDiscountBps";
+        if (
+            uint256(10_000 - s.balanceDiscountBps) * (10_000 + s.buyToArtistBps)
+                > uint256(10_000 - s.redeemSlippageBps) * 10_000
+        ) return "balanceDiscountBps";
         return bytes32(0);
     }
 

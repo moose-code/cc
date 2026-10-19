@@ -21,6 +21,7 @@ import {
   type State,
 } from "../src/decide.ts";
 import { DOORS, type Door } from "../src/config.ts";
+import { candidatesOrEmpty } from "../src/main.ts";
 
 const CORE = "0x00000000000000000000000000000000000000c0" as Address;
 const SEAPORT_ADAPTER = "0x00000000000000000000000000000000000000a1" as Address;
@@ -69,6 +70,9 @@ function state(over: Partial<State> = {}): State {
     referenceTime: 0n,
     referenceMaxStale: 0n,
     referenceMinSeconds: 600n,
+    referenceRateBpsPerHour: 100n,
+    referenceStepBps: 100n,
+    spot: parseEther("0.49"),
     ...over,
   };
 }
@@ -82,6 +86,15 @@ function policy(over: Partial<{ [d in Door]: { maxBaseFee: bigint; tip: bigint }
 const gas = (g: string) => ({ baseFee: parseGwei(g) });
 const doorsOf = (r: ReturnType<typeof decide>) => r.calls.map((c) => c.door);
 const reason = (r: ReturnType<typeof decide>, d: Door) => r.skips.filter((s) => s.door === d).map((s) => s.reason).join(" | ");
+
+// promise: a listing-source failure cannot suppress a profitable independent buyback decision
+test("listing discovery failure leaves other keeper doors available", async () => {
+  const listings = await candidatesOrEmpty({ candidates: async () => { throw new Error("listing rpc unavailable"); } }, {} as any, 1_000n);
+  assert.deepEqual(listings, []);
+  const d = decide(state({ ethToBuyback: parseEther("1") }), listings, gas("1"), policy(), new Map());
+  assert.ok(d.calls.some((c) => c.door === "buyback"));
+  assert.ok(d.calls.every((c) => c.door !== "buyListing"));
+});
 
 // ------------------------------------------------------------------ buyback
 
@@ -229,11 +242,11 @@ test("listing: the artist royalty is part of the room bound and the payment cap"
   assert.equal(listingPayment(capped, l, GAS_GUESS.buyListing, parseGwei("1")), 10n ** 13n);
 });
 
-// promise: a lapsed value quote degrades the eth bid instead of halting it, so the keeper still sweeps (decision 159, C02)
-test("listing: in value mode an unusable quote degrades the bid and still sweeps", () => {
+// promise: a zero Core bid during a protected quote outage prevents the keeper from buying a listing
+test("listing: in value mode an unusable quote gives no ETH sweep", () => {
   const p = policy({}, 0);
-  const degraded = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [listing()], gas("1"), p, new Map());
-  assert.ok(doorsOf(degraded).includes("buyListing"), "the sweep runs at the degraded bid, not NoQuote-halted");
+  const degraded = decide(state({ valueModeOn: true, noQuote: true, pageReady: true }), [{ ...listing(), bid: 0n }], gas("1"), p, new Map());
+  assert.ok(!doorsOf(degraded).includes("buyListing"), "the Core's zero bid cannot cover the listing price");
   const live = decide(state({ valueModeOn: true, noQuote: false }), [listing()], gas("1"), p, new Map());
   assert.ok(doorsOf(live).includes("buyListing"), "a usable quote sweeps the same way");
 });
@@ -245,6 +258,7 @@ test("refreshReference: due referenceMinSeconds after the last sample, never bef
   const base = { referencePrice: 49n * 10n ** 16n, referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n };
   assert.match(refreshReferenceDue(state({ ...base, referencePrice: 0n })).reason, /pool key is not set/);
   assert.match(refreshReferenceDue(state({ ...base, referenceMaxStale: 0n })).reason, /never usable/);
+  assert.match(refreshReferenceDue(state({ ...base, spot: 0n })).reason, /spot is unavailable/);
   const early = decide(state({ ...base, timestamp: 4_000n + 599n }), [], gas("1"), p, new Map());
   assert.deepEqual(doorsOf(early), []);
   assert.match(reason(early, "refreshReference"), /next refresh at 4600/);
@@ -258,6 +272,17 @@ test("refreshReference: due referenceMinSeconds after the last sample, never bef
   assert.match(reason(unpaid, "refreshReference"), /unprofitable/);
   const high = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("4"), p, new Map());
   assert.match(reason(high, "refreshReference"), /above the door ceiling/);
+});
+
+// promise: a failed spot or integer move of zero cannot earn the Core's refresh payment, so the keeper spends no gas on it
+test("refreshReference: unavailable spot and sub-bps move do not send an unpaid call", () => {
+  const base = { referencePrice: parseEther("0.49"), referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n };
+  const missing = decide(state({ ...base, timestamp: 4_600n, spot: 0n }), [], gas("1"), policy(), new Map());
+  assert.match(reason(missing, "refreshReference"), /spot is unavailable/);
+  const rounded = decide(state({ ...base, timestamp: 4_600n, referenceRateBpsPerHour: 1n }), [], gas("1"), policy(), new Map());
+  assert.match(reason(rounded, "refreshReference"), /rounds to zero/);
+  const due = decide(state({ ...base, timestamp: 7_600n, referenceRateBpsPerHour: 1n }), [], gas("1"), policy(), new Map());
+  assert.deepEqual(doorsOf(due), ["refreshReference"]);
 });
 
 // promise: a refresh with only unbooked hook income is projected as paid from the pot share, matching the Core's

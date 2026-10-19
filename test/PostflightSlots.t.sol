@@ -111,11 +111,11 @@ contract PostflightSlotsTest is Fixture {
         }
     }
 
-    /// @dev one site of an immutable holds another value than the other sites and the getter. every one of the nine
+    /// @dev one site of an immutable holds another value than the other sites and the getter. every one of the eight
     /// immutables of the Core and its last site
     // promise: one site of an immutable holds another value than the other sites and the getter
     function test_oneDivergentImmutableSiteFailsPostflight() public {
-        for (uint256 g; g < 9; ++g) {
+        for (uint256 g; g < 8; ++g) {
             uint256[] memory sites = _immutableSites("Core", g);
             assertGt(sites.length, 0, "an immutable is read at least once");
             // an immutable read only by its public getter has no second site to diverge from the getter

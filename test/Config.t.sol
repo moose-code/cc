@@ -26,6 +26,9 @@ import {StandinRenderer} from "./standins/StandinRenderer.sol";
 
 /// @notice the config file, the placeholder guard, the preflight and the postflight on the pinned fork
 contract ConfigTest is Fixture {
+    string internal constant LAUNCH_DESCRIPTION =
+        "$CC trades fill the pot. the pot buys Credits, priced by rating. every 80 become a statement, which sells to refill the pot.";
+
     /// @dev SETTINGS_CHANGED of the operator, a flag here so parallel tests never share an environment variable
     bool internal changedFlag;
 
@@ -84,8 +87,9 @@ contract ConfigTest is Fixture {
         assertEq(f.artist, 0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a, "the launch artist address (decision 123)");
         assertEq(f.name, "CC");
         assertEq(f.symbol, "CC");
+        assertEq(f.description, LAUNCH_DESCRIPTION, "launch coin description");
         assertEq(f.salt, keccak256("CC"));
-        assertEq(f.rateStart, 4_900_000_000_000_000);
+        assertEq(f.rateStart, 4_650_000_000_000_000);
         assertEq(f.supply, 1_000_000_000e18);
         assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
         // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 186
@@ -693,20 +697,19 @@ contract ConfigTest is Fixture {
     function test_jsonParsesImageAndDescription() public view {
         string memory j = vm.readFile(DEFAULT_CONFIG_FILE);
         j = vm.replace(j, '"image": ""', '"image": "ipfs://cid/cc.png"');
-        j = vm.replace(j, '"description": ""', '"description": "the CC coin"');
+        j = vm.replace(j, string.concat('"description": "', LAUNCH_DESCRIPTION, '"'), '"description": "the CC coin"');
         LaunchConfig memory c = parseConfig(j);
         assertEq(c.image, "ipfs://cid/cc.png");
         assertEq(c.description, "the CC coin");
     }
 
-    // the readbacks name the row of the field a config changes, and the Core address row catches any change of the config
-    // promise: the readbacks name the row of the field a config changes, and the Core address row catches any change of the config
+    // promise: the readbacks name the affected rows, and the Core address still binds the constructor config
     function test_postflightCatchesEveryMismatch() public {
         string memory id = "core: address is the CREATE2 address of the config and the deployer";
         LaunchConfig memory c = lc;
         c.rateStart = lc.rateStart + 1;
         postflightAs(c, address(core), owner);
-        assertEq(_failedNames(), id);
+        assertEq(_failedNames(), string.concat("core: opening rate equals the approved value, ", id));
 
         c = lc;
         c.owner = creator;
@@ -757,9 +760,9 @@ contract ConfigTest is Fixture {
 
     // ------------------------------------------------------------------ settings
 
-    /// the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
-    // promise: the bounds of the preflight rows and of the deploy guard are the Core's: every field, both edges
-    function test_settingsBoundsEveryFieldBothEdges() public view {
+    /// the preflight and deploy guard use the Core's field bounds; dependent BALANCE bounds have separate cases
+    // promise: each independently viable field edge is accepted and every representable out-of-range edge is refused
+    function test_settingsBoundsFieldsAndViableEdges() public view {
         uint256[39] memory lo = SettingsFields.lo();
         uint256[39] memory hi = SettingsFields.hi();
         bytes32[39] memory names = SettingsFields.names();
@@ -773,6 +776,9 @@ contract ConfigTest is Fixture {
                 if (i == 17 || i == 18) s.buybackSlice = type(uint128).max;
                 if (i == 26) s.saleToOperatorBps = 0;
                 if (i == 27) s.saleToArtistBps = 0;
+                if (i == 13 && edge == 1) continue; // zero redemption proceeds cannot cover a nonzero BALANCE bid
+                if (i == 37 && edge == 1) s.balanceDiscountBps = 1_100;
+                if (i == 38 && edge == 0) (s.buyToArtistBps, s.redeemSlippageBps) = (0, 0);
                 SettingsFields.set(s, i, v);
                 assertEq(SettingsBounds.firstViolation(s), bytes32(0), "inclusive bound accepted");
             }
@@ -790,6 +796,27 @@ contract ConfigTest is Fixture {
             SettingsFields.set(s, i, lo[i] - 1);
             assertEq(SettingsBounds.firstViolation(s), names[i], "below the bound");
         }
+    }
+
+    // promise: a BALANCE purchase cannot cost more with its artist royalty than the smallest accepted redemption
+    function test_balanceDiscountCoversRoyaltyAndRedemptionShortfall() public pure {
+        Settings memory s = Mainnet.defaultSettings();
+        s.balanceDiscountBps = 439;
+        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "439 bps misses 250 royalty and 200 shortfall");
+        s.balanceDiscountBps = 440;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "440 bps covers the launch royalty and shortfall");
+        s.buyToArtistBps = 1_000;
+        s.balanceDiscountBps = 1_090;
+        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "higher royalty raises the discount floor");
+        s.balanceDiscountBps = 1_091;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the exact higher-royalty boundary passes");
+        s.buyToArtistBps = 0;
+        s.redeemSlippageBps = 0;
+        s.balanceDiscountBps = 0;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "zero royalty and shortfall allow par");
+        s.redeemSlippageBps = 10_000;
+        s.balanceDiscountBps = 9_999;
+        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "zero proceeds cannot cover a bid");
     }
 
     /// preflight names the failing settings row, the deploy guard refuses, postflight reads each field back
@@ -835,7 +862,7 @@ contract ConfigTest is Fixture {
             uint256 v = SettingsFields.get(c.settings, i);
             SettingsFields.set(c.settings, i, v == 0 ? 1 : v - 1);
             postflightAs(c, address(core), address(0));
-            assertEq(_failedNames(), "core: settings equal the config", "a settings field slipped the readback");
+            assertEq(_failedNames(), "core: settings equal the approved launch values", "a settings field slipped the readback");
         }
     }
 
@@ -846,7 +873,7 @@ contract ConfigTest is Fixture {
         s.saleFloorBps = 8_000;
         _setSettings(s);
         postflightAs(lc, address(core), owner);
-        assertEq(_failedNames(), "core: settings equal the config");
+        assertEq(_failedNames(), "core: settings equal the approved launch values");
         changedFlag = true;
         postflightAs(lc, address(core), owner);
         assertEq(_failedNames(), "", "SETTINGS_CHANGED turns the row into a warning");
@@ -891,6 +918,38 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), string.concat(codeRow, ", ", keyRow));
     }
 
+    // promise: resuming a partial deploy rechecks the current owner delegation, delegate code and key registry
+    function test_resumePreflightPinsTheOwnerDelegation() public {
+        if (keccak256(bytes(vm.envOr("STACK", string("")))) == keccak256("master")) vm.skip(true);
+        address d2 = _funded();
+        LaunchConfig memory c = lc;
+        c.rateStart = c.settings.rateCap / 3;
+        c.salt = keccak256(abi.encode(c.salt, "resume preflight"));
+        string memory codeRow = "owner: code is the pinned EIP 7702 delegation";
+        string memory hashRow = "owner: delegate code hash is the pinned Calibur";
+        string memory keyRow = "owner: no registered keys";
+
+        preflightResume(c, d2);
+        assertEq(_failedNames(), "", "an unchanged owner permits recovery");
+        assertTrue(_warnClean(codeRow) && _warnClean(hashRow) && _warnClean(keyRow), "all owner rows run");
+
+        uint256 snap = vm.snapshotState();
+        vm.etch(c.owner, "");
+        preflightResume(c, d2);
+        assertEq(_failedNames(), string.concat(codeRow, ", ", keyRow), "lost delegation blocks recovery");
+        vm.revertToState(snap);
+
+        vm.etch(OWNER_DELEGATE, abi.encodePacked(OWNER_DELEGATE.code, hex"00"));
+        preflightResume(c, d2);
+        assertEq(_failedNames(), hashRow, "changed delegate code blocks recovery");
+        vm.revertToState(snap);
+
+        vm.mockCall(c.owner, abi.encodeWithSignature("keyCount()"), abi.encode(uint256(1)));
+        preflightResume(c, d2);
+        assertEq(_failedNames(), keyRow, "a registered key blocks recovery");
+        vm.clearMockedCalls();
+    }
+
     /// the Core payee window and the pool launch skim window are separate values that must start equal
     // promise: preflight fails unless settings.sniperSeconds equals launch.sniperSeconds
     function test_preflightSniperSecondsMatchTheCoreSetting() public {
@@ -931,7 +990,7 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         LaunchConfig memory shipped = _shipped();
         assertEq(shipped.settings.rateCap, 3 * shipped.rateStart, "the shipped file holds the ratio");
-        assertEq(shipped.settings.rateCap, 14_700_000_000_000_000, "decision 145 opening cap");
+        assertEq(shipped.settings.rateCap, 13_950_000_000_000_000, "launch opening cap");
         // the fixture opens at 1.732e15 under the launch cap: the row passes once the start is a third of the cap
         LaunchConfig memory c = lc;
         c.salt = keccak256("preflight");
