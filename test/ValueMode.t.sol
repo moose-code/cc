@@ -574,9 +574,8 @@ contract ValueModeTest is ValueBase {
         assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "conversion runs by age, no quote read");
     }
 
-    // promise: SPEC 1 a hostile controller quoting a huge value pays at most rateCap and cannot move the balance bid; a
-    // zero or not-ok quote degrades the eth bid to the last good rate (bounded by rateCap) and leaves conversion and the
-    // balance bid live (decision 159, C02)
+    // promise: a hostile value quote cannot lift the ETH bid above rateCap; a missing balance clamp refuses BALANCE
+    // fills in value mode while the separate ETH bid fallback remains live
     function test_hostileQuoteIsBounded() public {
         _valueOn();
         _fundPot(20 ether);
@@ -591,8 +590,44 @@ contract ValueModeTest is ValueBase {
         assertLe(core.ethRate(), core.settings().rateCap, "a not-ok quote degrades to the bounded fallback");
         assertEq(core.balanceRate(), bal0, "the quote never moves the balance bid");
         uint256[] memory ids = _credits(seller, 1);
+        assertEq(core.balanceBidOf(ids[0]), 0, "missing clamp disables the quoted BALANCE bid");
+        assertEq(core.balanceBidForScore(_scoreOf(ids[0])), 0, "score quote shares the failed clamp");
+        vm.prank(seller);
+        vm.expectRevert(ICore.ZeroAmount.selector);
+        core.sellForBalance(ids);
+        assertEq(CREDITS.ownerOf(ids[0]), seller, "failed clamp did not take the Credit");
+    }
+
+    // promise: outside value mode a controller without balanceClampFor cannot silence the flat BALANCE bid
+    function test_missingClampKeepsModeOffBalanceBid() public {
+        QuoteController q = new QuoteController(address(core), address(ctl));
+        _setController(address(q));
+        uint256[] memory ids = _credits(seller, 1);
+        uint256 bid = core.balanceBidOf(ids[0]);
+        assertGt(bid, 0, "the posted bid is available outside value mode");
+        uint256 before = xt.balanceOf(seller);
         vm.prank(seller);
         core.sellForBalance(ids);
+        assertEq(xt.balanceOf(seller) - before, bid, "the seller receives the posted payout");
+    }
+
+    // promise: a hostile clamp cannot raise the posted payout or turn a failed quote into a BALANCE fill
+    function test_hostileClampCannotRaiseThePostedPayout() public {
+        _valueOn();
+        QuoteController q = new QuoteController(address(core), address(ctl));
+        _setController(address(q));
+        uint256[] memory ids = _credits(seller, 1);
+        bytes memory request = abi.encodeWithSelector(IControllerV1.balanceClampFor.selector);
+        vm.mockCall(address(q), request, abi.encode(type(uint256).max, true));
+        uint256 posted = _scoreOf(ids[0]) * UNIT * (10_000 - core.settings().balanceDiscountBps) / 10_000;
+        assertEq(core.balanceBidOf(ids[0]), posted, "oversized clamp is limited to the posted bid");
+        vm.clearMockedCalls();
+        vm.mockCall(address(q), request, abi.encode(type(uint256).max, false));
+        assertEq(core.balanceBidOf(ids[0]), 0, "false status refuses the BALANCE bid");
+        vm.clearMockedCalls();
+        vm.mockCall(address(q), request, hex"1234");
+        assertEq(core.balanceBidOf(ids[0]), 0, "short answer refuses the BALANCE bid");
+        assertEq(CREDITS.ownerOf(ids[0]), seller, "the Credit remains with the seller");
     }
 
     // promise: SPEC 8 in value mode a credit's floor is valueOf(score) times floorMultBps with the cost dropped, and a

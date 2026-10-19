@@ -7,6 +7,7 @@ import { controllerAbi } from "./abis/ControllerV1";
 import { coreAbi } from "./abis/Core";
 import { creditsAbi, erc20Abi, statementsAbi, strategyAbi } from "./abis/external";
 import { fallbackTransport, guardedHttp, type Endpoint } from "./src/lib/rpc";
+import { localRpc } from "./src/lib/rpc-selection";
 
 // Every address and start block comes from the deployment record (deployments/<chainId>.json) with an
 // environment variable of the same meaning taking precedence. A missing required value stops the start.
@@ -76,9 +77,9 @@ const endpoints: Endpoint[] = PUBLIC.map((e, i) => ({ ...e, rps: caps[i] ?? e.rp
 const reserve = process.env.PONDER_RPC_URL_1?.trim();
 if (reserve) endpoints.push({ url: reserve, rps: Number(process.env.RPC_RPS_RESERVE ?? 10) });
 
-const localUrl = str("RPC_URL", "rpcUrl");
+const localUrl = localRpc(CHAIN_ID, record.rpcUrl as string | undefined, process.env.RPC_URL?.trim());
 if (IS_LOCAL && !localUrl) throw new Error("RPC_URL is not set and the record has no rpcUrl. Refusing to start.");
-const rpc = IS_LOCAL ? guardedHttp(localUrl!) : fallbackTransport(endpoints);
+const rpc = localUrl ? guardedHttp(localUrl) : fallbackTransport(endpoints);
 
 // PGlite serves local development only. A real chain needs Postgres so the RPC cache and schemas outlive the machine.
 if (!IS_LOCAL && !process.env.DATABASE_URL) throw new Error("DATABASE_URL is required on a real chain. Refusing to start.");
@@ -97,9 +98,9 @@ export default createConfig({
     chain: {
       id: CHAIN_ID,
       rpc,
-      pollingInterval: Number(process.env.PONDER_POLL_INTERVAL_MS ?? (IS_LOCAL ? 1_000 : 12_000)),
+      pollingInterval: Number(process.env.PONDER_POLL_INTERVAL_MS ?? (localUrl ? 1_000 : 12_000)),
       ethGetLogsBlockRange: Number(process.env.PONDER_ETH_GETLOGS_BLOCK_RANGE ?? 5_000),
-      disableCache: IS_LOCAL,
+      disableCache: Boolean(localUrl),
     },
   },
   contracts: {

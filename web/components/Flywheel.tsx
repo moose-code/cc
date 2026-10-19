@@ -28,7 +28,8 @@ const Arrow = ({ n }: { n: number }) => (
 export function Flywheel() {
   const { data: snap } = useSnapshot();
   const { events: latest } = useFeed("credits", 1);
-  const { data: fee } = useHookFeeBps(useCcMarket());
+  const { market } = useCcMarket();
+  const { data: fee } = useHookFeeBps(market);
   const balanceOn = !!snap?.balanceOn;
 
   const creditId = latest.find((e) => e.tile?.kind === "credit")?.tile?.id;

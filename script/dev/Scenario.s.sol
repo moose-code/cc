@@ -46,6 +46,7 @@ interface IERC20R {
 /// env: CORE, OWNER, A1 A2 A3 (credit holders), KEEPER (calls keeper doors), TRADER (trades the coin and holds the CC that
 /// `composeChosen` and `setHeldFormat` require), DEV_WALLET (stage `dev-wallet` only).
 contract Scenario is Script {
+    uint256 internal constant MAINNET_TX_GAS_CAP = 16_777_216;
     ICore internal core;
     IControllerV1 internal ctl;
     address internal coin;
@@ -615,7 +616,9 @@ contract Scenario is Script {
                     vm.toString(data),
                     '","value":"',
                     _quantity(value),
-                    '","gas":"0x17d7840"}]'
+                    '","gas":"',
+                    _quantity(MAINNET_TX_GAS_CAP),
+                    '"}]'
                 )
             ),
             (bytes32)
@@ -623,6 +626,7 @@ contract Scenario is Script {
         vm.rpc("evm_mine", "[]");
         string memory receipt = _receipt(txHash);
         require(vm.parseJsonUint(receipt, ".status") == 1, "Anvil dev transaction reverted");
+        require(vm.parseJsonUint(receipt, ".gasUsed") <= MAINNET_TX_GAS_CAP, "Anvil dev transaction exceeded gas cap");
         vm.createSelectFork(vm.envString("E2E_RPC_URL"), vm.parseJsonUint(receipt, ".blockNumber"));
     }
 

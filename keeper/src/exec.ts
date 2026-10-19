@@ -94,7 +94,7 @@ export class Executor {
     }
 
     if (!this.ledger.allows(r.cost)) {
-      await alert(this.cfg.alertWebhook, "budget", "daily budget exhausted, paid doors wait for the next UTC day", { remaining: this.ledger.remaining(), cost: r.cost });
+      void alert(this.cfg.alertWebhook, "budget", "daily budget exhausted, paid doors wait for the next UTC day", { remaining: this.ledger.remaining(), cost: r.cost });
       return { kind: "skipped", reason: "daily budget exhausted" };
     }
 
@@ -112,7 +112,7 @@ export class Executor {
       hash = await this.send(tx, chainId);
     } catch (e) {
       const tripped = this.breaker.fail(c.door);
-      if (tripped) await alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated send failures`, { error: txError(e) });
+      if (tripped) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated send failures`, { error: txError(e) });
       return { kind: "failed", reason: `send failed: ${txError(e)}` };
     }
     log("info", "sent", { door: c.door, fn: c.functionName, args: c.args, hash, url: txUrl(hash, chainId), gasLimit: tx.gas, ...c.note });
@@ -121,7 +121,7 @@ export class Executor {
     if (!receipt) {
       // a private relay drops a transaction it will not include; the nonce stays free, so the next send replaces it
       const tripped = this.breaker.fail(c.door);
-      if (tripped) await alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused: receipts never came`, { hash, url: txUrl(hash, chainId) });
+      if (tripped) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused: receipts never came`, { hash, url: txUrl(hash, chainId) });
       return { kind: "failed", reason: `no receipt within ${this.cfg.receiptTimeoutSec} s` };
     }
     const spent = receipt.gasUsed * receipt.effectiveGasPrice;
@@ -135,9 +135,9 @@ export class Executor {
       log("info", "confirmed", fields);
     } else {
       log("error", "reverted on chain", fields);
-      if (this.breaker.fail(c.door)) await alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated on chain reverts`, fields);
+      if (this.breaker.fail(c.door)) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated on chain reverts`, fields);
     }
-    if (after < this.cfg.lowBalance) await alert(this.cfg.alertWebhook, "balance", "keeper balance low, top up", { balance: after, address: this.signer.address });
+    if (after < this.cfg.lowBalance) void alert(this.cfg.alertWebhook, "balance", "keeper balance low, top up", { balance: after, address: this.signer.address });
     return { kind: "sent", hash, status: receipt.status, spent, received };
   }
 

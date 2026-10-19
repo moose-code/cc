@@ -633,8 +633,9 @@ abstract contract InvariantsBase is InvariantFixture {
         Settings memory st = core.settings();
         (uint256 lastFillRate,,) = _anchor();
         (uint256 peakRate, uint256 peakTime) = _peak();
-        uint256 anchor = _anchorNow(lastFillRate, peakRate, peakTime, st.peakHalfLife);
-        uint256 idle = block.timestamp > core.lastFillTime() ? block.timestamp - core.lastFillTime() : 0;
+        uint256 growthNow = core.paused() ? core.pausedSince() : block.timestamp;
+        uint256 anchor = _anchorNow(lastFillRate, peakRate, peakTime, st.peakHalfLife, growthNow);
+        uint256 idle = growthNow > core.lastFillTime() ? growthNow - core.lastFillTime() : 0;
         // decision 128 variant d: the loosening scales by m, counted at the last fill rate, capped by climbMultiplierCapBps
         uint256 m = _climbMulBps(pagesPot, lastFillRate, st.pointsPerPage, st.climbMultiplierCapBps);
         uint256 ceiling =
@@ -655,12 +656,12 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     /// the larger of the fill rate and the remembered peak decayed to now
-    function _anchorNow(uint256 fillRate, uint256 peakRate, uint256 peakTime, uint256 halfLife)
+    function _anchorNow(uint256 fillRate, uint256 peakRate, uint256 peakTime, uint256 halfLife, uint256 growthNow)
         internal
         view
         returns (uint256)
     {
-        uint256 peakNow = Halving.halve(peakRate, block.timestamp > peakTime ? block.timestamp - peakTime : 0, halfLife);
+        uint256 peakNow = Halving.halve(peakRate, growthNow > peakTime ? growthNow - peakTime : 0, halfLife);
         return fillRate > peakNow ? fillRate : peakNow;
     }
 
@@ -1067,6 +1068,16 @@ abstract contract InvariantsBase is InvariantFixture {
 contract InvariantsPhase1 is InvariantsBase {
     function setUp() public virtual override {
         _build(false, false, true, false, "p1");
+    }
+
+    // promise: the bid ceiling model excludes elapsed pause time, as the price state does
+    function test_bidCeilingModelFreezesDuringPause() public {
+        vm.prank(owner);
+        core.setPaused(true);
+        uint256 ceiling = _ethCap(core.ethPot());
+        vm.warp(block.timestamp + 76);
+        assertEq(_ethCap(core.ethPot()), ceiling, "the modeled ceiling changed during pause");
+        assertLe(core.ethPrice(), ceiling, "the price exceeded the frozen ceiling");
     }
 
     // promise: inv 5 the handler reads the Core storage slots

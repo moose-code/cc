@@ -579,13 +579,12 @@ library CoreLib {
     /// the posted balance payout `pay` for `score` stored units lowered to the controller's `balanceClampFor`: the eth
     /// bid for the score valued in tokens at the protected sale price, so a filled payout is worth at most the eth bid
     /// when the engine sells the tokens and a round trip cannot extract a spot that leads the reference.
-    /// returns `pay` outside value mode. in value mode the controller's answer is used as given; while the reference is
-    /// unusable the controller answers a zero payout, so the fill reverts `ZeroAmount`. a failed or malformed
-    /// controller call keeps `pay`
+    /// returns `pay` outside value mode. in value mode a failed or malformed bounded read returns zero, so the fill
+    /// reverts `ZeroAmount`; a successful answer cannot raise the posted payout
     function _clampPayout(uint256 score, uint256 pay) private view returns (uint256) {
         if (!state().settings.valueModeOn) return pay;
         (uint256 out, bool ok) = _quoteRead(abi.encodeCall(IController.balanceClampFor, (score, pay)));
-        return ok ? out : pay;
+        return ok ? out.min(pay) : 0;
     }
 
     /// @notice the eth the pot keeps for processing now, wei. the Core forwards its `reserve()`
@@ -1128,9 +1127,9 @@ library CoreLib {
     /// balance token through a second module `pay`. the module holds the balance token: the running total of the
     /// payouts and the royalties must not exceed the module's live `available()` (`PotTooSmall`), so the funds for
     /// both are present. the module pays the seller with one `pay(seller, total)`, and the seller's holding must
-    /// rise by at least `total` (`BadModule`). the artist `pay` is gas bounded and non-blocking. the production
-    /// module reserves token transfer shortfalls as `owed[artist]`, claimable later. a reverted whole module call
-    /// cannot persist an accrual. the credit enters the pile at `_ethFloorNow() * score / RATE_SCORE`, at least 1
+    /// rise by at least `total` (`BadModule`). the artist `pay` is gas bounded; a failed whole call reverts the sale
+    /// because it cannot record a liability. the production module reserves token transfer shortfalls as
+    /// `owed[artist]`, claimable later. the credit enters the pile at `_ethFloorNow() * score / RATE_SCORE`, at least 1
     /// wei. a failing, short or zero live unit read reverts the whole bid (`BadModule`)
     function _sellForBalance(uint256[] calldata ids, uint256 minOut) private {
         State storage c = state();
@@ -1147,13 +1146,11 @@ library CoreLib {
         uint256 heldBefore = SafeTransferLib.balanceOf(token, msg.sender);
         IBalanceModule(module).pay(msg.sender, total);
         if (SafeTransferLib.balanceOf(token, msg.sender).zeroFloorSub(heldBefore) < total) revert BadModule();
-        // the artist royalty call is gas bounded by ARTIST_PAY_GAS and its result is not checked. a transfer the module
-        // cannot complete inside that bound is recorded by the module as a liability that `available()` excludes, and
-        // anyone may settle it later through the module's `claim`. a hostile artist or token cannot block the sale.
+        // The module may record a failed token transfer as debt. A failed whole module call cannot persist that debt.
         if (artistTotal != 0) {
             (bool okPay,) =
                 module.call{gas: ARTIST_PAY_GAS}(abi.encodeCall(IBalanceModule.pay, (c.artist, artistTotal)));
-            okPay;
+            if (!okPay) revert BadModule();
         }
     }
 

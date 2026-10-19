@@ -5,6 +5,7 @@ pragma solidity ^0.8.28;
 
 interface IStatementBalanceModule {
     error CoreNotRetired();
+    error CoreRetired();
     error InsufficientAvailable();
     error InvalidConfiguration();
     error InvalidSuccessor();
@@ -13,12 +14,13 @@ interface IStatementBalanceModule {
 
     event OwedClaimed(address indexed to, uint256 amount);
     event PaymentAccrued(address indexed to, uint256 amount);
-    event ReserveMigrated(address indexed successor, address indexed module, uint256 amount);
+    event ReserveMigrated(address indexed targetCore, address indexed module, uint256 amount);
 
     function available() external view returns (uint256);
     function balanceToken() external view returns (address);
     function claim(address to) external returns (uint256 amount);
     function core() external view returns (address);
+    function migrateInactiveReserve() external returns (uint256 amount);
     function migrateReserve() external returns (uint256 amount);
     function owed(address) external view returns (uint256);
     function pay(address to, uint256 amount) external;

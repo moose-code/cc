@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Sources } from "../src/listings.ts";
 import { setSink } from "../src/log.ts";
+import { CREDIT_STRATEGY } from "@cc/engine/addresses";
 
 const offerer = "0x00000000000000000000000000000000000000f1";
 const params = {
@@ -74,4 +75,37 @@ test("seaport: hashless and zero-price orders are skipped while a valid order is
   } finally {
     setSink((l) => process.stdout.write(l + "\n"));
   }
+});
+
+// promise: stale top-ranked listings cannot hide a valid 41st listing from the keeper indefinitely.
+test("a valid 41st listing is checked on the next block after 40 stale listings", async () => {
+  const cfg: any = {
+    record: { core: "0x00000000000000000000000000000000000000c0", strategyAdapter: "0x00000000000000000000000000000000000000a1" },
+    strategy: { mode: "off" },
+    opensea: { refreshSec: 60 },
+  };
+  const checked: bigint[] = [];
+  const client: any = {
+    multicall: async ({ contracts }: { contracts: { functionName: string; args: bigint[] }[] }) =>
+      contracts.map((c) => {
+        if (c.functionName === "bidOf") checked.push(c.args[0]);
+        if (c.functionName === "price" && c.args[0] < 41n) return { status: "failure" };
+        const result = c.functionName === "bidOf" ? 2_000n : c.functionName === "price" ? ["0x0", 1_000n, "0x"] : CREDIT_STRATEGY;
+        return { status: "success", result };
+      }),
+  };
+  const s = new Sources(client, cfg, () => 1_000_000_000);
+  const watched = Array.from({ length: 41 }, (_, i) => ({
+    venue: "strategy", adapter: cfg.record.strategyAdapter, id: BigInt(i + 1), price: 1_000n, params: "0x",
+  }));
+  (s as any).strategy = watched;
+  (s as any).scores = new Map(watched.map((w) => [w.id, 2_000n]));
+  const first = await s.candidates({ ethRate: 1_000_000n } as any, 1n);
+  assert.equal(first.length, 40);
+  assert.ok(first.every((l) => !l.valid));
+  assert.ok(!checked.includes(41n));
+  (s as any).strategy = [...watched]; // refresh does not reset the scan window
+  const second = await s.candidates({ ethRate: 1_000_000n } as any, 2n);
+  assert.ok(second.some((l) => l.id === 41n && l.valid));
+  assert.equal(checked.length, 80, "at most 40 full reads per block");
 });

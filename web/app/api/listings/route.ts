@@ -1,4 +1,4 @@
-// OpenSea listings of the Credits collection that the Core can fill through SeaportBasicAdapter (owner decision 134).
+// OpenSea listings of the Credits collection that the Core can fill through SeaportBasicAdapter.
 // Server only: OPENSEA_API_KEY never reaches the browser. The response is the cheapest listings that pass the
 // adapter's checks. The list (no fulfillment data) is cached for CACHE_MS so every browser shares one OpenSea round of
 // requests; `?fulfill=<orderHash>` returns the encoded `params` for Core.buyListing of one order, cached per order.
@@ -13,7 +13,9 @@ const OS = "https://api.opensea.io/api/v2";
 const SLUG = "credits";
 const SEAPORT_1_6 = "0x0000000000000068f116a894984e2db1123eb395";
 const PAGE = 100; // OpenSea's maximum page size
-const MAX_LISTINGS = 200; // the cheapest listings kept per cache window (two pages); sent as `max` for the listings page caption
+const MAX_LISTINGS = 200; // the cheapest listings kept per cache window; sent as `max` for the listings page caption
+const MAX_PAGES = 5; // upstream GET limit even when every returned order is ineligible
+const LISTINGS_TIMEOUT_MS = 10_000; // one deadline for the full paged snapshot
 const CACHE_MS = 20_000;
 const FULFILL_CACHE_MS = 10_000;
 const MAX_FULFILL_INFLIGHT = 4; // concurrent OpenSea fulfillment POSTs across all clients
@@ -90,8 +92,9 @@ async function os(path: string, init?: RequestInit) {
 async function build(): Promise<Out> {
   const rows: Out["listings"] = [];
   let next = "";
-  while (rows.length < MAX_LISTINGS) {
-    const page = await os(`/listings/collection/${SLUG}/best?limit=${PAGE}${next ? `&next=${encodeURIComponent(next)}` : ""}`);
+  const signal = AbortSignal.timeout(LISTINGS_TIMEOUT_MS);
+  for (let pages = 0; pages < MAX_PAGES && rows.length < MAX_LISTINGS; pages++) {
+    const page = await os(`/listings/collection/${SLUG}/best?limit=${PAGE}${next ? `&next=${encodeURIComponent(next)}` : ""}`, { signal });
     for (const l of page.listings as any[]) {
       const p = l.protocol_data?.parameters;
       const id = p?.offer?.[0]?.identifierOrCriteria;

@@ -310,7 +310,7 @@ contract E2EReal is Scenario {
     /// deploys Jack's `ConversionLineageWithdrawals` from `out/upstream-balance.json` exactly as the production-module test
     /// does: the funder receives 80 real Credits, the Statements owner registers the Balance renderer, the funder
     /// composes a page, withdraws and retires the launch supply, then the owner deploys `StatementBalanceModule`, sets
-    /// it, switches `redeemOn` on (`balanceBidOn` follows value mode in `phase7Quote`), initializes a native eth / token pool at the dev sqrt and points
+    /// it, sets the phase-two fee reserve share, initializes a native eth / token pool at the dev sqrt and points
     /// the controller at it. every write goes through the node directly (`_send` / `_sendCreate`) so the deployed token
     /// address is the one the node assigns, not a simulated one. `opensAt` is a constant timestamp; the shell advances
     /// node time to it before the redemption.
@@ -364,6 +364,7 @@ contract E2EReal is Scenario {
         _send(OWNER, address(core), abi.encodeCall(ICore.setBalanceModule, (module)), 0);
         Settings memory s = core.settings();
         s.redeemOn = true;
+        s.feeToRedeemBurnBps = 1_000;
         _send(OWNER, address(core), abi.encodeCall(ICore.setSettings, (s)), 0);
         _send(
             OWNER,
@@ -385,6 +386,7 @@ contract E2EReal is Scenario {
         );
 
         require(core.balanceModule() == module, "phase6prod: module not set");
+        require(core.settings().feeToRedeemBurnBps == 1_000, "phase6prod: fee reserve share not set");
         // preflight: balance bid on, value mode off and a pool key set is the round trip hazard state
         Settings memory after_ = core.settings();
         require(
@@ -480,7 +482,8 @@ contract E2EReal is Scenario {
             vm.rpc(
                 "eth_sendTransaction",
                 string.concat(
-                    '[{"from":"', vm.toString(who), '","data":"', vm.toString(initcode), '","gas":"0x17d7840"}]'
+                    '[{"from":"', vm.toString(who), '","data":"', vm.toString(initcode), '","gas":"',
+                    _quantity(MAINNET_TX_GAS_CAP), '"}]'
                 )
             ),
             (bytes32)
@@ -488,16 +491,25 @@ contract E2EReal is Scenario {
         vm.rpc("evm_mine", "[]");
         string memory receipt = _receipt(txHash);
         require(vm.parseJsonUint(receipt, ".status") == 1, "Anvil create reverted");
+        require(vm.parseJsonUint(receipt, ".gasUsed") <= MAINNET_TX_GAS_CAP, "Anvil create exceeded gas cap");
         deployed = vm.parseJsonAddress(receipt, ".contractAddress");
         vm.createSelectFork(vm.envString("E2E_RPC_URL"), vm.parseJsonUint(receipt, ".blockNumber"));
     }
 
     // ------------------------------------------------------------------ phase 7: value mode
 
-    /// sets the value quote and switches value mode and the balance bid on with the eth spend cap active, as the owner. reference values
+    /// sets the phase-two 203-bps credit spread and quote while the balance bid remains off. reference values are
     /// 1,200 bps/h, step 200, min 600 s, stale 3,600, tol 100, minLiquidity from the balance pool depth.
     function phase7Quote(uint128 minLiquidity) external {
         _boot();
+        CreditSale memory credit = CreditSale({
+            saleOn: ctl.creditSaleOn(),
+            window: ctl.creditWindow(),
+            spreadBps: 203,
+            startBps: ctl.creditStartBps()
+        });
+        vm.broadcast(OWNER);
+        ctl.setCredit(credit);
         vm.broadcast(OWNER);
         ctl.setQuote(
             Quote({
@@ -509,14 +521,34 @@ contract E2EReal is Scenario {
                 minLiquidity: minLiquidity
             })
         );
+        require(ctl.creditSpreadBps() == 203, "phase7: credit spread not set");
+        require(!core.settings().valueModeOn && !core.settings().balanceBidOn, "phase7: bid opened before reference warmup");
+    }
+
+    /// opens the balance bid only after the configured reference answers from the seeded pool.
+    function phase7Activate() external {
+        _boot();
+        (uint256 saleValue, bool ok) = ctl.valuePerPoint(true);
+        require(ok && saleValue != 0, "phase7: reference not usable");
+        vm.broadcast(OWNER);
+        ctl.setAgeEligibilityOn(true);
         Settings memory s = core.settings();
         s.valueModeOn = true;
-        s.balanceBidOn = true; // the balance bid opens with value mode
-        s.spendCapBps = 1_000;
+        s.balanceBidOn = true;
+        s.balanceBidCapBps = 11_000;
+        s.climbPerMinBps = 100;
+        s.recoveryClimbPerMinBps = 100;
+        s.saleFloorBps = 5_000;
+        s.spendCapBps = 9_999;
         vm.broadcast(OWNER);
         core.setSettings(s);
-        require(core.settings().valueModeOn, "phase7: value mode not on");
-        console.log("phase7: value mode on, spendCapBps 1000, referencePrice", ctl.referencePrice());
+        Settings memory after_ = core.settings();
+        require(after_.valueModeOn && after_.balanceBidOn && after_.balanceBidCapBps == 11_000, "phase7: value bid not on");
+        require(
+            after_.feeToRedeemBurnBps == 1_000 && after_.spendCapBps == 9_999 && ctl.creditSpreadBps() == 203,
+            "phase7: phase-two tuple changed"
+        );
+        console.log("phase7: value mode on, spread 203, referencePrice", ctl.referencePrice());
     }
 
     /// moves the balance pool spot up about 8 percent with real eth buys of the balance token through a swap router.
@@ -557,9 +589,10 @@ contract E2EReal is Scenario {
         _boot();
         Settings memory s = core.settings();
         s.valueModeOn = false;
+        s.balanceBidOn = false;
         vm.broadcast(OWNER);
         core.setSettings(s);
-        require(!core.settings().valueModeOn, "phase7: value mode still on");
+        require(!core.settings().valueModeOn && !core.settings().balanceBidOn, "phase7: value or balance bid still on");
         console.log("phase7: value mode off, ethRate", core.ethRate());
     }
 

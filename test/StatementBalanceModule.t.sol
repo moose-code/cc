@@ -15,12 +15,14 @@ interface IStatementBalanceModuleErrors {
     error OnlyCore();
     error InsufficientAvailable();
     error CoreNotRetired();
+    error CoreRetired();
     error InvalidSuccessor();
     error RedeemedBelowRating();
 
     event ReserveMigrated(address indexed successor, address indexed module, uint256 amount);
 
     function core() external view returns (address);
+    function migrateInactiveReserve() external returns (uint256 amount);
     function migrateReserve() external returns (uint256 amount);
 }
 
@@ -164,16 +166,22 @@ contract StatementBalanceModuleTest is Test {
     uint256 public recordedPayments;
     bool public retired;
     address public successor;
+    address public balanceModule;
+
+    function balanceToken() external view returns (address) {
+        return address(token);
+    }
 
     function setUp() public {
         vm.etch(Mainnet.STATEMENTS, address(new StatementsDouble()).code);
         token = new BalanceGateTokenDouble();
         module = _deploy(address(this), address(token));
+        balanceModule = address(module);
     }
 
-    function _deploy(address core, address balanceToken) internal returns (IBalanceModule) {
+    function _deploy(address core, address tokenAddress) internal returns (IBalanceModule) {
         return IBalanceModule(
-            vm.deployCode("StatementBalanceModule.sol:StatementBalanceModule", abi.encode(core, balanceToken))
+            vm.deployCode("StatementBalanceModule.sol:StatementBalanceModule", abi.encode(core, tokenAddress))
         );
     }
 
@@ -195,6 +203,61 @@ contract StatementBalanceModuleTest is Test {
 
     function _migrateReserve() internal returns (uint256) {
         return IStatementBalanceModuleErrors(address(module)).migrateReserve();
+    }
+
+    function _migrateInactiveReserve() internal returns (uint256) {
+        return IStatementBalanceModuleErrors(address(module)).migrateInactiveReserve();
+    }
+
+    // promise: an inactive module moves only unowed same-token reserve to the live Core's selected module
+    function test_inactiveReserveMovesToCurrentModuleAndLeavesArtistDebt() public {
+        IBalanceModule target = _deploy(address(this), address(token));
+        balanceModule = address(target);
+        _open();
+        token.mint(address(module), 100 ether);
+        token.setMode(2);
+        this.payFromCore(40 ether);
+        token.setMode(0);
+        assertEq(IOwedClaim(address(module)).owed(recipient), 40 ether);
+        vm.expectEmit(address(module));
+        emit IStatementBalanceModuleErrors.ReserveMigrated(address(this), address(target), 60 ether);
+        vm.prank(recipient);
+        assertEq(_migrateInactiveReserve(), 60 ether);
+        assertEq(token.balanceOf(address(module)), 40 ether);
+        assertEq(token.balanceOf(address(target)), 60 ether);
+        assertEq(_migrateInactiveReserve(), 0);
+        assertEq(IOwedClaim(address(module)).claim(recipient), 40 ether);
+    }
+
+    // promise: current, retired, mismatched, and not-yet-open modules cannot move an active reserve
+    function test_inactiveReserveRejectsWrongStateOrBinding() public {
+        _open();
+        token.mint(address(module), 100 ether);
+        vm.expectRevert(IStatementBalanceModuleErrors.InvalidSuccessor.selector);
+        _migrateInactiveReserve();
+        IBalanceModule target = _deploy(address(this), address(token));
+        balanceModule = address(target);
+        retired = true;
+        vm.expectRevert(IStatementBalanceModuleErrors.CoreRetired.selector);
+        _migrateInactiveReserve();
+        retired = false;
+        balanceModule = recipient;
+        vm.expectRevert(IStatementBalanceModuleErrors.InvalidSuccessor.selector);
+        _migrateInactiveReserve();
+        BalanceSuccessorDouble unrelated = new BalanceSuccessorDouble(address(token));
+        balanceModule = address(_deploy(address(unrelated), address(token)));
+        vm.expectRevert(IStatementBalanceModuleErrors.InvalidSuccessor.selector);
+        _migrateInactiveReserve();
+        BalanceGateTokenDouble other = new BalanceGateTokenDouble();
+        balanceModule = address(_deploy(address(this), address(other)));
+        vm.expectRevert(IStatementBalanceModuleErrors.InvalidSuccessor.selector);
+        _migrateInactiveReserve();
+        balanceModule = address(target);
+        token.setGate(0, uint64(block.timestamp));
+        vm.expectRevert(IStatementBalanceModuleErrors.InsufficientAvailable.selector);
+        _migrateInactiveReserve();
+        assertEq(token.balanceOf(address(module)), 100 ether);
+        assertEq(token.balanceOf(address(target)), 0);
     }
 
     // promise: the module fixes its Core, balance token and score unit at construction.

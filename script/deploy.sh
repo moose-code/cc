@@ -18,7 +18,8 @@
 # simulation. it needs no wallet, no broadcast rpc, no etherscan key and sends or verifies nothing.
 # RESUME=replay|state|record continues a stopped run (docs/RUNBOOK.md section 6). each needs CORE and FROM_BLOCK (the
 # block the first run printed as `start block`). replay is `forge script --resume --slow` of broadcast/Deploy.s.sol/1/run-latest.json
-# and refuses a signer nonce outside that run's nonces; state is script/Resume.s.sol, which sends what has no code on
+# and refuses a signer nonce outside that run's nonces. all resume modes recheck the owner delegation before continuing.
+# state is script/Resume.s.sol, which sends what has no code on
 # chain; record sends nothing and runs postflight, the record write and verification for a launch that has landed.
 # the scripts require chain id 1 (Checks.sol), so forge runs with --chain-id 1; a local node keeps its own chain id
 # and the record carries it.
@@ -87,6 +88,9 @@ if [ -n "$CHAIN_OVERRIDE" ]; then
   CHAIN_ID="$CHAIN_OVERRIDE"
 fi
 case "$NODE:$WALLET" in anvil:unlocked|anvil:keystore|live:keystore) ;; *) die "NODE $NODE with WALLET $WALLET is not a supported pair in $ENV_FILE" ;; esac
+STACK="${STACK:-live}"
+[ "$NODE" != live ] || [ "$STACK" = live ] || die "a live deploy requires STACK=live so owner delegation checks cannot be skipped"
+export STACK
 RECORD="${RECORD_SHELL:-${RECORD_FILE:-deployments/$CHAIN_ID.json}}"
 
 NFAIL=0
@@ -168,9 +172,7 @@ case "$(cast code "$DEPLOYER" --rpc-url "$RPC_URL")" in
   0xef0100*) echo "deploy.sh: $DEPLOYER carries an EIP 7702 delegation: one transaction in flight, the broadcast waits for each receipt (--slow)" ;;
 esac
 
-# the stack the forge scripts read; STACK=master repoints them at the master stack fork (docs/RUNBOOK.md section 7)
-STACK="${STACK:-live}"
-export STACK
+# STACK=master repoints local or rehearsal scripts at the master stack fork (docs/RUNBOOK.md section 7).
 
 # LAUNCH_ONLY reads the Core and the start block from the deferred record and checks them against the chain. a dry run
 # collects every failure through guard. from here on it runs as RESUME=state with the extra Resume.s.sol rows (every step
@@ -275,6 +277,9 @@ if [ "$PRE_RC" != 0 ] && [ -z "$RESUME" ]; then
   PRE_OK=0
   printf '%s\n' "$PRE" | grep -E '^ +(failed: |[0-9]+ of )' | sed 's/^ */  /' || true
   guard "preflight failed: $(printf '%s\n' "$PRE" | grep -E '^ +failed: ' | sed -E 's/^ +failed: //' | head -1)"
+fi
+if [ -n "$RESUME" ]; then
+  OWNER_PRE="$(script/tools/check-resume-owner.sh "$PRE_RC" <<<"$PRE")" || guard "$OWNER_PRE"
 fi
 if [ "$SIGNOFF" = 1 ]; then
   if [ -z "${CONFIG_HASH:-}" ]; then

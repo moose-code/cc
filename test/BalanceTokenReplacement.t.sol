@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
+import {RATE_SCORE, Settings} from "../src/interfaces/Interfaces.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -159,37 +159,48 @@ contract BalanceTokenReplacementTest is Fixture {
         _buyRaw(0, data, ids[0], address(xt));
     }
 
-    // rule: setBalanceModule while balanceBidOn leaves the balance price state alone and the posted rate unchanged: the
-    // balance bid is a posted price that never reads the instance, and a fill never moves it (decision 164)
+    // promise: a module replacement preserves a shared instance above its floor and the balance bid's separate discount
     function test_replacementWhileBidOnLeavesTheInstance() public {
+        Settings memory s = core.settings();
+        s.balanceBidMarginBps = 1_500;
+        s.balanceDiscountBps = 2_000;
+        _setSettings(s);
         uint256 floor = 10_000 - core.settings().balanceBidMarginBps;
         uint256 posted = 10_000 - core.settings().balanceDiscountBps;
+        assertLt(posted, floor, "the posted bid differs from the instance floor");
         nextToken.mint(address(nextModule), 1e24);
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
         core.sellForBalance(ids);
         _warp(2 hours);
         uint256 clockBefore = _slot(33);
+        uint256 rateBefore = _slot(32);
+        uint256 anchorBefore = _slot(34);
         assertTrue(uint64(clockBefore) != uint64(block.timestamp), "the clock is behind before the replacement");
-        assertEq(_slot(32), floor, "a fill left rateAtCheckpoint at the launch floor");
+        assertGt(rateBefore, floor, "the instance is above its new floor before replacement");
         _setBalanceModule(address(nextModule));
-        assertEq(_slot(32), floor, "rateAtCheckpoint is untouched by the replacement");
+        assertEq(_slot(32), rateBefore, "rateAtCheckpoint is untouched by the replacement");
         assertEq(_slot(33), clockBefore, "the clocks are untouched");
-        assertEq(_slot(34), floor, "anchor.lastFillRate is untouched");
+        assertEq(_slot(34), anchorBefore, "anchor.lastFillRate is untouched");
         assertEq(core.balanceRate(), posted, "the read rate is the posted rate");
     }
 
-    // rule: a replacement inside the fill bucket resets the instance and the next sell pays in the new token
+    // promise: a replacement inside the fill bucket preserves a nonfloor instance and the next sell pays in the new token
     function test_replacementMidBucketThenSell() public {
+        Settings memory s = core.settings();
+        s.balanceBidMarginBps = 1_500;
+        _setSettings(s);
         nextToken.mint(address(nextModule), 1e24);
         uint256[] memory first = _credits(seller, 1);
         vm.prank(seller);
         core.sellForBalance(first);
         // inside the same 60 second bucket as the fill
         _warp(30);
-        _setBalanceModule(address(nextModule));
         uint256 floor = 10_000 - core.settings().balanceBidMarginBps;
-        assertEq(_slot(32), floor, "the instance reset to the floor inside the bucket");
+        uint256 rateBefore = _slot(32);
+        assertGt(rateBefore, floor, "the instance is above its new floor before replacement");
+        _setBalanceModule(address(nextModule));
+        assertEq(_slot(32), rateBefore, "the instance survives replacement inside the bucket");
         uint256 oldPile = xt.balanceOf(seller);
         assertGt(oldPile, 0, "the first sell paid the old token");
         uint256[] memory second = _credits(seller, 1);
@@ -200,9 +211,13 @@ contract BalanceTokenReplacementTest is Fixture {
         assertEq(CREDITS.ownerOf(second[0]), address(core));
     }
 
-    // rule: an old-token pile a seller already holds is untouched by a replacement, and the bid reads on a 6 decimal
+    // promise: an old-token pile a seller already holds is untouched by a replacement, and the bid reads on a 6 decimal
     // token the new module reports its rate and per credit payout
     function test_replacementWithSixDecimalToken() public {
+        Settings memory s = core.settings();
+        s.balanceBidMarginBps = 1_500;
+        s.balanceDiscountBps = 2_000;
+        _setSettings(s);
         uint256[] memory sold = _credits(seller, 1);
         vm.prank(seller);
         core.sellForBalance(sold);
@@ -218,10 +233,11 @@ contract BalanceTokenReplacementTest is Fixture {
         assertEq(core.balanceToken(), address(six));
         assertEq(mod.available(), oldReserve, "the old reserve stayed in the old module");
 
-        uint256 floor = 10_000 - core.settings().balanceBidMarginBps;
-        assertEq(core.balanceRate(), floor, "the rate reads the floor on the 6 decimal token");
+        uint256 posted = 10_000 - core.settings().balanceDiscountBps;
+        assertTrue(posted != 10_000 - core.settings().balanceBidMarginBps, "the posted rate differs from the instance floor");
+        assertEq(core.balanceRate(), posted, "the posted rate survives the module replacement");
         uint256[] memory probe = _credits(seller, 1);
-        assertEq(core.balanceBidOf(probe[0]), _scoreOf(probe[0]) * 1e4 * floor / 10_000, "the per credit payout scales");
+        assertEq(core.balanceBidOf(probe[0]), _scoreOf(probe[0]) * 1e4 * posted / 10_000, "the per credit payout scales");
 
         vm.prank(seller);
         core.sellForBalance(probe, 1, address(six));

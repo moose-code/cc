@@ -31,7 +31,7 @@ export function TradePanel({ market }: { market?: Market }) {
 }
 
 function TradeBody({ market }: { market?: Market }) {
-  const cc = useCcMarket();
+  const { market: cc, error: ccPoolError } = useCcMarket();
   const m = market ?? cc;
   const { data: perEth } = useTokensPerEth(m);
   const { address, chainId } = useAccount();
@@ -170,25 +170,29 @@ function TradeBody({ market }: { market?: Market }) {
   const wrongChain = address != null && chainId !== chain.id;
   const needApprove = side === "sell" && (!plan[0].done || !plan[1].done);
   const approveLabel = !plan[0].done ? `approve ${tag}` : "approve Permit2";
-  const gate = !address
-    ? { label: "connect wallet", off: !openConnectModal, go: openConnectModal }
-    : wrongChain
-      ? { label: "switch network", go: () => switchChain({ chainId: chain.id }) }
-      : amountIn === 0n
-        ? { label: "enter an amount", off: true }
-        : over
-          ? { label: `not enough ${side === "buy" ? "ETH" : tag}`, off: true }
-          : quote.isLoading
-            ? { label: "getting quote…", off: true }
-            : {
-                label: needApprove ? approveLabel : `${side} ${tag}`,
-                off: !(quoteOut != null && quoteOut > 0n),
-                go: () => {
-                  setResult(null);
-                  setWithApprovals(needApprove);
-                  run(swap, plan);
-                },
-              };
+  const gate = !market && ccPoolError
+    ? { label: "pool configuration error", off: true }
+    : !m
+      ? { label: "loading pool", off: true }
+      : !address
+        ? { label: "connect wallet", off: !openConnectModal, go: openConnectModal }
+        : wrongChain
+          ? { label: "switch network", go: () => switchChain({ chainId: chain.id }) }
+          : amountIn === 0n
+            ? { label: "enter an amount", off: true }
+            : over
+              ? { label: `not enough ${side === "buy" ? "ETH" : tag}`, off: true }
+              : quote.isLoading
+                ? { label: "getting quote…", off: true }
+                : {
+                    label: needApprove ? approveLabel : `${side} ${tag}`,
+                    off: !(quoteOut != null && quoteOut > 0n),
+                    go: () => {
+                      setResult(null);
+                      setWithApprovals(needApprove);
+                      run(swap, plan);
+                    },
+                  };
   const active = steps.find((s) => s.status === "wallet" || s.status === "pending");
   const busy = pending && !result;
   const failed = Boolean(err) && err !== CANCELLED && !busy && !result;
@@ -482,9 +486,10 @@ function TradeBody({ market }: { market?: Market }) {
         </button>
       )}
 
-      {!hookFee?.active && (
+      {m && !hookFee?.active && (
         <p className="tp-fee caption">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
       )}
+      {!market && ccPoolError && <p className="panel-note tp-note" role="alert">{ccPoolError}</p>}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}
     </aside>
   );

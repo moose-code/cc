@@ -190,3 +190,89 @@ test("errors: a URL with a key in an error message reaches neither the log line 
   assert.ok(!bodies[0].includes(secret), "webhook payload");
   assert.ok(lines.length >= 2 && lines.every((l) => !l.includes(secret)), "log lines");
 });
+
+// promise: one refused webhook schedules delivery without another keeper tick invoking the alert
+test("alert retries a refused webhook without a second caller", async () => {
+  const realFetch = globalThis.fetch;
+  const realTimeout = globalThis.setTimeout;
+  let retryCall: (() => void) | undefined;
+  globalThis.setTimeout = ((cb: () => void, ms: number) => {
+    if (ms === 60_000) { retryCall = cb; return { unref() {} } as ReturnType<typeof setTimeout>; }
+    return realTimeout(cb, ms);
+  }) as typeof setTimeout;
+  const statuses: number[] = [];
+  globalThis.fetch = (async () => {
+    const status = statuses.length ? 200 : 500;
+    statuses.push(status);
+    return new Response(null, { status });
+  }) as typeof fetch;
+  try {
+    await alert("https://hooks.example.org/x", "retry-after-refusal", "keeper failed");
+    await alert("https://hooks.example.org/x", "retry-after-refusal", "keeper failed");
+    assert.deepEqual(statuses, [500], "the next tick does not wait for another POST");
+    assert.ok(retryCall, "the failed one-shot alert scheduled its own retry");
+    retryCall();
+    await new Promise<void>((resolve) => realTimeout(resolve, 0));
+    await alert("https://hooks.example.org/x", "retry-after-refusal", "keeper failed");
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realTimeout;
+  }
+  assert.deepEqual(statuses, [500, 200]);
+});
+
+// promise: a timed-out webhook has at most one in-flight request for its key and cannot trigger another every tick
+test("alert suppresses duplicate in-flight timeout", async () => {
+  const realFetch = globalThis.fetch;
+  const realTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((cb: () => void, ms: number) => {
+    if (ms === 60_000) return { unref() {} } as ReturnType<typeof setTimeout>;
+    return realTimeout(cb, ms);
+  }) as typeof setTimeout;
+  let rejectPending: ((error: Error) => void) | undefined;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Promise<Response>((_resolve, reject) => { rejectPending = reject; });
+  }) as typeof fetch;
+  try {
+    const pending = alert("https://hooks.example.org/x", "persistent-timeout", "keeper failed");
+    await alert("https://hooks.example.org/x", "persistent-timeout", "keeper failed");
+    assert.equal(calls, 1, "a later tick does not start a second timeout");
+    rejectPending!(new Error("timeout"));
+    await pending;
+    await alert("https://hooks.example.org/x", "persistent-timeout", "keeper failed");
+    assert.equal(calls, 1, "failure backoff starts after the timeout");
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realTimeout;
+  }
+});
+
+// promise: a slow low-balance webhook does not hold keeper startup before the first decision tick
+test("start checks do not await a slow balance webhook", async () => {
+  const realFetch = globalThis.fetch;
+  let release: ((response: Response) => void) | undefined;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Promise<Response>((resolve) => { release = resolve; });
+  }) as typeof fetch;
+  const signer = "0x00000000000000000000000000000000000000a5" as Address;
+  const cfg = loadConfig({
+    RECORD: "x", RPC_URLS: "http://127.0.0.1:8545", IMPERSONATE: signer,
+    LOW_BALANCE_ETH: "2", ALERT_WEBHOOK_URL: "https://hooks.example.org/x",
+  }, () => rec(31337));
+  const fixed = { factory: OWNER, escrow: OWNER, owner: "0x00000000000000000000000000000000000000ee" as Address };
+  try {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      startChecks(fakeClient(undefined), cfg, fixed, { address: signer }),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("startup waited for webhook")), 100); }),
+    ]).finally(() => clearTimeout(timer));
+    assert.equal(calls, 1);
+    release!(new Response(null, { status: 200 }));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

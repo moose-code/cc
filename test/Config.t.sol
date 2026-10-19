@@ -891,6 +891,38 @@ contract ConfigTest is Fixture {
         assertEq(_failedNames(), string.concat(codeRow, ", ", keyRow));
     }
 
+    // promise: resuming a partial deploy rechecks the current owner delegation, delegate code and key registry
+    function test_resumePreflightPinsTheOwnerDelegation() public {
+        if (keccak256(bytes(vm.envOr("STACK", string("")))) == keccak256("master")) vm.skip(true);
+        address d2 = _funded();
+        LaunchConfig memory c = lc;
+        c.rateStart = c.settings.rateCap / 3;
+        c.salt = keccak256(abi.encode(c.salt, "resume preflight"));
+        string memory codeRow = "owner: code is the pinned EIP 7702 delegation";
+        string memory hashRow = "owner: delegate code hash is the pinned Calibur";
+        string memory keyRow = "owner: no registered keys";
+
+        preflightResume(c, d2);
+        assertEq(_failedNames(), "", "an unchanged owner permits recovery");
+        assertTrue(_warnClean(codeRow) && _warnClean(hashRow) && _warnClean(keyRow), "all owner rows run");
+
+        uint256 snap = vm.snapshotState();
+        vm.etch(c.owner, "");
+        preflightResume(c, d2);
+        assertEq(_failedNames(), string.concat(codeRow, ", ", keyRow), "lost delegation blocks recovery");
+        vm.revertToState(snap);
+
+        vm.etch(OWNER_DELEGATE, abi.encodePacked(OWNER_DELEGATE.code, hex"00"));
+        preflightResume(c, d2);
+        assertEq(_failedNames(), hashRow, "changed delegate code blocks recovery");
+        vm.revertToState(snap);
+
+        vm.mockCall(c.owner, abi.encodeWithSignature("keyCount()"), abi.encode(uint256(1)));
+        preflightResume(c, d2);
+        assertEq(_failedNames(), keyRow, "a registered key blocks recovery");
+        vm.clearMockedCalls();
+    }
+
     /// the Core payee window and the pool launch skim window are separate values that must start equal
     // promise: preflight fails unless settings.sniperSeconds equals launch.sniperSeconds
     function test_preflightSniperSecondsMatchTheCoreSetting() public {

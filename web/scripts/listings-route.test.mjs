@@ -1,5 +1,6 @@
 // Exercises app/api/listings/route.ts with a stubbed fetch: fulfill only for hashes in the listings snapshot, a global
-// in-flight limit, a per-client token bucket and a bounded fulfill cache. "@/" imports resolve through a registered hook.
+// in-flight limit, a per-client token bucket, a bounded fulfill cache and a maximum upstream GET scan.
+// "@/" imports resolve through a registered hook.
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import { dirname, join } from "node:path";
@@ -32,11 +33,14 @@ const KNOWN = [h(1), h(2), h(3)];
 const MANY = 250; // more listings than the cap; the route keeps the cheapest 200
 const ALL = Array.from({ length: MANY }, (_, i) => h(5000 + i));
 let posts = 0;
+let listingGets = 0;
 globalThis.fetch = async (url, init) => {
   if (init?.method === "POST") {
     posts++;
     return Response.json({}); // not a fulfillBasicOrder call: the route answers "skipped"
   }
+  listingGets++;
+  if (globalThis.INVALID_PAGE_MODE) return Response.json({ next: "more", listings: [] });
   return Response.json({
     next: "",
     listings: (globalThis.MANY_MODE ? ALL : KNOWN).map((order_hash, i) => ({
@@ -104,5 +108,14 @@ assert.equal(posts, 12);
 // the cache serves repeats without a POST or a token
 for (let i = 0; i < 12; i++) assert.equal((await call(ALL[i], `30.0.${i >> 8}.${i & 255}`)).status, 200);
 assert.equal(posts, 12);
+
+// promise: ineligible upstream pages cannot keep one website request fetching without a bound.
+clock += 60_000;
+globalThis.INVALID_PAGE_MODE = true;
+listingGets = 0;
+const capped = await GET(new Request("http://x/api/listings"));
+assert.equal(capped.status, 200);
+assert.deepEqual((await capped.json()).listings, []);
+assert.equal(listingGets, 5);
 
 console.log("listings-route test ok");

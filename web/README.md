@@ -30,9 +30,14 @@ npm run dev                  # or npm run build && npm start
 
 The controller, coin and balance module are read from the Core. Without
 `NEXT_PUBLIC_CORE` the engine pages show "engine not deployed". Wallets connect
-through RainbowKit. `npm run check` runs `scripts/selfcheck.ts` (the sell
-replays) and `scripts/v4-selfcheck.ts` (the swap encoders). `npm run build`
-type checks.
+through RainbowKit. `npm run check` covers the sell replays, swap encoders and
+pool settings; `npm run build` type checks.
+
+The CC swap panel reads the pool hook, fee and tick spacing from the configured
+Core. Optional `NEXT_PUBLIC_POOL_*` values from the verified deployment record
+must match those on-chain values; a mismatch disables CC swaps and shows the
+configuration error. The pool is read once after the coin launches, so deferred
+Core deployment does not require a live coin pool.
 
 ## pages and actions
 

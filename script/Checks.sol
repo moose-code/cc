@@ -75,7 +75,7 @@ abstract contract LaunchChecks is PostflightChecks {
     /// codes. computed from the sources at the frozen candidate recorded in the freeze table of docs/STATUS.md. a change of a
     /// production contract on purpose updates these in the same commit as the sizes of test/BuildIdentity.t.sol
     bytes32 internal constant BUILD_HASH_CORE = 0x3229a50eaca6067227f487adc0aa6479e77658539a823b3ee8b320691e4f6d21;
-    bytes32 internal constant BUILD_HASH_CORELIB = 0xbe30bdc90c010d7e9524026be8968d134e1b236e985f8f2aa20c6737a0873947;
+    bytes32 internal constant BUILD_HASH_CORELIB = 0x4e99aff4d967412c270ee1e6eb02da17eacfd7f7ce8d61fa02b89d1d74c1212f;
     bytes32 internal constant BUILD_HASH_COREOPSLIB =
         0x3237260e6856f332de483e9f73b60f697c6ff886976ce39f1cf84e4d87d7fa35;
     bytes32 internal constant BUILD_HASH_CONTROLLER =
@@ -86,7 +86,7 @@ abstract contract LaunchChecks is PostflightChecks {
         0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x789770d6ad6b21255e6aa816a264650ed079691ad3ee36359a2972b75b7d9be9;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
-        0x2976071ea572f728ce1d84dd6e892a1015ce582297ca7c6689c0d67ddca6cada;
+        0xd285db45f2400cb71f0bc81ca47dfed3e62498d15dd0393384693b04b20396ac;
     bytes32 internal constant BUILD_CREATION_HASH_COREOPSLIB =
         0x0b4009fdd38f08368b9427fbf12658364f8144a6408d149eab888f88f161d689;
     /// @dev the bound of `settings.payeePpm` (`SettingsBounds`), restated so the launch rule row names it
@@ -132,8 +132,8 @@ abstract contract LaunchChecks is PostflightChecks {
         _preSignoff(c, deployer);
     }
 
-    /// @notice the checks of `Resume.s.sol` before it sends the missing steps. the prediction rows are left out (the
-    /// Core is deployed by now)
+    /// @notice the checks of `Resume.s.sol` before it sends missing steps. prediction rows are left out after the Core
+    /// is deployed; the current owner delegation, delegate code and key registry are checked again
     function preflightResume(LaunchConfig memory c, address deployer) internal {
         _reset();
         _preConfig(c);
@@ -142,6 +142,7 @@ abstract contract LaunchChecks is PostflightChecks {
         _preBuild();
         _preStack(c);
         _preFactory(c, deployer);
+        _preOwner(c);
         _preLive();
     }
 

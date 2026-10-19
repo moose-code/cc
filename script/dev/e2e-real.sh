@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
-# The full launch end to end on a local chain id 1 anvil fork of mainnet, with nothing faked: the real deploy and seed,
-# real pool swaps pushing fee income through the hook, the real keeper binary (keeper/src/main.ts) as the only engine
-# caller for the keeper doors, real EIP-712 Seaport orders, the owner's real phase 2 and value mode calls. Every phase
-# asserts on chain reads and prints PASS/FAIL; the run exits nonzero on any FAIL. The keeper and the anvil this script
-# starts are stopped on exit. Total wall time is printed.
+# The local chain-id-1 lifecycle uses forked protocol code, real swaps and signed Seaport orders. It impersonates and
+# funds owner, funder, trader and user accounts, supplies BALANCE pool liquidity, advances time and calls keeper ticks.
+# Every phase checks chain reads and prints PASS/FAIL; the run exits nonzero on a failed check.
 #
-# Chain id 1 so Seaport accepts the OpenSea-style signatures. The fork is https://gateway.tenderly.co/public/mainnet at
-# latest minus 100, built once (deploy local + Seed PHASE=pre) and saved with anvil_dumpState keyed on the contract,
-# deploy and seed sources (not the phase logic), so reruns load the state in seconds. The first run pays the fork.
+# Chain id 1 makes Seaport signatures comparable to mainnet. The default fork is pinned at block 26208025. A pre-phase
+# snapshot caches deploy and seed work; a passing run saves a separate final snapshot and matching deployment record.
 #
 #   script/dev/e2e-real.sh            build or load the cache, run every phase, stop anvil and the keeper
 #   FRESH=1 script/dev/e2e-real.sh    ignore the cache and rebuild the deployed and seeded state
 #   FORK_URL=<archive rpc> ...        the default is the Tenderly public gateway
-#   KEEP=1 ...                        leave anvil running after the run
+#   KEEP=1 ...                        request that this shell leave its anvil process running after the run
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -290,6 +287,12 @@ OUT6="$(step "phase6ProdDeploy()")" && {
 check "the owner set the production balance module (Jack's pinned build)" "$([ -n "$BMOD" ] && echo 1 || echo 0)" "module $BMOD"
 if [ -n "$BTOK" ]; then
   jq --arg t "$BTOK" --arg m "$BMOD" '.balanceToken=$t|.balanceModule=$m' "$REC" > "$SCRATCH/rec.json" && mv "$SCRATCH/rec.json" "$REC"
+  # A post-module steady-fee trade gives the 10 percent fee share a real balance before redemption.
+  BURN_RESERVE0="$(num "$CORE" 'ethRedeemBurn()(uint256)')"
+  step "phase2Swaps(uint256,uint256)" 1 0 || true
+  KEEPER_ENV="DOORS=book" keeper_run 1
+  BURN_RESERVE1="$(num "$CORE" 'ethRedeemBurn()(uint256)')"
+  check "phase-two fee share funded the redeem burn reserve" "$(calc "$BURN_RESERVE1 > $BURN_RESERVE0")" "reserve $BURN_RESERVE0 -> $BURN_RESERVE1"
   # A1 fills a page for the redemption; compose waits for the credit window
   step "phase6ProdFill()" || true
   PILE6="$(num "$CORE" 'pileSize()(uint256)')"
@@ -310,7 +313,10 @@ if [ -n "$BTOK" ]; then
       warp 86400
     done
     check "phase 6 statement reached its floor" "$([ "$(callc "$CTL" 'atFloor(uint256)(bool)' "$RSID")" = true ] && echo 1 || echo 0)" "atFloor $RSID"
+    BUYBACK_BEFORE="$(num "$CORE" 'ethToBuyback()(uint256)')"
     if step "phase6ProdRedeem(uint256)" "$RSID"; then check "redeem at the floor pays rating times 1e14 into the module" 1 "see step log"; fi
+    BUYBACK_AFTER="$(num "$CORE" 'ethToBuyback()(uint256)')"
+    check "redemption moved a fee reserve share to later buyback" "$(calc "$BUYBACK_AFTER > $BUYBACK_BEFORE")" "buyback $BUYBACK_BEFORE -> $BUYBACK_AFTER"
   fi
 fi
 
@@ -318,7 +324,7 @@ fi
 say "PHASE 7: value mode"
 if [ -n "$BTOK" ]; then
   # Jack's token reaches holders through the module (A1's balance sell, run after value mode is on) and the funder's
-  # launch balance. the funder moves about 2 percent of supply to the liquidity wallet after opensAt and adds a full-range
+  # launch balance. the funder moves a measured part of supply to the liquidity wallet after opensAt and adds a full-range
   # position, so the balance pool carries real trading depth. value mode then runs the full pool-move stress: a quote
   # gated on that depth, an 8 percent spot move, a sell inside the bands, the keeper refresh cadence, and a same-block
   # round trip that nets at most zero after pool fees. phase 6 already mined past opensAt for the redemption.
@@ -328,12 +334,17 @@ if [ -n "$BTOK" ]; then
   check "the funder seeded real balance-pool depth" "$([ -n "$DEPTH" ] && calc "$DEPTH > 0")" "depth $DEPTH moved $MOVED"
   # the minLiquidity gate at half the seeded depth: usable now, and an 8 percent price move keeps full-range L in place
   MINLIQ="$(python3 -c "print(${DEPTH:-0}//2)")"
-  if step "phase7Quote(uint128)" "$MINLIQ"; then check "value mode is on with the quote set" 1 "referencePrice $(num "$CTL" 'referencePrice()(uint256)')"; fi
-  # the balance bid opens with value mode (phase7Quote). two healthy refreshes first: the stored liquidity samples predate
-  # the seeded depth, and the balance cap refuses while a sample is under minLiquidity or the reference is stale
+  if step "phase7Quote(uint128)" "$MINLIQ"; then check "phase-two 203-bps spread and 100-bps quote configured with bid off" 1 "referencePrice $(num "$CTL" 'referencePrice()(uint256)')"; fi
+  # Two eligible reference refreshes follow the liquidity deposit before the owner opens the value-mode balance bid.
   : > "$KEEPER_LOG"
-  KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
-  KEEPER_ENV="DOORS=refreshReference" keeper_once; warp 601
+  REF0="$(num "$CTL" 'referenceTime()(uint40)')"
+  warp 601; KEEPER_ENV="DOORS=refreshReference" keeper_once
+  REF1="$(num "$CTL" 'referenceTime()(uint40)')"
+  warp 601; KEEPER_ENV="DOORS=refreshReference" keeper_once
+  REF2="$(num "$CTL" 'referenceTime()(uint40)')"
+  check "two healthy reference refreshes preceded activation" "$(calc "$REF1 > $REF0 and $REF2 > $REF1")" "samples $REF0 -> $REF1 -> $REF2"
+  if step "phase7Activate()"; then check "value mode and balance bid opened on the chosen tuple" 1 "see step log"; fi
+  warp 601
   ART="$(callc "$CORE" 'artist()(address)')"
   royalty_held() { echo $(( $(num "$BTOK" 'balanceOf(address)(uint256)' "$ART") + $(num "$BMOD" 'owed(address)(uint256)' "$ART") )); }
   ROY0="$(royalty_held)"
@@ -373,6 +384,20 @@ fi
 WALL=$(( $(date +%s) - START_TS ))
 say "RESULT"
 echo "passes: $PASSES   fails: $FAILS   wall: ${WALL}s"
-[ "${KEEP:-0}" = 1 ] && { trap - EXIT; rm -rf "$SCRATCH"; echo "anvil left running on $RPC (pid $ANVIL_PID)"; }
 [ "$FAILS" -eq 0 ] || exit 1
+FINAL_KEY="$KEY-$(shasum script/dev/e2e-real.sh script/dev/E2EReal.s.sol | shasum | cut -c1-12)"
+FINAL_STATE="$CACHE_DIR/e2e-real-final-state-$FINAL_KEY.hex"
+FINAL_RECORD="$CACHE_DIR/e2e-real-final-record-$FINAL_KEY.json"
+FINAL_BLOCK="$(cast block-number --rpc-url "$RPC")"
+FINAL_HASH="$(cast block "$FINAL_BLOCK" --field hash --rpc-url "$RPC")"
+jq --arg t "$BTOK" --argjson block "$FINAL_BLOCK" --arg hash "$FINAL_HASH" \
+  '.phase="post" | .balancePool={currency0:"0x0000000000000000000000000000000000000000",currency1:$t,fee:3000,tickSpacing:60,hooks:"0x0000000000000000000000000000000000000000"} | .snapshot={block:$block,hash:$hash}' \
+  "$REC" > "$SCRATCH/final-record.json" || exit 1
+cast rpc anvil_dumpState --rpc-url "$RPC" | tr -d '"' > "$SCRATCH/final-state.hex" || exit 1
+[ -s "$SCRATCH/final-state.hex" ] || exit 1
+mv "$SCRATCH/final-state.hex" "$FINAL_STATE"
+mv "$SCRATCH/final-record.json" "$FINAL_RECORD"
+cp "$FINAL_RECORD" "$REC"
+echo "final snapshot: $FINAL_STATE; record: $FINAL_RECORD; block $FINAL_BLOCK hash $FINAL_HASH"
+[ "${KEEP:-0}" = 1 ] && { trap - EXIT; rm -rf "$SCRATCH"; echo "anvil left running on $RPC (pid $ANVIL_PID)"; }
 echo "E2E-REAL PASSED"

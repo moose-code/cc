@@ -40,7 +40,7 @@ export async function startChecks(client: PublicClient, cfg: Config, fixed: Fixe
   }
   const balance = await client.getBalance({ address: signer.address });
   log("info", "keeper start", { address: signer.address, balance, ...describe(cfg) });
-  if (!cfg.dryRun && balance < cfg.lowBalance) await alert(cfg.alertWebhook, "balance", "keeper balance low, top up", { balance, address: signer.address });
+  if (!cfg.dryRun && balance < cfg.lowBalance) void alert(cfg.alertWebhook, "balance", "keeper balance low, top up", { balance, address: signer.address });
 }
 
 function makeSigner(cfg: Config): Signer {
@@ -103,12 +103,12 @@ export class Keeper {
     // An unusable protected buy quote degrades the eth bid to its last good rate. Sale doors may recover on a
     // projected reference refresh; the balance bid, compose and redemption keep running.
     if (state.valueModeOn && state.noQuote && !state.retired) {
-      await alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token reference price is unusable; the eth bid uses its last good rate", { referenceTime: state.referenceTime, referenceMaxStale: state.referenceMaxStale });
+      void alert(this.cfg.alertWebhook, "quote", "value mode is on and the balance token reference price is unusable; the eth bid uses its last good rate", { referenceTime: state.referenceTime, referenceMaxStale: state.referenceMaxStale });
     }
     // the reserve alert: a pot at or under the reserve halts every acquisition until fee income refills it; processing
     // (compose, redeem, buyback) keeps paying from the whole pot
     if (state.potRoom === 0n && !state.retired) {
-      await alert(this.cfg.alertWebhook, "reserve", "the pot is at or under the reserve, the bids read zero", { pot: state.potWithPending, reserve: state.reserve });
+      void alert(this.cfg.alertWebhook, "reserve", "the pot is at or under the reserve, the bids read zero", { pot: state.potWithPending, reserve: state.reserve });
     }
     const outcomes: TickResult["outcomes"] = [];
     for (const c of d.calls) {
@@ -171,7 +171,7 @@ async function main() {
     } catch (e) {
       failures++;
       log("error", "tick failed", { error: txError(e), failures });
-      if (failures === 5) await alert(cfg.alertWebhook, "tick", "five ticks in a row failed", { error: txError(e) });
+      if (failures === 5) void alert(cfg.alertWebhook, "tick", "five ticks in a row failed", { error: txError(e) });
     }
     await new Promise((r) => setTimeout(r, HEAD_POLL_MS));
   }

@@ -72,12 +72,11 @@ contract BalanceFlatTest is Fixture {
         assertGt(cost, 0, "with an eth cost basis");
     }
 
-    // promise: SPEC 9 a reverting artist or a blacklisting token does not block the sale: the seller is paid, the
-    // artist royalty stays in the module (paid to the artist later or recovered by the owner), and the credit piles (decision 163)
-    function test_hostileArtistDoesNotBlockTheSale() public {
+    // promise: a whole-module artist payment failure rolls back the seller payment and Credit transfer
+    function test_wholeArtistPayFailureRollsBackTheSale() public {
         address hostile = _user("flat.hostileArtist");
         _setArtist(hostile);
-        xt.setBanned(hostile); // the token refuses the artist, so module.pay(artist) reverts
+        xt.setBanned(hostile);
         uint256[] memory ids = _credits(user, 1);
         uint256 pay = _payout(ids[0]);
         uint256 royalty = _royalty(pay);
@@ -85,12 +84,14 @@ contract BalanceFlatTest is Fixture {
         uint256 userBefore = xt.balanceOf(user);
         uint256 moduleBefore = _moduleHolding();
         vm.prank(user);
+        vm.expectRevert(ICore.BadModule.selector);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(user) - userBefore, pay, "the seller is paid the posted payout");
+        assertEq(xt.balanceOf(user), userBefore, "the seller payment rolled back");
         assertEq(xt.balanceOf(hostile), 0, "the blacklisted artist received nothing");
-        assertEq(moduleBefore - _moduleHolding(), pay, "only the payout left the module; the royalty stays");
+        assertEq(_moduleHolding(), moduleBefore, "the module reserve is unchanged");
         (bool inPile,,) = core.creditInfo(ids[0]);
-        assertTrue(inPile, "the credit still entered the pile");
+        assertFalse(inPile, "the credit did not enter the pile");
+        assertEq(CREDITS.ownerOf(ids[0]), user, "the seller kept the Credit");
     }
 
     // promise: SPEC 9 the posted rate does not climb while idle and does not drop on a fill: a day idle and a batch
