@@ -59,7 +59,7 @@ case "$TARGET" in
     need FLY_CONFIG
     APP=$(awk -F'"' '/^app[[:space:]]*=/ {print $2; exit}' "indexer/$FLY_CONFIG")
     [[ -n "$APP" ]] || { echo "refusing: no app in indexer/$FLY_CONFIG" >&2; exit 1; }
-    CMD=(fly deploy --config "$FLY_CONFIG" -a "$APP")
+    CMD=(fly deploy --ha=false --config "$FLY_CONFIG" -a "$APP")
     for v in "${VARS[@]}"; do CMD+=(-e "$v"); done
     ;;
   local)

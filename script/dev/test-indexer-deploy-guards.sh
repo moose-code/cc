@@ -20,6 +20,7 @@ EOF
 echo 'app = "cc-test"' > "$TMP/indexer/fly.toml"
 cat > "$TMP/bin/fly" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$1" == deploy ]]; then [[ " $* " == *" --ha=false "* ]] || exit 9; fi
 exit 0
 EOF
 cat > "$TMP/bin/curl" <<'EOF'
