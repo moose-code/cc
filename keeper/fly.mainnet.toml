@@ -1,0 +1,30 @@
+app = "cc-keeper-mainnet"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+# Run fly deploy from the repository root with --ha=false: one keeper owns this state volume.
+[build]
+  dockerfile = "keeper/Dockerfile"
+  ignorefile = "keeper/Dockerfile.dockerignore"
+
+[env]
+  NODE_ENV = "production"
+  RECORD = "/app/deployments/1.json"
+  DRY_RUN = "1"
+  KEEPER_ADDRESS = "0x6b9411DD51DF1E41015cD8293C1BBC3E881a4aee"
+  STATE_DIR = "/data"
+  RPC_URLS = "https://gateway.tenderly.co/public/mainnet,https://eth.drpc.org,https://ethereum-rpc.publicnode.com"
+  INDEXER_URL = "https://cc-indexer-mainnet.fly.dev"
+
+[[mounts]]
+  source = "keeper_state"
+  destination = "/data"
+
+[[restart]]
+  policy = "always"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
