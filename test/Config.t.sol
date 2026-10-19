@@ -89,9 +89,11 @@ contract ConfigTest is Fixture {
         assertEq(f.symbol, "CC");
         assertEq(f.description, LAUNCH_DESCRIPTION, "launch coin description");
         assertEq(f.salt, keccak256("CC"));
-        assertEq(f.rateStart, 4_650_000_000_000_000);
+        assertEq(f.rateStart, 5_600_000_000_000_000);
         assertEq(f.supply, 1_000_000_000e18);
-        assertEq(abi.encode(f.settings), abi.encode(Mainnet.defaultSettings()), "settings block is the launch values");
+        Settings memory expectedSettings = Mainnet.defaultSettings();
+        expectedSettings.rateCap = 16_800_000_000_000_000;
+        assertEq(abi.encode(f.settings), abi.encode(expectedSettings), "settings block is the launch values");
         // the launch values of docs/DECISIONS.md 10.1 and 10.6, the fee split of decision 186
         assertEq(f.baselineSkimBps, 690);
         assertEq(f.bountyBps, 9_000);
@@ -990,7 +992,7 @@ contract ConfigTest is Fixture {
         address d2 = _funded();
         LaunchConfig memory shipped = _shipped();
         assertEq(shipped.settings.rateCap, 3 * shipped.rateStart, "the shipped file holds the ratio");
-        assertEq(shipped.settings.rateCap, 13_950_000_000_000_000, "launch opening cap");
+        assertEq(shipped.settings.rateCap, 16_800_000_000_000_000, "launch opening cap");
         // the fixture opens at 1.732e15 under the launch cap: the row passes once the start is a third of the cap
         LaunchConfig memory c = lc;
         c.salt = keccak256("preflight");
