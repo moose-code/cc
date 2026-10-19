@@ -134,8 +134,8 @@ fi
 CORE="$(jq -r .core "$REC")"
 CTL="$(jq -r .controller "$REC")"
 CREDITS=0x97630aA70AB14ed9883B41dAfccBc11349723043
-RATE_START=4900000000000000
-RATE_CAP=14700000000000000
+RATE_START=4650000000000000
+RATE_CAP=13950000000000000
 
 # ---- the keeper (real binary, throwaway keystore outside the repo) -------------------------------------------------
 
@@ -175,9 +175,9 @@ say "PHASE 1: launch"
 P1="$(step "phase1Settings()")"; echo "$P1" | sed 's/^/    /'
 check "ethPot is 0 at launch" "$(calc "$(num "$CORE" 'ethPot()(uint256)') == 0")" "pot $(num "$CORE" 'ethPot()(uint256)')"
 check "ethRate is 0 (empty pot clamps the bid)" "$(calc "$(num "$CORE" 'ethRate()(uint256)') == 0")" "rate $(num "$CORE" 'ethRate()(uint256)')"
-check "RATE_START is 4.9e15" "$(calc "$(num "$CORE" 'RATE_START()(uint256)') == $RATE_START")" "$(num "$CORE" 'RATE_START()(uint256)')"
+check "RATE_START is 4.65e15" "$(calc "$(num "$CORE" 'RATE_START()(uint256)') == $RATE_START")" "$(num "$CORE" 'RATE_START()(uint256)')"
 P1CAP="$(echo "$P1" | grep -m1 'phase1: rateCap' | awk '{print $NF}')"
-check "rateCap is 1.47e16" "$(calc "'$P1CAP' == '$RATE_CAP'")" "$P1CAP"
+check "rateCap is 1.395e16" "$(calc "'$P1CAP' == '$RATE_CAP'")" "$P1CAP"
 MOD="$(callc "$CORE" 'balanceModule()(address)' | tr 'A-Z' 'a-z')"
 check "balance module is zero" "$([ "$MOD" = 0x0000000000000000000000000000000000000000 ] && echo 1 || echo 0)" "$MOD"
 

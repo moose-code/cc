@@ -415,7 +415,7 @@ library Mainnet {
             buybackSlice: 0.5 ether,
             keeperFee: 0.0003 ether,
             keeperMaxBaseFee: 5 gwei,
-            rateCap: 14_700_000_000_000_000,
+            rateCap: 13_950_000_000_000_000,
             callerFee: 0.0003 ether,
             callerMaxBaseFee: 3 gwei,
             feeToRedeemBurnBps: 0,

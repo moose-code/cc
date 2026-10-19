@@ -65,7 +65,7 @@ interface IERC20Transfer {
 contract E2EReal is Scenario {
     using StateLibrary for IPoolManager;
 
-    uint160 internal constant DEV_SQRT = uint160(11318308930609191084791992905142);
+    uint160 internal constant DEV_SQRT = uint160(11618581461159793320010313039067);
     int24 internal constant TICK_FULL = 887_220;
 
     function _boot() internal {
@@ -97,11 +97,11 @@ contract E2EReal is Scenario {
     function phase1Settings() external {
         _boot();
         Settings memory s = core.settings();
-        s.rateCap = 14_700_000_000_000_000; // 1.47e16
+        s.rateCap = 13_950_000_000_000_000; // 1.395e16
         vm.broadcast(OWNER);
         core.setSettings(s);
         vm.broadcast(OWNER);
-        core.setRate(4_900_000_000_000_000); // 4.9e15
+        core.setRate(4_650_000_000_000_000); // 4.65e15
         console.log("phase1: RATE_START", core.RATE_START());
         console.log("phase1: rateCap", uint256(core.settings().rateCap));
     }

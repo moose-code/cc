@@ -21,7 +21,7 @@ interface IERC20Min {
 /// `script/tools/upstream-balance.sh` is required (the test fails with the build instruction when it is absent).
 contract LaunchDayPhase2Test is LaunchDayBase {
     /// @dev the balance pool sqrt the Seed post section and the e2e flows use (script/config/anvil.json .dev)
-    uint160 internal constant DEV_SQRT = uint160(11318308930609191084791992905142);
+    uint160 internal constant DEV_SQRT = uint160(11618581461159793320010313039067);
 
     // promise: SPEC 4 the balance door against the pinned production module and Jack's token: the renderer is registered,
     // the funder retires the launch supply, a statement redeems once transfers open, and a seller then takes the balance bid.

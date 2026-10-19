@@ -62,9 +62,9 @@ const R0 = 6.668e15;
   for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], k === 'anchorMinCost' ? +cfg.sale[k] / 1e18 : +cfg.sale[k], 1e-12, 'controller ' + k); // eth in the model, wei in the config
   assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same fields
   // the launch rateStart is 100 percent of market
-  near(cfg.rateStart, 0.0049 * W, 1e-4, 'launch rateStart is 0.0049 eth per 100 points (decision 145, refreshed 2026-10-16)');
+  assert.equal(cfg.rateStart, 4_650_000_000_000_000, 'launch rateStart is 0.00465 eth per 100 points'); n++;
   // the launch rate cap is the config value and 3 times rateStart
-  near(SETTINGS.rateCap, cfg.settings.rateCap, 1e-12, 'launch rateCap'); near(cfg.settings.rateCap, 3 * cfg.rateStart, 1e-12, 'launch rateCap is 3 times rateStart');
+  near(SETTINGS.rateCap, cfg.settings.rateCap, 1e-12, 'launch rateCap'); assert.equal(cfg.settings.rateCap, 3 * cfg.rateStart, 'launch rateCap is 3 times rateStart'); n++;
   // the pool and payee values of the v2 launch
   for (const k of ['baselineSkimBps', 'bountyBps', 'sniperStartBps']) near(DEFAULTS[k], cfg.launch[k], 1e-12, 'launch ' + k);
   near(DEFAULTS.sniperSeconds, cfg.launch.sniperSeconds, 1e-12, 'launch sniperSeconds');

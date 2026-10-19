@@ -631,7 +631,7 @@ contract ColdLaunchMatrixTest is Fixture {
     }
 
     function _fixtureRateStart() internal pure override returns (uint256) {
-        return 4_900_000_000_000_000;
+        return 4_650_000_000_000_000;
     }
 
     function _fixtureCreditSaleOn() internal pure override returns (bool) {
@@ -696,7 +696,7 @@ contract ColdLaunchMatrixTest is Fixture {
         autoBook = false;
         uint256 id = _credits(seller, 1)[0];
         _buyCoin(funder, 2 ether);
-        assertEq(core.RATE_START(), 4_900_000_000_000_000);
+        assertEq(core.RATE_START(), 4_650_000_000_000_000);
         assertEq(core.settings().reserveWei, 0.1 ether);
         assertTrue(ctl.creditSaleOn());
         assertEq(core.ethPot(), 0);
