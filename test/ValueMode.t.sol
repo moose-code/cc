@@ -808,6 +808,58 @@ contract ValueModeTest is ValueBase {
         this.tripBackExternal(id);
     }
 
+    // promise: a real pool move can leave the prior-block Credit ask below a later ETH bid after the production lock
+    function test_persistentRealPoolRiseCanOutrunTheAskAfterReturnLock() public {
+        uint256[] memory ids = _fillEthPile(1);
+        _valueOn();
+        _setCreditSaleOn(true);
+        _setReturnLock(6 hours);
+        _setQuote(Quote({
+            referenceRateBpsPerHour: 1_200,
+            referenceStepBps: 200,
+            tolBps: 100,
+            referenceMaxStale: 1 days,
+            referenceMinSeconds: 600,
+            minLiquidity: 1e18
+        }));
+        CreditSale memory sale = _creditSale();
+        sale.spreadBps = 203;
+        vm.prank(owner);
+        ctl.setCredit(sale);
+        _warp(ctl.creditWindow());
+        vm.roll(block.number + 1);
+        _fundPot(50 ether);
+
+        // The pool swap executes through the real v4 manager with test-funded ETH. The Credit buyer pays only the
+        // Credit ask, so a positive Credit round trip here is not a net swap, gas or MEV profit calculation.
+        uint256 beforeSpot = _spotNow();
+        uint256 movedSpot = _swapSpot(3_000);
+        assertGt(movedSpot, beforeSpot * 12 / 10, "the real pool move did not reach the test band");
+        uint256 price = ctl.creditPrice(ids[0]);
+        vm.deal(TRIPPER, price);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price}(ids[0]);
+        vm.prank(TRIPPER);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.expectPartialRevert(ICore.ReturnLocked.selector);
+        vm.prank(TRIPPER);
+        core.sellForEth(_one(ids[0]));
+
+        for (uint256 i; i < 36; ++i) {
+            _warp(10 minutes);
+            vm.roll(block.number + 1);
+            ctl.refreshReference();
+        }
+        uint256 beforeEth = TRIPPER.balance;
+        vm.prank(TRIPPER);
+        core.sellForEth(_one(ids[0]));
+        uint256 back = TRIPPER.balance - beforeEth;
+        emit log_named_uint("real swap spot wei per balance token", movedSpot);
+        emit log_named_uint("credit purchase wei", price);
+        emit log_named_uint("credit resale wei after six-hour lock", back);
+        assertGt(back, price, "the later bid did not outrun the stale ask");
+    }
+
     /// refreshes the reference, a step and a block at a time, until it is within 0.1 percent of the pool spot, so a round
     /// trip runs at a settled reference where the buy and the sell read the same sampled spot
     function _settleReference() internal {
