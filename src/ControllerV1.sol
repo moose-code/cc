@@ -27,15 +27,15 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
-/// Sale policy and oldest-first composition pages; settings follow the Core's live owner.
-/// Mode-off references include cost and `floorRate`; value-mode references use protected sale value without cost.
-/// Final statement and credit quotes in both modes retain the Core's historical cost minimum.
-/// Statement age excludes pauses; the anchor decays with wall time. Settings apply to held inventory at once.
-///
-/// Owner pool-key changes seed the reference and both spot/liquidity samples. Later quotes use a prior-block spot
-/// sample and require both recent liquidity samples at least `minLiquidity`. Refreshes are cadence/rate/step bounded.
-/// Sale views project a due refresh to match the sale door. Unusable quotes revert value-mode sale prices with
-/// `NoQuote`; the Core's ETH bid has its own last-good fallback. Mode-off sale valuations ignore the pool.
+/// the sale policy and the oldest first composition page; settings follow the Core's live owner. with value mode off a
+/// reference includes cost and `floorRate`; in value mode it is the protected sale value without cost. in both modes
+/// the final statement and credit quotes keep the Core's cost floor. statement age excludes pauses; the anchor decays
+/// with wall time; a setting applies to held inventory at once. `setBalancePoolKey` seeds the reference and both spot
+/// and liquidity samples; later quotes read the spot sampled in a prior block and need both liquidity samples at least
+/// `minLiquidity`. a refresh is bounded by `referenceMinSeconds`, `referenceRateBpsPerHour` and `referenceStepBps`.
+/// the sale views project a due refresh so a view equals the door's charge. an unusable quote reverts the value mode
+/// sale prices with `NoQuote`; the Core's eth bid has its own last good fallback. with value mode off no sale price
+/// reads the pool
 contract ControllerV1 is IController {
     using StateLibrary for IPoolManager;
 
@@ -84,7 +84,7 @@ contract ControllerV1 is IController {
     uint32 public anchorHalfLife;
     /// the least statement cost, in wei, whose `buy` moves the anchor. 0 to uint128.max
     uint128 public anchorMinCost;
-    /// Share of the upward anchor gap moved by a qualifying sale, 0 to 10,000.
+    /// share of the gap above the anchor a qualifying sale moves it by, bps. 0 to 10_000; 0 leaves the anchor
     uint16 public anchorMoveBps;
     bool private _busy;
     /// whether the balance token pool key is set. launch value false
@@ -107,10 +107,10 @@ contract ControllerV1 is IController {
     uint32 public creditStartBps;
     /// when true, `atFloor` is by age only: the start at or below 10_000, or the statement aged `decayHours`, with no
     /// reference read. when false, `atFloor` compares the curve price with its floor and reads the reference. launch
-    /// value false; the owner turns it on with the value switch (decision 155)
+    /// value false; the owner turns it on with the value switch
     bool public ageEligibilityOn;
 
-    /// the reference price settings (decision 148)
+    /// the reference price settings
     Quote public quote;
     /// the reference price of the balance token, wei per 1e18 base units, 0 until the pool key is set
     uint256 public referencePrice;
@@ -413,15 +413,16 @@ contract ControllerV1 is IController {
     // ------------------------------------------------------------------ credit sale settings, owner, at once
 
     /// sets the credit sale settings at once. `saleOn` turns the credit sale window on or off: while on, pile credits
-    /// are for sale through `buyCredit` and compose takes only credits past their window. `window` 1 to uint32.max seconds,
-    /// `spreadBps` 200 to uint16.max, `startBps` 10_000 to uint32.max
+    /// are for sale through `buyCredit` and compose takes only credits past their window. `window` 1 to uint32.max
+    /// seconds; `spreadBps` at least 200 and at least the round trip bound `(10_000 + tolBps) * 10_000 / (10_000 -
+    /// tolBps) - 10_000`, rounded up (203 at `tolBps` 100), at most uint16.max; `startBps` 10_000 to uint32.max
     function setCredit(CreditSale calldata v) external onlyOwner {
         _setCredit(v);
         emit CreditSaleSet(v);
     }
 
     /// switches redemption eligibility between the age only rule (true) and the reference curve rule (false). launch
-    /// value false; the owner turns it on with the value switch (decision 155)
+    /// value false; the owner turns it on with the value switch
     function setAgeEligibilityOn(bool v) external onlyOwner {
         ageEligibilityOn = v;
         emit AgeEligibilitySet(v);
@@ -485,7 +486,7 @@ contract ControllerV1 is IController {
     }
 
     /// the reference of a statement of `cost` and `rating`: the larger of its cost and `valueOf(rating)`; in value mode
-    /// the protected floor `valueOf(rating) * floorMultBps() / 10_000`, the cost term dropped (decision 150)
+    /// the protected floor `valueOf(rating) * floorMultBps() / 10_000`, the cost term dropped
     function _reference(uint256 cost, uint256 rating, Settings memory cfg) private view returns (uint256) {
         uint256 value = _valueOf(rating, cfg);
         if (cfg.valueModeOn) return value * _floorMult(cfg) / BPS;

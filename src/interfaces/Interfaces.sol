@@ -64,7 +64,7 @@ interface ICoreViews {
     function pileSize() external view returns (uint256);
     function pilePage(uint256 startAfter, uint256 n) external view returns (uint256[] memory ids); // startAfter 0 starts at head
     function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
-    /// the eth bid rate now, wei per 100 points, the price state lowered to the pot. a credit of score `score` is paid
+    /// the eth bid now, wei per 100 points: the price state lowered to the bid room. a credit of score `score` is paid
     /// `ethRate() * score / (100 points in score units)`; `bidForScore` and `bidOf` apply the scaling
     function ethRate() external view returns (uint256);
     /// the eth bid for a score of `score` stored units now, wei: `ethRate() * score / 1_000_000`
@@ -75,11 +75,12 @@ interface ICoreViews {
     function bidOf(uint256 id) external view returns (uint256);
     /// the eth price state now, wei per 100 points, before the pot clamp `ethRate` applies. the cost basis of an
     /// adopted credit is this price times its score over 100 points plus the artist purchase royalty, at least 1
-    /// wei. in later blocks the climb heads toward the larger pot
+    /// wei. the climb heads toward the smaller of the ceiling and the booked bid room (`ethPot` less the reserve, over
+    /// `1 + buyToArtistBps / 10_000`), and only while that room covers the last fill bid for 100 points
     function ethPrice() external view returns (uint256);
-    /// max(climbed mode-off ETH instance, its decayed peak), wei per 100 points. mode-off sale references and
-    /// balance-acquisition bases scale it by score. value-mode acquisition bases use `ethPrice()`, while value-mode
-    /// sale references use protected sale-token value. ETH purchase bids use `ethRate()`
+    /// max(climbed mode off eth instance, its decayed peak), wei per 100 points. mode off sale references and
+    /// balance acquisition bases scale it by score. value mode acquisition bases use `ethPrice()`, while value mode
+    /// sale references use the protected sale token value. eth purchase bids use `ethRate()`
     function floorRate() external view returns (uint256);
     function statementInfo(uint256 sid) external view returns (bool held, uint256 cost, uint64 composedAt);
     /// the seconds a held statement has aged outside every pause. reverts `NotForSale` when the core does not hold it
@@ -110,12 +111,13 @@ interface ICoin {
 interface ICredits {
     function seedOf(uint256 id) external view returns (bytes21);
     function timestampOf(uint256 id) external view returns (uint64);
+    /// tests and scripts only
     function tokensOf(address owner) external view returns (uint256[] memory);
     function ownerOf(uint256 id) external view returns (address);
     function balanceOf(address owner) external view returns (uint256);
     function setApprovalForAll(address operator, bool approved) external;
+    /// tests and scripts only
     function isApprovedForAll(address owner, address operator) external view returns (bool);
-    function approve(address to, uint256 id) external;
     function transferFrom(address from, address to, uint256 id) external;
 }
 
@@ -123,16 +125,15 @@ interface IStatements {
     function compose(uint256[80] calldata creditIds, uint8 format) external returns (uint256 statementId);
     function creditsOf(uint256 statementId) external view returns (uint256);
     function setFormat(uint256 statementId, uint8 format) external;
+    /// tests and scripts only
     function formatOf(uint256 statementId) external view returns (uint8);
     /// the statement's rating, the sum of its credits' scores in ten-thousandths of a point
     function creditScoreOf(uint256 statementId) external view returns (uint256);
+    /// tests and scripts only
     function balanceOf(address owner) external view returns (uint256);
     function supply() external view returns (uint256);
     function ownerOf(uint256 id) external view returns (address);
-    function setApprovalForAll(address operator, bool approved) external;
-    function isApprovedForAll(address owner, address operator) external view returns (bool);
     function transferFrom(address from, address to, uint256 id) external;
-    function safeTransferFrom(address from, address to, uint256 id) external;
 }
 
 interface ICreditStrategy {
@@ -164,8 +165,7 @@ uint256 constant BUYLISTING_GAS = 1_500_000;
 /// sale fields and the balance mode and bps, slot 1 the buyback and keeper fields, slot 2 the rate cap, caller
 /// fields, fee split and `pointsPerPage`, slot 3 `swapFeeCc`, the two sale cuts, `climbMultiplierCapBps`,
 /// `spendCapBps`, `bucketSeconds`, `balanceBidCapBps` and `idleStepSeconds`, slot 4 `sniperSeconds`, `reserveWei`,
-/// `returnLockSeconds`, `valueModeOn`, `buyToArtistBps` and `balanceDiscountBps`. docs/SPEC.md section 3 has the
-/// meaning of every field
+/// `returnLockSeconds`, `valueModeOn`, `buyToArtistBps` and `balanceDiscountBps`
 struct Settings {
     // slot 0
     /// fall of a bid rate on a fill, bps of the rate before the credit, as `dropPer100PointsBps * score / (100
@@ -178,10 +178,10 @@ struct Settings {
     /// the rate stays at or below this share of the ceiling anchor, bps. the anchor is `max(last fill rate, peak now)`
     uint16 ceilBps;
     /// growth of the ceiling anchor per full idleStepSeconds since the later of the last fill and a funded clock restart,
-    /// bps of the anchor in mode-off ETH pricing
+    /// bps of the anchor in mode off eth pricing
     uint16 idleLoosenBps;
     /// the floor of a statement sale, bps of the statement cost in `sellTo` and bps of the controller reference in
-    /// the mode-off curve. the Core's cost floor applies in both modes
+    /// the mode off curve. the Core's cost floor applies in both modes
     uint16 saleFloorBps;
     /// share of a statement sale payment after the artist and operator cuts that goes to the coin buyback, bps
     uint16 saleToBuybackBps;
@@ -244,13 +244,13 @@ struct Settings {
     /// before the other splits, bps; artist and operator together are strictly below 10,000
     uint16 saleToOperatorBps;
     /// the cap of the pot scaled climb multiplier, bps (10,000 is 1x). the ceiling's idle loosening scales by
-    /// `clamp(pot / (rate * pointsPerPage / 100), 1, this / 10,000)`. 10,000 to uint16.max, packed into slot 3 beside the sale cut shares
+    /// `clamp(pot / (rate * pointsPerPage / 100), 1, this / 10,000)`. 10,000 to uint16.max
     uint16 climbMultiplierCapBps;
-    /// share of the opening buying pot available per bucket; 10,000 bypasses enforcement
+    /// share of the pot at the bucket's first purchase that the bucket may spend, bps; 10,000 bypasses enforcement
     uint16 spendCapBps;
     /// seconds per shared purchase-budget and bid-drop bucket
     uint32 bucketSeconds;
-    /// shared value-mode ETH instance cap, bps of par, at least 10,000. also feeds the sale-floor multiplier in
+    /// value mode's shared eth instance cap, bps of par, at least 10,000. also feeds the sale floor multiplier in
     /// both modes; the posted balance bid does not read it
     uint32 balanceBidCapBps;
     /// seconds per full ceiling-loosening step; per-minute climb units remain 60 seconds
@@ -272,13 +272,13 @@ struct Settings {
     /// same currency: the seller receives the bid whole, the artist `pay * this / 10,000`. 0 to 1,000
     uint16 buyToArtistBps;
     /// the balance bid's discount to par, bps: the balance route pays `score * unitPerPoint * (10,000 - this) /
-    /// 10,000` per credit before the value-mode cap. 0 to 9,999 keeps the discount below 100 percent; rounding or
+    /// 10,000` per credit before the value mode cap. 0 to 9,999 keeps the discount below 100 percent; rounding or
     /// the cap may pay 0
     uint16 balanceDiscountBps;
 }
 
 /// the sale settings of the controller, its constructor argument and the `sale` block of the launch config.
-/// bounds are enforced by the controller (docs/SPEC.md section 3). the controller keeps one more value, the anchor, which
+/// bounds are enforced by the controller (`setSale`). the controller keeps one more value, the anchor, which
 /// starts at 10_000
 struct Sale {
     /// the start price over the anchor, bps
@@ -313,7 +313,7 @@ struct CreditSale {
     uint32 startBps;
 }
 
-/// the reference price settings of the controller (decision 148), set at once by `setQuote`. the controller keeps a
+/// the reference price settings of the controller, set at once by `setQuote`. the controller keeps a
 /// reference price of the balance token that `refreshReference()` and its sale doors move toward the pool spot by at most
 /// `min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps)` bps of the reference per update
 struct Quote {
@@ -339,8 +339,8 @@ struct Quote {
 /// controller reads `saleOn`, `window`, `spreadBps` and `startBps`. the point rate basis is the fixed 100 points
 struct Credit {
     // core
-    /// share of the sold credit's cost booked to the buying pot, bps. the rest of the payment funds the coin buyback.
-    /// 0 to 10_000
+    /// share of the sold credit's cost booked to the pot (`ethPot`), bps. the rest of the payment funds the coin
+    /// buyback. 0 to 10_000
     uint16 costToPotBps;
     /// whether a caller may name the 80 credits and the format of a compose through `composeChosen`
     bool chosenComposeOn;
@@ -386,15 +386,14 @@ library Mainnet {
     address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
     address internal constant UNIVERSAL_ROUTER = 0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af;
 
-    // the artcoins v2 stack addresses are config inputs and not constants: `defaultStack` leaves them zero, the Core
-    // refuses a zero member and the deploy script refuses a zero config. script/config/v2-mainnet.json records the live
-    // stack, script/config/mainnet.json carries it into the launch config, test/utils/V2Stack.sol reads it for the tests
+    // the artcoins v2 stack addresses are deploy inputs, not constants: `defaultStack` leaves them zero, the Core
+    // refuses a zero member and the deploy script refuses a zero config
 
     /// the dynamic fee flag every artcoins pool uses, and its tick spacing
     uint24 internal constant POOL_FEE = 0x800000;
     int24 internal constant TICK_SPACING = 200;
 
-    /// the launch values of docs/SPEC.md section 3
+    /// the launch settings
     function defaultSettings() internal pure returns (Settings memory) {
         return Settings({
             dropPer100PointsBps: 115,
@@ -453,12 +452,10 @@ library Mainnet {
         });
     }
 
-    /// the launch credit settings: the credit sale is on, its window is 4 hours, the spread is 10 percent over the bid's
-    /// hard cap (decision 155; the floor is 110 percent of the reference at the launch cap of 10_000, today's 1.1x; the
-    /// value switch keeps 1,000 unless the owner sets a pair compatible with the chosen tolerance), the start is 150
-    /// percent of the floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and the coin
-    /// balance a caller needs to choose a
-    /// compose or a held format is 1 coin
+    /// the launch credit settings: the credit sale is on, its window is 4 hours, the spread is 1,000 bps over the bid's
+    /// hard cap (a floor of 110 percent of the reference at the launch cap of 10_000), the start is 150 percent of the
+    /// floor, 80 percent of a sold credit's cost funds the pot, chosen composition is off, and a caller needs 1 coin to
+    /// choose a compose or a held format
     function defaultCredit() internal pure returns (Credit memory) {
         return Credit({
             costToPotBps: 8_000,
@@ -474,7 +471,7 @@ library Mainnet {
     /// the launch reference price settings: a 100 bps executable band and a 600 second refresh
     /// cadence. the rate, the step, the staleness and the liquidity minimum are owner inputs set once the balance token
     /// pool exists and its depth is known; a `referenceMaxStale` of 0 keeps the reference price unusable, so value mode
-    /// makes the controller's value-mode sale prices unusable until they are set
+    /// makes the controller's value mode sale prices unusable until they are set
     function defaultQuote() internal pure returns (Quote memory) {
         return Quote({
             referenceRateBpsPerHour: 0,

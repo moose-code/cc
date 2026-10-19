@@ -22,7 +22,7 @@ import {SettingsBounds} from "./SettingsBounds.sol";
 /// reads it at slot 0 (`CoreLib.state`), so both address the same storage
 struct State {
     address controller;
-    /// one way locks of the owner (docs/SPEC.md section 11): once set, never cleared
+    /// one way locks of the owner: once set, never cleared
     bool controllerLocked;
     bool balanceModuleLocked;
     bool adaptersLocked;
@@ -39,7 +39,7 @@ struct State {
     uint256 rateAtCheckpoint;
     uint64 checkpointTime;
     uint64 lastFillTime;
-    /// time since which the booked pot has covered the last-fill bid for 100 points and its artist payment
+    /// time since which the booked pot has covered the last fill bid for 100 points and its artist payment
     uint64 climbRestartTime;
     uint256 lastBuybackBlock;
     CoreLib.Pile pile;
@@ -59,7 +59,7 @@ struct State {
     bool chosenComposeOn;
     /// least coin balance the caller of `composeChosen` and `setHeldFormat` must hold, read at the call
     uint96 minCcToChoose;
-    /// whether the owner pause blocks acquisitions, composition, sales, Credit swaps and buybacks
+    /// whether the owner pause blocks acquisitions, composition, sales, credit swaps and buybacks
     bool paused;
     /// when the open pause began, 0 while not paused
     uint40 pausedSince;
@@ -78,10 +78,11 @@ struct State {
     Settings settings;
     /// the eth bid anchor state, four words
     CoreLib.Anchor anchor;
-    /// value mode's shared eth instance, a `Rate`: its own stored rate, checkpoint, fill time and anchor. the rate
-    /// is bps of par, bounded to [10_000 - balanceBidMarginBps, balanceBidCapBps]; module availability scales its
-    /// pages multiplier, not its clamp. `sharedRate()` reads it. the posted balance bid does not read or move it
-    /// (decision 164). the climb and drop are the eth bid's, shared through CoreLib
+    /// value mode's shared eth instance, a `Rate`: its own stored price state, checkpoint, fill time and anchor. the
+    /// price state is bps of par, bounded to [10_000 - balanceBidMarginBps, balanceBidCapBps]; module availability
+    /// scales its climb multiplier, not its clamp. `sharedRate()` reads it. the posted balance bid never reads or
+    /// moves it, in either mode; the name is the storage field's. the climb and drop are the eth bid's, shared through
+    /// CoreLib
     CoreLib.Rate balance;
     /// the last `sellCreditTo` per credit id, the buyer packed in the high 160 bits and the sale time in the low 96,
     /// kept after the credit leaves the pile. every intake door (`sellForEth`, `sellForBalance`, `buyListing`,
@@ -95,10 +96,10 @@ struct State {
     mapping(address => bool) everBalanceTarget;
 }
 
-/// the Core's pricing and accounting library: settings validation and writes, the eth bid and its ceiling, and the
-/// sale of Credits into the balance token bid. CoreOpsLib holds the pool swap and low-frequency operations.
-/// it holds no state of its own and is called by delegatecall, so it works on the Core's storage and balance, and the
-/// Core keeps its runtime under the size limit. deployed once before the Core (docs/RUNBOOK.md)
+/// the Core's linked library, run by delegatecall in the Core's storage: the settings write, the eth bid (climb,
+/// ceiling, drop, clamp, reserve), the posted balance bid, adopt, swapCredit, the three rescues, setArtist, the
+/// successor and migrate, and the paid refreshReference door. it holds no state of its own: `state()` reads the
+/// Core's `State` at slot 0. CoreOpsLib holds the pause transitions, the pool swap and the low frequency owner setters
 library CoreLib {
     using FixedPointMathLib for uint256;
 
@@ -118,7 +119,7 @@ library CoreLib {
 
     /// a statement the Core holds for sale or redemption. `composedAt` is the time of the compose, `slot` the index in
     /// `heldIds`, `rating` the sum of its credits' scores read from Statements at compose, `pauseMark` the paused
-    /// seconds accumulated at compose (`pausedNow()` of the Core). the record is deleted when the statement leaves
+    /// seconds accumulated at compose (`_pausedNow()` of the Core). the record is deleted when the statement leaves
     struct Statement {
         uint256 cost;
         uint64 composedAt;
@@ -132,9 +133,10 @@ library CoreLib {
     struct Anchor {
         /// the price state at the last fill. the rate at deployment before the first fill
         uint256 lastFillRate;
-        /// the price state at the first fill of the minute bucket `minuteBucket`
+        /// the price state at the first fill of bucket `minuteBucket`; the drop floor of that bucket is `dropFloorBps`
+        /// of it. the bucket is `bucketSeconds` long (60 at launch); the field name keeps the launch unit
         uint256 minuteStartRate;
-        /// `timestamp / bucketSeconds` of the first fill of the current bucket
+        /// `timestamp / bucketSeconds` of the bucket `minuteStartRate` belongs to
         uint64 minuteBucket;
         /// time `peakRate` was last written: the last fill or `setRate`, deploy time before the first fill
         uint64 peakTime;
@@ -146,7 +148,7 @@ library CoreLib {
     }
 
     /// one bid instance's price state: the stored rate at its checkpoint, the checkpoint and last fill times, and
-    /// its anchor. the mode-off eth bid keeps these fields inline in `State` at their fixed slots; value mode uses
+    /// its anchor. the mode off eth bid keeps these fields inline in `State` at their fixed slots; value mode uses
     /// the appended `State.balance` instance. the shared climb and drop take the anchor and the instance cap and
     /// floor, so one body serves both
     struct Rate {
@@ -187,6 +189,8 @@ library CoreLib {
     /// warm). a failed token transfer within the production module accrues a liability; a reverted whole call
     /// cannot accrue one
     uint256 internal constant ARTIST_PAY_GAS = 600_000;
+    /// gas bound of the module unit and availability reads and of the controller markup read
+    uint256 internal constant READ_GAS = 2_000_000;
     ICredits internal constant CREDITS = ICredits(Mainnet.CREDITS);
     IStatements internal constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
 
@@ -195,7 +199,7 @@ library CoreLib {
     error Empty();
     error NoBalanceModule();
     error BadModule();
-    /// a listing adapter answered with a bad quote. declared here for abi parity with the Core
+    /// declared for abi parity with the Core; CoreLib never raises it
     error BadQuote();
     error ZeroId();
     error NotOwner();
@@ -208,10 +212,10 @@ library CoreLib {
     error BalanceTokenChanged();
     /// a credit the engine sold through `sellCreditTo` is offered back to an intake door by its buyer before `until`
     error ReturnLocked(uint256 id, uint256 until);
-    /// retained for ABI compatibility; ETH quote failures now fall back to the last good value rate
+    /// never raised by the Core or CoreLib; kept until the next abi change
     error NoQuote();
-    /// one eth fill in value mode: the eth paid, the shared instance rate (bps of par) after this credit's drop, and the
-    /// pot left. mirrors `EthRateFill`
+    /// one eth fill in value mode: the eth paid, the shared instance's price state (bps of par) after this credit's
+    /// drop, and the pot left. mirrors `EthRateFill`
     event ValueRateFill(uint256 spent, uint256 rateBps, uint256 pot);
     event CreditBought(uint256 indexed id, address indexed from, uint256 cost, uint256 toArtist);
     /// a pile credit was swapped for one of equal or higher score for a coin fee burned by the caller
@@ -219,11 +223,11 @@ library CoreLib {
     error Paused();
     error NotInPile(uint256 id);
     error ScoreTooLow(uint256 inId, uint256 outId);
-    /// one mode-off ETH fill: ETH spent including royalty, the post-drop rate in wei per 100 points, and the pot
-    /// left
+    /// one mode off eth fill: the eth spent, royalty included, the price state after the fill drop (the new fill rate),
+    /// wei per 100 points, and the pot left
     event EthRateFill(uint256 spent, uint256 rate, uint256 pot);
     /// one balance fill: the balance token paid to the seller for this credit, the artist royalty, and `available()`
-    /// left after both (decisions 163, 164)
+    /// left after both
     event BalanceFill(uint256 paid, uint256 toArtist, uint256 available);
     error BadSetting(bytes32 field);
     event SettingsSet(Settings settings);
@@ -260,7 +264,7 @@ library CoreLib {
     event EngineRetired(address indexed successor);
 
     /// @notice validates the settings, stores them and logs them. the Core forwards its own `setSettings` call here
-    /// under the library selector, after checkpointing the active ETH rate. the constructor calls it too. the
+    /// under the library selector, after checkpointing the active eth price state. the constructor calls it too. the
     /// shared instance is checkpointed here only when the old settings have value mode on. a change of
     /// `peakHalfLife` restates both remembered peaks at the old half life before storing the new one, so the new
     /// half life decays the peaks forward only
@@ -285,7 +289,7 @@ library CoreLib {
         bool wasValue = c.settings.valueModeOn;
         // credit the elapsed climb of the shared instance under the old settings and clamp before the new ones apply,
         // so a settings change compares against the climbed value, not a stale checkpoint. the instance climbs in value
-        // mode only: outside it no bid reads it (decision 164)
+        // mode only: outside it no bid reads it
         if (wasValue) _balanceCheckpointNow(c);
         uint256 oldHalf = c.settings.peakHalfLife;
         if (oldHalf != 0 && ns.peakHalfLife != oldHalf) {
@@ -296,12 +300,12 @@ library CoreLib {
         c.settings = ns;
         if (c.balance.rateAtCheckpoint > ns.balanceBidCapBps) c.balance.rateAtCheckpoint = ns.balanceBidCapBps;
         uint256 floor = BPS - ns.balanceBidMarginBps;
-        // Turning value mode on resets the shared instance to its floor. Otherwise only a stored rate below the
-        // floor resets; equality preserves its clock. The posted balance bid never moves this instance.
+        // turning value mode on resets the shared instance to its floor. otherwise only a stored rate below the
+        // floor resets; equality preserves its clock. the posted balance bid never moves this instance
         if (ns.valueModeOn && !wasValue) _resetBalanceToFloor(c, floor);
         else _resetBalanceToFloorIfBelow(c, floor);
         // leaving value mode: seed the eth instance from the current value rate, or the stored last good value rate.
-        // with neither available use 1 wei, so the mode-off bid cannot reopen at a stale high rate
+        // with neither available use 1 wei, so the mode off bid cannot reopen at a stale high rate
         if (wasValue && !ns.valueModeOn) {
             (uint256 vr, bool okv) = _valueRate(c);
             // the quote, else the last good value rate kept in the idle eth instance; 1 wei if neither is known
@@ -395,9 +399,9 @@ library CoreLib {
     }
 
     /// the bucket id, budget and spent wei of the current bucket. a bucket a purchase has opened returns its stored
-    /// budget and spent. a fresh bucket quotes `spendCapBps` of the pages pot (`ethPot` plus the pot share of the
-    /// unbooked fee income the next `_book` adds), the pot the first purchase of the bucket books and snapshots, so the
-    /// quote equals the budget the next purchase enforces (decision 147)
+    /// budget and spent. a fresh bucket quotes `spendCapBps` of the pot with pending (`ethPot` plus the pot share of
+    /// the unbooked fee income the next `_book` adds), the pot the first purchase of the bucket books and snapshots, so
+    /// the quote equals the budget the next purchase enforces
     function spendState() external view returns (uint64 bucket, uint128 budget, uint128 spent) {
         State storage c = state();
         bucket = SafeCastLib.toUint64(block.timestamp / c.settings.bucketSeconds);
@@ -406,7 +410,7 @@ library CoreLib {
         return (bucket, SafeCastLib.toUint128(_ethPagesPot(c).mulDiv(c.settings.spendCapBps, BPS)), 0);
     }
 
-    /// Restates a peak under the old half life. Paused time never decays the peak, including an owner settings edit.
+    /// restates a peak under the old half life. paused time never decays the peak, an owner settings edit included
     function _restatePeak(Anchor storage a, uint256 oldHalf) private {
         State storage c = state();
         uint256 t = c.paused ? c.pausedSince : block.timestamp;
@@ -420,8 +424,8 @@ library CoreLib {
         _balanceCheckpoint(c.balance, c.settings.balanceBidCapBps, _sharedPagesPot(c));
     }
 
-    /// the pages pot of the shared instance in value mode: the module's `available()` as bps of par, 0 without a usable
-    /// module
+    /// the pot the shared instance's climb multiplier reads in value mode: the module's `available()` as bps of par,
+    /// 0 without a usable module
     function _sharedPagesPot(State storage c) private view returns (uint256) {
         address module = c.balanceModule;
         if (module == address(0)) return 0;
@@ -430,7 +434,8 @@ library CoreLib {
     }
 
     /// the shared instance now in value mode, bps of par: the price state climbed with the cap as its clamp and the
-    /// pages pot of `_sharedPagesPot`. read only; value mode's eth bid is this times the controller's value per point
+    /// multiplier pot of `_sharedPagesPot`. read only; value mode's eth bid is this times the controller's value per
+    /// point
     function _sharedRead(State storage c) private view returns (uint256 rate) {
         Rate storage bal = c.balance;
         uint256 cap = c.settings.balanceBidCapBps;
@@ -483,20 +488,20 @@ library CoreLib {
             (uint256 vr, bool okv) = _valueRate(c);
             if (okv) c.rateAtCheckpoint = vr;
         } else {
-            bool paused;
-            (c.rateAtCheckpoint,, paused) = _ethClimb(c);
-            // A book or fund checkpoints before the pot grows. The new ETH must not inherit time spent unable to pay
-            // the last-fill bid for 100 points and its artist payment.
-            if (paused) c.climbRestartTime = uint64(block.timestamp);
+            bool underfunded;
+            (c.rateAtCheckpoint,, underfunded) = _ethClimb(c);
+            // a book or fund checkpoints before the pot grows: the new eth must not inherit the time the pot could not
+            // pay the last fill bid for 100 points and its artist payment
+            if (underfunded) c.climbRestartTime = uint64(block.timestamp);
         }
         // forge-lint: disable-next-line(unsafe-typecast)
         c.checkpointTime = uint64(block.timestamp);
     }
 
     /// @notice the keeper's reference refresh door: forwards to the controller's refresh and, when it ran, pays the
-    /// caller like compose, bounded by the pot and the caller base-fee ceiling. the Core books the pending fee income
-    /// before forwarding here, so the payment comes from the pot share of that income (decision 159, C02). runs in the
-    /// Core's storage context by delegatecall (the `_toLib` door forwards to it)
+    /// caller like compose, bounded by the pot and the caller base fee ceiling. the Core books the pending fee income
+    /// before forwarding here, so the payment comes from the pot share of that income. runs in the Core's storage
+    /// context by delegatecall (the `_toLib` door forwards to it)
     function refreshReference() external {
         uint256 gasStart = gasleft();
         State storage c = state();
@@ -505,7 +510,7 @@ library CoreLib {
         if (!IController(ctrl).refreshReference()) return;
         Settings storage cfg = c.settings;
         if (cfg.callerMaxBaseFee == 0 && cfg.callerFee == 0) return;
-        // The Core checkpointed the mode-off bid before this payment can lower its funding room.
+        // the Core checkpointed the mode off bid before this payment can lower its room
         uint256 pay = ((gasStart - gasleft() + REFRESH_OVERHEAD_GAS).min(REFRESH_GAS)
                 * block.basefee.min(cfg.callerMaxBaseFee) + cfg.callerFee)
         .min(c.ethPot);
@@ -514,10 +519,10 @@ library CoreLib {
         SafeTransferLib.safeTransferETH(msg.sender, pay);
     }
 
-    /// @notice the eth bid rate now, wei per 100 points: the price state lowered to the royalty-adjusted room from
-    /// `ethPot` plus the pending pot share less the reserve. in value mode the price state is `_valueRate`, falling back to the last good value
-    /// rate while the quote is unusable. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint` and `bidOf` and its
-    /// doors read it
+    /// @notice the eth bid now, wei per 100 points: the price state lowered to the bid room (the pot with pending less
+    /// the reserve, over `1 + buyToArtistBps / 10_000`). in value mode the price state is `_valueRate`, falling back to
+    /// the last good value rate while the quote is unusable. the Core forwards `ethRate`, `bidForScore`, `ethPerPoint`
+    /// and `bidOf` and its doors read it
     function ethRate() external view returns (uint256 read) {
         State storage c = state();
         if (!c.settings.valueModeOn) {
@@ -541,18 +546,18 @@ library CoreLib {
     }
 
     /// the value mode eth price state now: the controller's value read when usable, else the last good value mode eth
-    /// rate kept in the eth instance checkpoint. a lapsed or unusable quote degrades the eth bid instead of reverting
-    /// `NoQuote`, so the engine keeps buying while the reference recovers (decision 159, C02)
+    /// rate kept in the eth instance checkpoint. a lapsed or unusable quote degrades the eth bid to the last good value
+    /// rate instead of halting it, so the engine keeps buying while the reference recovers
     function _valueRateOrLast(State storage c) private view returns (uint256) {
         (uint256 rate, bool ok) = _valueRate(c);
         // the fallback is the last good value rate, itself stored at or under `rateCap` by `_valueRate`
         return ok ? rate : c.rateAtCheckpoint;
     }
 
-    /// the value mode eth rate, wei per 100 points: the shared instance climbed to now (clamped to the cap, not to the
-    /// funds) times 100 times the controller's value per point at the buy price, over 10_000, at most `rateCap`. `ok` is
-    /// false while the controller's bounded read fails, answers short, answers a false flag or a zero value. a hostile
-    /// controller quoting a huge value pays at most `rateCap`
+    /// the value mode eth price state, wei per 100 points: the shared instance climbed to now (clamped to the cap, not
+    /// to the funds) times 100 times the controller's value per point at the buy price, over 10_000, at most `rateCap`.
+    /// `ok` is false while the controller's bounded read fails, answers short, answers a false flag or a zero value. a
+    /// hostile controller quoting a huge value pays at most `rateCap`
     function _valueRate(State storage c) private view returns (uint256 rate, bool ok) {
         uint256 v;
         (v, ok) = _quoteRead(abi.encodeCall(IController.valuePerPoint, (false)));
@@ -599,33 +604,33 @@ library CoreLib {
         return c.ethPot.zeroFloorSub(_reserve(c));
     }
 
-    /// the eth instance price state and peak at now. booked ETH above the reserve funds the climb; the separate read
-    /// may also use pending fee income, which has no known arrival time and earns no prior climb. when the
-    /// booked room cannot pay the last-fill bid for 100 points plus the artist payment, the funded climb and idle
-    /// loosening pause; peak decay follows wall time outside an owner pause. the normal ceiling, recovery rate and
+    /// the eth instance price state and peak at now, and whether the booked bid room is under the last fill bid for
+    /// 100 points (`underfunded`). booked eth above the reserve funds the climb; the separate read may also use pending
+    /// fee income, which has no known arrival time and earns no prior climb. while underfunded the funded climb and the
+    /// idle loosening stop; peak decay follows wall time outside an owner pause. the normal ceiling, recovery rate and
     /// rateCap still bind
-    function _ethClimb(State storage c) private view returns (uint256 price, uint256 peakNow, bool paused) {
+    function _ethClimb(State storage c) private view returns (uint256 price, uint256 peakNow, bool underfunded) {
         uint256 bookedRoom = _bookedBidRoom(c);
-        paused = bookedRoom < c.anchor.lastFillRate;
+        underfunded = bookedRoom < c.anchor.lastFillRate;
         (price, peakNow) = _climb(
             c.anchor,
             c.rateAtCheckpoint,
             bookedRoom,
             c.settings.rateCap,
             c.ethPot,
-            paused ? block.timestamp : uint256(c.lastFillTime).max(c.climbRestartTime),
-            paused ? block.timestamp : c.checkpointTime,
+            underfunded ? block.timestamp : uint256(c.lastFillTime).max(c.climbRestartTime),
+            underfunded ? block.timestamp : c.checkpointTime,
             block.timestamp
         );
     }
 
+    /// the booked bid room: `ethPot` less the reserve, over `1 + buyToArtistBps / 10_000`. the funded climb reads it
     function _bookedBidRoom(State storage c) private view returns (uint256) {
         return _roomAt(c, c.ethPot);
     }
 
-    /// the clamp of the eth bid: the pages pot less the reserve, over `1 + buyToArtistBps / 10_000`, so a bid the read
-    /// shows is payable with its artist royalty on top (decision 163). the funded climb uses the same adjustment on
-    /// booked ETH alone
+    /// the bid room, the clamp of the eth bid: the pot with pending less the reserve, over `1 + buyToArtistBps /
+    /// 10_000`, so a bid the read shows is payable with its artist royalty on top
     function _bidRoom(State storage c) private view returns (uint256) {
         return _roomAt(c, _ethPagesPot(c));
     }
@@ -636,8 +641,8 @@ library CoreLib {
 
     /// the eth the pot keeps for processing: the larger of `reserveWei` and 1.5 times the queued caller payments, one
     /// compose per full page of the pile at `COMPOSE_QUEUE_GAS` and one redemption per held statement at
-    /// `REDEEM_QUEUE_GAS`, each gas at `callerMaxBaseFee` plus `callerFee`. the bids and the eth rate read `ethPot` less it;
-    /// the caller payments, the buyback and the pushes pay from the whole pot
+    /// `REDEEM_QUEUE_GAS`, each gas at `callerMaxBaseFee` plus `callerFee`. the bids read `ethPot` less it; the caller
+    /// payments, the buyback and the pushes pay from the whole pot
     function _reserve(State storage c) private view returns (uint256) {
         Settings storage s = c.settings;
         uint256 base = s.callerMaxBaseFee;
@@ -663,10 +668,11 @@ library CoreLib {
         if (block.timestamp < until) revert ReturnLocked(id, until);
     }
 
-    /// the eth instance pages pot: `ethPot` plus the pot share of the unbooked fee income the next `_book` adds (the
-    /// payee share while `payeeOn`, then `feeToRedeemBurnBps` of the rest to the redeem burn pot, the remainder to the
-    /// pot). `msg.value` of the current call is excluded, the same as `Core._income`. the total is conserved across a
-    /// `_book`, so a door that books before it checkpoints reads the same pages pot the handler and the views read
+    /// the pot with pending: `ethPot` plus the pot share of the unbooked fee income the next `_book` adds (the payee
+    /// share while `payeeOn`, then `feeToRedeemBurnBps` of the rest to the redeem burn pot, the remainder to the pot).
+    /// `msg.value` of the current call is excluded, the same as `Core._income`. the total is conserved across a
+    /// `_book`, so a door that books before it checkpoints reads the same pot with pending the handler and the views
+    /// read
     function _ethPagesPot(State storage c) private view returns (uint256) {
         uint256 income = (address(this).balance - msg.value).zeroFloorSub(c.ethPot + c.ethToBuyback + c.ethRedeemBurn);
         if (income == 0) return c.ethPot;
@@ -684,8 +690,8 @@ library CoreLib {
         return price.max(peakNow);
     }
 
-    /// @notice the eth instance pages multiplier now, bps (10_000 is 1x): the pages the booked pot
-    /// covers at the last fill rate, clamped to [1x, `climbMultiplierCapBps`]. the Core forwards its `climbMultiplier()`
+    /// @notice the eth instance's pot scaled climb multiplier now, bps (10_000 is 1x): the pages the booked pot covers
+    /// at the fill rate, clamped to [1x, `climbMultiplierCapBps`]. the Core forwards its `climbMultiplier()`
     function climbMultiplier() external view returns (uint256) {
         State storage c = state();
         return _climbMulBps(
@@ -693,13 +699,14 @@ library CoreLib {
         );
     }
 
-    /// @notice the price state and peak of a bid instance at `nowTs`, from its stored rate `r` of checkpoint
-    /// time `t`. the mode-off instance uses royalty-adjusted booked ETH room as `clampTo`, `rateCap` as `capMax`, and the
-    /// booked ETH pot as `pagesPot`. the shared value instance uses `balanceBidCapBps` for both
-    /// bounds and module availability in bps of par for `pagesPot`. the shared climb settings are read from
-    /// `state()`. the idle climb (`climbPerMinBps`, `recoveryClimbPerMinBps`) is unscaled; the ceiling's idle
-    /// loosening scales by `m`, the pages the pot buys at the last fill rate, clamped to [1,
-    /// `climbMultiplierCapBps` / 10_000] (decision 128, variant d)
+    /// @notice the price state and peak of a bid instance at `nowTs`, from its stored price state `r` of checkpoint
+    /// time `t`. the vocabulary: the price state is the stored or climbed figure before the clamp, the bid is the
+    /// `ethRate()` read after it, and the fill rate is `lastFillRate`, the price state at the last fill. the mode off
+    /// instance uses the booked bid room as `clampTo`, `rateCap` as `capMax`, and the booked pot `ethPot` as
+    /// `pagesPot`, the pot the multiplier reads. the shared value instance uses `balanceBidCapBps` for both bounds and
+    /// module availability in bps of par for `pagesPot`. the shared climb settings are read from `state()`. the idle
+    /// climb (`climbPerMinBps`, `recoveryClimbPerMinBps`) is unscaled; the ceiling's idle loosening scales by `m`, the
+    /// pages `pagesPot` buys at the fill rate, clamped to [1, `climbMultiplierCapBps` / 10_000]
     function _climb(
         Anchor storage a,
         uint256 r,
@@ -716,10 +723,10 @@ library CoreLib {
         peakNow = Halving.halve(a.peakRate, growthNow.zeroFloorSub(a.peakTime), s.peakHalfLife);
         uint256 anchor = a.lastFillRate.max(peakNow);
         uint256 idle = growthNow.zeroFloorSub(anchorTime);
-        // the multiplier is the pot divided by the pages the last fill rate affords, clamped to [BPS, cap]. the last
-        // fill rate is the denominator and holds between fills, so a checkpoint that climbs the stored rate leaves it
+        // the multiplier is the pot divided by the pages the fill rate affords, clamped to [BPS, cap]. the fill rate
+        // is the denominator and holds between fills, so a checkpoint that climbs the stored price state leaves it
         // unchanged; the pot numerator moves as `fund` and sale booking change `pagesPot`, so the multiplier tracks the
-        // pot between fills (decision 128, variant d)
+        // pot between fills
         uint256 m = _climbMulBps(pagesPot, a.lastFillRate, s.pointsPerPage, s.climbMultiplierCapBps);
         uint256 loosened = 10_000 + uint256(s.idleLoosenBps) * m / BPS * (idle / s.idleStepSeconds);
         uint256 cap = (anchor * loosened * s.ceilBps / 1e8).min(capMax);
@@ -732,7 +739,7 @@ library CoreLib {
         }
     }
 
-    /// @notice the pot scaled multiplier, bps in [10_000, `capBps`]. `m` is the pages the pages pot buys at the rate
+    /// @notice the pot scaled multiplier, bps in [10_000, `capBps`]. `m` is the pages `pagesPot` buys at the rate
     /// `rate`: one page is `pointsPerPage` points and costs `rate * pointsPerPage / 100`, so pages in bps is
     /// `pagesPot.fullMulDiv(BPS * 100, rate * pointsPerPage)`, clamped to [1x, `capBps`]. a zero rate reads as 1x. only
     /// the ceiling's idle loosening scales by it
@@ -748,12 +755,12 @@ library CoreLib {
         return mBps;
     }
 
-    /// @notice the price state climbed from `r` at time `t` to `nowTs`, clamped to `target`. Below the recovery level
+    /// @notice the price state climbed from `r` at time `t` to `nowTs`, clamped to `target`. below the recovery level
     /// (`recoveryGapBps` under the decaying peak) the climb is `recoveryClimbPerMinBps` a minute, at or above it
-    /// `climbPerMinBps`. The recovery level decays at the peak's rate, so the crossing where the fast climb meets it
+    /// `climbPerMinBps`. the recovery level decays at the peak's rate, so the crossing where the fast climb meets it
     /// is the solution of `r * fast^(s/60) = levelT * 2^(-s/H)`, `crossWadSec = ln(levelT / r) / (lnFast/60 + ln2/H)`
-    /// in wad seconds: closed form, linear in log time, so it does not move with the evaluation time. The trajectory is
-    /// continuous at the crossing and monotone in `nowTs`. The ceiling clamp can fall as the peak decays, which lowers
+    /// in wad seconds: closed form, linear in log time, so it does not move with the evaluation time. the trajectory is
+    /// continuous at the crossing and monotone in `nowTs`. the ceiling clamp can fall as the peak decays, which lowers
     /// the clamped result; the unclamped climb never does
     function _recover(uint256 r, uint256 target, uint256 t, uint256 nowTs, Anchor storage a, Settings storage s)
         private
@@ -761,7 +768,7 @@ library CoreLib {
         returns (uint256)
     {
         // forge-lint: disable-start(unsafe-typecast)
-        // the per minute climb is unscaled (decision 128, variant d: the multiplier scales the ceiling loosening only)
+        // the per minute climb is unscaled: the multiplier scales the ceiling loosening only
         int256 lnFast = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.recoveryClimbPerMinBps) * 1e14));
         int256 lnSlow = FixedPointMathLib.lnWad(int256(1e18 + uint256(s.climbPerMinBps) * 1e14));
         uint256 peakT = Halving.halve(a.peakRate, t.zeroFloorSub(a.peakTime), s.peakHalfLife);
@@ -788,14 +795,14 @@ library CoreLib {
         // forge-lint: disable-end(unsafe-typecast)
     }
 
-    /// @notice the rate after one credit of score `score` is bought with the price state `price` at the fill, and
-    /// the anchor update of that fill. The fall below `price` is `dropPer100PointsBps * score / RATE_SCORE`,
-    /// bounded at 10_000, so the drop tracks the eth spent on the credit. The rate stays at or above `dropFloorBps`
-    /// of the price state at the first fill of the current bucket (`nowTs / bucketSeconds`). A `price` already
+    /// @notice the price state after one credit of score `score` is bought with the price state `price` at the fill,
+    /// and the anchor update of that fill. the fall below `price` is `dropPer100PointsBps * score / RATE_SCORE`,
+    /// bounded at 10_000, so the drop tracks the eth spent on the credit. the result stays at or above `dropFloorBps`
+    /// of the price state at the first fill of the current bucket (`nowTs / bucketSeconds`). a `price` already
     /// below that floor (restated by `setRate` or lowered by a bound) starts a new floor at `price`. `price`
-    /// becomes the last fill rate, and the remembered peak becomes `max(price, peak now)` with `peakTime` set to
-    /// `nowTs` `absFloor` is a lower bound on the result: 0 for the eth bid, `10_000 - balanceBidMarginBps` for
-    /// value mode's shared eth instance
+    /// becomes the fill rate, and the remembered peak becomes `max(price, peak now)` with `peakTime` set to `nowTs`.
+    /// `absFloor` is a lower bound on the result: 0 for the eth bid, `10_000 - balanceBidMarginBps` for value mode's
+    /// shared eth instance
     function _drop(Anchor storage a, uint256 price, uint256 nowTs, uint256 score, uint256 absFloor)
         private
         returns (uint256)
@@ -836,7 +843,7 @@ library CoreLib {
 
     /// @notice sends `amount` of the ERC20 `token` the Core holds to `to`. every forbidden target is refused, the
     /// current and past balance tokens and modules included, and tracked eth is not an ERC20, so a stray token is
-    /// recovered and nothing the engine accounts for can leave (decision 159, C06). the Core forwards its call here
+    /// recovered and nothing the engine accounts for can leave. the Core forwards its call here
     /// untouched; the owner check is here. no reentrancy guard: it transfers a token the Core does not track and does
     /// nothing after the transfer, so a token callback changes nothing here and any Core door it re-enters is guarded
     function rescueToken(address token, address to, uint256 amount) external {
@@ -883,16 +890,12 @@ library CoreLib {
         emit NftRescued(token, id, to);
     }
 
-    /// @notice puts credits the Core holds without a record into the eth pile, anyone may call. The cost basis of a
-    /// credit is the price state at `block.timestamp` (`climb`, before the clamp) times the
-    /// credit's score over 100 points, plus the artist royalty `buyToArtistBps` the eth bid would pay, at least 1 wei,
-    /// so the sale floor matches a bought credit (decision 163). The price state is what the engine pays with a funded
-    /// pot, so statements built from adopted credits are priced at that level; the clamp of a thin pot would book a
-    /// basis of 1 wei. A donor who inflates the basis of a statement gives credits away. The basis is booked and the
-    /// eth pile grows; the Core checkpoints before the reserve may rise. `acquiredAt` is the current
-    /// time. Reverts `Empty` for an empty list, `ZeroId` for id zero, `InPile` for a credit that is in a pile (the same
-    /// id twice included), and `NotHolder` for a credit the Core does not hold. The Core books the fee income, then
-    /// forwards its call here untouched, under its own reentrancy guard
+    /// @notice the body of `Core.adopt`, which states the rule; the Core books the fee income and holds the reentrancy
+    /// guard, this function checks the ids and records the basis: the price state at `block.timestamp` (before the
+    /// clamp) times the credit's score over 100 points, plus the artist royalty `buyToArtistBps` the eth bid would
+    /// pay, at least 1 wei, so the sale floor matches a bought credit. reverts `Empty` for an empty list, `ZeroId` for
+    /// id zero, `InPile` for a credit that is in a pile (the same id twice included), and `NotHolder` for a credit the
+    /// Core does not hold
     function adopt(uint256[] calldata ids) external {
         if (ids.length == 0) revert Empty();
         State storage c = state();
@@ -904,7 +907,7 @@ library CoreLib {
             if (CREDITS.ownerOf(id) != address(this)) revert NotHolder();
             uint256 score = ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
             // record the price plus its artist royalty, as a bought credit does, so the adopted credit's sale floor
-            // covers the royalty the eth bid would have paid (decision 163)
+            // covers the royalty the eth bid would have paid
             uint256 pay = price.mulDiv(score, RATE_SCORE);
             uint256 cost = (pay + pay * c.settings.buyToArtistBps / BPS).max(1);
             push(c.pile, c.credits, id, cost);
@@ -988,7 +991,7 @@ library CoreLib {
     /// credits: up to `maxCredits` from the head of the pile, by `transferFrom`, the pile membership cleared (the
     /// cost and arrival time of the record stay). zero moves the pot only.
     /// the held statements and their records stay with the Core, which sells or redeems them itself.
-    /// the eth rate is checkpointed before `ethPot` is zeroed. a call with nothing left to move logs zeros
+    /// the eth price state is checkpointed before `ethPot` is zeroed. a call with nothing left to move logs zeros
     function migrate(uint256 maxCredits) external {
         _onlyOwner();
         State storage c = state();
@@ -1040,7 +1043,7 @@ library CoreLib {
         }
     }
 
-    /// the Core's forbidden list, read through its `isForbidden` view (the base set and every module or token a
+    /// the Core's forbidden list, read through its `isForbidden` view (the fixed set and every module or token a
     /// `setBalanceModule` has ever selected)
     function _forbidden(address t) private view returns (bool) {
         return ICoinOf(address(this)).isForbidden(t);
@@ -1122,9 +1125,9 @@ library CoreLib {
         _sellForBalance(ids, minOut);
     }
 
-    /// posts `score * unit * (10_000 - balanceDiscountBps) / 10_000` per credit, lowered by the value-mode cap. the
-    /// posted bid has no climb, drop or floor-rate check. `unit` is the module's `unitPerPoint()` read in the call.
-    /// runs only while `balanceBidOn`. the artist is paid `buyToArtistBps` of each payout on top (decision 163), in
+    /// posts `score * unit * (10_000 - balanceDiscountBps) / 10_000` per credit, lowered by the value mode cap. the
+    /// posted bid has no climb, drop or floor rate check. `unit` is the module's `unitPerPoint()` read in the call.
+    /// runs only while `balanceBidOn`. the artist is paid `buyToArtistBps` of each payout on top, in
     /// balance token through a second module `pay`. the module holds the balance token: the running total of the
     /// payouts and the royalties must not exceed the module's live `available()` (`PotTooSmall`), so the funds for
     /// both are present. the module pays the seller with one `pay(seller, total)`, and the seller's holding must
@@ -1157,8 +1160,8 @@ library CoreLib {
         }
     }
 
-    /// climbs the balance instance to now with clamp `clampTo`, cap balanceBidCapBps and pages pot `pagesPot` and stores the
-    /// price state and checkpoint
+    /// climbs the shared instance to now with clamp `clampTo`, cap `balanceBidCapBps` and multiplier pot `pagesPot`,
+    /// and stores the price state and checkpoint
     function _balanceCheckpoint(Rate storage bal, uint256 clampTo, uint256 pagesPot) private {
         (uint256 price,) = _climb(
             bal.anchor,
@@ -1175,8 +1178,8 @@ library CoreLib {
         bal.checkpointTime = uint64(block.timestamp);
     }
 
-    /// balance-acquisition ETH basis: mode off uses max(climbed price state, decayed peak); value mode uses the
-    /// current value rate or the stored last good rate, before the ETH pot clamp
+    /// the eth basis of a balance acquisition: mode off uses max(climbed price state, decayed peak); value mode uses
+    /// the current value rate or the stored last good rate, before the pot clamp
     function _ethFloorNow(State storage c) private view returns (uint256) {
         if (c.settings.valueModeOn) {
             // value mode: the eth bid the shared instance prices, a record only. a momentarily down quote falls back to
@@ -1189,7 +1192,7 @@ library CoreLib {
         return ep.max(epk);
     }
 
-    /// pays each credit its posted discount lowered by the value-mode cap and books the artist royalty
+    /// pays each credit its posted discount lowered by the value mode cap and books the artist royalty
     /// `buyToArtistBps` of it, in order. reverts `ZeroAmount` on a zero payout and `PotTooSmall` once the payouts
     /// plus the royalties pass `avail`. the credit enters the pile at eth cost basis `floor * score / RATE_SCORE`,
     /// at least 1 wei. returns the balance token totals owed to the seller and to the artist
@@ -1224,9 +1227,9 @@ library CoreLib {
         emit CreditBought(id, msg.sender, cost, toArtist);
     }
 
-    /// the multiplier pages pot in bps of par. `avail` saturates at ceil(denom * multiplierCap * balanceRateCap *
-    /// pointsPerPage / (BPS squared * 100)), where every allowed last-fill rate reaches the multiplier cap, so the
-    /// product cannot overflow
+    /// the multiplier pot of the shared instance in bps of par. `avail` saturates at ceil(denom * climbMultiplierCapBps
+    /// * balanceBidCapBps * pointsPerPage / (BPS * BPS * 100)), the holding at which every allowed fill rate already
+    /// reaches the multiplier cap, so the product cannot overflow
     function _toBpsRaw(uint256 avail, uint256 denom) private view returns (uint256) {
         if (denom == 0) return 0;
         Settings storage cfg = state().settings;
@@ -1235,34 +1238,34 @@ library CoreLib {
         return avail.min(enough).mulDiv(BPS, denom);
     }
 
-    /// @notice the balance bid rate, bps of par: the posted `10_000 - balanceDiscountBps`, in every mode, bid on or off
-    /// (decision 164). the Core forwards its `balanceRate()`
+    /// @notice the balance bid rate, bps of par: the posted `10_000 - balanceDiscountBps`, in every mode, bid on or
+    /// off. the Core forwards its `balanceRate()`
     function balanceRate() external view returns (uint256) {
         return BPS - state().settings.balanceDiscountBps;
     }
 
     /// @notice the shared instance now, bps of par: value mode's eth price state climbed to now with the cap as its
     /// clamp, the figure `ethPrice` multiplies by the value per point. read for the eth quote replay in value mode;
-    /// it leaves the posted balance rate unchanged but feeds the executable payout's value-mode cap through
+    /// it leaves the posted balance rate unchanged but feeds the executable payout's value mode cap through
     /// `ethPrice()`. the Core forwards its `sharedRate()`
     function sharedRate() external view returns (uint256) {
         return _sharedRead(state());
     }
 
-    /// @notice executable payout for `score` stored units, after the value-mode cap; 0 when the module cannot cover
+    /// @notice executable payout for `score` stored units, after the value mode cap; 0 when the module cannot cover
     /// it and its royalty. the Core forwards `balanceBidForScore(score)`
     function balanceBidForScore(uint256 score) external view returns (uint256) {
         return _balancePayout(score);
     }
 
     /// @notice the executable balance token payout for credit `id` now: `balanceBidForScore(scoreOf(id))`. a module too
-    /// short to pay this credit and its royalty reads 0 here, so the view never advertises a payout the fill refuses
-    /// (decision 159, C05). the Core forwards its `balanceBidOf(id)`
+    /// short to pay this credit and its royalty reads 0 here, so the view never advertises a payout the fill refuses.
+    /// the Core forwards its `balanceBidOf(id)`
     function balanceBidOf(uint256 id) external view returns (uint256) {
         return _balancePayout(scoreOf(id));
     }
 
-    /// the executable balance payout: the posted discount lowered by the value-mode cap, and 0 when no module is
+    /// the executable balance payout: the posted discount lowered by the value mode cap, and 0 when no module is
     /// set, the unit read fails, or the payout plus its artist royalty exceeds `available()`: the fill
     /// (`_fillBalance`) reverts `PotTooSmall` there, and the view returns 0 instead of a payout the fill refuses
     function _balancePayout(uint256 score) private view returns (uint256) {
@@ -1330,9 +1333,6 @@ library CoreLib {
         }
         if (!ok) revert BadModule();
     }
-
-    /// gas bound of module unit/availability reads and the controller markup read
-    uint256 internal constant READ_GAS = 2_000_000;
 
     /// bounded read of `unitPerPoint()` of `module`: at most `READ_GAS`, at least 32 bytes returned (a long answer
     /// is cut off). a revert, a short answer, a zero unit or a unit above `type(uint128).max` reverts `BadModule`
