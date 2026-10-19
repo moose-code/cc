@@ -4,7 +4,6 @@
 !keeper/
 !keeper/package.json
 !keeper/Dockerfile
-!keeper/Dockerfile.dockerignore
 !keeper/src/
 !keeper/src/**
 !packages/

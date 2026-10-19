@@ -3,10 +3,11 @@ primary_region = "iad"
 kill_signal = "SIGTERM"
 kill_timeout = "30s"
 
-# Run fly deploy from the repository root with --ha=false: one keeper owns this state volume.
+# Run fly deploy . --config keeper/fly.mainnet.toml --ha=false from the repository root.
+# Build paths are relative to this config; the context is the repository root.
 [build]
-  dockerfile = "keeper/Dockerfile"
-  ignorefile = "keeper/Dockerfile.dockerignore"
+  dockerfile = "Dockerfile"
+  ignorefile = "../.dockerignore"
 
 [env]
   NODE_ENV = "production"
