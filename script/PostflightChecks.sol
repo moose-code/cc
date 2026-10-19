@@ -295,7 +295,7 @@ abstract contract PostflightChecks is PostflightPool {
         // `setRate`, so it is exact only at launch: a difference is a warning. the read `ethRate()` is zero while the pot is
         // empty
         _warn(
-            "warn: price state is rateStart",
+            "warn: price state is the opening rate",
             core.ethPot() != 0 || core.rateAtCheckpoint() == openingRate,
             string.concat(
                 "rateAtCheckpoint ", vm.toString(core.rateAtCheckpoint()), " openingRate ", vm.toString(openingRate)

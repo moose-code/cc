@@ -130,7 +130,7 @@ library CoreLib {
         uint40 pauseMark;
     }
 
-    /// the bid anchor state, written by a fill and by `setRate`
+    /// the bid anchor state, written by a fill, `setRate` or a pre-coin `setOpeningRate`
     struct Anchor {
         /// the price state at the last fill. the rate at deployment before the first fill
         uint256 lastFillRate;
@@ -138,10 +138,10 @@ library CoreLib {
         uint256 minuteStartRate;
         /// `timestamp / bucketSeconds` of the first fill of the current bucket
         uint64 minuteBucket;
-        /// time `peakRate` was last written: the last fill or `setRate`, deploy time before the first fill
+        /// time `peakRate` was last written: the last fill or a rate reset, deploy time before the first fill
         uint64 peakTime;
-        /// the remembered peak: `max(fill price, peak decayed to the fill time)` at the last fill, `setRate`'s rate, or
-        /// `rateStart` at deploy. it halves every `peakHalfLife` since `peakTime`. the ceiling anchors on
+        /// the remembered peak: `max(fill price, peak decayed to the fill time)` at the last fill, the rate of an
+        /// owner reset, or `rateStart` at deploy. it halves every `peakHalfLife` since `peakTime`. the ceiling anchors on
         /// `max(lastFillRate, peak now)`, and the price state climbs at `recoveryClimbPerMinBps` while below the
         /// recovery level `peak now * (10_000 - recoveryGapBps) / 10_000`
         uint256 peakRate;

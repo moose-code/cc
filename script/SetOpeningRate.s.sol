@@ -5,11 +5,12 @@ import {Script, console} from "forge-std/Script.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
-import {SystemBuilder} from "./Builder.sol";
+import {SystemResumer} from "./SystemResumer.sol";
+import {NewProd} from "./NewProd.sol";
 
 /// Prepares one owner transaction to reset the opening ETH rate before the coin exists. Without SEND=1 this only
 /// prints the rate, cap and separate signoff hash. The constructor config and its CONFIG_HASH stay unchanged.
-contract SetOpeningRate is Script, SystemBuilder {
+contract SetOpeningRate is Script, SystemResumer, NewProd {
     error BadOpeningRate(uint256 rate);
     error WrongOwner(address want, address got);
     error CoinAlreadyLaunched();
@@ -39,6 +40,8 @@ contract SetOpeningRate is Script, SystemBuilder {
         (, address signer,) = vm.readCallers();
         vm.stopBroadcast();
         if (signer != core.owner()) revert WrongOwner(core.owner(), signer);
+        address expectedCore = coreAddress(c, signer);
+        if (address(core) != expectedCore) revert CoreMismatch(expectedCore, address(core));
         vm.startBroadcast();
         core.setOpeningRate(rate);
         vm.stopBroadcast();
