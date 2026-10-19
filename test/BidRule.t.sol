@@ -76,6 +76,7 @@ contract BidRuleTest is Fixture {
         cfg.dropPer100PointsBps = 9_999;
         cfg.dropFloorBps = 1;
         _setSettings(cfg);
+        assertEq(BidModel.dropOnce(cfg, 1, 1, RATE_SCORE), 1, "the invariant model keeps the same one-wei floor");
         _potTo(1 ether);
         vm.prank(owner);
         core.setRate(2);
