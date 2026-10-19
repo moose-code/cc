@@ -115,3 +115,103 @@ Actual production `/api/rpc` batch returned HTTP 200 in 1,126 ms, preserved all 
 Restored four-RPS indexer image: `registry.fly.io/cc-indexer-mainnet:deployment-01M5B6PN9AGZ0E4BYQXG8RWW2G`, digest `sha256:7c28b952e4e1a3c6f47596967fbe440083b23585b5b5e6b6d1de9b0d9406d262`, source `74102cf`. Same v6 schema resumed. Reducing the cap did not clear Tenderly's refusal: one explicit read from the actual Fly host returned HTTP 429 / -32005 `rate limit exceeded`, while the same harmless mainnet-head read succeeded from the Mac. The owner has no dedicated Tenderly endpoint. Public Tenderly remains first and fallbacks continue advancing; the precise quota/window is unproven. Tenderly documents IP-based public access and a 1 GB daily response-data limit: https://docs.tenderly.co/node-rpc/overview#public-endpoint-limits . No IP/quota bypass was attempted.
 
 The keeper continued actual no-send mainnet ticks through block 26,229,816, each with zero pot, 0.1 ETH reserve and `decided=[]`, `sent=[]`. Indexer at the latest checkpoint remained backfilling, with process Credits transfers 4,577 and fetch head 26,071,175; `/ready` still 503. Website success does not close this service-readiness blocker.
+
+
+### Temporary Alchemy fallback and spending constraint
+
+Owner approved reusing the Artcoins site's existing Alchemy credential for CC,
+then required restrained billing. The credential was transferred only in memory
+from its existing Netlify store into Fly `RPC_FAST_FALLBACK_URL`; no credential
+value or full URL was printed or saved. Source `6f46ac8` keeps Tenderly first,
+adds Alchemy as the first fallback at four physical requests/second, and sanitizes
+all upstream error chains before logging. Config-only changes leave the v6
+indexing build inputs and database/cache intact. Focused config tests 3/3,
+TypeScript and independent source review passed. Canonical deployment exited 0:
+`registry.fly.io/cc-indexer-mainnet:deployment-01M5B8H225Y0PTRBMBWZ95ZEY8`,
+digest `b241bf59aa584b13ba1a2d3f9765cb05cd663e786fd22e991ef81895a712fce6`.
+
+Actual host checks before activation: historical Credit URI succeeded in 73 ms;
+a 64-Credit aggregate returned 128 valid decoded URI/owner results, 867,430 bytes,
+in 508 ms; a 5,000-block empty Transfer log range succeeded in 487 ms. These were
+manual read-only probes, not synthetic chain events. At 23:52:14 UTC production
+showed 3,006 Alchemy requests, zero errors; completed methods were 2,562 block
+reads, 361 log reads, 82 calls and one chain ID. Other public fallbacks had zero
+requests; Tenderly continued refusing reads. This mix is about 75,092 compute
+units under the published method table, or about $0.034 at standard PAYG rates.
+A conservative 60-CU bound including five manual probes is below $0.082.
+Sources: https://www.alchemy.com/docs/reference/compute-unit-costs and
+https://support.alchemy.com/articles/2300474614-understanding-alchemy-s-pay-as-you-go-billing-model .
+Account plan, total shared usage and billing caps are unverified; this is not
+an invoice or a claim of free service. Four RPS alone does not cap total spend.
+The operator limit is fewer than 30,000 calls for this run (stop process counter
+by 29,995 to include probes), about $0.81 at the conservative standard-rate bound.
+Remove the temporary fallback on catch-up or when that limit is approached.
+
+Actual production log at 23:51:40 committed 5,775 events for block range
+26,037,627 to 26,037,714 after 11m55s. Ponder commits its public safe checkpoint
+only after an entire historical event range; PostgreSQL showed no lock waits.
+Increasing event counts and the actual commit prove progress, but not completion.
+Core parity is still unavailable and `/ready` remains 503. Remaining early NFT
+hydration and later historical fetching may exceed this run's usage limit;
+completion within the limit is not promised. Do not reset counters through restarts or truncate indexing to meet this limit.
+
+### Artcoins discovery and trading dependency
+
+The actual live site is the local main repository `/Users/dd/CascadeProjects/artcoins`
+at published source `d06d29c`, Netlify deploy `6ad1b0fce9dd865be40d02c8`.
+Its generated V2 factory, hook, locker, escrow and ABI agree with the deployed
+launcher snapshot, including factory `0xC27e182ef5D8A1A7C9dd0a27414fEaBA47DF8e3c`
+at block 26,202,473. The swap flow validates the locker pool key and pool ID,
+quotes/simulates before submitting, supports native ETH/CC, and uses mainnet
+wallet checks. The site's create freeze does not disable trading. No site code
+or deployment changed in this repair.
+
+Its old Fly indexer was healthy but watched the old factory/event ABI and stored
+PGlite outside `/data`; its empty successful coin list suppressed chain fallback.
+The owner explicitly authorized preserving/verifying data and repairing this
+separate indexer. Actual source `36d5238` is now deployed on existing Machine
+`9080d229ae5387`, volume `vol_4qlz8we159p8l3gr`, app `artcoins-indexer`, iad,
+shared one CPU/1 GB. Image `deployment-01M5B91337881KSQ85Q6448B3R`, digest
+`4653ab025823b1819b2b700c280b3e87bac77e5718d80cce3922eafd1da85502`.
+It uses `/data/pglite`, fresh schema `artcoins_v2_20261019`, correct C27e factory
+and event ABI, 12-second polling and Tenderly first. No extra Alchemy credential,
+replica or capacity was added. Focused config tests 2/2, TypeScript and independent
+source/storage review passed; the canonical deployment exited 0.
+
+Preservation was real, not a fixture: capture at 23:42:02 UTC under the running
+PGlite transaction/query locks after checkpoint/sync, with source tree unchanged.
+The 81,891,328-byte archive SHA-256 is
+`c18320f1f4ede79185f9cfc03cee10939dc0cfaceca3e6970fec3ed55d125852`.
+An identical PGlite 0.2.13/WASM Mac restore matched all 35 table counts, checkpoints
+and build metadata. Active and separate rollback volume copies matched tree
+`68fa8efd14ce38b628c00d61d081b0449376708b1858747207a1eb3172e523ed`
+and were synced. A first snapshot attempt failed before locks/capture because
+inspector evaluation could not use dynamic import; module resolution was fixed
+and reviewed before the successful capture. An earlier memory-heavy Blob export
+was rejected in local profiling before production; the successful capture streamed
+tar under the locks. No inconsistent live-directory copy or second live database
+opener was used.
+
+Actual post-start readback through the existing instance verified all old `public`
+counts/checkpoints/build metadata unchanged (145 burns, nine claims, two tokens),
+`ponder_sync` retained, and the new schema independently rebuilt the same legacy
+counts. The loopback inspector was closed and independently checked. Separate
+rollback copy `/data/rollback-v35` and immutable archive remain; old image rollback
+needs an explicit symlink because v35 ignores the new directory variable. The
+Artcoins indexer README records the exact rollback image and identities.
+
+Production acceptance: `/health` and `/ready` 200; checkpoint 26,230,021 to
+26,230,022 across 12 seconds, mainnet head 26,230,023 (lag one); all 19 website
+GraphQL coin fields returned a valid empty prelaunch list; website `/api/coins`
+returned 200. Latest 100 production log records through 23:52:35 contained no
+error/fatal/migration/OOM matches and showed continuing blocks 26,230,024 to
+26,230,028 at roughly 12 seconds. This repairs the actual discovery dependency.
+
+Actual CC launch-event insertion, listing, pool reads and executable quote remain
+unproven until launch. Existing site caches can delay discovery; an already-open
+list needs Refresh/reload. No predicted-coin page was queried before launch, to
+avoid populating its negative caches. No synthetic event or blockchain transaction
+was sent. Factory launch atomically creates the coin/pool and emits the event;
+there is no extra pool-launch transaction to perform. The 69% to 6.9% initial fee
+schedule is a trading cost, not a trading lock. These parameters come from the
+actual deployed factory source/ABI, not the stale nested contracts checkout.
