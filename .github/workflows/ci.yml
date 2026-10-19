@@ -1,8 +1,8 @@
 # Per-change checks. `changes` reads the changed paths, the web and contracts jobs run only when
 # their paths changed, and `ci-ok` always reports: it is the one required status check, and it
 # passes when every job succeeded or was skipped.
-# contracts follows the AGENTS.md rule: forge build plus the test files the change touched. The
-# full suite, the rehearsal and the deep invariants run in the candidate workflow.
+# Contract changes run a bounded smoke selection plus changed test files. Tools use offline checks.
+# The full suite, deployment rehearsal and deep invariants run in the candidate workflow.
 # Fork tests run against an anvil that forks a recent mainnet block, where the deployed v2 stack lives.
 # UPSTREAM_RPC_URL is the repo secret FORK_URL when set, else publicnode. foundry-toolchain saves foundry's rpc cache.
 name: ci
@@ -26,6 +26,8 @@ jobs:
       web: ${{ steps.diff.outputs.web }}
       contracts: ${{ steps.diff.outputs.contracts }}
       tests: ${{ steps.diff.outputs.tests }}
+      tools: ${{ steps.diff.outputs.tools }}
+      smoke: ${{ steps.diff.outputs.smoke }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,8 +41,14 @@ jobs:
           files=$(git diff --name-only "$BASE"...HEAD)
           printf '%s\n' "$files"
           has() { printf '%s\n' "$files" | grep -Eq "$1" && echo true || echo false; }
-          echo "web=$(has '^(web/|keeper/|indexer/|packages/|package\.json$|package-lock\.json$|\.github/workflows/)')" >> "$GITHUB_OUTPUT"
-          echo "contracts=$(has '^(src/|test/|script/|lib/|foundry\.toml$|foundry\.lock$|remappings\.txt$|\.gitmodules$|\.github/workflows/)')" >> "$GITHUB_OUTPUT"
+          echo "web=$(has '^(web/|keeper/|indexer/|packages/|package\.json$|package-lock\.json$|\.github/workflows/(ci|web)\.yml$)')" >> "$GITHUB_OUTPUT"
+          contract_paths='^(src/|test/|lib/|foundry\.toml$|foundry\.lock$|remappings\.txt$|\.gitmodules$|script/.*\.sol$|script/config/|script/deploy\.sh$|script/dev/.*\.sh$|script/tools/check-preflight\.sh$|\.github/workflows/ci\.yml$)'
+          echo "contracts=$(has "$contract_paths")" >> "$GITHUB_OUTPUT"
+          # Test-only edits run those tests. Shared source/fixture/config changes always get smoke coverage,
+          # even when the author changed no .t.sol file. This is bounded coverage, not full release proof.
+          non_test_files=$(printf '%s\n' "$files" | grep -Ev '^test/.*\.t\.sol$' || true)
+          echo "smoke=$(printf '%s\n' "$non_test_files" | grep -Eq "$contract_paths" && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "tools=$(has '^(script/|\.github/workflows/.*\.yml$)')" >> "$GITHUB_OUTPUT"
           tests=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- 'test/*.t.sol' 'test/**/*.t.sol' | sort -u | tr '\n' ' ')
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
 
@@ -48,6 +56,26 @@ jobs:
     needs: changes
     if: needs.changes.outputs.web == 'true'
     uses: ./.github/workflows/web.yml
+
+  tools:
+    needs: changes
+    if: needs.changes.outputs.tools == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: offline approval wrapper tests
+        run: |
+          for test in script/tools/test-*.py; do
+            PYTHONDONTWRITEBYTECODE=1 python3 "$test"
+          done
+      - name: shell syntax
+        run: find script -type f -name '*.sh' -print0 | xargs -0 -r -n 1 bash -n
+      - name: resume owner guards
+        run: bash script/tools/test-resume-owner.sh
 
   contracts:
     needs: changes
@@ -80,36 +108,33 @@ jobs:
             --auto-impersonate --retries 10 --timeout 60000 > anvil.log 2>&1 &
           for _ in $(seq 1 60); do cast chain-id --rpc-url "$MAINNET_RPC_URL" >/dev/null 2>&1 && break; sleep 1; done
           cast chain-id --rpc-url "$MAINNET_RPC_URL"
-      - run: forge build
+      # forge test compiles with the configured production restrictions; no duplicate build.
+      - name: focused contract checks
+        env:
+          TESTS: ${{ needs.changes.outputs.tests }}
+          SMOKE: ${{ needs.changes.outputs.smoke }}
+        run: |
+          selected=()
+          if [ "$SMOKE" = true ] || [ -z "${TESTS// /}" ]; then
+            selected+=(test/{CoreUnit,Config,BuildIdentity,CoreLayout,OwnerPowers,ScriptLint}.t.sol)
+          fi
+          for f in $TESTS; do selected+=("$f"); done
+          # One invocation, including overlap between changed tests and the smoke selection only once.
+          selection=$(printf '%s\n' "${selected[@]}" | sort -u | paste -sd, -)
+          if [[ "$selection" == *,* ]]; then selection="{$selection}"; fi
+          forge test --match-path "$selection" -vv --chain-id 1
       - name: indexer ABI pins
         run: |
           node indexer/scripts/gen-abis.mjs
           git diff --exit-code -- indexer/abis
-      - name: touched test files
-        env:
-          TESTS: ${{ needs.changes.outputs.tests }}
-        run: |
-          if [ -z "${TESTS// /}" ]; then
-            echo "no test files touched"
-            exit 0
-          fi
-          for f in $TESTS; do
-            echo "::group::$f"
-            forge test --match-path "$f" -vv --chain-id 1
-            echo "::endgroup::"
-          done
-      # the local deploy path (preflight, deploy, postflight) on the fork anvil: the test runner does not enforce the
-      # script-only guards of forge script, so a broken deploy path fails here
-      - name: local deploy
-        run: RPC_URL=http://127.0.0.1:8545 script/deploy.sh local
 
   ci-ok:
     if: always()
-    needs: [changes, web, contracts]
+    needs: [changes, web, contracts, tools]
     runs-on: ubuntu-latest
     steps:
       - env:
-          RESULTS: ${{ needs.changes.result }} ${{ needs.web.result }} ${{ needs.contracts.result }}
+          RESULTS: ${{ needs.changes.result }} ${{ needs.web.result }} ${{ needs.contracts.result }} ${{ needs.tools.result }}
         run: |
           for r in $RESULTS; do
             case "$r" in

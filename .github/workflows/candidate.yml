@@ -58,6 +58,9 @@ jobs:
           node indexer/scripts/gen-abis.mjs
           git diff --exit-code -- indexer/abis
       - run: forge test -vv --chain-id 1
+      # Exercise forge script's deploy-only guards through the production deployment path.
+      - name: local deploy
+        run: RPC_URL=http://127.0.0.1:8545 script/deploy.sh local
       - name: deep invariants
         if: ${{ inputs.deep }}
         env:
