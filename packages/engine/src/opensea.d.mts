@@ -51,6 +51,7 @@ export declare function fetchListings(o: {
   allowedRecipients?: string[];
   horizon?: number;
   timeoutMs?: number;
+  fulfillmentTimeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<FetchResult>;
 

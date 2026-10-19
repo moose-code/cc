@@ -62,3 +62,27 @@ test("executor: a fee-bearing pending simulation that receives no caller payment
   assert.equal(gasArgs[0].maxFeePerGas, cfg.doors.refreshReference.maxBaseFee + cfg.doors.refreshReference.tip);
   assert.equal(gasArgs[0].maxPriorityFeePerGas, cfg.doors.refreshReference.tip);
 });
+
+// promise: a confirmed receipt spends daily budget even when the historical balance read fails
+test("executor: a failed receipt-block balance read records gas and trips the breaker", async () => {
+  const spent = 60_000n * parseGwei("1");
+  const client: any = {
+    getBlock: async () => ({ baseFeePerGas: parseGwei("1") }),
+    estimateGas: async () => 60_000n,
+    getBalance: async ({ blockNumber }: { blockNumber?: bigint }) => {
+      if (blockNumber) throw new Error("historical balance unavailable");
+      return parseEther("1");
+    },
+    request: async () => "0x" + "22".repeat(32),
+    getTransactionReceipt: async () => ({ status: "success", gasUsed: 60_000n, effectiveGasPrice: parseGwei("1"), blockNumber: 2n }),
+  };
+  const ledger = new Ledger(undefined, cfg.dailyBudget);
+  const breaker = new Breaker(1, 60);
+  const exec = new Executor(client, cfg, policy, { address: keeper, impersonate: true }, ledger, breaker);
+  const out = await exec.run(call, state);
+  assert.equal(out.kind, "sent");
+  if (out.kind === "sent") assert.deepEqual([out.spent, out.received], [spent, 0n]);
+  assert.equal(ledger.snapshot().spent, spent);
+  assert.equal(ledger.remaining(), cfg.dailyBudget - spent);
+  assert.equal(breaker.paused("refreshReference"), true);
+});

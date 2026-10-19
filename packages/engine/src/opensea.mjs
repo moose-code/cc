@@ -44,6 +44,7 @@ const word = (id) => BigInt(id).toString(16).padStart(64, "0");
  * @param {string[]} [o.allowedRecipients] allowlist without an rpc, default the OpenSea fee collector
  * @param {number} [o.horizon] seconds past the head block an order may start at and still be kept, default 86400
  * @param {number} [o.timeoutMs] maximum time for the whole refresh, default 30000
+ * @param {number} [o.fulfillmentTimeoutMs] maximum time per fulfillment request, default 8000
  * @param {(n: number) => Promise<void>} [o.sleep]
  */
 export async function fetchListings(o) {
@@ -52,7 +53,7 @@ export async function fetchListings(o) {
   const sign = o.sign ?? 40;
   const fulfiller = o.fulfiller ?? "0x1111111111111111111111111111111111111111";
   const signal = AbortSignal.timeout(o.timeoutMs ?? 30_000);
-  const sleep = o.sleep ?? ((ms) => delay(ms, undefined, { signal }));
+  const sleep = (ms, requestSignal = signal) => o.sleep ? o.sleep(ms) : delay(ms, undefined, { signal: requestSignal });
   const envAllowed = (o.allowedRecipients ?? [OPENSEA_FEE]).map((a) => a.toLowerCase());
   const headers = { "x-api-key": key, accept: "application/json" };
 
@@ -131,16 +132,17 @@ export async function fetchListings(o) {
   }
 
   async function fulfillment(hash) {
+    const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(o.fulfillmentTimeoutMs ?? 8_000)]);
     let res;
     for (let attempt = 0; attempt < 4; ++attempt) {
       res = await fetch("https://api.opensea.io/api/v2/listings/fulfillment_data", {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify({ listing: { hash, chain: "ethereum", protocol_address: SEAPORT_16 }, fulfiller: { address: fulfiller } }),
-        signal,
+        signal: requestSignal,
       });
       if (res.status !== 429) break;
-      await sleep(1000 * (attempt + 1));
+      await sleep(1000 * (attempt + 1), requestSignal);
     }
     if (!res.ok) return null;
     const tx = (await res.json()).fulfillment_data?.transaction;

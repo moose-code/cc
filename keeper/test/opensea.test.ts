@@ -79,3 +79,35 @@ test("OpenSea: a malformed fulfillment does not discard another signed order", a
     globalThis.fetch = realFetch;
   }
 });
+
+// promise: a single slow fulfillment cannot erase another valid signed order from the same refresh
+test("OpenSea: one fulfillment times out while another signed order remains", async () => {
+  const realFetch = globalThis.fetch;
+  const keepAlive = setInterval(() => {}, 1_000);
+  const slowHash = "0x" + "33".repeat(32);
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const path = new URL(url).pathname;
+    if (path.includes("/contract/")) return new Response(JSON.stringify({ collection: "credits" }), { status: 200 });
+    if (path.endsWith("/best")) return new Response(JSON.stringify({ listings: ["42", "43"].map((id, i) => ({
+      protocol_address: SEAPORT_16, order_hash: i ? slowHash : hash, protocol_data: { parameters: {
+        offer: [{ itemType: 2, token: CREDITS, startAmount: "1", endAmount: "1", identifierOrCriteria: id }],
+        consideration: [{ itemType: 0, token: zero, startAmount: "900", endAmount: "900", recipient: offerer }],
+        orderType: 0, offerer, startTime: "1", endTime: "9999999999",
+      } },
+    })) }), { status: 200 });
+    if (JSON.parse(String(init?.body)).listing.hash === slowHash) return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+    return new Response(JSON.stringify({ fulfillment_data: { transaction: {
+      function: "fulfillBasicOrder_efficient_6GL6yc", input_data: { parameters: basic },
+    } } }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const r = await fetchListings({ key: "test", pages: 1, sign: 2, timeoutMs: 200, fulfillmentTimeoutMs: 10 });
+    assert.equal(r.dropped["fulfillment request failed"], 1);
+    assert.deepEqual(r.orders.map((o) => o.id), ["42"]);
+  } finally {
+    clearInterval(keepAlive);
+    globalThis.fetch = realFetch;
+  }
+});

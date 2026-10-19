@@ -141,13 +141,22 @@ export class Executor {
       return { kind: "failed", reason: `no receipt within ${this.cfg.receiptTimeoutSec} s` };
     }
     const spent = receipt.gasUsed * receipt.effectiveGasPrice;
-    const after = await this.client.getBalance({ address: this.signer.address, blockNumber: receipt.blockNumber });
-    // the keeper's balance moves only by this transaction: received = after - before + spent
-    const received = after + spent > before ? after + spent - before : 0n;
+    let after: bigint | undefined;
+    let balanceError: string | undefined;
+    try {
+      after = await this.client.getBalance({ address: this.signer.address, blockNumber: receipt.blockNumber });
+    } catch (e) {
+      balanceError = txError(e);
+    }
+    // A failed historical balance read cannot erase confirmed gas spend. Count no refund without evidence.
+    const received = after !== undefined && after + spent > before ? after + spent - before : 0n;
     this.ledger.record(spent, received, hash);
     const fields = { door: c.door, hash, url: txUrl(hash, chainId), block: receipt.blockNumber, gasUsed: receipt.gasUsed, spent, received, net: received - spent };
     const paidDoor = c.door === "buyListing" || c.door === "buyback" || c.door === "compose" || c.door === "redeemStatement" || c.door === "refreshReference";
-    if (receipt.status === "success" && (!paidDoor || received >= spent + this.policy.margin)) {
+    if (balanceError) {
+      log("error", "receipt balance read failed", { ...fields, error: balanceError });
+      if (this.breaker.fail(c.door)) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after confirmed receipt could not be accounted`, fields);
+    } else if (receipt.status === "success" && (!paidDoor || received >= spent + this.policy.margin)) {
       this.breaker.ok(c.door);
       log("info", "confirmed", fields);
     } else if (receipt.status === "success") {
@@ -157,7 +166,7 @@ export class Executor {
       log("error", "reverted on chain", fields);
       if (this.breaker.fail(c.door)) void alert(this.cfg.alertWebhook, `breaker:${c.door}`, `${c.door} paused after repeated on chain reverts`, fields);
     }
-    if (after < this.cfg.lowBalance) void alert(this.cfg.alertWebhook, "balance", "keeper balance low, top up", { balance: after, address: this.signer.address });
+    if (after !== undefined && after < this.cfg.lowBalance) void alert(this.cfg.alertWebhook, "balance", "keeper balance low, top up", { balance: after, address: this.signer.address });
     return { kind: "sent", hash, status: receipt.status, spent, received };
   }
 
