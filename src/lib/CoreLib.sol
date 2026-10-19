@@ -93,6 +93,8 @@ struct State {
     /// every module and token a `setBalanceModule` has ever selected. a replaced module or token stays here, so it
     /// remains a forbidden target after it stops being the live module or token
     mapping(address => bool) everBalanceTarget;
+    /// the opening ETH rate in wei per 100 points; the owner may reset it before the coin exists
+    uint256 openingRate;
 }
 
 /// the Core's pricing and accounting library: settings validation and writes, the eth bid and its ceiling, and the

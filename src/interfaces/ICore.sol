@@ -61,6 +61,7 @@ interface ICore {
     error OnlyOwner();
     error OnlyPendingOwner();
     error OnlyPoolManager();
+    error OpeningRateClosed();
     error Paused();
     error PotTooSmall();
     error RedeemOff();
@@ -229,6 +230,7 @@ interface ICore {
     function setCreditCostToPotBps(uint16) external;
     function setHeldFormat(uint256 sid, uint8 format) external;
     function setMinCcToChoose(uint96) external;
+    function setOpeningRate(uint256) external;
     function setPaused(bool on) external;
     function setPayee(address to) external;
     function setRate(uint256) external;

@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {Test} from "forge-std/Test.sol";
+import {ProdDeployer} from "./utils/ProdDeployer.sol";
+import {V2Stack} from "./utils/V2Stack.sol";
+import {ICore} from "../src/interfaces/ICore.sol";
+import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
+import {SystemResumer} from "../script/SystemResumer.sol";
+import {Deployed} from "../script/SystemDeployer.sol";
+import {LaunchConfig} from "../script/LaunchConfig.sol";
+
+/// Checks the deferred Core's price reset and the exact signed launch path on the live v2 factory fork.
+contract PrelaunchRateTest is Test, SystemResumer, ProdDeployer {
+    address internal deployer;
+    address internal creator;
+    LaunchConfig internal base;
+    IArtCoinsFactoryV2 internal factory;
+
+    function setUp() public {
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
+        vm.etch(libraryAddress(), "");
+        vm.resetNonce(libraryAddress());
+        vm.etch(opsLibraryAddress(), "");
+        vm.resetNonce(opsLibraryAddress());
+        V2Stack.Stack memory v2 = V2Stack.attach();
+        deployer = v2.owner;
+        creator = makeAddr("price.creator");
+        factory = IArtCoinsFactoryV2(v2.factory);
+        vm.deal(deployer, 5 ether);
+        base = defaultConfig();
+        base.owner = deployer;
+        base.creator = creator;
+        base.artist = creator;
+        base.payee = makeAddr("price.payee");
+        base.name = "Price Coin";
+        base.symbol = "PRC";
+        base.image = "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        base.description = "Price Coin test description";
+        base.salt = keccak256("prelaunch price");
+        base.stack.hook = v2.hook;
+        base.stack.factory = v2.factory;
+        base.stack.locker = v2.locker;
+        base.stack.escrow = v2.escrow;
+        base.mevModule = v2.mev;
+        vm.setEnv("PRELAUNCH_RATE", "0");
+        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(bytes32(0)));
+    }
+
+    function _defer() internal returns (Deployed memory d) {
+        vm.prank(deployer);
+        (bool ok,) = CREATE2_DEPLOYER.call(abi.encodePacked(bytes32(0), vm.getCode("CoreLib.sol:CoreLib")));
+        assertTrue(ok, "CoreLib deployed");
+        vm.prank(deployer);
+        (ok,) = CREATE2_DEPLOYER.call(abi.encodePacked(bytes32(0), vm.getCode("CoreOpsLib.sol:CoreOpsLib")));
+        assertTrue(ok, "CoreOpsLib deployed");
+        vm.startPrank(deployer);
+        d = deploySystemUntilLaunch(deployer, base);
+        vm.stopPrank();
+    }
+
+    function _approve(uint256 rate) internal {
+        bytes32 hash = keccak256(abi.encode(keccak256("credits.prelaunchRate.v1"), configHash(base), rate, rate * 3));
+        vm.setEnv("PRELAUNCH_RATE", vm.toString(rate));
+        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(hash));
+    }
+
+    function guardsExt(address core) external {
+        resumeChecks(deployer, base, core);
+        launchOnlyChecks(deployer, base, core, factory.tokenDeployer());
+    }
+
+    // promise: an owner reset after an idle day changes the reference, hard cap and live clock, and launch closes it
+    function test_resetThenLaunch() public {
+        Deployed memory d = _defer();
+        ICore k = ICore(payable(d.core));
+        uint256 rate = 20_000_000_000_000_000;
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(deployer);
+        k.setOpeningRate(rate);
+        assertEq(k.RATE_START(), rate);
+        assertEq(k.settings().rateCap, 3 * rate);
+        assertEq(k.rateAtCheckpoint(), rate);
+        assertEq(k.ethPrice(), rate, "pre-reset idle time earns no climb");
+        assertEq(d.coin.code.length, 0);
+        _approve(rate);
+        this.guardsExt(d.core);
+        vm.startPrank(deployer);
+        Deployed memory launched = resumeSend(deployer, base);
+        vm.stopPrank();
+        assertEq(launched.core, d.core);
+        assertEq(launched.coin, d.coin);
+        assertGt(d.coin.code.length, 0);
+        postflightAs(base, d.core, deployer);
+        (string memory failures,) = _failed();
+        assertEq(failures, "", "postflight");
+        vm.prank(deployer);
+        vm.expectRevert(bytes4(keccak256("OpeningRateClosed()")));
+        k.setOpeningRate(base.rateStart);
+    }
+
+    // promise: only the owner may reset, and rates whose 3x cap cannot fit the setting are rejected atomically
+    function test_authorityAndBounds() public {
+        Deployed memory d = _defer();
+        ICore k = ICore(payable(d.core));
+        vm.prank(creator);
+        vm.expectRevert(bytes4(keccak256("OnlyOwner()")));
+        k.setOpeningRate(base.rateStart);
+        vm.startPrank(deployer);
+        vm.expectRevert(bytes4(keccak256("BadRate()")));
+        k.setOpeningRate(0);
+        vm.expectRevert(bytes4(keccak256("BadRate()")));
+        k.setOpeningRate(type(uint64).max / 3 + 1);
+        vm.stopPrank();
+        assertEq(k.RATE_START(), base.rateStart);
+        assertEq(k.settings().rateCap, base.settings.rateCap);
+    }
+
+    // promise: a funded Core can reset upward and downward without carrying prior idle climb into either new rate
+    function test_fundedResetsInBothDirections() public {
+        Deployed memory d = _defer();
+        ICore k = ICore(payable(d.core));
+        vm.prank(deployer);
+        k.fund{value: 1 ether}();
+        vm.warp(block.timestamp + 2 hours);
+        assertGt(k.ethPrice(), base.rateStart, "funded climb occurred");
+        uint256 high = 20_000_000_000_000_000;
+        vm.prank(deployer);
+        k.setOpeningRate(high);
+        assertEq(k.ethPrice(), high, "upward reset is immediate");
+        assertEq(k.settings().rateCap, 3 * high);
+        vm.warp(block.timestamp + 2 hours);
+        assertGt(k.ethPrice(), high, "new funded climb occurred");
+        uint256 low = 3_000_000_000_000_000;
+        vm.prank(deployer);
+        k.setOpeningRate(low);
+        assertEq(k.ethPrice(), low, "downward reset is immediate");
+        assertEq(k.RATE_START(), low);
+        assertEq(k.settings().rateCap, 3 * low);
+    }
+
+    // promise: launch-only rejects a different signed price, missing signoff, a live-rate edit and unrelated settings
+    function test_launchGuardsRejectTampering() public {
+        Deployed memory d = _defer();
+        ICore k = ICore(payable(d.core));
+        uint256 rate = 20_000_000_000_000_000;
+        vm.prank(deployer);
+        k.setOpeningRate(rate);
+        _approve(rate - 1);
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "opening rate"));
+        this.guardsExt(d.core);
+        vm.setEnv("PRELAUNCH_RATE", vm.toString(rate));
+        vm.setEnv("PRELAUNCH_RATE_HASH", vm.toString(bytes32(0)));
+        vm.expectPartialRevert(PrelaunchRateSignoff.selector);
+        this.guardsExt(d.core);
+        _approve(rate);
+        this.guardsExt(d.core);
+
+        vm.prank(deployer);
+        k.setRate(rate - 1);
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "opening price state"));
+        this.guardsExt(d.core);
+        vm.prank(deployer);
+        k.setOpeningRate(rate);
+        Settings memory changed = k.settings();
+        changed.payeePpm += 1;
+        vm.prank(deployer);
+        k.setSettings(changed);
+        vm.expectRevert(abi.encodeWithSelector(NotDeferred.selector, "core settings"));
+        this.guardsExt(d.core);
+    }
+}

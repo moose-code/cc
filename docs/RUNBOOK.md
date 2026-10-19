@@ -173,7 +173,7 @@ the 0.5 eth slice is unprofitable to sandwich down to about a quarter of the lau
 
 ## 5. what cannot change after the launch
 
-the coin starts with a 6.9 percent skim and a 9,000 of 10,000 bounty split. the admin can lower the baseline skim before `coin.lock()`; the lock freezes it. the bounty split, protocol recipient, ticks and supply are fixed in the pool and coin. the Core's stack, coin and `RATE_START` are immutables; a new stack or a new coin is a new Core. Core Settings in docs/SPEC.md section 3 remain owner editable within their bounds.
+the coin starts with a 6.9 percent skim and a 9,000 of 10,000 bounty split. the admin can lower the baseline skim before `coin.lock()`; the lock freezes it. the bounty split, protocol recipient, ticks and supply are fixed in the pool and coin. the Core's stack and coin are immutables; a new stack or a new coin is a new Core. `RATE_START()` is stored and can be reset by the owner only before the coin exists. Core Settings in docs/SPEC.md section 3 remain owner editable within their bounds.
 
 ## 6. when a transaction fails half way
 
@@ -202,6 +202,14 @@ DEFER_LAUNCH=1 CONFIG_HASH=$CONFIG_HASH PRIVATE_RPC=... ETHERSCAN_API_KEY=... KE
 # step 2: the launch alone, from the record. full postflight, record rewrite, verification
 LAUNCH_ONLY=1 CONFIG_HASH=$CONFIG_HASH PRIVATE_RPC=... ETHERSCAN_API_KEY=... KEYSTORE_ACCOUNT=<name> PASSWORD_FILE=<path> script/deploy.sh mainnet
 ```
+
+If the market price changes between steps, use the exact `LAUNCH_CONFIG` and `CONFIG_HASH` from step 1. Preview with `LAUNCH_CONFIG=<same-file> PRELAUNCH_RATE=<wei-per-100-points> forge script script/SetOpeningRate.s.sol:SetOpeningRate`. The preview prints the original config hash, the proposed 3 times cap and a separate `PRELAUNCH_RATE_HASH`. Review those values before sending the one owner transaction:
+
+```sh
+SEND=1 CORE=<deferred-Core> LAUNCH_CONFIG=<same-file> CONFIG_HASH=$CONFIG_HASH PRELAUNCH_RATE=<rate> PRELAUNCH_RATE_HASH=<preview-hash> forge script script/SetOpeningRate.s.sol:SetOpeningRate --rpc-url "$PRIVATE_RPC" --chain-id 1 --sender "$DEPLOYER" --account "$KEYSTORE_ACCOUNT" --password-file "$PASSWORD_FILE" --broadcast --slow
+```
+
+Run a no-broadcast postflight against the deferred Core, then pass the same `PRELAUNCH_RATE` and `PRELAUNCH_RATE_HASH` to `LAUNCH_ONLY=1 script/deploy.sh mainnet`. The original launch config and `CONFIG_HASH` do not change. The launch-only guard checks the exact onchain opening reference, cap, live checkpoint and every other setting against the original config. Do not set an override if no owner reset was sent. A replacement price cannot exceed `uint64.max / 3` wei per 100 points. The setter is unavailable after the coin is deployed.
 
 step 1 runs the postflight without the coin and pool rows and adds `deferred: coin has no code`, `deferred: coin salt is unused on the factory` and `deferred: coin equals the factory prediction for the deployer`. the record has both library addresses, the predicted coin, `coinLive` false and no `launchBlock`. step 2 reads the Core and start block from that record and refuses unless the record is deferred, both library addresses match the compiled CREATE2 addresses, the chain matches it (Core code, controller, coin address, both adapters allowed, coin without code), the factory is still deprecated with the token deployer the record saved (`tokenDeployer`), every earlier step is on chain (`NotDeferred`, `FactoryChanged`), the config is the config of the Core (`CoreMismatch`: the Core address is a CREATE2 address over the creation code, so a different build or config is a different address) and the signer is the factory owner. it sends the launch, runs the full postflight, and writes the record with `coinLive` true and `launchBlock`. `DRY_RUN=1` with either variable evaluates the guards and simulates.
 

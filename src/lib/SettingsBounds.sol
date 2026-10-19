@@ -44,7 +44,7 @@ library SettingsBounds {
         return bytes32(0);
     }
 
-    /// @notice the bounds of the eth rate, wei per 100 points. `setRate` and the constructor argument `rateStart`
+    /// @notice the bounds of the ETH rate, wei per 100 points, for `setRate`, `setOpeningRate` and the constructor
     function rateInBounds(uint256 r) internal pure returns (bool) {
         return r >= RATE_START_MIN_WEI && r <= RATE_START_MAX_WEI;
     }

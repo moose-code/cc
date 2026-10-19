@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {ICore} from "../src/interfaces/ICore.sol";
+import {Settings} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsFactoryV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {LaunchConfig} from "./LaunchConfig.sol";
@@ -26,8 +27,24 @@ abstract contract SystemResumer is SystemDeployer {
         if (core_ != want) revert CoreMismatch(want, core_);
         if (want.code.length == 0) revert NotStarted();
         if (ICore(payable(want)).COIN().code.length != 0) revert AlreadyLaunched();
+        _prelaunchPriceChecks(c, ICore(payable(want)));
         preflightResume(c, deployer);
         _require();
+    }
+
+    /// Refuse a changed or unsigned price and any unrelated settings edit before a launch transaction is sent.
+    function _prelaunchPriceChecks(LaunchConfig memory c, ICore core) private {
+        uint256 rate = _approvedOpeningRate(c);
+        if (!runtimeMatchesArtifact(address(core), "Core")) revert NotDeferred("core runtime");
+        if (core.RATE_START() != rate) revert NotDeferred("opening rate");
+        Settings memory expected = abi.decode(abi.encode(c.settings), (Settings));
+        if (vm.envOr("PRELAUNCH_RATE", uint256(0)) != 0) {
+            expected.rateCap = uint64(rate * 3);
+            if (core.rateAtCheckpoint() != rate) revert NotDeferred("opening price state");
+        }
+        if (keccak256(abi.encode(core.settings())) != keccak256(abi.encode(expected))) {
+            revert NotDeferred("core settings");
+        }
     }
 
     /// @notice a step before the launch is not on chain, so the run is not a deferred deploy awaiting its launch

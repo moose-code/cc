@@ -103,6 +103,8 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     error NothingBought();
     error TooSoon();
     error BadRate();
+    /// an opening-rate reset after the coin exists or the Core retires
+    error OpeningRateClosed();
     error BadStack();
     /// a setting is out of its bounds. `field` is its name
     error BadSetting(bytes32 field);
@@ -271,8 +273,6 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     IStatements private constant STATEMENTS = IStatements(Mainnet.STATEMENTS);
 
     address public immutable COIN;
-    /// opening eth rate, wei per 100 points, fixed at deploy
-    uint256 public immutable RATE_START;
     /// the artcoins v2 stack this core launched on, fixed at deploy. `receive` accepts eth from HOOK and ESCROW only
     IPoolManager public immutable MANAGER;
     address public immutable HOOK;
@@ -288,6 +288,11 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
 
     /// every state variable of the Core (`State` in src/lib/CoreLib.sol), at slot 0. both libraries use the same type
     State internal s;
+
+    /// opening ETH rate, wei per 100 points. the owner may reset it while the coin has no code
+    function RATE_START() external view returns (uint256) {
+        return s.openingRate;
+    }
 
     modifier onlyOwner() {
         _onlyOwner();
@@ -345,7 +350,7 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
         if (artist_ != address(0) && _forbidden(artist_)) revert ForbiddenTarget();
         s.artist = artist_;
         COIN = coin;
-        RATE_START = rateStart_;
+        s.openingRate = rateStart_;
         MANAGER = IPoolManager(stack_.poolManager);
         HOOK = stack_.hook;
         TICK_SPACING = stack_.tickSpacing;
@@ -1388,6 +1393,12 @@ contract Core is ICoreViews, IUnlockCallback, ReentrancyGuard {
     /// last fill rate and the remembered peak are all `rate`; the actual last fill time stays and the funded ceiling
     /// clock restarts. the clamp and the ceiling still bound the rate on read
     function setRate(uint256) external onlyOwner nonReentrant {
+        _toOps();
+    }
+
+    /// Resets the opening ETH rate, its 3x hard cap and the live ETH bid together before the coin exists.
+    function setOpeningRate(uint256) external onlyOwner nonReentrant {
+        if (COIN.code.length != 0 || s.retired) revert OpeningRateClosed();
         _toOps();
     }
 
