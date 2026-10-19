@@ -62,10 +62,10 @@ const STRATEGY_START = strategyStart();
 
 // ---- RPC ---------------------------------------------------------------------------------------------------
 
-// Public requests rotate across these endpoints before using the reserve. Caps are requests per second, overridable with
+// Tenderly is always first; other public endpoints are fallback only. Caps are requests per second, overridable with
 // RPC_RPS as a comma separated list in the same order.
 const PUBLIC: Endpoint[] = [
-  { url: "https://gateway.tenderly.co/public/mainnet", rps: 8 },
+  { url: "https://gateway.tenderly.co/public/mainnet", rps: 4 },
   { url: "https://eth-mainnet.public.blastapi.io", rps: 8 },
   { url: "https://1rpc.io/eth", rps: 5 },
   { url: "https://ethereum-rpc.publicnode.com", rps: 10 },

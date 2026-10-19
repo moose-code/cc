@@ -1,4 +1,4 @@
-import { loadBalance, rateLimit } from "ponder";
+import { rateLimit } from "ponder";
 import { fallback, http, type Transport } from "viem";
 
 export type EndpointStats = {
@@ -98,13 +98,13 @@ export function guardedHttp(url: string, rps: number | null = null, timeoutMs = 
 
 export type Endpoint = { url: string; rps: number };
 
-/** Round robin across public endpoints; each request tries the other publics before the optional reserve. */
+/** Ordered public fallback; every request starts at the first endpoint and the optional reserve is last. */
 export function fallbackTransport(endpoints: Endpoint[], reserve?: Endpoint, timeoutMs = 20_000): Transport {
   if (endpoints.length === 0) throw new Error("At least one public RPC endpoint is required");
   let shared: ReturnType<Transport> | undefined;
   return (params) => {
     if (shared) return shared;
-    // Constructors and fallback requests share one limiter per endpoint and one round-robin cursor.
+    // Constructors and fallback requests share one concrete limiter per endpoint.
     const limited = [...endpoints, ...(reserve ? [reserve] : [])].map((e): Transport => {
       const stats = entry(new URL(e.url).host, e.rps);
       const transport = rateLimit(guardedHttp(e.url, e.rps, timeoutMs), { requestsPerSecond: e.rps, browser: false })({ ...params, retryCount: 0 });
@@ -117,16 +117,10 @@ export function fallbackTransport(endpoints: Endpoint[], reserve?: Endpoint, tim
       };
       return () => observed;
     });
-    const publics = limited.slice(0, endpoints.length);
-    const reserveTransport = limited.slice(endpoints.length);
-    const rotations = publics.map((_, i): Transport => {
-      const transport = fallback([...publics.slice(i), ...publics.slice(0, i), ...reserveTransport], {
-        rank: false,
-        retryCount: 0,
-        shouldThrow: (error) => REVERT.test(`${error.message} ${(error as { details?: string }).details ?? ""}`),
-      })({ ...params, retryCount: 0 });
-      return () => transport;
-    });
-    return (shared = loadBalance(rotations)({ ...params, retryCount: 0 }));
+    return (shared = fallback(limited, {
+      rank: false,
+      retryCount: 0,
+      shouldThrow: (error) => REVERT.test(`${error.message} ${(error as { details?: string }).details ?? ""}`),
+    })({ ...params, retryCount: 0 }));
   };
 }

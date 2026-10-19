@@ -1,4 +1,4 @@
-// promise: healthy public requests share endpoint budgets and round-robin state across constructors without using reserve RPC.
+// promise: every request starts at the primary with one shared rate cap across constructors and no healthy fallthrough.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fallbackTransport, rpcStats } from "./rpc.ts";
@@ -9,30 +9,30 @@ function response(id: number, result: unknown) {
   });
 }
 
-test("RPC public balancing shares each endpoint rate limit across concurrent constructors", async (t) => {
+test("RPC primary shares its rate and concurrency limit across concurrent constructors", async (t) => {
   const starts: { host: string; second: number }[] = [];
+  let active = 0;
+  let maxActive = 0;
   t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
     starts.push({ host: new URL(url).host, second: Math.floor(Date.now() / 1000) });
     const body = JSON.parse(String(init.body));
+    maxActive = Math.max(maxActive, ++active);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    active--;
     return response(body.id, "0x1");
   });
-  const endpoints = [8, 8, 5, 10, 5, 5].map((rps, i) => ({ url: `https://public-${i}.invalid`, rps }));
+  const endpoints = [4, 8, 5, 10, 5, 5].map((rps, i) => ({ url: `https://public-${i}.invalid`, rps }));
   const factory = fallbackTransport(endpoints, { url: "https://reserve.invalid", rps: 8 });
-  await Promise.all(Array.from({ length: 72 }, () => factory({}).request({ method: "eth_blockNumber" })));
+  await Promise.all(Array.from({ length: 24 }, () => factory({}).request({ method: "eth_blockNumber" })));
   const perSecond = new Map<string, number>();
   for (const { host, second } of starts) {
     const key = `${host}:${second}`;
     perSecond.set(key, (perSecond.get(key) ?? 0) + 1);
   }
-  assert.equal(starts.length, 72);
-  for (const endpoint of endpoints) {
-    const host = new URL(endpoint.url).host;
-    assert.equal(starts.filter((s) => s.host === host).length, 12);
-    for (const [key, count] of perSecond) {
-      if (key.startsWith(`${host}:`)) assert.ok(count <= endpoint.rps, `${key}: ${count} > ${endpoint.rps}`);
-    }
-  }
-  assert.equal(starts.filter((s) => s.host === "reserve.invalid").length, 0);
+  assert.equal(starts.length, 24);
+  assert.ok(starts.every((s) => s.host === "public-0.invalid"));
+  assert.ok(Math.max(...perSecond.values()) <= 4, JSON.stringify([...perSecond]));
+  assert.equal(maxActive, 1);
 });
 
 // promise: malformed, pruned and unavailable public responses fail over before reserve; execution reverts stop immediately.
@@ -112,15 +112,15 @@ test("RPC deadline releases an uncooperative fetch and its queued requests", asy
   const pending = Promise.all(Array.from({ length: 3 }, () => transport.request({ method: "eth_blockNumber" })));
   await started;
   assert.equal(rpcStats().get("stalled.invalid")?.active, 1);
-  assert.equal(rpcStats().get("stalled.invalid")?.queued, 1);
+  assert.equal(rpcStats().get("stalled.invalid")?.queued, 2);
   assert.deepEqual(await pending, ["0x1", "0x1", "0x1"]);
-  assert.deepEqual(hosts.filter((h) => h === "stalled.invalid"), ["stalled.invalid", "stalled.invalid"]);
+  assert.deepEqual(hosts.filter((h) => h === "stalled.invalid"), ["stalled.invalid", "stalled.invalid", "stalled.invalid"]);
   assert.equal(hosts.filter((h) => h === "healthy.invalid").length, 3);
   assert.equal(hosts.filter((h) => h === "unused-reserve.invalid").length, 0);
   assert.ok(signals.every((signal) => signal.aborted));
   const stats = rpcStats().get("stalled.invalid")!;
-  assert.equal(stats.requests, 2);
-  assert.equal(stats.errors, 2);
+  assert.equal(stats.requests, 3);
+  assert.equal(stats.errors, 3);
   assert.equal(stats.queued, 0);
   assert.equal(stats.active, 0);
   assert.ok(stats.lastStarted! <= stats.lastSettled!);
