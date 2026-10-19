@@ -34,7 +34,7 @@ const REVERT = /execution reverted|revert/i;
  */
 export function guardedHttp(url: string, rps: number | null = null): Transport {
   const host = new URL(url).host;
-  const inner = http(url, { timeout: 20_000, retryCount: 2 });
+  const inner = http(url, { timeout: 20_000, retryCount: 0 });
   return (params) => {
     const t = inner(params);
     return {
@@ -79,8 +79,12 @@ export type Endpoint = { url: string; rps: number };
 
 /** Ordered fallback over rate limited, guarded endpoints. The first endpoints in the list should serve archive state. */
 export function fallbackTransport(endpoints: Endpoint[]): Transport {
-  return fallback(
-    endpoints.map((e) => rateLimit(guardedHttp(e.url, e.rps), { requestsPerSecond: e.rps, browser: false })),
-    { rank: false, retryCount: 0 },
-  );
+  return (params) => {
+    const transports = endpoints.map((e): Transport => {
+      // Viem fallback reconstructs children per request; one shared limiter must own each endpoint's budget.
+      const shared = rateLimit(guardedHttp(e.url, e.rps), { requestsPerSecond: e.rps, browser: false })({ ...params, retryCount: 0 });
+      return () => shared;
+    });
+    return fallback(transports, { rank: false, retryCount: 0 })(params);
+  };
 }
