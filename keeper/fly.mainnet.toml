@@ -13,6 +13,8 @@ kill_timeout = "30s"
   NODE_ENV = "production"
   RECORD = "/app/deployments/1.json"
   DRY_RUN = "1"
+  KEYSTORE = "/run/secrets/keeper-keystore.json"
+  KEYSTORE_PASSWORD_FILE = "/run/secrets/keeper-password"
   KEEPER_ADDRESS = "0x6b9411DD51DF1E41015cD8293C1BBC3E881a4aee"
   STATE_DIR = "/data"
   RPC_URLS = "https://gateway.tenderly.co/public/mainnet,https://eth.drpc.org,https://ethereum-rpc.publicnode.com"
@@ -21,6 +23,14 @@ kill_timeout = "30s"
 [[mounts]]
   source = "keeper_state"
   destination = "/data"
+
+[[files]]
+  guest_path = "/run/secrets/keeper-keystore.json"
+  secret_name = "KEEPER_KEYSTORE_B64"
+
+[[files]]
+  guest_path = "/run/secrets/keeper-password"
+  secret_name = "KEEPER_PASSWORD_B64"
 
 [[restart]]
   policy = "always"
