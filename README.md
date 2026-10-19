@@ -1,6 +1,6 @@
 # credits engine
 
-an erc20 on ethereum mainnet (CC) whose trading fees fund a permanent public bid for Credits NFTs. the engine buys Credits at the bid or sweeps cheaper listings, composes 80 into a Statement, sells the Statement at a falling price, and burns CC with half of every sale. when the balance token is live, Statements redeem into it by rating and the engine buys Credits with it by score. the coin and pool run on the live artcoins v2 stack. status: unaudited by humans, launching on the AI run reviews in docs/reviews/, not deployed. the working branch is named in docs/STATUS.md.
+an erc20 on ethereum mainnet (CC) whose trading fees fund a permanent public bid for Credits NFTs. the engine buys Credits at the bid or sweeps cheaper listings, composes 80 into a Statement, sells the Statement at a falling price, and a quarter of every sale buys and burns CC. when the balance token is live, Statements redeem into it by rating and the engine buys Credits with it by score. the coin and pool run on the live artcoins v2 stack. status: unaudited by humans, launching on the AI run reviews in docs/reviews/, not deployed. the working branch is named in docs/STATUS.md.
 
 ```mermaid
 graph LR
@@ -12,8 +12,8 @@ graph LR
     compose --> held["held Statement, 1.5x reference falling to the floor"]
     held --> sold["ControllerV1.buy"]
     held --> redeem["redeemStatement, balance side"]
-    sold -->|half| burn["coin buy and burn"]
-    sold -->|half| core
+    sold -->|quarter| burn["coin buy and burn"]
+    sold -->|three quarters| core
     redeem -->|reserve share| burn
 ```
 
@@ -24,17 +24,17 @@ graph LR
 | Core | custody and every rule: pots, the bid, the pile, compose, sales, fee booking, the pause, buyback, the balance side, owner powers, locks, migrate |
 | CoreLib | linked pricing and accounting library, run by delegatecall in Core's storage |
 | CoreOpsLib | linked pause, pool swap and owner operations library, run by delegatecall in Core's storage |
-| ControllerV1 | pricing: the statement curve and anchor, the credit sale, `valueOf`, the royalty |
+| ControllerV1 | pricing: the statement curve and anchor, the credit sale, `valueOf`, the reference price |
 | SeaportBasicAdapter, CreditStrategyAdapter | read only pricers for `buyListing` |
 
 ## who can call what
 
 | caller | doors |
 |---|---|
-| anyone | `sellForEth`, `buyListing`, `compose`, `composeChosen` (when open), `setHeldFormat` (with 1 CC), `sellForBalance` (when on), `redeemStatement` (when on), `buyback`, `book`, `fund`, `collectEscrow`, `claimPayee`, `adopt`, `ControllerV1.buy`, `buyCredit`, `claimRoyalty` |
+| anyone | `sellForEth`, `buyListing`, `compose`, `composeChosen` (when open), `setHeldFormat` (with 1 CC), `sellForBalance` (when on), `redeemStatement` (when on), `buyback`, `book`, `fund`, `collectEscrow`, `adopt`, `swapCredit`, `refreshReference`, `ControllerV1.buy`, `buyCredit`, `buyCredits` |
 | the owner | every setting, the controller, the balance module, the adapters, the successor, the four locks, `migrate`, `rescueCoin`, `rescueNft`, `setPaused`, `setPayee`, the handover |
 
-eth, credits and the balance token leave the Core at the owner's call only through `migrate` to the successor. the owner sets the price the engine pays, so holders trust the owner key (docs/SPEC.md section 11).
+eth and credits leave the Core at the owner's call only through `migrate` to the successor; the balance token is held by the ownerless module, not the Core. the owner sets the price the engine pays, so holders trust the owner key (docs/SPEC.md section 11).
 
 ## build and test
 
@@ -43,7 +43,7 @@ prerequisites: foundry 1.8.1, an archive mainnet rpc.
 ```sh
 git clone --recurse-submodules <repo>
 cd cc
-cp .env.example .env            # MAINNET_RPC_URL, FORK_BLOCK=26158000
+cp .env.example .env            # MAINNET_RPC_URL, FORK_BLOCK=26222700
 set -a; . ./.env; set +a
 forge build
 forge test --match-path test/Sale.t.sol
