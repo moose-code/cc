@@ -109,17 +109,17 @@ These entries predate the current candidate. Use section 1 and `docs/reviews/LAU
 
 ## 4. the freeze table
 
-`script/tools/check-freeze.sh` reads the one table below, the lines between this heading and the next heading of any level. the candidate row must equal `git rev-parse HEAD` (or an ancestor with only docs/ changed since), and when the candidate is frozen each gate row needs a commit and a result file that exists. the acceptance row holds `pending` until the owner signs off, and the script exits 1 with one pending line until then.
+`script/tools/check-freeze.sh` reads the one table below, the lines between this heading and the next heading of any level. the candidate row must equal `git rev-parse HEAD` (or an ancestor with only docs/ changed since), and when the candidate is frozen each gate row needs a commit and a result file that exists. the acceptance row holds `pending` until the owner signs off, and the script exits 1 with one pending line until then. The 2026-10-19 owner acceptance is scoped to deferred Core only. The e2e and final review rows are explicit waivers, not completed checks; the separate coin launch remains gated.
 
 | gate | commit | result |
 |---|---|---|
-| candidate | 0ddf07e | docs/reviews/SIGNED-REHEARSAL-b6f60f5-2026-10-19.md |
+| candidate | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
 | suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
 | deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md |
-| e2e | pending | signed same-record local chain-id-1 lifecycle not run |
+| e2e waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
 | rehearsal | b6f60f5 | docs/reviews/SIGNED-REHEARSAL-b6f60f5-2026-10-19.md |
-| review | pending | candidate findings and owner decisions still need release acceptance |
-| acceptance | pending | (owner signs off) |
+| final review waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
+| owner acceptance for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md |
 
 ### history (outside the gate)
 
