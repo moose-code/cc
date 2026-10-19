@@ -113,14 +113,6 @@ export default createConfig({
       startBlock: DEPLOY_BLOCK,
     },
     Coin: { abi: erc20Abi, chain: "chain", address: COIN, startBlock: DEPLOY_BLOCK, filter: { event: "Transfer", args: { to: zeroAddress } } },
-    // The balance token is known from the first BalanceModuleSet; no events until then.
-    BalanceToken: {
-      abi: erc20Abi,
-      chain: "chain",
-      address: factory({ address: CORE, event: getAbiItem({ abi: coreAbi, name: "BalanceModuleSet" }), parameter: "balanceToken" }),
-      startBlock: DEPLOY_BLOCK,
-      filter: { event: "Transfer", args: { from: CORE } },
-    },
     Credits: { abi: creditsAbi, chain: "chain", address: CREDITS, startBlock: CREDITS_START },
     Statements: { abi: statementsAbi, chain: "chain", address: STATEMENTS, startBlock: STATEMENTS_START },
     Strategy: { abi: strategyAbi, chain: "chain", address: STRATEGY, startBlock: STRATEGY_START },

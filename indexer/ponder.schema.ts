@@ -30,7 +30,7 @@ export const log = onchainTable(
   (t) => ({
     id: t.text().primaryKey(), // txHash:logIndex
     address: t.hex().notNull(),
-    contract: t.text().notNull(), // core, controller, coin, balance_token, credits, statements
+    contract: t.text().notNull(), // core, controller, coin, credits, statements, strategy
     event: t.text().notNull(),
     args: t.json().notNull(),
     blockNumber: t.bigint().notNull(),
@@ -188,7 +188,7 @@ export const credit = onchainTable(
     acquiredTx: t.hex(),
     acquiredHow: acquiredHow("acquired_how"),
     seller: t.hex(),
-    royalty: t.bigint(), // the artist royalty paid at acquisition: wei for an eth bid or listing, balancePaidToken units for a balance bid (decision 163)
+    royalty: t.bigint(), // artist amount assigned at acquisition; BALANCE royalties may be claimable module debt
     balancePaid: t.bigint(), // BalanceFill.paid, the seller's payout in balancePaidToken's base units
     balancePaidToken: t.hex(), // the balance token active at the sale; changes at BalanceModuleSet
     pileOrder: t.bigint(), // insertion sequence; a swap-in takes the out credit's value
@@ -320,11 +320,11 @@ const counters = (t: PgColumnsBuilders) => ({
   feesBooked: t.bigint().notNull().default(0n),
   toPayee: t.bigint().notNull().default(0n),
   toArtist: t.bigint().notNull().default(0n), // the artist cut of sales, wei
-  toArtistBuys: t.bigint().notNull().default(0n), // the artist royalty on eth bid and listing purchases, wei (decision 163); balance bid royalties are inside balancePaidByToken
+  toArtistBuys: t.bigint().notNull().default(0n), // ETH purchase royalties; BALANCE royalties are in balanceCommittedByToken
   toOperator: t.bigint().notNull().default(0n),
   ccBurned: t.bigint().notNull().default(0n), // Core buyback burns plus CreditSwapped.fee
   ethToBuybackSpent: t.bigint().notNull().default(0n), // sum of Buyback.amountIn
-  balancePaidByToken: t.json().$type<Record<string, string>>().notNull().default({}), // raw units keyed by token
+  balanceCommittedByToken: t.json().$type<Record<string, string>>().notNull().default({}), // seller payout plus Core-requested artist amount, raw units keyed by token
 });
 
 /** Singleton per Core. */

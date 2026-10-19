@@ -17,7 +17,7 @@ import {
 import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, refreshStatementArt, settingsColumns, snapshot } from "./chain";
 import { composeModeOf } from "./lib/mode";
 import { creditSaleSplit, statementPot } from "./lib/split";
-import { act, bump, bumpBalancePaid, idOf, lc, posOf, record, toJson, type At, type Ctx } from "./shared";
+import { act, bump, bumpBalanceCommitted, idOf, lc, posOf, record, toJson, type At, type Ctx } from "./shared";
 
 // ---- per-transaction memory ----------------------------------------------------------------------------------
 // Handlers run in log order, so facts that arrive earlier in a transaction are kept for the later event.
@@ -126,7 +126,7 @@ ponder.on("Core:CreditBought", async ({ event, context }) => {
 
 ponder.on("Core:BalanceFill", async ({ event, context }) => {
   await coreEvent(context, event, "BalanceFill");
-  // paid is the seller's posted payout, toArtist the royalty, both in balance token (decisions 163, 164)
+  // paid reaches the seller; toArtist is requested from the module, which may record debt instead of transferring.
   const { paid, toArtist } = event.args;
   // This column follows earlier BalanceModuleSet logs, never a latest-state RPC read.
   const { balanceToken } = await ensureEngine(context);
@@ -138,11 +138,10 @@ ponder.on("Core:BalanceFill", async ({ event, context }) => {
   }
   balanceBuy = null;
   if (balanceToken) {
-    // the module's outflow: the payout and the royalty, raw units of the token
-    await bumpBalancePaid(context, event, balanceToken, paid + toArtist);
+    await bumpBalanceCommitted(context, event, balanceToken, paid + toArtist);
   } else {
     console.error(
-      `BalanceFill at ${event.transaction.hash} paid ${paid} while engine.balanceToken is null; the payout is credited to no token`,
+      `BalanceFill at ${event.transaction.hash} paid ${paid} while engine.balanceToken is null; the commitment is credited to no token`,
     );
   }
 });
@@ -531,10 +530,6 @@ ponder.on("Coin:Transfer", async ({ event, context }) => {
     coreBurn.set(event.transaction.hash, (coreBurn.get(event.transaction.hash) ?? 0n) + event.args.value);
     await bump(context, event, { ccBurned: event.args.value });
   }
-});
-
-ponder.on("BalanceToken:Transfer", async ({ event, context }) => {
-  await record(context, event, "balance_token", "Transfer");
 });
 
 // Owner follows every Transfer. A transfer from the Core to the successor moves a held credit out of the pile
