@@ -152,3 +152,44 @@ test("server: serves the view over HTTP without a body on HEAD and never caches"
   assert.equal((await fetch(`${base}/market`, { method: "POST", headers: { authorization: "Bearer secret" } })).status, 405);
   assert.ok(lines.some((l) => l.msg === "market view listening" && l.token === true && l.port === port));
 });
+
+// promise: website Strategy rows reuse the keeper catalog without RPC, and failed refreshes preserve its successful timestamp and cadence.
+test("view: cached Strategy rows have honest publication/failure state without per-reader scans", async () => {
+  let now = 1_700_000_000_000;
+  let calls = 0;
+  let failure: Error | undefined;
+  const source: any = new Sources({ multicall: async () => {
+    calls++;
+    if (failure) throw failure;
+    now += 5;
+    return [{ status: "success", result: 1000n }, { status: "success", result: 3000n }];
+  } } as any, { record, strategy: { mode: "ids", ids: [42n, 43n] }, strategyRefreshSec: 60,
+    opensea: { refreshSec: 300 } } as any, () => now);
+  source.scores = new Map([[42n, 1000n], [43n, 2000n]]);
+  assert.deepEqual(source.marketView(1).strategy, { publishedAt: 0, lastFailure: null, total: 0, rows: [] });
+  assert.equal(calls, 0);
+  await source.refreshStrategy();
+  const publishedAt = now;
+  const first = source.marketView(1).strategy;
+  assert.deepEqual(first, { publishedAt, lastFailure: null, total: 2, rows: [{ id: "42", price: "1000", score: "1000" }] });
+  source.scores.delete(43n);
+  assert.deepEqual(source.marketView(10).strategy.rows[1], { id: "43", price: "3000", score: null });
+  source.scores.set(43n, 2000n);
+  for (let i = 0; i < 10; i++) source.marketView(10);
+  await source.refreshStrategy();
+  assert.equal(calls, 1, "view reads and refresh cadence add no scans");
+  now += 60_000;
+  failure = new Error("fixture failure with private upstream path");
+  await assert.rejects(source.refreshStrategy(), error => error === failure);
+  const failedAt = now;
+  assert.deepEqual(source.marketView(1).strategy, { ...first, lastFailure: { at: failedAt, error: "strategy refresh failed" } });
+  await source.refreshStrategy();
+  assert.equal(calls, 2, "a failure keeps the existing refresh cadence");
+  now += 60_000; failure = undefined;
+  await source.refreshStrategy();
+  const recovered = source.marketView(1).strategy;
+  assert.equal(calls, 3);
+  assert.equal(recovered.publishedAt, now);
+  assert.ok(recovered.publishedAt > failedAt);
+  assert.deepEqual(recovered.lastFailure, { at: failedAt, error: "strategy refresh failed" });
+});

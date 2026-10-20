@@ -15,7 +15,7 @@ import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, st
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { MULTICALL3, readSnapshot, useHead } from "./live";
 import { useIxMode } from "./indexer";
-import { bucketCount, cheapestPerId, fitsBucket, type Priced } from "./acquire";
+import { bucketCount, cheapestPerId, fitsBucket, type Priced, type StrategyReadStatus } from "./acquire";
 import { gatherListings, scoresFor, spendCost, spendRoom } from "./useAcquire";
 import type { MarketOut } from "./market-view";
 import { ETH_ANCHOR_SLOT, ETH_CLOCK_SLOT } from "./sell";
@@ -41,6 +41,7 @@ export interface ListingsData {
   paused: boolean;
   /** the market view these rows came from, for the status lines; undefined when the website API failed */
   market?: MarketOut;
+  strategyStatus: StrategyReadStatus;
   pot: bigint;
   now: number;
   covers: number; // rows under their bid and the pot
@@ -66,7 +67,7 @@ export function useListings() {
     queryFn: async () => {
       const c = client!;
       const snap = await readSnapshot(c, core!);
-      const { listings, known, market } = await gatherListings(c, head!.n, qc);
+      const { listings, known, market, strategyStatus } = await gatherListings(qc);
       const best = cheapestPerId(listings);
       const scores = await scoresFor(c, best.map((l) => l.id), known);
       const bidFor = (rate: bigint, s: bigint) => (rate * s) / SCORE_PER_100_POINTS;
@@ -196,7 +197,7 @@ export function useListings() {
         return { ...r, paused: snap.paused, gap: gapOf(r.price, r.bid), clears, wait, eta, balanceBid: balanceOf(r) };
       });
       out.sort((a, b) => a.gap - b.gap);
-      return { rows: out, paused: snap.paused, market, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state };
+      return { rows: out, paused: snap.paused, market, strategyStatus, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state };
     },
   });
 }

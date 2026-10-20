@@ -100,6 +100,12 @@ export interface MarketView {
   };
   catalog: { total: number; scored: number; signed: number; limit: number };
   rows: MarketViewRow[];
+  strategy: {
+    publishedAt: number;
+    lastFailure: { at: number; error: string } | null;
+    total: number;
+    rows: { id: string; price: string; score: string | null }[];
+  };
 }
 export interface SignedView { id: string; price: string; hash: string; params: Hex }
 
@@ -107,6 +113,8 @@ export class Sources {
   private scores = new Map<bigint, bigint>();
   private strategy: Watched[] = [];
   private strategyAt = 0;
+  private strategyPublishedAt = 0;
+  private strategyFailure?: { at: number; error: string };
   private book?: StrategyBook;
   private seaport: Watched[] = [];
   private seaportAt = 0;
@@ -351,23 +359,29 @@ export class Sources {
     const s = this.cfg.strategy;
     if (s.mode === "off" || this.now() - this.strategyAt < this.cfg.strategyRefreshSec * 1000) return;
     this.strategyAt = this.now();
-    let listed: { id: bigint; price: bigint }[];
-    if (s.mode === "ids") {
-      const prices = await this.readPrices(s.ids);
-      listed = s.ids.flatMap((id, i) => ((prices[i] ?? 0n) > 0n ? [{ id, price: prices[i]! }] : []));
-    } else {
-      this.book ??= this.strategyBook();
-      listed = [...(await this.book.refresh())].map(([id, price]) => ({ id, price }));
+    try {
+      let listed: { id: bigint; price: bigint }[];
+      if (s.mode === "ids") {
+        const prices = await this.readPrices(s.ids);
+        listed = s.ids.flatMap((id, i) => ((prices[i] ?? 0n) > 0n ? [{ id, price: prices[i]! }] : []));
+      } else {
+        this.book ??= this.strategyBook();
+        listed = [...(await this.book.refresh())].map(([id, price]) => ({ id, price }));
+      }
+      await this.scoresOf(listed.map((x) => x.id));
+      this.strategy = listed.map(({ id, price }) => ({
+        venue: "strategy" as const,
+        adapter: this.cfg.record.strategyAdapter,
+        id,
+        price,
+        params: "0x" as Hex,
+      }));
+      this.strategyPublishedAt = this.now();
+      log("info", "strategy listings indexed", { listed: this.strategy.length });
+    } catch (error) {
+      this.strategyFailure = { at: this.now(), error: "strategy refresh failed" };
+      throw error;
     }
-    await this.scoresOf(listed.map((x) => x.id));
-    this.strategy = listed.map(({ id, price }) => ({
-      venue: "strategy" as const,
-      adapter: this.cfg.record.strategyAdapter,
-      id,
-      price,
-      params: "0x" as Hex,
-    }));
-    log("info", "strategy listings indexed", { listed: this.strategy.length });
   }
 
   private async refreshSeaport() {
@@ -533,6 +547,14 @@ export class Sources {
       },
       catalog: { total: live.length, scored: live.filter(r => r.score !== null).length, signed: live.filter(r => r.signed).length, limit },
       rows: live.slice(0, limit),
+      strategy: {
+        publishedAt: this.strategyPublishedAt,
+        lastFailure: this.strategyFailure ?? null,
+        total: this.strategy.length,
+        rows: this.strategy.slice(0, limit).map(row => ({
+          id: String(row.id), price: String(row.price), score: this.scores.get(row.id)?.toString() ?? null,
+        })),
+      },
     };
   }
 

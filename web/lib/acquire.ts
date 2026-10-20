@@ -9,7 +9,12 @@ export interface Listing {
   source: AcquireSource;
   params: `0x${string}`; // adapter params; "0x" for the strategy adapter, and for an OpenSea listing until its fulfillment is fetched
   orderHash?: string; // OpenSea order whose fulfillment data gives `params`
+  prepared?: boolean; // OpenSea fulfillment is already prepared in the keeper; absent or false cannot be acquired
 }
+
+export const preparedForAcquire = (l: Listing): boolean => l.source === "strategy" || l.prepared === true;
+
+export interface StrategyReadStatus { pending: boolean; publishedAt?: number; error?: string }
 
 export interface Priced extends Listing {
   bid: bigint; // Core.bidOf(id)

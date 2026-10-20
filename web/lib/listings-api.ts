@@ -16,11 +16,18 @@ export interface ViewStatus {
   retryAt: number | null;
   lastFailure: { at: number; error: string } | null;
 }
+export interface StrategyView {
+  publishedAt: number;
+  lastFailure: { at: number; error: string } | null;
+  total: number;
+  rows: { id: string; price: string; score: string | null }[];
+}
 export interface View {
   builtAt: number;
   status: ViewStatus;
   catalog: { total: number; scored: number; signed: number; limit: number };
   rows: ViewRow[];
+  strategy: StrategyView;
 }
 
 /** The route's answer: the keeper view when one was ever read, with the website's own freshness fields. */
@@ -64,6 +71,18 @@ export function parseView(body: unknown): { view: View; identity: { chainId: num
     if (!object(r) || typeof r.id !== "string" || !DIGITS.test(r.id) || typeof r.price !== "string" || !DIGITS.test(r.price) || typeof r.hash !== "string" || !HASH.test(r.hash) || !int(r.endTime) || !(r.score === null || (typeof r.score === "string" && DIGITS.test(r.score))) || typeof r.signed !== "boolean") throw new Error("malformed view row");
     return { id: r.id, price: r.price, hash: lc(r.hash), endTime: r.endTime as number, score: r.score as string | null, signed: r.signed };
   });
+  // Older keeper views remain readable during rollout, but never claim a published Strategy catalog.
+  let strategy: StrategyView = { publishedAt: 0, lastFailure: null, total: 0, rows: [] };
+  if (body.strategy !== undefined) {
+    const v = body.strategy;
+    if (!object(v) || !int(v.publishedAt) || !int(v.total) || !Array.isArray(v.rows) || v.rows.length > 2000 || v.rows.length > (c.limit as number) || v.rows.length > (v.total as number) || !(v.lastFailure === null || (object(v.lastFailure) && int(v.lastFailure.at) && typeof v.lastFailure.error === "string"))) throw new Error("malformed strategy view");
+    const rows = v.rows.map((r: unknown) => {
+      if (!object(r) || typeof r.id !== "string" || !DIGITS.test(r.id) || typeof r.price !== "string" || !DIGITS.test(r.price) || !(r.score === null || (typeof r.score === "string" && DIGITS.test(r.score)))) throw new Error("malformed strategy row");
+      return { id: r.id, price: r.price, score: r.score as string | null };
+    });
+    const lastFailure = v.lastFailure as StrategyView["lastFailure"];
+    strategy = { publishedAt: v.publishedAt as number, total: v.total as number, rows, lastFailure: lastFailure && { at: lastFailure.at, error: lastFailure.error.slice(0, 200) } };
+  }
   const failure = s.lastFailure as { at: number; error: string } | null;
   return {
     view: {
@@ -71,6 +90,7 @@ export function parseView(body: unknown): { view: View; identity: { chainId: num
       status: { source: s.source as ViewStatus["source"], complete: s.complete, lastFullAt: s.lastFullAt as number, publishedAt: s.publishedAt as number, streamJoined: s.streamJoined, gap: s.gap, queuedUpdates: s.queuedUpdates as number, queuedRemovals: s.queuedRemovals as number, retryAt: s.retryAt as number | null, lastFailure: failure && { at: failure.at, error: failure.error.slice(0, 200) } },
       catalog: { total: c.total as number, scored: c.scored as number, signed: c.signed as number, limit: c.limit as number },
       rows,
+      strategy,
     },
     identity: { chainId: body.chainId as number, core: body.core, seaportAdapter: body.seaportAdapter },
   };

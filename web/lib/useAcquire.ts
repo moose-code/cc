@@ -1,48 +1,24 @@
 "use client";
 
-// Listing acquisition through Core.buyListing (owner decision 134). Candidates come from the CreditStrategy (indexer
-// table strategy_listing; in chain mode a browser scan of its two events) and from the keeper's market view through
-// the website API. The listings page reads them at one block and filters with lib/acquire.ts; a purchase fetches the
-// order's prepared fulfillment and simulates the call before sending.
+// Listing acquisition through Core.buyListing (owner decision 134). Both venues and their known immutable scores
+// come from the keeper's cached market view through the website API. Purchases still fetch prepared fulfillment
+// and simulate the current chain call before sending.
 
 import { useEffect, useState } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
-import { core, strategy, strategyAdapter, seaportAdapter, strategyStartBlock } from "./config";
-import { coreAbi, strategyAbi } from "./abis";
+import { core, strategyAdapter, seaportAdapter } from "./config";
+import { coreAbi } from "./abis";
 import { creditScores, useSnapshot } from "./live";
-import { fetchScoresIx, fetchStrategyListings, getIxMode } from "./indexer";
+import { fetchScoresIx, getIxMode } from "./indexer";
 import { readMarketView, type MarketOut } from "./market-view";
 import { useTx } from "./tx";
-import { type Listing, type Priced, type SpendRoom } from "./acquire";
+import { preparedForAcquire, type Listing, type Priced, type SpendRoom, type StrategyReadStatus } from "./acquire";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 const MAX_SCORE_READS = 600;
-const CHUNK = 5_000n; // blocks per getLogs call
-const RESCAN = 12n; // blocks re-read behind the last scanned block (reorg window)
-
-// ---- chain mode: strategy listings from its events ------------------------------------------------------------
-
-const scan = { next: strategyStartBlock, listed: new Map<bigint, bigint>() };
-
-// NFTBoughtByProtocol lists a credit at listPrice, NFTSoldByProtocol ends the listing; the last event of an id wins.
-// Replaying the last RESCAN blocks yields the same state.
-async function scanStrategy(client: Client, head: bigint): Promise<Map<bigint, bigint>> {
-  const from = scan.next > strategyStartBlock + RESCAN ? scan.next - RESCAN : strategyStartBlock;
-  for (let a = from; a <= head; a += CHUNK) {
-    const to = a + CHUNK - 1n < head ? a + CHUNK - 1n : head;
-    const logs = await client.getLogs({ address: strategy, events: [strategyAbi[0], strategyAbi[1]], fromBlock: a, toBlock: to });
-    for (const l of logs) {
-      if (l.eventName === "NFTBoughtByProtocol") scan.listed.set(l.args.tokenId!, l.args.listPrice!);
-      else scan.listed.delete(l.args.tokenId!);
-    }
-  }
-  scan.next = head + 1n;
-  return scan.listed;
-}
-
 // ---- scores ---------------------------------------------------------------------------------------------------
 
 const scoreCache = new Map<bigint, bigint>(); // credit scores never change
@@ -93,40 +69,31 @@ export function spendCost(price: bigint, bid: bigint, pot: bigint, keeperFee: bi
 
 // ---- candidate gathering, shared with the /listings page --------------------------------------------------------
 
-/**
- * Every listing of both venues and the scores already known. Strategy listings come from the indexer (decision 133:
- * the chain scan when it is unconfigured or failing); OpenSea asks from the keeper's market view through the website
- * API (lib/market-view.ts), unexpired only, with the keeper's cached immutable scores.
- */
-export async function gatherListings(c: Client, head: bigint, qc: QueryClient): Promise<{ listings: Listing[]; known: Map<bigint, bigint>; market?: MarketOut }> {
+/** Both venues from the keeper's last published catalog; gathering never starts a visitor's chain-history scan. */
+export async function gatherListings(qc: QueryClient): Promise<{ listings: Listing[]; known: Map<bigint, bigint>; market?: MarketOut; strategyStatus: StrategyReadStatus }> {
+  const market = await readMarketView(qc);
+  const view = market.available ? market.view : undefined;
   const listings: Listing[] = [];
   const known = new Map<bigint, bigint>();
-  let strat: { id: bigint; price: bigint }[] | undefined;
-  if (getIxMode() === "ix") {
-    try {
-      const rows = await fetchStrategyListings();
-      strat = rows;
-      rows.forEach((r) => r.score != null && known.set(r.id, r.score));
-    } catch {
-      /* the indexer failed: scan the chain below */
-    }
-  }
-  strat ??= [...(await scanStrategy(c, head)).entries()].map(([id, price]) => ({ id, price }));
-  for (const r of strat) listings.push({ id: r.id, price: r.price, source: "strategy", params: "0x" });
-  let market: MarketOut | undefined;
-  try {
-    market = await readMarketView(qc);
-  } catch {
-    /* the website API failed: strategy listings only, the status line says so */
+  for (const r of view?.strategy.rows ?? []) {
+    const id = BigInt(r.id);
+    listings.push({ id, price: BigInt(r.price), source: "strategy", params: "0x" });
+    if (r.score != null) known.set(id, BigInt(r.score));
   }
   const now = Math.floor(Date.now() / 1000);
-  for (const l of market?.view?.rows ?? []) {
+  for (const l of view?.rows ?? []) {
     if (l.endTime !== 0 && l.endTime <= now) continue;
     const id = BigInt(l.id);
     if (l.score != null && !known.has(id)) known.set(id, BigInt(l.score));
-    listings.push({ id, price: BigInt(l.price), source: "opensea", params: "0x", orderHash: l.hash });
+    listings.push({ id, price: BigInt(l.price), source: "opensea", params: "0x", orderHash: l.hash, prepared: l.signed });
   }
-  return { listings, known, market };
+  const strategy = view?.strategy;
+  return { listings, known, market, strategyStatus: {
+    pending: !strategy?.publishedAt,
+    publishedAt: strategy?.publishedAt,
+    error: !view ? "CreditStrategy listings unavailable: keeper view unavailable."
+      : strategy?.lastFailure && strategy.lastFailure.at > strategy.publishedAt ? "CreditStrategy refresh failed; showing its last published rows." : undefined,
+  } };
 }
 
 /** Scores for `ids`: the known ones first, the indexer's credit table next, the chain for the rest. */
@@ -161,7 +128,7 @@ export function useAcquireTx(block: bigint | undefined) {
   const [done, setDone] = useState<{ id: bigint; hash: `0x${string}` }>();
 
   const live = dropped.block === block ? dropped.keys : [];
-  const available = <T extends Listing>(list: T[]) => paused ? [] : list.filter((l) => !live.includes(keyOf(l)));
+  const available = <T extends Listing>(list: T[]) => paused ? [] : list.filter((l) => preparedForAcquire(l) && !live.includes(keyOf(l)));
 
   // the confirmation stays 20 s
   useEffect(() => {

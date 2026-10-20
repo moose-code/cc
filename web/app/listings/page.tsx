@@ -110,7 +110,7 @@ export default function ListingsPage() {
       </PageHead>
 
       <div className="split-pad">
-        <ListingsStatus market={data?.market} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
+        <ListingsStatus market={data?.market} strategy={data?.strategyStatus} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
         {rows.length > 0 && (
           <div className="lhist" aria-label="listings by price over bid">
             {BUCKETS.map((b, i) => (
@@ -126,7 +126,7 @@ export default function ListingsPage() {
         )}
 
         <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} />
-        {data && rows.length === 0 && <p className="caption">no credits are listed.</p>}
+        {data && rows.length === 0 && <p className="caption">no listings in the current view.</p>}
 
         <div className="more-row">
           <span className="muted">

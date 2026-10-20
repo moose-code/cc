@@ -170,11 +170,11 @@ function ListingsPanel() {
   const rows = data?.rows ?? [];
   return (
     <>
-      <ListingsStatus market={data?.market} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
+      <ListingsStatus market={data?.market} strategy={data?.strategyStatus} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
       <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} />
       {!data && !error && <p className="muted">reading listings…</p>}
       {!data && error && <p className="muted">listings unavailable: the chain read failed.</p>}
-      {data && rows.length === 0 && <p className="muted">no credits are listed.</p>}
+      {data && rows.length === 0 && <p className="muted">no listings in the current view.</p>}
       {shown < rows.length && (
         <button className="action more" onClick={() => setShown((n) => n + LISTINGS_PAGE)}>
           {`show more (${rows.length - shown} more)`}
