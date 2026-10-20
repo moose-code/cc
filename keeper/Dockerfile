@@ -8,7 +8,6 @@ RUN npm ci --omit=dev --workspace keeper --workspace @cc/engine
 COPY keeper/src ./keeper/src
 COPY packages/engine/src ./packages/engine/src
 COPY deployments/1.json ./deployments/1.json
-ENV NODE_ENV=production
-# Arming requires an explicitly approved image change, even if the Fly environment changes.
-ENTRYPOINT ["env", "DRY_RUN=1"]
+# Images default to no-send; production arming is the owner's explicit DRY_RUN=0 setting.
+ENV NODE_ENV=production DRY_RUN=1
 CMD ["sh", "-c", "umask 077; if [ -n \"${KEYSTORE:-}\" ]; then chmod 600 \"$KEYSTORE\" \"$KEYSTORE_PASSWORD_FILE\" || exit; fi; exec npm start --workspace keeper"]

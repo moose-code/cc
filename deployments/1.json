@@ -17,12 +17,15 @@
   "poolFee": 8388608,
   "tickSpacing": 200,
   "configHash": "0xe146658a6d35ea8c00acb845e9c7876850fa5682df5238f0832b0f7320820b36",
-  "openingRate": "5600000000000000",
-  "openingRateHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "openingRate": "9700000000000000",
+  "openingRateHash": "0x64804a8f4f5c68f4143537b4fd5521b1719b3583134dccc0a191500b49ededcc",
   "balanceToken": null,
   "balanceModule": null,
   "balancePool": null,
   "owner": "0xCB43078C32423F5348Cab5885911C3B5faE217F9",
   "coinLive": false,
-  "tokenDeployer": "0x99EB38d6a757a9f1061dFb1887bffD4637050903"
+  "tokenDeployer": "0x99EB38d6a757a9f1061dFb1887bffD4637050903",
+  "controllerDecayHours": "1",
+  "controllerCreditWindow": "3600",
+  "controllerTimingHash": "0x468313466c19a6b7ea305ce4d00ea9c206a121066ded37e3a8ea540911951159"
 }

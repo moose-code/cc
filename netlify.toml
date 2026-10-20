@@ -1,6 +1,8 @@
 # Netlify build for the web app in web/. Values here are public (inlined into the client bundle) and override
-# same-named variables set in the Netlify UI. OPENSEA_API_KEY is a secret: set it in the UI or with
-# `netlify env:set OPENSEA_API_KEY <key> --secret --scope functions`, never in this file.
+# same-named variables set in the Netlify UI. Server-only values live in the UI's functions scope, never here:
+# KEEPER_MARKET_URL (the keeper's market view origin, https://cc-keeper-mainnet.fly.dev) and the secret
+# KEEPER_MARKET_TOKEN (`netlify env:set KEEPER_MARKET_TOKEN <token> --secret --scope functions`, the keeper's
+# MARKET_VIEW_TOKEN). OPENSEA_API_KEY is no longer read by the website and can be removed from its store.
 
 [build]
   base = "web"

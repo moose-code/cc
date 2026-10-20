@@ -1,6 +1,6 @@
-// Exercises app/api/listings/route.ts with a stubbed fetch: fulfill only for hashes in the listings snapshot, a global
-// in-flight limit, a per-client token bucket, a bounded fulfill cache and a maximum upstream GET scan.
-// "@/" imports resolve through a registered hook.
+// Exercises app/api/listings/route.ts with a stubbed keeper: the view is read once per window and shared, a foreign
+// or malformed view is refused, the last good view is kept and marked stale through failures, and fulfillment is
+// served only for signed orders of the current view. "@/" imports resolve through a registered hook.
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import { dirname, join } from "node:path";
@@ -24,138 +24,125 @@ export async function resolve(spec, ctx, next) {
 }`;
 register("data:text/javascript," + encodeURIComponent(hook));
 
-process.env.OPENSEA_API_KEY = "test";
-process.env.TRUSTED_PROXY_HOPS = "1";
+process.env.KEEPER_MARKET_URL = "https://keeper.example/";
+process.env.KEEPER_MARKET_TOKEN = "secret";
 process.env.NEXT_PUBLIC_CORE = "0x" + "1".repeat(40);
 process.env.NEXT_PUBLIC_SEAPORT_ADAPTER = "0x" + "2".repeat(40);
 
 const h = (n) => "0x" + n.toString(16).padStart(64, "0");
-const KNOWN = [h(1), h(2), h(3)];
-const MANY = 250; // more listings than the cap; the route keeps the cheapest 200
-const ALL = Array.from({ length: MANY }, (_, i) => h(5000 + i));
-let posts = 0;
-let listingGets = 0;
-let hangPosts = false;
+const status = { source: "api", complete: true, lastFullAt: 1000, publishedAt: 2000, streamJoined: true, gap: false, queuedUpdates: 0, queuedRemovals: 0, retryAt: null, lastFailure: null };
+const row = (n, signed = false) => ({ id: String(n), price: String(100 * n), hash: h(n).toUpperCase().replace("0X", "0x"), endTime: 9999999999, score: "10000", signed });
+let upstream = () => ({ chainId: 1, core: process.env.NEXT_PUBLIC_CORE, seaportAdapter: process.env.NEXT_PUBLIC_SEAPORT_ADAPTER, builtAt: 3000, status, catalog: { total: 3, scored: 3, signed: 1, limit: 1000 }, rows: [row(1, true), row(2), row(3)] });
+const calls = [];
 globalThis.fetch = async (url, init) => {
-  if (init?.method === "POST") {
-    posts++;
-    if (hangPosts) return new Promise((_, reject) => {
-      if (init.signal.aborted) reject(init.signal.reason);
-      else init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
-    });
-    return Response.json({}); // not a fulfillBasicOrder call: the route answers "skipped"
+  calls.push({ url: String(url), auth: init?.headers?.authorization });
+  if (String(url).includes("/market/orders/")) {
+    const hash = String(url).split("/").at(-1);
+    return hash === h(1) ? Response.json({ id: "1", price: "100", hash, params: "0xabcd" }) : new Response("", { status: 404 });
   }
-  listingGets++;
-  if (globalThis.INVALID_PAGE_MODE) return Response.json({ next: "more", listings: [] });
-  return Response.json({
-    next: "",
-    listings: (globalThis.MANY_MODE ? ALL : KNOWN).map((order_hash, i) => ({
-      status: "ACTIVE", type: "basic", order_hash,
-      protocol_address: "0x0000000000000068f116a894984e2db1123eb395",
-      price: { current: { currency: "ETH", value: String(100 + i) } },
-      protocol_data: { parameters: { offer: [{ identifierOrCriteria: String(i) }], endTime: "9999999999" } },
-    })),
-  });
+  const answer = upstream();
+  if (answer instanceof Response) return answer;
+  if (answer instanceof Error) throw answer;
+  return Response.json(answer);
 };
 
 const { GET } = await import(pathToFileURL(join(web, "app/api/listings/route.ts")).href);
-const call = (hash, ip = "1.1.1.1", supplied = "9.9.9.9") =>
-  GET(new Request(`http://x/api/listings?fulfill=${hash}`, { headers: { "x-forwarded-for": `${supplied}, ${ip}` } }));
-
-// unknown hash: rejected, no upstream POST
-let r = await call(h(999));
-assert.equal(r.status, 404);
-assert.equal(posts, 0);
-
-// 205 unknown hashes from distinct clients: no upstream POST
-for (let i = 0; i < 205; i++) assert.equal((await call(h(1000 + i), `10.0.${i >> 8}.${i & 255}`)).status, 404);
-assert.equal(posts, 0);
-
-// known hash: one POST, then served from the cache
-assert.equal((await call(KNOWN[0], "2.2.2.2")).status, 200);
-assert.equal(posts, 1);
-assert.equal((await call(KNOWN[0], "2.2.2.2")).status, 200);
-assert.equal(posts, 1);
-
-// burst over the per-client limit is rejected
-const codes = [];
-for (let i = 0; i < 15; i++) codes.push((await call(KNOWN[1], "3.3.3.3", `198.51.100.${i}`)).status);
-assert.ok(codes.includes(429), "burst must hit the client limit");
-assert.equal(codes.indexOf(429), 10);
-assert.equal(posts, 2); // KNOWN[1] fetched once, cached for the rest
-
-// the other client is unaffected
-assert.equal((await call(KNOWN[2], "4.4.4.4")).status, 200);
-
-// cache bound and global upstream budget (burst 8, refill 4 per second). The clock is frozen so the arithmetic is exact.
-let clock = Date.now() + 60_000; // new snapshot window; the bucket has refilled to the burst
-Date.now = () => clock;
-globalThis.MANY_MODE = true;
-posts = 0;
-let ok = 0, busy = 0;
-for (let i = 0; i < 200; i++) {
-  const res = await call(ALL[i], `20.0.${i >> 8}.${i & 255}`);
-  if (res.status === 200) ok++;
-  else {
-    assert.equal(res.status, 503);
-    assert.ok(res.headers.get("retry-after"));
-    busy++;
-  }
-}
-assert.equal(ok, 8);
-assert.equal(busy, 192);
-assert.equal(posts, 8);
-
-// one second later 4 more POSTs are allowed; a refused hash is not cached, so it succeeds once the budget allows
-clock += 1000;
-for (let i = 8; i < 28; i++) await call(ALL[i], `21.0.${i >> 8}.${i & 255}`);
-assert.equal(posts, 12);
-
-// the cache serves repeats without a POST or a token
-for (let i = 0; i < 12; i++) assert.equal((await call(ALL[i], `30.0.${i >> 8}.${i & 255}`)).status, 200);
-assert.equal(posts, 12);
-
-// promise: absent a verified proxy chain, arbitrary forwarding headers cannot select a client bucket;
-// the global upstream budget still bounds uncached requests.
-process.env.TRUSTED_PROXY_HOPS = "0";
-for (let i = 0; i < 15; i++) assert.equal((await call(ALL[0], "3.3.3.3", `203.0.113.${i}`)).status, 200);
-assert.equal(posts, 12);
-process.env.TRUSTED_PROXY_HOPS = "1";
-
-// promise: ineligible upstream pages cannot keep one website request fetching without a bound.
-clock += 60_000;
-globalThis.INVALID_PAGE_MODE = true;
-listingGets = 0;
-const capped = await GET(new Request("http://x/api/listings"));
-assert.equal(capped.status, 200);
-assert.deepEqual((await capped.json()).listings, []);
-assert.equal(listingGets, 5);
-
-// promise: four stalled fulfillment POSTs occupy the slots only until their deadline, then a fresh order proceeds.
-clock += 60_000;
-globalThis.INVALID_PAGE_MODE = false;
-await GET(new Request("http://x/api/listings"));
-const realTimeout = AbortSignal.timeout;
-AbortSignal.timeout = (ms) => realTimeout(Math.min(ms, 50));
-hangPosts = true;
+const { VIEW_LIMIT } = await import(pathToFileURL(join(web, "lib/listings-api.ts")).href);
+const view = () => GET(new Request("http://x/api/listings"));
+const fulfill = (hash) => GET(new Request(`http://x/api/listings?fulfill=${hash}`));
+const realNow = Date.now;
+let now = realNow();
+Date.now = () => now;
 try {
-  const stalled = Array.from({ length: 4 }, (_, i) => call(ALL[30 + i], `40.0.0.${i + 1}`));
-  await new Promise((resolve) => setImmediate(resolve));
-  const saturated = await call(ALL[34], "40.0.0.5");
-  assert.equal(saturated.status, 503, "all four fulfillment slots are occupied");
-  let guard;
-  const settled = await Promise.race([
-    Promise.all(stalled),
-    new Promise((_, reject) => { guard = setTimeout(() => reject(new Error("fulfillment slots did not time out")), 1_000); }),
-  ]).finally(() => clearTimeout(guard));
-  for (const response of settled) {
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { skipped: "fulfillment data failed" });
-  }
+  // one upstream read serves concurrent readers; the token travels only upstream
+  const [a, b] = await Promise.all([view(), view()]);
+  assert.equal(a.status, 200);
+  assert.equal(a.headers.get("cache-control"), "no-store");
+  const first = await a.json();
+  assert.deepEqual(await b.json(), first);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `https://keeper.example/market?limit=${VIEW_LIMIT}`);
+  assert.equal(calls[0].auth, "Bearer secret");
+  assert.equal(first.available, true);
+  assert.equal(first.stale, false);
+  assert.equal(first.fetchedAt, now);
+  assert.deepEqual(first.view.rows.map((r) => [r.id, r.hash, r.signed]), [["1", h(1), true], ["2", h(2), false], ["3", h(3), false]]);
+  assert.deepEqual(first.view.status, status);
+  assert.equal(first.view.catalog.total, 3);
+  assert.equal(JSON.stringify(first).includes("secret"), false);
+
+  // within the window nothing is re-read; past it one read follows
+  await view();
+  assert.equal(calls.length, 1);
+  now += 5_001;
+  await view();
+  assert.equal(calls.length, 2);
+
+  // an upstream failure keeps the last good view, marked stale with the failure named
+  now += 5_001;
+  upstream = () => new Response("", { status: 503 });
+  let out = await (await view()).json();
+  assert.equal(out.available, true);
+  assert.equal(out.stale, true);
+  assert.equal(out.error, "keeper view 503");
+  assert.equal(out.view.rows.length, 3);
+  now += 5_001;
+  upstream = () => new Error("fetch failed https://keeper.example/market");
+  out = await (await view()).json();
+  assert.equal(out.stale, true);
+  assert.equal(out.error, "fetch failed [upstream]");
+
+  // a malformed view is refused, not served
+  now += 5_001;
+  upstream = () => ({ ...upstream0(), rows: [{ ...row(4), price: "1e3" }] });
+  function upstream0() { return { chainId: 1, core: process.env.NEXT_PUBLIC_CORE, seaportAdapter: process.env.NEXT_PUBLIC_SEAPORT_ADAPTER, builtAt: 3000, status, catalog: { total: 1, scored: 1, signed: 0, limit: 1000 }, rows: [] }; }
+  out = await (await view()).json();
+  assert.equal(out.stale, true);
+  assert.equal(out.error, "malformed view row");
+
+  // a view of another Core is refused outright, not retained as stale data
+  now += 5_001;
+  upstream = () => ({ ...upstream0(), core: "0x" + "3".repeat(40) });
+  out = await (await view()).json();
+  assert.deepEqual(out, { available: false, reason: "identity", stale: false });
+
+  // recovery serves the fresh view
+  now += 5_001;
+  upstream = upstream0;
+  out = await (await view()).json();
+  assert.deepEqual([out.available, out.stale, out.view.rows.length, out.fetchedAt], [true, false, 0, now]);
+
+  // fulfillment: only a signed order of the current view reaches the keeper, cached per order
+  now += 5_001;
+  upstream = () => ({ ...upstream0(), catalog: { total: 3, scored: 3, signed: 1, limit: 1000 }, rows: [row(1, true), row(2), row(3)] });
+  await view();
+  const reads = calls.length;
+  assert.equal((await fulfill("0x12")).status, 400);
+  assert.equal((await fulfill(h(9))).status, 404);
+  assert.equal((await fulfill(h(2))).status, 404, "unsigned");
+  assert.equal(calls.length, reads);
+  let f = await fulfill(h(1).toUpperCase().replace("0X", "0x"));
+  assert.equal(f.status, 200);
+  assert.deepEqual(await f.json(), { id: "1", price: "100", params: "0xabcd" });
+  assert.equal(calls.length, reads + 1);
+  assert.equal(calls.at(-1).url, `https://keeper.example/market/orders/${h(1)}`);
+  await fulfill(h(1));
+  assert.equal(calls.length, reads + 1, "cached");
 } finally {
-  hangPosts = false;
-  AbortSignal.timeout = realTimeout;
+  Date.now = realNow;
 }
-assert.equal((await call(ALL[35], "40.0.0.6")).status, 200, "a new order can use a released slot");
+
+// unconfigured: no upstream read, an honest answer
+delete process.env.KEEPER_MARKET_URL;
+{
+  const reads = calls.length;
+  await new Promise((r) => setTimeout(r, 0));
+  // the cache window still holds the configured answer; a fresh module sees the unconfigured one
+  const fresh = await import(pathToFileURL(join(web, "app/api/listings/route.ts")).href + "?fresh");
+  const out = await (await fresh.GET(new Request("http://x/api/listings"))).json();
+  assert.deepEqual(out, { available: false, reason: "unconfigured", stale: false });
+  assert.deepEqual(await (await fresh.GET(new Request(`http://x/api/listings?fulfill=${h(1)}`))).json(), { skipped: "order not in the current listings" });
+  assert.equal(calls.length, reads);
+}
 
 console.log("listings-route test ok");

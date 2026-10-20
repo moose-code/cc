@@ -4,7 +4,11 @@ import { useFeed, useHistoryDown } from "@/lib/data";
 import { useBlockTs, useScan } from "@/lib/engine";
 import type { FeedEvent, FeedKind } from "@/lib/events";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { potPoints, useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
+import { potPoints, useCreditTraits, useHead, useNow, useScores, useSnapshot } from "@/lib/live";
+import { useAcquireTx } from "@/lib/useAcquire";
+import { useListings } from "@/lib/useListings";
+import { ListingsTable } from "./ListingsTable";
+import { ListingsStatus } from "./ListingsStatus";
 import { useStatementRating } from "./Cards";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
@@ -126,7 +130,7 @@ export function EngineFeed() {
       </div>
 
       {view === "listings" ? (
-        <p className="muted">OpenSea listings will be available after launch.</p>
+        <ListingsPanel />
       ) : (
         <>
           <div className="ledger-table">
@@ -151,6 +155,32 @@ export function EngineFeed() {
         </>
       )}
     </section>
+  );
+}
+
+const LISTINGS_PAGE = 50;
+
+// The listings table inside the feed tab: reads listings only while this tab is mounted, so the ledger view adds no
+// listings query. Same data, status and acquire path as the listings page, OpenSea included.
+function ListingsPanel() {
+  const { data, error, isFetching, refetch, dataUpdatedAt } = useListings();
+  const { data: head } = useHead();
+  const { buy, available, pending } = useAcquireTx(head?.n);
+  const [shown, setShown] = useState(LISTINGS_PAGE);
+  const rows = data?.rows ?? [];
+  return (
+    <>
+      <ListingsStatus market={data?.market} strategy={data?.strategyStatus} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
+      <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} />
+      {!data && !error && <p className="muted">reading listings…</p>}
+      {!data && error && <p className="muted">listings unavailable: the chain read failed.</p>}
+      {data && rows.length === 0 && <p className="muted">no listings in the current view.</p>}
+      {shown < rows.length && (
+        <button className="action more" onClick={() => setShown((n) => n + LISTINGS_PAGE)}>
+          {`show more (${rows.length - shown} more)`}
+        </button>
+      )}
+    </>
   );
 }
 
