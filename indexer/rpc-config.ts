@@ -44,7 +44,7 @@ export function withFastFallback(
 
 /** Keep rate-limit metadata until it has set the primary backoff; the general guard intentionally removes that metadata. */
 function primaryRpc(endpoint: Endpoint, stats: EndpointStats, backoff: () => void): Transport {
-  const inner = http(endpoint.url, { timeout: 20_000, retryCount: 0 });
+  const inner = http(endpoint.url, { timeout: 20_000, retryCount: 0, onFetchResponse(response) { if (response.status === 429) backoff(); } });
   return (params) => {
     const transport = inner(params);
     return { ...transport, request: (async (args: Parameters<typeof transport.request>[0]) => {

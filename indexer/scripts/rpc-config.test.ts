@@ -145,7 +145,7 @@ test("HTTP rate-limit classification and boosted revert sanitization", async () 
     const body = JSON.parse(String(init.body));
     const host = new URL(url).host;
     hosts.push(host);
-    if (host === "gateway.tenderly.co") return mode === "http429" ? new Response("busy", { status: 429 }) : new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32000, message: "Request exceeds defined limit." } }));
+    if (host === "gateway.tenderly.co") return mode === "http429" ? new Response("busy", { status: 429 }) : new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32005, message: "Request exceeds defined limit." } }));
     return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, ...(mode === "revert" ? { error: { code: 3, message: "execution reverted", data: "0xdead" } } : { result: "0x1" }) }));
   });
   try {
@@ -167,5 +167,25 @@ test("HTTP rate-limit classification and boosted revert sanitization", async () 
       return true;
     });
     assert.deepEqual(hosts, ["gateway.tenderly.co", "eth-mainnet.g.alchemy.com"]);
+  } finally { mock.restoreAll(); }
+});
+
+// promise: HTTP 429 remains authoritative when a valid JSON-RPC body hides its HTTP status inside viem.
+test("JSON-RPC limit body on HTTP 429 opens primary backoff", async () => {
+  const hosts: string[] = [];
+  mock.method(console, "warn", () => {});
+  mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body));
+    const host = new URL(url).host;
+    hosts.push(host);
+    return host === "gateway.tenderly.co"
+      ? new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32005, message: "Request exceeds defined limit." } }), { status: 429, headers: { "content-type": "application/json" } })
+      : new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: "0x1" }), { headers: { "content-type": "application/json" } });
+  });
+  try {
+    const transport = temporaryFallbackTransport(configured())({ chain: mainnet, retryCount: 0 });
+    await transport.request({ method: "eth_chainId" });
+    await transport.request({ method: "eth_chainId" });
+    assert.deepEqual(hosts, ["gateway.tenderly.co", "eth-mainnet.g.alchemy.com", "eth-mainnet.g.alchemy.com"]);
   } finally { mock.restoreAll(); }
 });
