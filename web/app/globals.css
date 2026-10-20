@@ -2970,7 +2970,7 @@ button.slot:disabled {
 /* credits table */
 .ctable-row {
   display: grid;
-  grid-template-columns: 14px 28px minmax(0, 1fr) 64px 88px 88px 96px 88px 88px;
+  grid-template-columns: 14px 28px minmax(0, 1fr) 64px 88px 76px 88px 96px 88px 88px;
   align-items: center;
   column-gap: 12px;
   min-height: 45px;
@@ -3034,12 +3034,22 @@ button.slot:disabled {
   .cgrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  /* a phone keeps rating, price, vs median and floor in; paid, got by and bought go */
   .ctable-row {
-    grid-template-columns: 14px 28px minmax(0, 1fr) 40px 72px 72px;
+    grid-template-columns: 14px 28px minmax(0, 1fr) 44px 56px 48px 56px;
     column-gap: 8px;
   }
+  .ctable-head {
+    letter-spacing: 0;
+  }
+  .ctable-row .th-wide {
+    display: none;
+  }
+  .ctable-row .th-narrow {
+    display: inline;
+  }
   .ctable-row .hide-sm,
-  .ctable-row > :nth-child(6) {
+  .ctable-row > :nth-child(7) {
     display: none;
   }
 }
@@ -3980,14 +3990,28 @@ button.slot:disabled {
   padding-top: 0;
   border-top: 0;
 }
-.ctable-vs {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--muted);
-  white-space: nowrap;
+/* a sortable table head: the label is a button, the active one in ink with its direction */
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
 }
-.ctable-vs {
-  display: block;
+.th-sort:hover,
+.th-sort.on {
+  color: var(--ink);
+}
+.th-sort i {
+  display: inline-block;
+  width: 1ch;
+  font-style: normal;
 }
 @media (max-width: 1300px) {
   .mkt {
@@ -4021,4 +4045,23 @@ button.slot:disabled {
   .mkt-band:last-child {
     grid-column: 1 / -1;
   }
+}
+/* the lowest asks of a band: a key and value pair, the engine's then the market's */
+.mkt-ask {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.mkt-ask > span:first-child {
+  color: var(--quiet);
+}
+.mkt-ask-top {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--divider);
+}
+.th-narrow {
+  display: none;
 }
