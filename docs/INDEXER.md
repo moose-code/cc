@@ -249,7 +249,7 @@ Every 300 blocks a block handler compares projections with views at the same blo
 
 ## 9. frontend data contract
 
-Source key: **I** indexer table.column, **L** live chain read through the website `/api/rpc`, **D** derived in the browser from the named inputs. A value marked L today that moves to I is listed with its new source. Every I row has an on-chain fallback that runs in chain mode (section 11, owner decision 133); the tables name the indexer source. Wired in phase 2: the rows below as written.
+Source key: **I** indexer table.column, **L** live chain read through the website `/api/rpc`, **K** the keeper's read-only market view through the website `/api/listings`, **D** derived in the browser from the named inputs. A value marked L today that moves to I is listed with its new source. Every I row has an on-chain fallback that runs in chain mode (section 11, owner decision 133); the tables name the indexer source. Wired in phase 2: the rows below as written.
 
 Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first, bounded queues, physical-request pacing, identical-read deduplication and short caches. Server metadata and listings reads share that dispatcher. Its memory and throttle are per warm Netlify instance; this is not a deployment-wide quota or a guarantee against public-provider outages. Local Anvil reads and wallet signing remain direct.
 
@@ -269,9 +269,10 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | ETH/USD | L Chainlink |
 | rating display | D `score / 10000` from I `credit.score` (chain mode: `CreditScore.scoreOf`) |
 | header bid per 100 points | L snapshot `ethRate`; D per-point display is `ethRate / 100` |
-| header acquire button: strategy listings | I `strategy_listing` where `active`, with `credit.score`; chain mode: browser `getLogs` of the two strategy events from `NEXT_PUBLIC_STRATEGY_START_BLOCK`, replayed in log order; both re-read live at each head: `nftForSale`, Credits `ownerOf`, Core `bidOf`, `ethPot`, `retired`, `allowedAdapter` |
-| header acquire button: spend cap | L `Core.spendState()` in the shortlist multicall; a listing over the bucket's remaining budget waits for the next bucket; the first candidate whose `buyListing` call simulates enables the button |
-| header acquire button: OpenSea listings | server route `web/app/api/listings` (OpenSea API v2 best listings and fulfillment data of the `credits` collection, `OPENSEA_API_KEY` server only, 20 s cache), filtered by the adapter's `allowedRecipient` |
+| header next ask | K the shared market view poll; D the best-ranked ask still above its estimated bid `ethRate * score / 1,000,000`, its price and the bid's progress; marked ~ and "stale" when the view is stale or its stream is disconnected; wide screens only, no chain read |
+| strategy listings (listings page and feed tab) | I `strategy_listing` where `active`, with `credit.score`; chain mode: browser `getLogs` of the two strategy events from `NEXT_PUBLIC_STRATEGY_START_BLOCK`, replayed in log order; both re-read live at each head: `nftForSale`, Credits `ownerOf`, Core `bidOf`, `ethPot`, `retired`, `allowedAdapter` |
+| listing spend cap | L `Core.spendState()` in the listings multicall; a listing over the bucket's remaining budget waits for the next bucket; a row's acquire button simulates `buyListing` before sending |
+| OpenSea asks (feed tab, listings page, header next-ask summary) | K keeper market view (`keeper/src/market-view.ts`, `Sources.marketView`: the keeper's compatible Seaport catalog less quarantined, transferred and expired orders, ranked by exact price per point with its cached immutable scores, plus discovery status) through the server route `web/app/api/listings` (`KEEPER_MARKET_URL` and `KEEPER_MARKET_TOKEN` server only, one keeper read per 5 s window per warm instance, identity gate on chain, Core and adapter, last good view kept and marked stale through failures); the browser polls the route every 10 s through one shared query (`web/lib/market-view.ts`). `?fulfill=<orderHash>` serves the keeper's prepared fulfillment of a signed order in the current view. Decision 235 |
 
 ### 9.2 home
 
@@ -335,7 +336,9 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 
 | value | source |
 |---|---|
-| listed credits, both venues | as the header acquire button (9.1): I `strategy_listing` where `active` (chain mode: the strategy event scan) and the `web/app/api/listings` route (200 cheapest OpenSea listings, bound `MAX_LISTINGS`, sent as `max` for the caption); one row per credit at its cheapest price |
+| listed credits, both venues | I `strategy_listing` where `active` (chain mode: the strategy event scan) and the keeper market view through the `web/app/api/listings` route (9.1): the best `VIEW_LIMIT` (1,000) of the keeper's compatible OpenSea asks by price per point, with the catalog total stated; one row per credit at its cheapest price |
+| listings status lines | D from the route answer (`viewLines` in `web/lib/market-view.ts`): coverage, view read time, the keeper's last applied change and reconciliation, stream live / disconnected / gap, backoff, last discovery failure, and the time or failure of the last chain read with a retry; stale or disconnected data is never labelled live |
+| Seaport order status | L `Seaport.getOrderStatus(orderHash)` for the live OpenSea rows in the same multicall; a cancelled or filled order leaves the table |
 | rating | I `credit.score`; chain mode `creditScores` |
 | bid | D `ethRate * score / RATE_SCORE` (`RATE_SCORE` is 1,000,000 stored score units, or 100 points) from the L snapshot for every row; L `bidOf`, `ownerOf` and `nftForSale` for the 100 rows nearest the bid |
 | balance bid column and header line | L `Core.balanceBidOf(id)` for the 100 rows nearest the bid, in the same multicall (allowFailure, read only with a module set and `balanceBidOn`); D `score * balanceUnit * balanceRate / 10,000` for the other rows (marked ~); header "balance bid R% of par" from L snapshot `balanceRate` |
