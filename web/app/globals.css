@@ -1296,10 +1296,6 @@ button.tp-row:disabled {
   gap: 16px;
   margin-left: auto;
 }
-.footer .contracts {
-  display: inline-flex;
-  gap: 8px;
-}
 .footer a {
   color: var(--quiet);
 }
@@ -3426,6 +3422,7 @@ button.slot:disabled {
 
 /* the status lines of a listings surface: coverage, freshness, stream and failure state */
 .lstatus {
+  overflow-wrap: anywhere;
   margin: 0 0 12px;
   font-size: 12px;
   line-height: 1.6;
@@ -3440,19 +3437,37 @@ button.slot:disabled {
 
 .ltable-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 112px 56px 88px 88px 160px 72px 136px 96px;
+  grid-template-columns: 28px minmax(72px, 1fr) 112px 64px 88px 88px 80px;
   align-items: center;
   column-gap: 12px;
-  min-height: 45px;
+  min-height: 40px;
   border-bottom: 1px solid var(--hairline);
   font-size: 13px;
+}
+.ltable {
+  min-width: 0;
+  max-width: 100%;
+}
+.ltable.balance-active .ltable-row {
+  grid-template-columns: 28px minmax(72px, 1fr) 112px 64px 88px 88px 112px 80px;
+}
+.ltable-row > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ltable-row.on {
   background: var(--surface);
 }
 .ltable-head {
   min-height: 32px;
+  border-top: 2px solid var(--structure);
   border-bottom: 1px solid var(--structure);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
 }
 .ltable-row .num {
   text-align: right;
@@ -3501,8 +3516,9 @@ button.slot:disabled {
   background: var(--m);
 }
 @media (max-width: 860px) {
-  .ltable-row {
-    grid-template-columns: 28px minmax(0, 1fr) 88px 64px 88px 80px;
+  .ltable .ltable-row,
+  .ltable.balance-active .ltable-row {
+    grid-template-columns: 28px minmax(0, 1fr) 88px 80px;
     column-gap: 8px;
   }
   .ltable-row .hide-sm {
@@ -3510,10 +3526,10 @@ button.slot:disabled {
   }
 }
 @media (max-width: 640px) {
-  .ltable-row {
-    grid-template-columns: 28px minmax(0, 1fr) 60px 48px 64px 64px;
+  .ltable .ltable-row,
+  .ltable.balance-active .ltable-row {
+    grid-template-columns: 28px minmax(0, 1fr) 80px 76px;
     column-gap: 6px;
-    font-size: 12px;
   }
   .lact .hdr-acq i {
     display: none;
@@ -3536,15 +3552,23 @@ button.slot:disabled {
 .ledger .ltable {
   margin: 0 24px;
 }
-.ledger .ltable-head {
-  border-top: 2px solid var(--structure);
-}
-.ledger .ltable-row {
-  min-height: 40px;
+.ledger .lstatus {
+  margin: 0 24px 12px;
 }
 @media (min-width: 861px) {
   .ledger .ltable-row {
-    grid-template-columns: 28px minmax(72px, 1fr) 96px 48px 72px 72px 120px 56px 108px 76px;
+    grid-template-columns: 28px minmax(60px, 1fr) 96px 64px 80px 80px 76px;
     column-gap: 8px;
+  }
+  .ledger .ltable.balance-active .ltable-row {
+    grid-template-columns: 28px minmax(60px, 1fr) 96px 64px 80px 80px 104px 76px;
+  }
+}
+@media (max-width: 860px) {
+  .ledger .ltable {
+    margin: 0 16px;
+  }
+  .ledger .lstatus {
+    margin: 0 16px 12px;
   }
 }

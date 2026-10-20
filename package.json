@@ -7,5 +7,10 @@
     "packages/engine",
     "web",
     "keeper"
-  ]
+  ],
+  "overrides": {
+    "cuer": {
+      "qr": "0.5.5"
+    }
+  }
 }

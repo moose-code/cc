@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useCoinLive, useHead, useSnapshot } from "@/lib/live";
+import { useHead } from "@/lib/live";
 import { lsGet, lsSet } from "@/lib/cache";
-import { commas, evmNowAddress } from "@/lib/format";
-import { core, credits, statements } from "@/lib/config";
+import { commas } from "@/lib/format";
 
 const THEME_KEY = "cc:theme"; // read before first paint by the script in app/layout.tsx
 const THEMES = ["auto", "light", "dark"] as const;
@@ -56,29 +55,10 @@ function ThemeControl() {
 
 export function Footer() {
   const block = useHead().data?.n;
-  const snap = useSnapshot().data;
-  const coinLive = useCoinLive();
-  const contracts = [
-    { label: "core", address: core },
-    { label: "controller", address: snap?.controller },
-    { label: "cc", address: coinLive === false ? undefined : snap?.coin },
-    { label: "credits", address: credits },
-    { label: "statements", address: statements },
-  ].filter((c): c is { label: string; address: `0x${string}` } => Boolean(c.address) && Boolean(core));
   return (
     <footer className="footer">
       <span>independent tool · not affiliated with Credits</span>
       <span>{block ? `block ${commas(Number(block))}` : "block —"}</span>
-      {contracts.length > 0 && (
-        <span className="contracts">
-          contracts:{" "}
-          {contracts.map((c) => (
-            <a key={c.label} href={evmNowAddress(c.address)} target="_blank" rel="noreferrer">
-              {c.label}
-            </a>
-          ))}
-        </span>
-      )}
       <Link href="/docs">docs</Link>
       <span>
         by{" "}

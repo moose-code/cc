@@ -97,8 +97,9 @@ export function EngineProgress() {
 export function EngineFeed() {
   const now = useNow();
   const [limit, setLimit] = useState(PAGE);
-  const [view, setView] = useState<FeedView>("ledger");
+  const [chosenView, setView] = useState<FeedView>();
   const { events: shown, total } = useFeed("all", limit);
+  const view = chosenView ?? (shown.some((event) => event.txHash) ? "ledger" : "listings");
   const historyDown = useHistoryDown();
   // one batched read for the credits on screen
   const ids = [...new Set(shown.flatMap((e) => (e.tile?.kind === "credit" ? [BigInt(e.tile.id)] : [])))];

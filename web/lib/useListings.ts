@@ -15,7 +15,7 @@ import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, st
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { MULTICALL3, readSnapshot, useHead } from "./live";
 import { useIxMode } from "./indexer";
-import { bucketCount, cheapestPerId, fitsBucket, type Priced, type StrategyReadStatus } from "./acquire";
+import { bucketCount, cheapestPerId, compareListingPricePerPoint, fitsBucket, type Priced, type StrategyReadStatus } from "./acquire";
 import { gatherListings, scoresFor, spendCost, spendRoom } from "./useAcquire";
 import type { MarketOut } from "./market-view";
 import { ETH_ANCHOR_SLOT, ETH_CLOCK_SLOT } from "./sell";
@@ -76,7 +76,7 @@ export function useListings() {
         return score == null ? [] : [{ ...l, score, bid: bidFor(snap.ethRate, score), live: false }];
       });
       const gapOf = (price: bigint, bid: bigint) => (bid === 0n ? Infinity : Number((price * 1_000_000n) / bid) / 1_000_000 - 1);
-      rows.sort((a, b) => gapOf(a.price, a.bid) - gapOf(b.price, b.bid));
+      rows.sort((a, b) => (gapOf(a.price, a.bid) - gapOf(b.price, b.bid)) || compareListingPricePerPoint(a, b));
 
       // live read of the best rows: pot, retired, the two adapters, the climb state, the multiplier, then bidOf / ownerOf / nftForSale per row
       const top = rows.slice(0, LIVE);
@@ -196,7 +196,7 @@ export function useListings() {
         const eta: ClearsIn = clears ? { kind: "now" } : r.price > pot ? { kind: "pot" } : f.kind === "now" ? { kind: "far" } : f;
         return { ...r, paused: snap.paused, gap: gapOf(r.price, r.bid), clears, wait, eta, balanceBid: balanceOf(r) };
       });
-      out.sort((a, b) => a.gap - b.gap);
+      out.sort((a, b) => (a.gap - b.gap) || compareListingPricePerPoint(a, b));
       return { rows: out, paused: snap.paused, market, strategyStatus, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state };
     },
   });
