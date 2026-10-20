@@ -24,6 +24,9 @@
   --art: #ffffff;
   /* the tint of art still loading: on white in both themes, so it is fixed too */
   --art-wait: #1a1a1a;
+  /* a price change, up and down: the only colour on text besides the inks' marks */
+  --up: #1f9d55;
+  --down: #d13b3b;
 
   --mono: var(--font-plex), ui-monospace, "SF Mono", "Menlo", "Monaco",
     "Cascadia Code", "Roboto Mono", monospace;
@@ -43,6 +46,8 @@
   --faint: #6a6861;
   --disabled: #4a4944;
   --k: #ecebe6;
+  --up: #45c47a;
+  --down: #f06a6a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -60,6 +65,8 @@
     --faint: #6a6861;
     --disabled: #4a4944;
     --k: #ecebe6;
+    --up: #45c47a;
+    --down: #f06a6a;
   }
 }
 
@@ -3884,13 +3891,25 @@ button.slot:disabled {
     margin: 0.225em 0;
   }
 }
-/* the 24h price change beside the price: small and muted, sign first (inks are not for text) */
+/* the price change beside the price, on its baseline: smaller and lighter than the price, green up and red down */
 .tp-chg {
-  margin-left: 10px;
-  font-size: 12px;
+  margin-left: 12px;
+  font-size: 0.62em;
   font-weight: 400;
   color: var(--muted);
-  vertical-align: 0.35em;
+}
+.tp-chg.up {
+  color: var(--up);
+}
+.tp-chg.down {
+  color: var(--down);
+}
+/* a sub-cent price's zero count, a small digit set low beside the zero */
+.tp-zeros {
+  font-size: 0.55em;
+  font-weight: 500;
+  vertical-align: -0.28em;
+  margin: 0 0.06em;
 }
 /* the token contract under the fee line */
 .tp-addr {
@@ -3908,14 +3927,7 @@ button.slot:disabled {
 .tp-price a.label {
   white-space: nowrap;
 }
-/* on a phone the price is set larger, so the change takes its own line under it */
-@media (max-width: 640px) {
-  .tp-chg {
-    display: block;
-    margin: 2px 0 0;
-    vertical-align: baseline;
-  }
-}
+
 
 /* ---- credits market report --------------------------------------------------
    A row of cells above the credits grid: the intro, then one cell per rating band (median the engine paid, change and

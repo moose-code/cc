@@ -218,7 +218,7 @@ A statement id the Core has not minted yet: `id >= nextStatementId` (Statements 
 
 ### 06 Swap states (`TradePanel.tsx`)
 The panel, top to bottom:
-1. `$CC price` with the 24h change beside it (`+2.4% 24h`, muted, spot now against the spot 7,200 blocks earlier; for a younger pool `since launch`, against the opening price of its PoolManager `Initialize` event), and `mkt cap ↗`, linking to the token's DexScreener page;
+1. `$CC price`: the price 24/700, a sub-cent price with its zero count as a small digit set low (`$0.0₄956`), then on its baseline the change at 0.62em, two decimals, `--up` green or `--down` red (`+56.48%`; the only coloured text besides ink marks). The change is spot now against the spot 7,200 blocks earlier, or for a younger pool against the opening price of its PoolManager `Initialize` event; the period is in its tooltip, and `mkt cap ↗`, linking to the token's DexScreener page;
 2. the buy|sell toggle (36px);
 3. the input box on `--surface` with a 1px `--divider` border and two crop marks: a **you pay** field and a **you receive** field;
 4. detail rows;
