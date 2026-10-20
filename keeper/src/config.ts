@@ -69,6 +69,8 @@ export interface Config {
   indexerUrl?: string;
   opensea: { key?: string; refreshSec: number; sign: number; file?: string };
   doorsOn: Set<Door>;
+  // the read-only market view server (./market-view.ts); off without MARKET_VIEW_PORT
+  marketView: { port?: number; host: string; token?: string };
 }
 
 type Env = { [k: string]: string | undefined };
@@ -236,7 +238,19 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
       file: env.SEAPORT_ORDERS || undefined,
     },
     doorsOn,
+    marketView: {
+      port: marketViewPort(env.MARKET_VIEW_PORT),
+      host: env.MARKET_VIEW_HOST || "0.0.0.0",
+      token: env.MARKET_VIEW_TOKEN || undefined,
+    },
   };
+}
+
+// MARKET_VIEW_PORT: a TCP port, or unset for no view server
+function marketViewPort(v: string | undefined): number | undefined {
+  if (v === undefined || v === "") return undefined;
+  if (!/^\d{1,5}$/.test(v) || Number(v) < 1 || Number(v) > 65535) throw new Error("config: MARKET_VIEW_PORT must be a port number");
+  return Number(v);
 }
 
 // the config as logged at start: secrets and secret paths reduced to whether they are set
@@ -262,5 +276,6 @@ export function describe(c: Config) {
     indexer: Boolean(c.indexerUrl),
     opensea: c.opensea.file ? "file" : c.opensea.key ? "api" : "off",
     alerts: Boolean(c.alertWebhook),
+    marketView: c.marketView.port ? { host: c.marketView.host, port: c.marketView.port, token: Boolean(c.marketView.token) } : "off",
   };
 }

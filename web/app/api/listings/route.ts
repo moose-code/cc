@@ -1,213 +1,119 @@
-// OpenSea listings of the Credits collection that the Core can fill through SeaportBasicAdapter.
-// Server only: OPENSEA_API_KEY never reaches the browser. The response is the cheapest listings that pass the
-// adapter's checks. The list (no fulfillment data) is cached for CACHE_MS so every browser shares one OpenSea round of
-// requests; `?fulfill=<orderHash>` returns the encoded `params` for Core.buyListing of one order, cached per order.
+// The website's read of the keeper's market view (keeper/src/market-view.ts): the compatible OpenSea asks of the
+// Credits collection ranked by exact price per point across the keeper's whole observed catalog, with its discovery
+// status, and the prepared fulfillment (`?fulfill=<orderHash>`) of one signed order for Core.buyListing.
+// Server only: KEEPER_MARKET_URL and KEEPER_MARKET_TOKEN never reach the browser. One fetch per VIEW_CACHE_MS is
+// shared by every visitor of a warm instance, the last good view is kept through upstream failures and marked stale,
+// and the view's chain, Core and adapter identity must match this deployment before it is served. Advisory data: the
+// browser re-reads the bid, the holder and the order status at a block and simulates buyListing before sending.
 
-import { createPublicClient, encodeAbiParameters, getAddress, zeroAddress, type Address, type Hex } from "viem";
-import { isIP } from "node:net";
-import { core, credits, seaportAdapter } from "@/lib/config";
-import { serverRpcTransport } from "@/lib/server-rpc";
-import { basicOrderParameters, seaportAdapterAbi } from "@/lib/abis";
+import { chain, core, seaportAdapter } from "@/lib/config";
+import { DIGITS, HASH, object, parseView, VIEW_LIMIT, type Fulfill, type Out } from "@/lib/listings-api";
 
 export const dynamic = "force-dynamic";
 
-const OS = "https://api.opensea.io/api/v2";
-const SLUG = "credits";
-const SEAPORT_1_6 = "0x0000000000000068f116a894984e2db1123eb395";
-const PAGE = 100; // OpenSea's maximum page size
-const MAX_LISTINGS = 200; // the cheapest listings kept per cache window; sent as `max` for the listings page caption
-const MAX_PAGES = 5; // upstream GET limit even when every returned order is ineligible
-const LISTINGS_TIMEOUT_MS = 10_000; // one deadline for the full paged snapshot
-const FULFILL_TIMEOUT_MS = 10_000; // release a fulfillment slot when OpenSea stalls
-const CACHE_MS = 20_000;
-const FULFILL_CACHE_MS = 10_000;
-const MAX_FULFILL_INFLIGHT = 4; // concurrent OpenSea fulfillment POSTs across all clients
-// Global upstream POST budget shared by all clients: a token bucket. These two numbers depend on the OpenSea plan's
-// rate limit and are the knobs to set once the plan is confirmed.
-const UPSTREAM_BURST = 8; // fulfillment POSTs that can go out back to back
-const UPSTREAM_REFILL_PER_SEC = 4; // POSTs regained per second
-const BUCKET_BURST = 10; // fulfill requests a client can send back to back
-const BUCKET_REFILL_MS = 2_000; // one request regained per interval
-const MAX_BUCKETS = 1_000; // tracked clients; the oldest is dropped past this
-
-interface Out {
-  /** open ETH listings of the collection, cheapest first; `price` is the wei the buyer pays in total */
-  listings: { id: string; price: string; orderHash: string; expiry: number }[];
-  /** the bound on `listings` */
-  max: number;
-}
-interface Fulfill {
-  id?: string;
-  price?: string;
-  params?: Hex;
-  /** why the order cannot be filled through the adapter */
-  skipped?: string;
-  /** fee recipient the adapter refuses */
-  blocked?: string;
-}
-
-let cache: { at: number; out: Out } | undefined;
-let inflight: Promise<Out> | undefined;
-// Insertion-ordered LRU: a hit is re-inserted last, the first key is evicted past MAX_LISTINGS.
-const fulfilled = new Map<string, { at: number; out: Promise<Fulfill> }>();
-let fulfillActive = 0;
-const buckets = new Map<string, { tokens: number; at: number }>();
-
-const upstream = { tokens: UPSTREAM_BURST, at: Date.now() };
-
-// Takes one token from the global upstream budget. Returns false when the budget is spent.
-function allowUpstream(): boolean {
-  const now = Date.now();
-  upstream.tokens = Math.min(UPSTREAM_BURST, upstream.tokens + ((now - upstream.at) / 1000) * UPSTREAM_REFILL_PER_SEC);
-  upstream.at = now;
-  if (upstream.tokens < 1) return false;
-  upstream.tokens -= 1;
-  return true;
-}
-
-// Token bucket per client key. Returns false when the client is over its rate.
-function allow(key: string): boolean {
-  const now = Date.now();
-  const b = buckets.get(key) ?? { tokens: BUCKET_BURST, at: now };
-  b.tokens = Math.min(BUCKET_BURST, b.tokens + (now - b.at) / BUCKET_REFILL_MS);
-  b.at = now;
-  buckets.delete(key);
-  buckets.set(key, b);
-  while (buckets.size > MAX_BUCKETS) buckets.delete(buckets.keys().next().value!);
-  if (b.tokens < 1) return false;
-  b.tokens -= 1;
-  return true;
-}
-
-// A proxy must append one address per configured trusted hop. Ignore untrusted left-hand entries and malformed
-// chains. Without that deployment guarantee the global upstream budget remains the request bound.
-function clientKey(req: Request): string | undefined {
-  const hops = Number(process.env.TRUSTED_PROXY_HOPS ?? 0);
-  if (!Number.isInteger(hops) || hops < 1 || hops > 8) return undefined;
-  const chain = req.headers.get("x-forwarded-for")?.split(",").map((s) => s.trim()) ?? [];
-  const candidate = chain.at(-hops);
-  return candidate && isIP(candidate) ? candidate : undefined;
-}
+const VIEW_CACHE_MS = 5_000; // one upstream read per window per warm instance
+const VIEW_TIMEOUT_MS = 8_000;
+const MAX_VIEW_BYTES = 4 * 1024 * 1024;
+const ORDER_CACHE_MS = 10_000;
+const MAX_ORDER_INFLIGHT = 8; // concurrent fulfillment reads across all clients
+const MAX_ORDER_CACHE = 256;
 
 const lc = (a: string) => a.toLowerCase();
 
-async function os(path: string, init?: RequestInit) {
-  const r = await fetch(`${OS}${path}`, {
-    ...init,
-    headers: { "x-api-key": process.env.OPENSEA_API_KEY!, accept: "application/json", "content-type": "application/json" },
-    cache: "no-store",
-  });
-  if (!r.ok) throw new Error(`opensea ${r.status}`);
-  return r.json();
-}
+let cache: { at: number; out: Out } | undefined;
+let inflight: Promise<Out> | undefined;
+// Insertion-ordered LRU of fulfillment reads by order hash.
+const orders = new Map<string, { at: number; out: Promise<Fulfill> }>();
+let orderActive = 0;
 
-// The collection's best listings, paged: id, total price, order hash and expiry only. No fulfillment data.
-async function build(): Promise<Out> {
-  const rows: Out["listings"] = [];
-  let next = "";
-  const signal = AbortSignal.timeout(LISTINGS_TIMEOUT_MS);
-  for (let pages = 0; pages < MAX_PAGES && rows.length < MAX_LISTINGS; pages++) {
-    const page = await os(`/listings/collection/${SLUG}/best?limit=${PAGE}${next ? `&next=${encodeURIComponent(next)}` : ""}`, { signal });
-    for (const l of page.listings as any[]) {
-      const p = l.protocol_data?.parameters;
-      const id = p?.offer?.[0]?.identifierOrCriteria;
-      if (l.status !== "ACTIVE" || l.type !== "basic" || l.price?.current?.currency !== "ETH" || lc(l.protocol_address) !== SEAPORT_1_6 || id == null) continue;
-      rows.push({ id: String(id), price: String(l.price.current.value), orderHash: l.order_hash, expiry: Number(p.endTime) });
-    }
-    next = page.next;
-    if (!next) break;
-  }
-  rows.sort((a, b) => (BigInt(a.price) < BigInt(b.price) ? -1 : 1));
-  return { listings: rows.slice(0, MAX_LISTINGS), max: MAX_LISTINGS };
-}
-
-// BasicOrderParameters of one order, from OpenSea's fulfillment data, if the adapter accepts the order.
-async function fulfill(orderHash: string): Promise<Fulfill> {
+function target(): { url: string; headers: Record<string, string> } | undefined {
+  const raw = process.env.KEEPER_MARKET_URL;
+  if (!raw) return undefined;
+  let url: URL;
   try {
-    const body = { listing: { hash: orderHash, chain: "ethereum", protocol_address: SEAPORT_1_6 }, fulfiller: { address: core } };
-    const f = (await os("/listings/fulfillment_data", { method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(FULFILL_TIMEOUT_MS) })).fulfillment_data?.transaction;
-    const p = f?.input_data?.parameters;
-    if (!p || !String(f.function).startsWith("fulfillBasicOrder_efficient_6GL6yc") || lc(f.to) !== SEAPORT_1_6) return { skipped: "not a fulfillBasicOrder call" };
-    if (lc(p.offerToken) !== lc(credits) || p.offerAmount !== "1") return { skipped: "not one credit" };
-    if (lc(p.considerationToken) !== zeroAddress) return { skipped: "not native currency" };
-    if (Number(p.basicOrderType) > 1) return { skipped: "restricted order type" };
-    const client = createPublicClient({ transport: serverRpcTransport() });
-    let price = BigInt(p.considerationAmount);
-    for (const r of p.additionalRecipients as { amount: string; recipient: string }[]) {
-      price += BigInt(r.amount);
-      if (lc(r.recipient) === lc(p.offerer)) continue;
-      const ok = await client.readContract({ address: seaportAdapter!, abi: seaportAdapterAbi, functionName: "allowedRecipient", args: [getAddress(r.recipient)] });
-      if (!ok) return { skipped: "fee recipient not allowed by the adapter", blocked: lc(r.recipient) };
-    }
-    if (price !== BigInt(f.value)) return { skipped: "value mismatch" };
-    const params = encodeAbiParameters(basicOrderParameters, [
-      {
-        considerationToken: p.considerationToken,
-        considerationIdentifier: BigInt(p.considerationIdentifier),
-        considerationAmount: BigInt(p.considerationAmount),
-        offerer: p.offerer,
-        zone: p.zone,
-        offerToken: p.offerToken,
-        offerIdentifier: BigInt(p.offerIdentifier),
-        offerAmount: BigInt(p.offerAmount),
-        basicOrderType: Number(p.basicOrderType),
-        startTime: BigInt(p.startTime),
-        endTime: BigInt(p.endTime),
-        zoneHash: p.zoneHash,
-        salt: BigInt(p.salt),
-        offererConduitKey: p.offererConduitKey,
-        fulfillerConduitKey: p.fulfillerConduitKey,
-        totalOriginalAdditionalRecipients: BigInt(p.totalOriginalAdditionalRecipients),
-        additionalRecipients: p.additionalRecipients.map((r: { amount: string; recipient: Address }) => ({ amount: BigInt(r.amount), recipient: r.recipient })),
-        signature: p.signature,
-      },
-    ]);
-    return { id: p.offerIdentifier, price: price.toString(), params };
+    url = new URL(raw);
   } catch {
-    return { skipped: "fulfillment data failed" };
+    return undefined;
+  }
+  const local = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return undefined;
+  const token = process.env.KEEPER_MARKET_TOKEN;
+  return { url: url.href.replace(/\/+$/, ""), headers: { accept: "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) } };
+}
+
+async function readJson(url: string, headers: Record<string, string>, timeoutMs: number): Promise<{ status: number; body: unknown }> {
+  const r = await fetch(url, { headers, cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
+  if (Number(r.headers.get("content-length")) > MAX_VIEW_BYTES) throw new Error("oversized view");
+  const text = await r.text();
+  if (text.length > MAX_VIEW_BYTES) throw new Error("oversized view");
+  return { status: r.status, body: text ? JSON.parse(text) : undefined };
+}
+
+async function fetchView(): Promise<Out> {
+  const t = target();
+  if (!t || !core || !seaportAdapter) return { available: false, reason: "unconfigured", stale: false };
+  const last = cache?.out;
+  try {
+    const { status, body } = await readJson(`${t.url}/market?limit=${VIEW_LIMIT}`, t.headers, VIEW_TIMEOUT_MS);
+    if (status !== 200) throw new Error(`keeper view ${status}`);
+    const { view, identity } = parseView(body);
+    if (identity.chainId !== chain.id || lc(identity.core) !== lc(core) || lc(identity.seaportAdapter) !== lc(seaportAdapter)) return { available: false, reason: "identity", stale: false };
+    return { available: true, fetchedAt: Date.now(), stale: false, view };
+  } catch (e) {
+    const error = (e instanceof Error ? e.message : "keeper view failed").replace(/https?:\/\/\S+/g, "[upstream]").slice(0, 120);
+    // the last good view stays on offer, marked stale with the failure; without one the route says so
+    if (last?.view) return { ...last, stale: true, error };
+    return { available: false, reason: "unreachable", stale: false, error };
   }
 }
 
-// The bounded listings snapshot, shared by every request within CACHE_MS.
+// The view shared by every request within VIEW_CACHE_MS; concurrent readers wait on one upstream read.
 async function snapshot(): Promise<Out> {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.out;
+  if (cache && Date.now() - cache.at < VIEW_CACHE_MS) return cache.out;
+  inflight ??= fetchView().finally(() => (inflight = undefined));
+  const out = await inflight;
+  cache = { at: Date.now(), out };
+  return out;
+}
+
+// The prepared fulfillment of one order the keeper signed, encoded for Core.buyListing.
+async function fulfill(hash: string): Promise<Fulfill> {
+  const t = target();
+  if (!t) return { skipped: "unconfigured" };
   try {
-    inflight ??= build().finally(() => (inflight = undefined));
-    const out = await inflight;
-    cache = { at: Date.now(), out };
+    const { status, body } = await readJson(`${t.url}/market/orders/${hash}`, t.headers, VIEW_TIMEOUT_MS);
+    if (status === 404) return { skipped: "order not prepared by the keeper" };
+    if (status !== 200) return { skipped: `keeper view ${status}` };
+    if (!object(body) || typeof body.id !== "string" || !DIGITS.test(body.id) || typeof body.price !== "string" || !DIGITS.test(body.price) || typeof body.params !== "string" || !/^0x[0-9a-fA-F]*$/.test(body.params) || lc(String(body.hash)) !== hash) return { skipped: "malformed fulfillment" };
+    return { id: body.id, price: body.price, params: body.params as `0x${string}` };
   } catch {
-    // OpenSea failed: keep the last good answer for one more window, else nothing
-    cache = { at: Date.now(), out: cache?.out ?? { listings: [], max: MAX_LISTINGS } };
+    return { skipped: "fulfillment read failed" };
   }
-  return cache.out;
 }
 
 export async function GET(req: Request) {
-  const empty: Out = { listings: [], max: MAX_LISTINGS };
-  if (!process.env.OPENSEA_API_KEY || !seaportAdapter || !core) return Response.json(empty);
-
+  const headers = { "cache-control": "no-store" };
   const hash = new URL(req.url).searchParams.get("fulfill");
   if (hash) {
-    if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) return Response.json({ skipped: "bad order hash" } satisfies Fulfill, { status: 400 });
-    const client = clientKey(req);
-    if (client && !allow(client)) return Response.json({ skipped: "rate limited" } satisfies Fulfill, { status: 429 });
-    const key = hash.toLowerCase();
-    if (!(await snapshot()).listings.some((l) => lc(l.orderHash) === key)) return Response.json({ skipped: "order not in the current listings" } satisfies Fulfill, { status: 404 });
-    const hit = fulfilled.get(key);
-    if (hit && Date.now() - hit.at < FULFILL_CACHE_MS) {
-      fulfilled.delete(key);
-      fulfilled.set(key, hit);
-      return Response.json(await hit.out);
+    if (!HASH.test(hash)) return Response.json({ skipped: "bad order hash" } satisfies Fulfill, { status: 400, headers });
+    const key = lc(hash);
+    const current = await snapshot();
+    const row = current.view?.rows.find((r) => r.hash === key);
+    if (!row) return Response.json({ skipped: "order not in the current listings" } satisfies Fulfill, { status: 404, headers });
+    if (!row.signed) return Response.json({ skipped: "order not prepared by the keeper" } satisfies Fulfill, { status: 404, headers });
+    const hit = orders.get(key);
+    if (hit && Date.now() - hit.at < ORDER_CACHE_MS) {
+      orders.delete(key);
+      orders.set(key, hit);
+      return Response.json(await hit.out, { headers });
     }
-    if (fulfillActive >= MAX_FULFILL_INFLIGHT) return Response.json({ skipped: "busy" } satisfies Fulfill, { status: 503 });
-    if (!allowUpstream()) return Response.json({ skipped: "busy" } satisfies Fulfill, { status: 503, headers: { "Retry-After": "1" } });
-    fulfillActive++;
-    const out = fulfill(key).finally(() => fulfillActive--);
-    fulfilled.delete(key);
-    fulfilled.set(key, { at: Date.now(), out });
-    while (fulfilled.size > MAX_LISTINGS) fulfilled.delete(fulfilled.keys().next().value!);
-    return Response.json(await out);
+    if (orderActive >= MAX_ORDER_INFLIGHT) return Response.json({ skipped: "busy" } satisfies Fulfill, { status: 503, headers: { ...headers, "retry-after": "1" } });
+    orderActive++;
+    const out = fulfill(key).finally(() => orderActive--);
+    orders.delete(key);
+    orders.set(key, { at: Date.now(), out });
+    while (orders.size > MAX_ORDER_CACHE) orders.delete(orders.keys().next().value!);
+    return Response.json(await out, { headers });
   }
-
-  return Response.json(await snapshot());
+  return Response.json(await snapshot(), { headers });
 }

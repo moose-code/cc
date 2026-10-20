@@ -3424,6 +3424,20 @@ button.slot:disabled {
 
 /* ---- listings page ------------------------------------------------------- */
 
+/* the status lines of a listings surface: coverage, freshness, stream and failure state */
+.lstatus {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.lstatus .quiet {
+  color: var(--quiet);
+}
+.lstatus .warn {
+  color: var(--ink);
+}
+
 .ltable-row {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) 112px 56px 88px 88px 160px 72px 136px 96px;

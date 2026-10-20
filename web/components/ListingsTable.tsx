@@ -5,6 +5,7 @@ import { CreditTile } from "@/components/Tiles";
 import { useBalanceToken } from "@/lib/live";
 import { useBalanceInEth } from "@/lib/market";
 import type { ListingRow } from "@/lib/useListings";
+import { preparedForAcquire } from "@/lib/acquire";
 import { etaLabel } from "@/lib/compose-eta";
 import { eth, formatBalance, rating } from "@/lib/format";
 
@@ -70,7 +71,8 @@ export function ListingsTable({ rows, acquire }: { rows: ListingRow[]; acquire?:
           <span className={`num${r.clears ? " ctable-price" : ""}`}>{gapLabel(r)}</span>
           <span className="num">{etaText(r)}</span>
           <span className="lact">
-            {acquire && r.clears && acquire.available([r]).length > 0 && (
+            {!preparedForAcquire(r) && <span className="muted" title="The keeper has not prepared fulfillment for this order.">unprepared</span>}
+            {acquire && preparedForAcquire(r) && r.clears && acquire.available([r]).length > 0 && (
               <button className="hdr-acq" onClick={() => acquire.buy([r])} disabled={acquire.pending}>
                 {acquire.pending ? "…" : "acquire"}
               </button>

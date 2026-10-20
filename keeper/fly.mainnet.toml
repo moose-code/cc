@@ -12,7 +12,7 @@ kill_timeout = "30s"
 [env]
   NODE_ENV = "production"
   RECORD = "/app/deployments/1.json"
-  DRY_RUN = "1"
+  DRY_RUN = "0"
   LISTING_DELAY_SEC = "0"
   KEYSTORE = "/run/secrets/keeper-keystore.json"
   KEYSTORE_PASSWORD_FILE = "/run/secrets/keeper-password"
@@ -20,6 +20,30 @@ kill_timeout = "30s"
   STATE_DIR = "/data"
   RPC_URLS = "https://mainnet.gateway.tenderly.co,https://eth.drpc.org,https://ethereum-rpc.publicnode.com"
   INDEXER_URL = "https://cc-indexer-mainnet.fly.dev"
+  # the read-only market view the website API reads (docs/RUNBOOK.md section 8); the bearer token is the
+  # MARKET_VIEW_TOKEN secret, set the same value as KEEPER_MARKET_TOKEN in the website's Netlify functions store
+  MARKET_VIEW_PORT = "8080"
+
+# GET-only JSON from the keeper process. The machine must not stop for want of traffic: the keeper's own
+# discovery and doors run whether or not the website reads the view.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/health"
 
 [[mounts]]
   source = "keeper_state"

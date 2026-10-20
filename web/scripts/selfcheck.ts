@@ -69,22 +69,11 @@ assert.equal(replayBalance([3n], { ...v, valueSell: undefined }), 0n);
 
 console.log("selfcheck ok");
 
-// ---- header acquire selection (lib/acquire.ts) ----
-import { bucketCount, cheapestPerId, clearing, fitsBucket, shortlist, type Listing, type Priced, type SpendRoom } from "../lib/acquire.ts";
+// ---- listing affordability (lib/acquire.ts) ----
+import { bucketCount, cheapestPerId, fitsBucket, type Listing, type SpendRoom } from "../lib/acquire.ts";
 
 const L = (id: number, price: bigint, source: "strategy" | "opensea" = "strategy"): Listing => ({ id: BigInt(id), price, source, params: "0x" });
-const P = (id: number, price: bigint, bid: bigint): Priced => ({ ...L(id, price), bid });
 
-// nothing clears when every price is above its bid
-assert.deepEqual(clearing([P(1, 110n, 100n), P(2, 101n, 100n)], 1000n, false), []);
-// price equal to the bid clears; the pot bounds the price
-assert.equal(clearing([P(1, 100n, 100n)], 100n, false).length, 1);
-assert.equal(clearing([P(1, 100n, 100n)], 99n, false).length, 0);
-// the largest bid minus price comes first (ids 2, 3 and 4 tie at 50); equal margins take the lower price
-assert.deepEqual(clearing([P(1, 90n, 100n), P(2, 50n, 100n), P(3, 150n, 200n), P(4, 40n, 90n)], 1000n, false).map((l) => Number(l.id)), [4, 2, 3, 1]);
-// a retired Core clears nothing; a zero price is not a listing
-assert.equal(clearing([P(1, 50n, 100n)], 1000n, true).length, 0);
-assert.equal(clearing([P(1, 0n, 100n)], 1000n, false).length, 0);
 // spend cap: the first purchase of a bucket passes; later ones need spent + cost <= budget; uncapped always passes
 const room = (spent: bigint): SpendRoom => ({ capped: true, budget: 100n, spent, nextIn: 30 });
 assert.equal(fitsBucket(room(0n), 500n), true);
@@ -97,14 +86,6 @@ assert.equal(bucketCount(room(0n), [60n, 50n, 20n]), 2);
 assert.equal(bucketCount(room(90n), [20n]), 0);
 // a credit listed twice keeps its lower price
 assert.deepEqual(cheapestPerId([L(1, 90n), L(1, 80n, "opensea"), L(2, 5n)]).map((l) => [Number(l.id), l.price, l.source]), [[1, 80n, "opensea"], [2, 5n, "strategy"]]);
-// shortlist: estimated bid = rate * score / scorePer100Points; ids without a score are skipped; n bounds the result
-const scores = new Map([[1n, 2000n], [2n, 1000n], [3n, 1000n]]);
-assert.deepEqual(shortlist([L(1, 150n), L(2, 90n), L(3, 120n), L(4, 1n)], 100n, 1000n, scores, 2).map((l) => Number(l.id)), [1, 2]);
-assert.equal(shortlist([L(1, 1n)], 100n, 0n, scores, 5).length, 0);
-// a pricier high-rated listing beats cheap low-rated ones: rate 100, scorePer100Points 1000, id 9 scores 8000 (bid 800, price 500, margin 300), ids 1..8 score 1000 (bid 100)
-const many = new Map<bigint, bigint>([[9n, 8000n], ...[1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n].map((i): [bigint, bigint] => [i, 1000n])]);
-const cheapLow = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => L(i, BigInt(10 * i)));
-assert.deepEqual(shortlist([...cheapLow, L(9, 500n, "opensea")], 100n, 1000n, many, 1).map((l) => Number(l.id)), [9]);
 
 // ---- eth bid forecast (lib/climb.ts, mirror of CoreLib._climb / _recover) ----
 import { bidAt, ceilingAt, clearsIn, nextRise, priceAt, rateAt, type ClimbState } from "../lib/climb.ts";

@@ -1,22 +1,28 @@
 "use client";
 
-// Rows of the /listings page: every listed Credit of both venues (candidate gathering shared with the header acquire
-// button, lib/useAcquire.ts), its bid estimated from the snapshot rate and the score, the best LIVE rows re-read
-// (Core.bidOf, owner, strategy price), and the time the bid reaches the price (lib/climb.ts).
+// Rows of the /listings page and the feed tab: every listed Credit of both venues (lib/useAcquire.ts gathers them from
+// the indexer and the keeper's market view), its bid estimated from the snapshot rate and the score, the best LIVE
+// rows re-read at one block (Core.bidOf, holder, strategy price, Seaport order status), and the time the bid reaches
+// the price (lib/climb.ts). One stable query polled every READ_MS: a failed read keeps the last rows on screen and
+// reports the failure, so a page never loops on "reading" without data.
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { numberToHex, type Address } from "viem";
 import { usePublicClient } from "wagmi";
+import { seaportAbi } from "@cc/engine/abis";
+import { SEAPORT } from "@cc/engine/addresses";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, strategy, strategyAdapter } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
 import { MULTICALL3, readSnapshot, useHead } from "./live";
 import { useIxMode } from "./indexer";
-import { bucketCount, cheapestPerId, fitsBucket, type Priced } from "./acquire";
+import { bucketCount, cheapestPerId, fitsBucket, type Priced, type StrategyReadStatus } from "./acquire";
 import { gatherListings, scoresFor, spendCost, spendRoom } from "./useAcquire";
+import type { MarketOut } from "./market-view";
 import { ETH_ANCHOR_SLOT, ETH_CLOCK_SLOT } from "./sell";
 import { clearsIn, type ClearsIn, type ClimbState } from "./climb";
 
 const LIVE = 100; // rows (smallest estimated gap first) whose bid and listing are re-read from the chain
+const READ_MS = 12_000; // one chain read per block time while a listings surface is open
 const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
 
 export interface ListingRow extends Priced {
@@ -33,7 +39,9 @@ export interface ListingRow extends Priced {
 export interface ListingsData {
   rows: ListingRow[];
   paused: boolean;
-  osMax: number;
+  /** the market view these rows came from, for the status lines; undefined when the website API failed */
+  market?: MarketOut;
+  strategyStatus: StrategyReadStatus;
   pot: bigint;
   now: number;
   covers: number; // rows under their bid and the pot
@@ -45,19 +53,21 @@ export interface ListingsData {
 
 export function useListings() {
   const client = usePublicClient();
+  const qc = useQueryClient();
   const mode = useIxMode();
   const { data: head } = useHead();
-  return useQuery<ListingsData | undefined>({
-    queryKey: ["listings-page", mode, head?.n?.toString()],
+  return useQuery<ListingsData>({
+    queryKey: ["listings-page", mode],
     enabled: engineDeployed && Boolean(client) && Boolean(strategyAdapter) && head != null && mode !== "checking",
-    staleTime: 10_000,
+    staleTime: READ_MS / 2,
+    refetchInterval: READ_MS,
     retry: 0,
-    // the key moves with the head block; the rows of the last block stay on screen while the new ones load
+    // the rows of the last read stay on screen while the next one loads or fails
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const c = client!;
       const snap = await readSnapshot(c, core!);
-      const { listings, known, osMax } = await gatherListings(c, head!.n);
+      const { listings, known, market, strategyStatus } = await gatherListings(qc);
       const best = cheapestPerId(listings);
       const scores = await scoresFor(c, best.map((l) => l.id), known);
       const bidFor = (rate: bigint, s: bigint) => (rate * s) / SCORE_PER_100_POINTS;
@@ -71,6 +81,7 @@ export function useListings() {
       // live read of the best rows: pot, retired, the two adapters, the climb state, the multiplier, then bidOf / ownerOf / nftForSale per row
       const top = rows.slice(0, LIVE);
       const balanceReads = snap.balanceOn && snap.settings.balanceBidOn; // one balanceBidOf per live row, after the per-row triples
+      const orders = top.filter((l) => l.source === "opensea" && l.orderHash); // one Seaport getOrderStatus per live OpenSea row, last
       const cc = { address: core!, abi: coreAbi } as const;
       const word = (i: bigint) => c.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }), blockNumber: snap.blockNumber });
       const [res, w0, w2, w3, clock] = await Promise.all([
@@ -93,6 +104,7 @@ export function useListings() {
               { address: strategy, abi: strategyAbi, functionName: "nftForSale", args: [l.id] },
             ] as const),
             ...(balanceReads ? top.map((l) => ({ ...cc, functionName: "balanceBidOf", args: [l.id] }) as const) : []),
+            ...orders.map((l) => ({ address: SEAPORT, abi: seaportAbi, functionName: "getOrderStatus", args: [l.orderHash as `0x${string}`] }) as const),
           ] as any, // mixed contracts; results are cast by position below
         }),
         word(0n),
@@ -123,6 +135,12 @@ export function useListings() {
           live.set(l.id, { bid, price: listed });
         } else if (owner.toLowerCase() === core!.toLowerCase()) stale.add(l.id);
         else live.set(l.id, { bid, price: l.price });
+      });
+      // a cancelled or filled Seaport order leaves the table; an unreadable status keeps the row, the simulation decides
+      const orderBase = 8 + 3 * top.length + (balanceReads ? top.length : 0);
+      orders.forEach((l, j) => {
+        const st = val<readonly [boolean, boolean, bigint, bigint]>(orderBase + j);
+        if (st && (st[1] || (st[3] > 0n && st[2] >= st[3]))) stale.add(l.id);
       });
       // balance bid per row: the live read for the top rows (0 or a failed read is off), else score * unit * rate / 10_000
       const balanceLive = new Map<bigint, bigint>();
@@ -179,7 +197,7 @@ export function useListings() {
         return { ...r, paused: snap.paused, gap: gapOf(r.price, r.bid), clears, wait, eta, balanceBid: balanceOf(r) };
       });
       out.sort((a, b) => a.gap - b.gap);
-      return { rows: out, paused: snap.paused, osMax, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state };
+      return { rows: out, paused: snap.paused, market, strategyStatus, pot, now, covers: under.length, fits: bucketCount(room, under), capped: room.capped, bucketSeconds: s.bucketSeconds, climb: state };
     },
   });
 }

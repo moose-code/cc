@@ -8,6 +8,9 @@
 // `bidOf(id)`, the adapter's quote (the exact value the Core pays, and the adapter's own order checks), the holder
 // and, for Seaport, the order status. The window advances so stale high-ranked listings cannot hide later ones.
 // The simulation stays the final check.
+// The same catalog feeds a read-only market view (./market-view.ts): the compatible OpenSea asks ranked by exact price
+// per point with their cached immutable scores, the prepared fulfillment of a signed order, and the discovery status
+// (stream, gap, reconciliation, backoff). The view publishes data only; it never sets purchase terms.
 
 import { mkdirSync, readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
@@ -75,10 +78,43 @@ interface Watched {
 
 type MarketUpdate = { revision: number; remove: boolean; receivedAt: number; event?: string; id?: bigint; price?: bigint };
 
+// one compatible ask of the market view; numbers are decimal strings, `endTime` unix seconds (0 for a file order)
+export interface MarketViewRow { id: string; price: string; hash: string; endTime: number; score: string | null; signed: boolean }
+export interface MarketView {
+  chainId: number;
+  core: Address;
+  seaportAdapter: Address;
+  credits: Address;
+  builtAt: number;
+  status: {
+    source: "api" | "file" | "off";
+    complete: boolean;
+    lastFullAt: number;
+    publishedAt: number;
+    streamJoined: boolean;
+    gap: boolean;
+    queuedUpdates: number;
+    queuedRemovals: number;
+    retryAt: number | null;
+    lastFailure: { at: number; error: string } | null;
+  };
+  catalog: { total: number; scored: number; signed: number; limit: number };
+  rows: MarketViewRow[];
+  strategy: {
+    publishedAt: number;
+    lastFailure: { at: number; error: string } | null;
+    total: number;
+    rows: { id: string; price: string; score: string | null }[];
+  };
+}
+export interface SignedView { id: string; price: string; hash: string; params: Hex }
+
 export class Sources {
   private scores = new Map<bigint, bigint>();
   private strategy: Watched[] = [];
   private strategyAt = 0;
+  private strategyPublishedAt = 0;
+  private strategyFailure?: { at: number; error: string };
   private book?: StrategyBook;
   private seaport: Watched[] = [];
   private seaportAt = 0;
@@ -101,6 +137,11 @@ export class Sources {
   // Decoded simulation faults have a short in-memory wait; receipt reverts also have a durable wait.
   private cooldown = new Map<string, number>();
   private nextCandidate = { strategy: 0, seaport: 0 };
+  // the market view: a revision per catalog, quarantine, stream or failure change, the ranked rows cached per revision
+  private viewRevision = 0;
+  private publishedAt = 0;
+  private lastFailure?: { at: number; error: string };
+  private ranked?: { revision: number; rows: MarketViewRow[] };
 
   private client: PublicClient;
   private cfg: Config;
@@ -127,6 +168,7 @@ export class Sources {
       onGap: () => { this.gapGeneration++; },
       onStatus: (joined) => {
         this.streamJoined = joined;
+        this.viewRevision++;
         log("info", "opensea stream status", { joined });
       },
     });
@@ -161,6 +203,7 @@ export class Sources {
       this.overflowed = true;
       log("warn", "opensea stream queue overflow, reconciliation required");
     }
+    this.viewRevision++;
   }
 
   private ackMarketChanges(changes: ReadonlyArray<readonly [string, MarketUpdate]>, reconcile = false, observedAt = this.now()) {
@@ -316,23 +359,29 @@ export class Sources {
     const s = this.cfg.strategy;
     if (s.mode === "off" || this.now() - this.strategyAt < this.cfg.strategyRefreshSec * 1000) return;
     this.strategyAt = this.now();
-    let listed: { id: bigint; price: bigint }[];
-    if (s.mode === "ids") {
-      const prices = await this.readPrices(s.ids);
-      listed = s.ids.flatMap((id, i) => ((prices[i] ?? 0n) > 0n ? [{ id, price: prices[i]! }] : []));
-    } else {
-      this.book ??= this.strategyBook();
-      listed = [...(await this.book.refresh())].map(([id, price]) => ({ id, price }));
+    try {
+      let listed: { id: bigint; price: bigint }[];
+      if (s.mode === "ids") {
+        const prices = await this.readPrices(s.ids);
+        listed = s.ids.flatMap((id, i) => ((prices[i] ?? 0n) > 0n ? [{ id, price: prices[i]! }] : []));
+      } else {
+        this.book ??= this.strategyBook();
+        listed = [...(await this.book.refresh())].map(([id, price]) => ({ id, price }));
+      }
+      await this.scoresOf(listed.map((x) => x.id));
+      this.strategy = listed.map(({ id, price }) => ({
+        venue: "strategy" as const,
+        adapter: this.cfg.record.strategyAdapter,
+        id,
+        price,
+        params: "0x" as Hex,
+      }));
+      this.strategyPublishedAt = this.now();
+      log("info", "strategy listings indexed", { listed: this.strategy.length });
+    } catch (error) {
+      this.strategyFailure = { at: this.now(), error: "strategy refresh failed" };
+      throw error;
     }
-    await this.scoresOf(listed.map((x) => x.id));
-    this.strategy = listed.map(({ id, price }) => ({
-      venue: "strategy" as const,
-      adapter: this.cfg.record.strategyAdapter,
-      id,
-      price,
-      params: "0x" as Hex,
-    }));
-    log("info", "strategy listings indexed", { listed: this.strategy.length });
   }
 
   private async refreshSeaport() {
@@ -402,6 +451,8 @@ export class Sources {
       const pendingHash = (e as { name?: string; hash?: string }).name === "OpenSeaPending" ? (e as { hash?: string }).hash : undefined;
       if (pendingHash) this.pendingUntil.set(pendingHash, this.now() + 30_000);
       this.seaportRetryAt = Math.max(this.seaportRetryAt, pendingHash ? this.now() + 1000 : typeof retryAt === "number" && Number.isFinite(retryAt) ? retryAt : this.now() + o.refreshSec * 1000);
+      if (!pendingHash) this.lastFailure = { at: this.now(), error: safeError(e) };
+      this.viewRevision++;
       log("warn", "opensea fetch failed, keeping the cached orders", { complete: false, retryAt: this.seaportRetryAt || undefined, error: safeError(e) });
       if (!pendingHash) void alert(this.cfg.alertWebhook, "opensea", "OpenSea discovery failed; keeping cached orders and backing off", { error: safeError(e), retryAt: this.seaportRetryAt });
       return;
@@ -435,7 +486,94 @@ export class Sources {
       }
     }
     this.seaport = watched.filter(order => !this.blocked.has(order.hash!.toLowerCase()) && !this.transferred.has(String(order.id)));
+    this.publishedAt = this.now();
+    this.viewRevision++;
     await this.scoresOf(this.seaport.map((w) => w.id));
+    this.viewRevision++;
+  }
+
+  // The compatible asks the website ranks: the whole observed catalog (or the file's orders) less quarantined and
+  // expired rows, by exact price per point with cached scores, unscored rows last by price. Cached per revision.
+  private rankedRows(): MarketViewRow[] {
+    if (this.ranked?.revision === this.viewRevision) return this.ranked.rows;
+    const rows: MarketViewRow[] = [];
+    if (this.cfg.opensea.file) {
+      for (const w of this.seaport) if (w.hash) rows.push({ id: String(w.id), price: String(w.price), hash: w.hash.toLowerCase(), endTime: 0, score: this.scores.get(w.id)?.toString() ?? null, signed: true });
+    } else {
+      for (const [hash, row] of this.market.rows) {
+        if (this.blocked.has(hash) || this.transferred.has(row.id)) continue;
+        rows.push({ id: row.id, price: row.price, hash, endTime: Number(row.endTime), score: this.scores.get(BigInt(row.id))?.toString() ?? null, signed: this.market.signed.has(hash) });
+      }
+    }
+    const price = (r: MarketViewRow) => BigInt(r.price);
+    rows.sort((a, b) => {
+      if ((a.score === null) !== (b.score === null)) return a.score === null ? 1 : -1;
+      if (a.score !== null && b.score !== null) {
+        const left = price(a) * BigInt(b.score);
+        const right = price(b) * BigInt(a.score);
+        if (left !== right) return left < right ? -1 : 1;
+      }
+      const pa = price(a), pb = price(b);
+      if (pa !== pb) return pa < pb ? -1 : 1;
+      return a.id.length === b.id.length ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : a.id.length - b.id.length;
+    });
+    this.ranked = { revision: this.viewRevision, rows };
+    return rows;
+  }
+
+  // The read-only market view of ./market-view.ts. `limit` bounds the rows; the counts cover the whole catalog.
+  marketView(limit: number, now = this.now()): MarketView {
+    const live = this.rankedRows().filter(r => r.endTime === 0 || r.endTime * 1000 > now);
+    const o = this.cfg.opensea;
+    let queuedRemovals = 0;
+    for (const change of this.marketChanges.values()) if (change.remove) queuedRemovals++;
+    return {
+      chainId: this.cfg.record.chainId,
+      core: this.cfg.record.core,
+      seaportAdapter: this.cfg.record.seaportAdapter,
+      credits: CREDITS,
+      builtAt: now,
+      status: {
+        source: o.file ? "file" : o.key ? "api" : "off",
+        complete: o.file ? this.publishedAt > 0 : this.market.complete,
+        lastFullAt: o.file ? this.publishedAt : this.market.lastFullAt,
+        publishedAt: this.publishedAt,
+        streamJoined: this.streamJoined,
+        gap: !o.file && (this.gapGeneration !== this.reconciledGeneration || this.overflowed),
+        queuedUpdates: this.marketChanges.size - queuedRemovals,
+        queuedRemovals,
+        retryAt: this.seaportRetryAt > now ? this.seaportRetryAt : null,
+        lastFailure: this.lastFailure ?? null,
+      },
+      catalog: { total: live.length, scored: live.filter(r => r.score !== null).length, signed: live.filter(r => r.signed).length, limit },
+      rows: live.slice(0, limit),
+      strategy: {
+        publishedAt: this.strategyPublishedAt,
+        lastFailure: this.strategyFailure ?? null,
+        total: this.strategy.length,
+        rows: this.strategy.slice(0, limit).map(row => ({
+          id: String(row.id), price: String(row.price), score: this.scores.get(row.id)?.toString() ?? null,
+        })),
+      },
+    };
+  }
+
+  // The prepared fulfillment of one order in the view, encoded for Core.buyListing; undefined for an unknown,
+  // quarantined, expired or unsigned order. Advisory: the Core, the adapter and Seaport still judge the order.
+  signedOrder(hash: string, now = this.now()): SignedView | undefined {
+    const key = hash.toLowerCase();
+    if (this.cfg.opensea.file) {
+      const w = this.seaport.find(order => order.hash?.toLowerCase() === key);
+      return w ? { id: String(w.id), price: String(w.price), hash: key, params: w.params } : undefined;
+    }
+    const row = this.market.rows.get(key);
+    const order = this.market.signed.get(key);
+    if (!row || !order || this.blocked.has(key) || this.transferred.has(row.id) || Number(row.endTime) * 1000 <= now) return undefined;
+    try {
+      return { id: order.id, price: order.price, hash: key, params: encodeBasicOrder(order.params) };
+    } catch {
+      return undefined;
+    }
   }
 
   // Read one rotating window per venue at the block. The cap bounds RPC work per tick and every ranked listing gets a turn.
