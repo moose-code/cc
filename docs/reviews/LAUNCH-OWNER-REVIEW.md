@@ -25,6 +25,21 @@ The nonsecret original config-lock backup `/Users/dd/.foundry/config-lock-backup
 
 The owner's new 69%-for-15-minutes request is interpreted as a starting 69% skim decaying to the 6.9% baseline across 900 seconds. The existing plan is 4,140 seconds. [Exact deployed factory source](factory-source/ArtCoinsFactoryV2.sol) predictToken/configHash/_salt hashes the entire DeploymentConfigV2, including mev.windowSeconds, into the CREATE2 salt. Core.COIN was fixed from the original configuration in its constructor. Changing 4,140 to 900 therefore predicts a different coin, which this Core cannot accept. Changing only Core.settings.sniperSeconds changes the payee clock but does not change the immutable module fee schedule. Independent source review confirmed no existing schedule-reset path. No attempted overlay or settings edit was made. The owner must choose retaining this deployment's 69-minute inputs or preparing a replacement Core/deployment record for 15 minutes; neither choice authorizes a broadcast by itself.
 
+## Readiness and minimum remaining actions
+
+Executable candidate: `62af0a2`; local commit only, no push. Production services retain the previously accepted runtime; timestamps below identify actual production observations rather than new synthetic checks. Full historical replay and website marketplace listings remain owner-deferred.
+
+| Component | Version/location | Live evidence retained | Unproven until launch/use | Owner action |
+|---|---|---|---|---|
+| Core / coin | Core cdb1889a, block 26229330; predicted coin 28ef14A5 | 11 actual receipts, seven code/wiring comparisons, original config hash; final read-only Postflight/Resume exit 0 at 26230893 | Actual coin/pool receipt and initial trading | Resolve 69-minute versus replacement-for-15-minute identity; then explicit exact launch approval |
+| Keeper | Fly cc-keeper-mainnet, runtime fed93c6/config9df242a | 02:10 UTC startup dryRun=true/delay0; full catalog followed actual events with gap=false; wallet0.100000 ETH | Relay inclusion, funded purchases and receipt accounting | Additional funding **0 ETH** to recommended float; separately authorize arming before expecting paid actions |
+| Website | cc.artcoins.art, fed93c6, Netlify Git auto-deploy | 02:08 publish; real API/browser canonical Core, zero pot/no coin, stable deferred notice | Postlaunch balances, swaps and fee-driven pot UI | None for current pre-coin preparation; marketplace issue [#117](https://github.com/ripe0x/cc/issues/117) deferred |
+| CC indexer | Fly cc-indexer-mainnet,801be6f/schema cc_mainnet_v6 | 02:07 health200; fetched through26230230, committed26039252; ready503 | Complete indexed history/parity and actual coin-event ingestion | Historical acceptance deferred; retain bounded replay, do not extend paid RPC window |
+| Artcoins | Site d06d29c, indexer36d5238; correct C27 V2 factory | Actual health/ready200, near-head26230703, persistent restored data | Actual CC discovery and tradable quotes; 12-second poll plus site cache | None before existing-config launch; replacement addresses would require reconciliation |
+| Alerts | Existing Midway topic, keeper delivery integration | Actual automatic reserve/OpenSea notifications read back; separately labelled synthetic503-to200 retry proof | Phone notification and live transaction-failure alerts | Rotate the chat-exposed OpenSea credential via provider/stores; do not treat cleanup as rotation |
+
+**Current verdict:** technical GO only for the existing accepted 69-minute inputs, **NO-GO for the newly requested 15-minute launch against this Core**. No launch command should pretend the original immutable identity supports 900 seconds. After the owner's identity choice, prepare its matching dry-run-first command and exact final transaction approval. Unlock the existing keystore interactively; preserve the private relay and API credentials in existing secret access, never command literals or files. The production wrapper must recheck state, nonce, calldata, signer, gas ceiling and each receipt. Keep phase two off and controller unlocked. No coin or pool creation, wallet funding, keeper arming or signing occurred during preparation.
+
 ## Historical owner review below
 
 The following material records its original revisions and dates; the current acceptance and limits above supersede conflicting status statements.
