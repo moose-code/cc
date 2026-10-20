@@ -53,6 +53,19 @@ interface IBalanceModule {
     function pay(address to, uint256 amount) external;
 }
 
+/// the replaceable quote of the phase 2 treasury's CC redemption. stateless and holding nothing: the treasury reads it
+/// under a bounded static call and refuses any answer above the proportional share `ccIn * claimReserve / ccSupply` it
+/// computes itself, so a policy can lower a payout (a fee) and never raise it
+interface IRedemptionPolicy {
+    /// the balance token paid for burning `ccIn` of a `ccSupply` against `claimReserve` with a fee of `feeBps`
+    function quote(uint256 ccIn, uint256 claimReserve, uint256 ccSupply, uint256 feeBps)
+        external
+        view
+        returns (uint256 out);
+    /// true. the treasury's policy probe
+    function isRedemptionPolicy() external pure returns (bool);
+}
+
 interface ICreditScore {
     /// score of a credit in ten-thousandths of a point, 800_000 to 8_000_000 (80 to 800 points). pure in `seed` and
     /// `paidAt`, which are fixed at mint
