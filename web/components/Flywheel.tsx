@@ -2,6 +2,7 @@
 
 import { Fragment } from "react";
 import Link from "next/link";
+import { statementSaleSplit } from "@/lib/sale-split";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { useFeed } from "@/lib/data";
 import { useSnapshot } from "@/lib/live";
@@ -13,6 +14,7 @@ import { Sk } from "./Skeleton";
 
 // bps as a percent, up to two decimals: 900 -> "9", 990 -> "9.9"
 const pct = (bps: number) => (bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const salePct = (percent: number) => percent.toLocaleString("en-US", { maximumFractionDigits: 2 });
 
 const Arrow = ({ n }: { n: number }) => (
   <div className="fw-arr" style={{ "--n": n } as React.CSSProperties} aria-hidden>
@@ -39,8 +41,8 @@ export function Flywheel() {
 
   const creditId = latest.find((e) => e.tile?.kind === "credit")?.tile?.id;
   const filled = snap ? Number(snap.pileSize % BigInt(STATEMENT_SIZE)) : 0;
-  // split of a statement sale after the artist and operator cuts, in bps
-  const split = snap ? { buyback: snap.settings.saleToBuybackBps, pot: 10000 - snap.settings.saleToBuybackBps } : undefined;
+  // gross statement sale shares, after the artist and operator cuts
+  const split = snap ? statementSaleSplit(snap.settings) : undefined;
 
   // the standing engine share; the launch fee window is left out of the explainer. A fee still loading is a skeleton;
   // no pool or a failed read keeps the general wording
@@ -89,7 +91,7 @@ export function Flywheel() {
     },
     {
       title: "buy credits",
-      line: "a standing bid, priced by credit rating",
+      line: "a funded bid that falls after purchases",
       glyph: (
         <span className="fw-thumb">{creditId != null ? <CreditTile id={creditId} /> : feedLoading && <Sk block w="100%" h="100%" />}</span>
       ),
@@ -125,9 +127,8 @@ export function Flywheel() {
       <div className="fw-intro">
         <h2>Credit Cycle</h2>
         <p>
-          $CC trades fill the pot. the pot buys Credits, priced by rating, from CreditStrategy, OpenSea or anyone who
-          sells. every {STATEMENT_SIZE} become a statement, which {balanceOn ? "sells or redeems" : "sells"} to refill
-          the pot.
+          $CC trading fees fund a moving bid for Jack Butcher’s Credits. acquired Credits can return to collectors
+          or become Statements. completed sales help finance more purchases and CC buybacks.
         </p>
         <Link href="/faq" className="fw-faq-link">how it works ↗</Link>
       </div>
@@ -150,11 +151,17 @@ export function Flywheel() {
         <div className="fw-ret-end" aria-hidden />
         <div className="fw-split">
           <span>
-            <b>{split ? <span className="fx-in">{pct(split.pot)}%</span> : wait("3ch")}</b> of statement sales back to the pot
+            <b>{split ? <span className="fx-in">{salePct(split.pot)}%</span> : wait("3ch")}</b> of each Statement sale to the pot
           </span>
           <i aria-hidden>·</i>
           <span>
-            <b>{split ? <span className="fx-in">{pct(split.buyback)}%</span> : wait("3ch")}</b> buys and burns $CC
+            <b>{split ? <span className="fx-in">{salePct(split.buyback)}%</span> : wait("3ch")}</b> allocated to later CC buybacks
+          </span>
+          <i aria-hidden>·</i>
+          <span>
+            <b>{snap ? pct(snap.settings.saleToArtistBps) + "%" : wait("3ch")}</b> artist
+            {" · "}
+            <b>{snap ? pct(snap.settings.saleToOperatorBps) + "%" : wait("3ch")}</b> operator
           </span>
         </div>
       </div>
