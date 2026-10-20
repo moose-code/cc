@@ -260,7 +260,7 @@ test("stream changes coalesce and ignore unrelated cancellation floods", () => {
   const source: any = new Sources({} as any, { record: { chainId: 1 }, strategy: { mode: "off" }, opensea: { refreshSec: 300 } } as any);
   source.market.complete = true;
   const hash = "0x" + "11".repeat(32);
-  source.market.rows.set(hash, { id: "42" });
+  source.market.rows.set(hash, { id: "42", price: "1000" });
   source.seaport = [{ id: 42n, hash }];
   for (let i = 0; i < 6000; i++) source.marketChanged({ event: "item_cancelled", hash: "0x" + BigInt(i + 100).toString(16).padStart(64, "0") });
   assert.equal(source.marketChanges.size, 0);
@@ -360,7 +360,7 @@ test("repeated negative events drain after the order is published absent", () =>
   const source: any = new Sources({} as any, { record: { chainId: 1 }, strategy: { mode: "off" }, opensea: { refreshSec: 300 } } as any);
   const hash = "0x" + "77".repeat(32);
   source.market.complete = true;
-  source.market.rows.set(hash, { id: "42" });
+  source.market.rows.set(hash, { id: "42", price: "1000" });
   try {
     source.marketChanged({ event: "item_cancelled", hash });
     const snapshot = [...source.marketChanges];
@@ -380,7 +380,7 @@ test("removal acknowledgments preserve newer positive updates and known-order qu
   const source: any = new Sources({} as any, { record: { chainId: 1 }, strategy: { mode: "off" }, opensea: { refreshSec: 300 } } as any);
   const hash = "0x" + "88".repeat(32);
   source.market.complete = true;
-  source.market.rows.set(hash, { id: "42" });
+  source.market.rows.set(hash, { id: "42", price: "1000" });
   source.marketChanged({ event: "item_cancelled", hash });
   const removal = [...source.marketChanges];
   source.market.rows.delete(hash);
@@ -389,7 +389,7 @@ test("removal acknowledgments preserve newer positive updates and known-order qu
   source.ackMarketChanges(removal);
   assert.equal(source.marketChanges.get(hash).revision, positiveRevision);
   assert.equal(source.marketChanges.get(hash).remove, false); assert.equal(source.blocked.has(hash), true);
-  source.market.rows.set(hash, { id: "42" });
+  source.market.rows.set(hash, { id: "42", price: "1000" });
   source.marketChanged({ event: "item_cancelled", hash });
   const knownRemoval = [...source.marketChanges];
   source.marketChanged({ event: "order_invalidate", hash });
@@ -399,4 +399,83 @@ test("removal acknowledgments preserve newer positive updates and known-order qu
   source.market.rows.delete(hash);
   source.ackMarketChanges(current);
   assert.equal(source.marketChanges.size, 0); assert.equal(source.blocked.has(hash), false);
+});
+
+// promise: cheap fresh listings jump a FIFO backlog by exact price per point without starving unpriced canonical reads.
+test("stream scheduling ranks advisory prices by cached score and keeps an unpriced lane", async () => {
+  const source: any = new Sources({} as any, { record: { chainId: 1 }, opensea: { refreshSec: 300 } } as any, () => 2_000_000);
+  const hash = (id: number) => "0x" + BigInt(id).toString(16).padStart(64, "0");
+  for (let i = 1; i <= 100; i++) source.marketChanged({ event: "order_revalidate", hash: hash(i) });
+  for (let i = 101; i <= 150; i++) {
+    source.scores.set(BigInt(i), 1000n);
+    source.marketChanged({ event: "item_listed", hash: hash(i), id: BigInt(i), price: 1000n });
+  }
+  source.scores.set(999n, 10_000n);
+  source.marketChanged({ event: "item_listed", hash: hash(999), id: 999n, price: 2000n });
+  source.pendingUntil.set(hash(102), 2_001_000);
+  const selected = await source.prioritizedUpdates();
+  assert.equal(selected.length, 32);
+  assert.equal(selected[0][0], hash(999), "higher ETH price still wins at lower ETH per point");
+  assert.equal(selected.filter(([, change]: any) => change.event === "order_revalidate").length, 8);
+  assert.equal(selected.some(([h]: any) => h === hash(102)), false);
+  assert.equal(source.market.rows.size, 0, "advisory hints never become executable orders");
+  assert.equal(source.seaport.length, 0);
+});
+
+// promise: stream ranking reads at most 64 missing immutable scores per pass, persists them, and reuses them.
+test("stream priority score work is bounded and uses the durable cache", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-priority-scores-"));
+  const sizes: number[] = [];
+  const client: any = { multicall: async ({ contracts }: any) => {
+    sizes.push(contracts.length);
+    return contracts.map((c: any) => c.functionName === "seedOf" ? "0x" + "11".repeat(21) : c.functionName === "timestampOf" ? 1n : 2000n);
+  } };
+  const cfg: any = { stateDir: dir, record: { chainId: 1 }, opensea: { refreshSec: 300 } };
+  const source: any = new Sources(client, cfg);
+  for (let i = 1; i <= 80; i++) source.marketChanged({ event: "item_listed", hash: "0x" + BigInt(i).toString(16).padStart(64, "0"), id: BigInt(i), price: 1000n });
+  await source.prioritizedUpdates();
+  assert.equal(source.scores.size, 64);
+  assert.ok(sizes.every(size => size <= 128));
+  assert.equal(JSON.parse(readFileSync(join(dir, "credit-scores.json"), "utf8")).scores.length, 64);
+  await source.prioritizedUpdates();
+  assert.equal(source.scores.size, 80);
+  const count = sizes.length;
+  await source.prioritizedUpdates();
+  assert.equal(sizes.length, count, "already-cached facts make no additional RPC calls");
+});
+
+// promise: bulk notification catch-up uses complete catalog pages at most every five minutes, preserving fresh and newer events.
+test("full reconciliation drains settled revalidations without losing new listing propagation", () => {
+  let now = 2_000_000;
+  const source: any = new Sources({} as any, { record: { chainId: 1 }, opensea: { refreshSec: 300 } } as any, () => now);
+  source.market.complete = true; source.market.lastFullAt = now; source.lastFullAttempt = now;
+  source.streamJoined = true; source.reconciledGeneration = source.gapGeneration;
+  const hash = (id: number) => "0x" + BigInt(id).toString(16).padStart(64, "0");
+  for (let i = 1; i <= 150; i++) source.marketChanged({ event: "order_revalidate", hash: hash(i) });
+  assert.equal(source.needsMarketReconcile(), false);
+  now += 300_000;
+  assert.equal(source.needsMarketReconcile(), true);
+  source.marketChanged({ event: "order_revalidate", hash: hash(151) });
+  source.marketChanged({ event: "item_listed", hash: hash(152), id: 152n, price: 1000n });
+  source.marketChanged({ event: "item_listed", hash: hash(153), id: 153n, price: 1000n });
+  const snapshot = [...source.marketChanges];
+  const started = now;
+  now += 60_000; // A slow collection scan does not turn a fresh-at-start notification into settled evidence.
+  source.marketChanged({ event: "item_listed", hash: hash(1), id: 1n, price: 1n });
+  source.market.rows.set(hash(153), { id: "153" });
+  source.ackMarketChanges(snapshot, true, started);
+  assert.deepEqual([...source.marketChanges.keys()], [hash(1), hash(151), hash(152)]);
+  now += 30_000;
+  source.ackMarketChanges([...source.marketChanges], true);
+  assert.deepEqual([...source.marketChanges.keys()], [hash(1), hash(152)], "missing fresh listings retain canonical reads even after settling");
+});
+
+// promise: optional priority hints cannot stop canonical discovery when their immutable score read fails.
+test("failed priority score hints remain in the unpriced canonical lane", async () => {
+  const source: any = new Sources({ multicall: async () => { throw new Error("fixture unavailable"); } } as any, { record: { chainId: 1 }, opensea: { refreshSec: 300 } } as any);
+  const hash = "0x" + "99".repeat(32);
+  source.marketChanged({ event: "item_listed", hash, id: 99n, price: 1000n });
+  const selected = await source.prioritizedUpdates();
+  assert.equal(selected[0][0], hash);
+  assert.equal(source.scores.has(99n), false);
 });

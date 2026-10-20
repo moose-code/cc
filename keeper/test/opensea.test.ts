@@ -1,6 +1,7 @@
 // promise: OpenSea refreshes end within their request budget and a malformed listing leaves other signed orders usable
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { safeError } from "../src/log.ts";
 import { fetchListings, CREDITS, SEAPORT_16, OpenSeaRateLimit, OpenSeaUnavailable, createMarketBook, OpenSeaPending } from "@cc/engine/opensea";
 
 const offerer = "0x00000000000000000000000000000000000000f1";
@@ -567,6 +568,38 @@ test("OpenSea market book: full baseline, warm reuse, new winner, cancellation, 
   } finally { Date.now = realNow; globalThis.fetch = realFetch; }
 });
 
+// promise: revalidation can describe Credits bids or bundles; unsupported order shapes do not abort unrelated listing updates.
+test("OpenSea market book: canonical bids and bundles are filtered without aborting listing discovery", async () => {
+  const realFetch = globalThis.fetch;
+  const book = createMarketBook(); let posts = 0;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith("/all")) return Response.json({ listings: [rpcListing(1)] });
+    if (path.includes("/orders/chain/")) {
+      const id = Number(BigInt(path.split("/").at(-1)!));
+      const order: any = { ...rpcListing(id), chain: "ethereum", status: "ACTIVE" };
+      const p = order.protocol_data.parameters;
+      if (id >= 2 && id <= 5) {
+        p.consideration = [{ ...p.offer[0], itemType: id, recipient: holder(id) }];
+        p.offer = [{ itemType: 1, token: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", identifierOrCriteria: "0", startAmount: "900", endAmount: "900" }];
+      }
+      if (id === 6) p.offer.push({ ...p.offer[0], identifierOrCriteria: "7" });
+      return Response.json({ order });
+    }
+    if (init?.method === "POST") posts++;
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, book, sign: 2, sleep: async () => {}, getScores: async (ids: string[]) => ids.map(() => 1n) };
+  try {
+    await fetchListings(opts); const before = posts;
+    const result = await fetchListings({ ...opts, updates: [abiWord(8), ...[2, 3, 4, 5, 6].map(abiWord)] });
+    assert.equal(result.complete, true); assert.equal(result.mode, "incremental");
+    assert.deepEqual([...book.rows.keys()], [abiWord(1), abiWord(8)]);
+    assert.deepEqual(result.orders.map(o => o.id), ["1", "8"]);
+    assert.equal(result.reusedParams, 1); assert.equal(posts, before + 1);
+  } finally { globalThis.fetch = realFetch; }
+});
+
 // promise: failed incremental passes do not publish partial rows or prepared orders, and wrong order/contract/chain identities never enter a book.
 test("OpenSea market book: atomic failure and canonical identity validation", async () => {
   const realFetch = globalThis.fetch;
@@ -594,7 +627,13 @@ test("OpenSea market book: atomic failure and canonical identity validation", as
     await fetchListings(opts);
     const rows = book.rows, signed = book.signed, fullAt = book.lastFullAt;
     mode = "atomic";
-    await assert.rejects(fetchListings({ ...opts, updates: [abiWord(3), abiWord(4)], removals: [abiWord(1)] }), /HTTP 503/);
+    await assert.rejects(fetchListings({ ...opts, updates: [abiWord(3), abiWord(4)], removals: [abiWord(1)] }), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, "OpenSeaHTTP503"); assert.equal(safeError(error), "OpenSeaHTTP503");
+      assert.equal(error.message, "opensea: HTTP 503");
+      assert.ok(!JSON.stringify(error).includes("api.opensea.io"));
+      return true;
+    });
     assert.equal(book.rows, rows); assert.equal(book.signed, signed); assert.equal(book.rows.size, 1); assert.equal(book.lastFullAt, fullAt);
     for (mode of ["hash", "protocol", "collection", "chain", "empty-chain", "status", "wrapper"]) {
       await assert.rejects(fetchListings({ ...opts, updates: [abiWord(3)] }), /identity|status/);

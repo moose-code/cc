@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# promise: a deployed indexer binds its schema, and read-only acceptance fails on an unhealthy service.
+# promise: an indexer binds its schema, rejects unhealthy SQL, and accepts only matching coinLive/code states.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -44,6 +44,7 @@ EOF
 cat > "$TMP/bin/node" <<'EOF'
 #!/usr/bin/env bash
 [[ "${*: -1}" == 1 ]] || exit 2
+if [[ "$MOCK_NODE_EXIT" != 0 ]]; then echo "mock SQL acceptance failed" >&2; fi
 exit "$MOCK_NODE_EXIT"
 EOF
 chmod +x "$TMP/bin/fly" "$TMP/bin/curl" "$TMP/bin/cast" "$TMP/bin/node"
@@ -51,15 +52,15 @@ chmod +x "$TMP/bin/fly" "$TMP/bin/curl" "$TMP/bin/cast" "$TMP/bin/node"
 A=0x1111111111111111111111111111111111111111
 B=0x2222222222222222222222222222222222222222
 record() {
-  jq -n --arg core "$1" \
+  jq -n --arg core "$1" --argjson live "${2:-false}" \
     '{core:$core,coin:"0x3333333333333333333333333333333333333333",
       credits:"0x4444444444444444444444444444444444444444",
-      statements:"0x5555555555555555555555555555555555555555",deployBlock:1,coinLive:false}' \
+      statements:"0x5555555555555555555555555555555555555555",deployBlock:1,coinLive:$live}' \
     > "$TMP/deployments/1.json"
 }
 record "$A"
 PATH="$TMP/bin:$PATH" bash "$TMP/indexer/deploy.sh" mainnet > "$TMP/out" 2>&1
-grep -q 'after backfill' "$TMP/out"
+grep -q "schema cc_test is bound to $A" "$TMP/out"
 [[ "$(jq -r .cc_test "$TMP/indexer/deployments.json")" == "$A" ]]
 
 record "$B"
@@ -74,20 +75,21 @@ if MOCK_NODE_EXIT=1 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP
   echo "unhealthy SQL acceptance was accepted" >&2
   exit 1
 fi
+grep -q "mock SQL acceptance failed" "$TMP/out"
 MOCK_NODE_EXIT=0 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1
 grep -q 'production read-only acceptance passed' "$TMP/out"
-jq '.coinLive = true' "$TMP/deployments/1.json" > "$TMP/record.tmp"
-mv "$TMP/record.tmp" "$TMP/deployments/1.json"
+record "$A" true
 if MOCK_NODE_EXIT=0 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1; then
-  echo "coin-live record passed the prelaunch check" >&2
+  echo "coinLive=true with no coin code was accepted" >&2
   exit 1
 fi
-grep -q 'requires coinLive=false' "$TMP/out"
-jq '.coinLive = false' "$TMP/deployments/1.json" > "$TMP/record.tmp"
-mv "$TMP/record.tmp" "$TMP/deployments/1.json"
+grep -q 'coinLive=true but coin has no valid code' "$TMP/out"
+MOCK_NODE_EXIT=0 MOCK_COIN_CODE=0x1234 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1
+grep -q 'production read-only acceptance passed' "$TMP/out"
+record "$A" false
 if MOCK_NODE_EXIT=0 MOCK_COIN_CODE=0x1234 RPC_URL=http://read.invalid PATH="$TMP/bin:$PATH" bash "$TMP/indexer/check-live.sh" mainnet > "$TMP/out" 2>&1; then
-  echo "deployed coin passed the prelaunch check" >&2
+  echo "coinLive=false with deployed coin code was accepted" >&2
   exit 1
 fi
-grep -q 'coin has code' "$TMP/out"
+grep -q 'coinLive=false but coin has code' "$TMP/out"
 echo "indexer deploy guards passed"

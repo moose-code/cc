@@ -6,7 +6,7 @@ const EVENTS = ["item_listed", "item_sold", "item_transferred", "item_cancelled"
 const BACKOFF = [1_000, 2_000, 5_000, 10_000, 30_000];
 const UINT256 = (1n << 256n) - 1n;
 
-export type MarketChange = { event: string; hash?: Hex; id?: bigint };
+export type MarketChange = { event: string; hash?: Hex; id?: bigint; price?: bigint };
 type Options = {
   key: string;
   onChange(change: MarketChange): void | Promise<void>;
@@ -40,7 +40,15 @@ function changeOf(event: string, envelope: any): MarketChange | null | undefined
   const hash = typeof p.order_hash === "string" && /^0x[0-9a-f]{64}$/i.test(p.order_hash) ? p.order_hash.toLowerCase() as Hex : undefined;
   if (p.order_hash != null && hash == null) return null;
   if (id == null && (hash == null || chain !== "ethereum")) return null;
-  return { event, ...(hash ? { hash } : {}), ...(id != null ? { id } : {}) };
+  // This untrusted lower bound only prioritizes canonical reads, never purchase amounts.
+  let price: bigint | undefined;
+  if (event === "item_listed" && p.payment_token?.address === "0x0000000000000000000000000000000000000000" &&
+      p.payment_token.decimals === 18 && (p.quantity === 1 || p.quantity === "1") && p.is_private === false &&
+      typeof p.base_price === "string" && /^[1-9][0-9]{0,77}$/.test(p.base_price)) {
+    const hint = BigInt(p.base_price);
+    if (hint <= UINT256) price = hint;
+  }
+  return { event, ...(hash ? { hash } : {}), ...(id != null ? { id } : {}), ...(price != null ? { price } : {}) };
 }
 
 export function startOpenSeaStream(options: Options): { stop(): void; ready: Promise<boolean> } {

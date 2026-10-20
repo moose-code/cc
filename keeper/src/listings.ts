@@ -73,6 +73,8 @@ interface Watched {
   offerer?: Address;
 }
 
+type MarketUpdate = { revision: number; remove: boolean; receivedAt: number; event?: string; id?: bigint; price?: bigint };
+
 export class Sources {
   private scores = new Map<bigint, bigint>();
   private strategy: Watched[] = [];
@@ -83,7 +85,7 @@ export class Sources {
   private seaportRetryAt = 0;
   private seaportRefresh?: Promise<void>;
   private market = createMarketBook();
-  private marketChanges = new Map<string, { revision: number; remove: boolean }>();
+  private marketChanges = new Map<string, MarketUpdate>();
   private transferred = new Set<string>();
   private blocked = new Set<string>();
   private pendingUntil = new Map<string, number>();
@@ -138,7 +140,11 @@ export class Sources {
       this.seaport = this.seaport.filter(order => order.id !== change.id);
     }
     if (hash && (!remove || this.market.rows.has(hash) || this.marketChanges.has(hash) || !this.market.complete)) {
-      this.marketChanges.set(hash, { revision: ++this.marketRevision, remove });
+      const previous = this.marketChanges.get(hash);
+      const known = this.market.rows.get(hash);
+      this.marketChanges.set(hash, { revision: ++this.marketRevision, remove, receivedAt: this.now(), event: change.event,
+        id: change.id ?? (known ? BigInt(known.id) : previous?.id),
+        price: remove ? undefined : change.price ?? (known ? BigInt(known.price) : previous?.price) });
       if (remove) {
         this.blocked.add(hash);
         this.seaport = this.seaport.filter(order => order.hash?.toLowerCase() !== hash);
@@ -157,8 +163,10 @@ export class Sources {
     }
   }
 
-  private ackMarketChanges(changes: ReadonlyArray<readonly [string, { revision: number; remove: boolean }]>) {
+  private ackMarketChanges(changes: ReadonlyArray<readonly [string, MarketUpdate]>, reconcile = false, observedAt = this.now()) {
     for (const [hash, change] of changes) {
+      // Fresh notifications may precede REST visibility; missing new listings always need their canonical read.
+      if (reconcile && !change.remove && !this.market.rows.has(hash) && (change.event === "item_listed" || observedAt - change.receivedAt < 30_000)) continue;
       const latest = this.marketChanges.get(hash);
       // Repeated removals are already satisfied once publication leaves the order absent; newer positive updates are not.
       if (!latest || (latest.revision !== change.revision && !(change.remove && latest.remove && !this.market.rows.has(hash)))) continue;
@@ -168,13 +176,41 @@ export class Sources {
     }
   }
 
+  private needsMarketReconcile() {
+    const interval = this.streamJoined ? 30 * 60_000 : this.cfg.opensea.refreshSec * 1000;
+    return !this.market.complete || this.now() - this.market.lastFullAt >= interval
+      || (this.gapGeneration !== this.reconciledGeneration && this.now() - this.lastFullAttempt >= 60_000)
+      // A collection page covers 200 orders; bulk revalidations are cheaper to reconcile than fetch individually.
+      || ([...this.marketChanges.values()].filter(change => !change.remove).length > 128
+        && this.now() - this.lastFullAttempt >= 300_000);
+  }
+
+  private async prioritizedUpdates() {
+    const updates = [...this.marketChanges].filter(([hash, change]) => !change.remove && (this.pendingUntil.get(hash) ?? 0) <= this.now());
+    const missing = [...new Set(updates.filter(([, change]) => change.price && change.id !== undefined && !this.scores.has(change.id)).map(([, change]) => change.id!))].slice(0, 64);
+    try { await this.scoresOf(missing, true); }
+    catch (error) { log("warn", "opensea priority score hints unavailable", { error: safeError(error) }); }
+    // Hints schedule canonical reads only. Signed order terms and on-chain checks still control every purchase.
+    const ranked = updates.sort(([, a], [, b]) => {
+      const as = a.id === undefined ? 0n : this.scores.get(a.id) ?? 0n;
+      const bs = b.id === undefined ? 0n : this.scores.get(b.id) ?? 0n;
+      const ap = a.price && as > 0n, bp = b.price && bs > 0n;
+      if (ap && bp) {
+        const delta = a.price! * bs - b.price! * as;
+        if (delta !== 0n) return delta < 0n ? -1 : 1;
+      } else if (ap || bp) return ap ? -1 : 1;
+      return a.revision - b.revision;
+    });
+    const unpriced = ranked.filter(([, change]) => !change.price || change.id === undefined || !this.scores.has(change.id)).slice(0, 8);
+    const preferred = ranked.filter(entry => !unpriced.includes(entry));
+    return [...preferred.slice(0, 32 - unpriced.length), ...unpriced];
+  }
+
   private marketDue() {
     const now = this.now();
     if (now < this.seaportRetryAt) return false;
     if (this.overflowed) return now - this.lastFullAttempt >= 60_000;
-    const interval = this.streamJoined ? 30 * 60_000 : this.cfg.opensea.refreshSec * 1000;
-    return !this.market.complete || now - this.market.lastFullAt >= interval
-      || (this.gapGeneration !== this.reconciledGeneration && now - this.lastFullAttempt >= 60_000)
+    return this.needsMarketReconcile()
       || [...this.market.rows.values()].some(order => Number(order.endTime) * 1000 <= now)
       || (([...this.marketChanges].some(([hash, change]) => change.remove || (this.pendingUntil.get(hash) ?? 0) <= now)
         || this.transferred.size > 0) && now - this.seaportAt >= 5000);
@@ -314,19 +350,19 @@ export class Sources {
         }
         if (this.market.complete) for (const id of this.transferred) {
           for (const [hash, order] of this.market.rows) if (order.id === id) {
-            this.marketChanges.set(hash, { revision: ++this.marketRevision, remove: true });
+            this.marketChanges.set(hash, { revision: ++this.marketRevision, remove: true, receivedAt: this.now() });
             this.blocked.add(hash);
           }
         }
         if (this.market.complete) this.transferred.clear();
-        const interval = this.streamJoined ? 30 * 60_000 : o.refreshSec * 1000;
-        const reconcile = !this.market.complete || this.now() - this.market.lastFullAt >= interval
-          || (this.gapGeneration !== this.reconciledGeneration && this.now() - this.lastFullAttempt >= 60_000);
+        const reconcile = this.needsMarketReconcile();
         const generation = this.gapGeneration;
         const overflow = this.overflowGeneration;
         if (reconcile) this.lastFullAttempt = this.now();
-        const changes = [...this.marketChanges].filter(([, change]) => change.remove);
-        changes.push(...[...this.marketChanges].filter(([hash, change]) => !change.remove && (this.pendingUntil.get(hash) ?? 0) <= this.now()).slice(0, 32));
+        const reconciliationStarted = this.now();
+        const snapshot = [...this.marketChanges];
+        const changes = snapshot.filter(([, change]) => change.remove);
+        if (!reconcile) changes.push(...await this.prioritizedUpdates());
         const r = await fetchListings({
           key: o.key!,
           rpcUrls: this.cfg.rpcUrls,
@@ -348,7 +384,8 @@ export class Sources {
         if (overflow !== this.overflowGeneration) throw Object.assign(new Error("opensea: stream buffer overflow during pass"), { retryAt: this.now() + 1000 });
         if (reconcile) this.overflowed = false;
         if (reconcile) this.reconciledGeneration = generation;
-        this.ackMarketChanges(changes);
+        // A completed collection scan supersedes older revalidations. Missing new listings may still be propagating.
+        this.ackMarketChanges(reconcile ? snapshot : changes, reconcile, reconciliationStarted);
         // Notifications received during the pass must not resurrect a quarantined order.
         orders = r.orders.filter(order => !this.blocked.has(order.hash.toLowerCase()) && !this.transferred.has(order.id));
         const queuedRemovals = [...this.marketChanges.values()].filter(change => change.remove).length;
@@ -356,6 +393,7 @@ export class Sources {
           complete: r.complete, pages: r.pages, fetched: r.fetched, fit: r.fit, signed: orders.length,
           validationTruncated: r.validationTruncated, bookSize: r.bookSize, reusedParams: r.reusedParams, cachedScores: this.scores.size, queued: this.marketChanges.size,
           queuedUpdates: this.marketChanges.size - queuedRemovals, queuedRemovals,
+          listedUpdates: changes.filter(([, change]) => !change.remove && change.event === "item_listed").length,
           gap: this.gapGeneration !== this.reconciledGeneration, dropped: r.dropped });
       }
       if (!Array.isArray(orders)) throw new Error("orders is not an array");

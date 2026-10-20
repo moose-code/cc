@@ -222,3 +222,36 @@ test("disconnect status callback stop fences the following gap", t => {
   t.mock.timers.tick(100_000);
   assert.equal(FakeSocket.instances.length, 1);
 });
+
+// promise: only a public, single-item native-ETH listing carries an advisory price; bad hints never lose the event.
+test("native ETH listing price hints only prioritize canonical reads", t => {
+  const s = setup(t), ws = FakeSocket.instances[0]; ws.join();
+  const valid = { ...payload().payload, base_price: "1234", payment_token: {
+    address: "0x0000000000000000000000000000000000000000", decimals: 18,
+  }, quantity: 1, is_private: false };
+  for (const quantity of [1, "1"]) {
+    ws.frame(["1", null, "collection:credits", "item_listed", { event_type: "item_listed", payload: { ...valid, quantity } }]);
+    assert.deepEqual(s.changes.at(-1), { event: "item_listed", hash, id: 42n, price: 1234n });
+  }
+  const invalid = [
+    { base_price: "0" }, { base_price: "-1" }, { base_price: "1.5" }, { base_price: "bad" },
+    { base_price: (1n << 256n).toString() }, { base_price: undefined }, { base_price: 1234 },
+    { payment_token: { address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18, symbol: "ETH" } },
+    { payment_token: { symbol: "ETH", decimals: 18 } }, { payment_token: null },
+    { payment_token: { ...valid.payment_token, decimals: "18" } },
+    { payment_token: { ...valid.payment_token, decimals: 6 } },
+    { quantity: 2 }, { quantity: "01" }, { quantity: undefined }, { is_private: true }, { is_private: undefined },
+  ];
+  for (const patch of invalid) {
+    const before = s.changes.length;
+    ws.frame(["1", null, "collection:credits", "item_listed", { event_type: "item_listed", payload: { ...valid, ...patch } }]);
+    assert.equal(s.changes.length, before + 1);
+    assert.equal(Object.hasOwn(s.changes.at(-1), "price"), false);
+  }
+  ws.frame(["1", null, "collection:credits", "order_revalidate", { event_type: "order_revalidate", payload: valid }]);
+  assert.equal(Object.hasOwn(s.changes.at(-1), "price"), false);
+  const before = s.changes.length;
+  ws.frame(["1", null, "collection:credits", "item_listed", { event_type: "item_listed", payload: { ...valid, collection: { slug: "foreign" } } }]);
+  assert.equal(s.changes.length, before);
+  assert.equal(s.gaps(), 1);
+});

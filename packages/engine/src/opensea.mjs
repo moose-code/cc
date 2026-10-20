@@ -29,6 +29,9 @@ export class OpenSeaPending extends Error {
   constructor(retryAt, hash) { super("opensea: order not indexed yet"); this.name = "OpenSeaPending"; this.retryAt = retryAt; this.hash = hash; }
 }
 class RpcUnavailable extends Error { name = "RpcUnavailable"; }
+class OpenSeaHttpFailure extends Error {
+  constructor(status) { super(`opensea: HTTP ${status}`); this.name = `OpenSeaHTTP${status}`; }
+}
 class OpenSeaAuthFailure extends Error {
   constructor(status) { super("opensea: fulfillment authorization failed"); this.name = `OpenSeaAuth${status}`; }
 }
@@ -213,7 +216,7 @@ export async function fetchListings(o) {
         continue;
       }
       if (allowMissing && res.status === 404) return undefined;
-      if (!res.ok) throw new Error(`opensea: HTTP ${res.status} for ${url.pathname}`);
+      if (!res.ok) throw new OpenSeaHttpFailure(res.status);
       return body;
     }
     throw new OpenSeaRateLimit(Date.now() + 300_000);
@@ -344,9 +347,11 @@ export async function fetchListings(o) {
       const chain = typeof order?.chain === "string" ? order.chain : order?.chain?.name;
       const offer = order?.protocol_data?.parameters?.offer;
       if (!order || typeof order.order_hash !== "string" || order.order_hash.toLowerCase() !== hash || typeof order.protocol_address !== "string" || !same(order.protocol_address, SEAPORT_16) || (order.chain !== undefined && chain !== "ethereum")) throw new Error("opensea: order identity mismatch");
-      if (offer !== undefined && (!Array.isArray(offer) || offer.length !== 1 || typeof offer[0].token !== "string" || !same(offer[0].token, CREDITS))) throw new Error("opensea: order identity mismatch");
       if (inactive(order)) { stagedRows.delete(hash); stagedSigned.delete(hash); continue; }
-      if (!offer) throw new Error("opensea: malformed order details");
+      const consideration = order?.protocol_data?.parameters?.consideration;
+      if (!Array.isArray(offer) || !Array.isArray(consideration)) throw new Error("opensea: malformed order details");
+      // Revalidation includes bids and bundles; collection identity is separate from basic listing eligibility.
+      if (![...offer, ...consideration].some(item => [2, 3, 4, 5].includes(item?.itemType) && typeof item.token === "string" && same(item.token, CREDITS))) throw new Error("opensea: order identity mismatch");
       const row = await convert(order);
       if (typeof row === "string") { stagedRows.delete(hash); stagedSigned.delete(hash); continue; }
       if (stagedRows.has(hash) && stagedRows.get(hash).id !== row.id) throw new Error("opensea: order identity mismatch");

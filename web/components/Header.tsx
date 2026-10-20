@@ -4,10 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAcquireCandidate } from "@/lib/useAcquire";
-import { useSnapshot } from "@/lib/live";
 import { useEns } from "@/lib/ens";
-import { commas, eth, shortAddr } from "@/lib/format";
+import { commas, shortAddr } from "@/lib/format";
 import { usePotPage } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
 
@@ -100,7 +98,7 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// The points the pot covers, the bid per 100 points and the next-listing bar, beside the wallet on every page.
+// The points the pot covers and the current bid, beside the wallet on every page.
 function PotPage() {
   const { pts, per1 } = usePotPage();
   return (
@@ -108,57 +106,7 @@ function PotPage() {
       <span className="hdr-next-label">pot covers</span>
       <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
       {per1 && <span className="hdr-next-bid">· current bid {per1} ETH / 1 pt</span>}
-      <NextListing />
     </div>
-  );
-}
-
-// True from the desktop breakpoint of the header (the indicator is hidden below it); keeps the acquire queries off on phones.
-function useWide() {
-  const [wide, setWide] = useState(false);
-  useEffect(() => {
-    const m = window.matchMedia("(min-width: 861px)");
-    const f = () => setWide(m.matches);
-    f();
-    m.addEventListener("change", f);
-    return () => m.removeEventListener("change", f);
-  }, []);
-  return wide;
-}
-
-// The next listing the engine will reach: the cheapest row still above its bid, with its ask and the bid's progress
-// toward it (bid / price) in eight cells. Reuses the acquire query, so it adds no reads, and runs on wide screens only.
-const NL_CELLS = 8;
-
-function NextListing() {
-  return useWide() ? <NextListingBar /> : null;
-}
-
-function NextListingBar() {
-  const { top } = useAcquireCandidate();
-  const { data: snap } = useSnapshot();
-  if (snap?.paused) return null;
-  const n = top.find((t) => BigInt(t.bid) < BigInt(t.price)) ?? top[0];
-  if (!n) return null;
-  const price = BigInt(n.price);
-  const bid = BigInt(n.bid);
-  const fill = price > 0n ? Math.min(1, Number((bid * 1000n) / price) / 1000) : 0;
-  const on = Math.round(fill * NL_CELLS);
-  // this listing's ask per rating point: price / points, where points = bid * 100 / ethRate
-  const perPoint = snap && snap.ethRate > 0n && bid > 0n ? `${eth((price * snap.ethRate) / (bid * 100n), 7)} ETH / point` : null;
-  return (
-    <span
-      className="hdr-nl"
-      title={perPoint ? `credit #${n.id} · ${eth(price)} ETH · ${perPoint}` : `credit #${n.id} · listed ${eth(price)} ETH (${n.source})`}
-    >
-      <span className="hdr-next-label">next credit</span>
-      <span className="hdr-nl-bar" aria-hidden>
-        {Array.from({ length: NL_CELLS }, (_, i) => (
-          <i key={i} className={i < on ? "on" : undefined} />
-        ))}
-      </span>
-      <b>{eth(price)} ETH</b>
-    </span>
   );
 }
 
