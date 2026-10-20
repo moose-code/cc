@@ -2,6 +2,8 @@
 
 read docs/STATUS.md first. CLAUDE.md points here.
 
+for product orientation, newcomer explanations and website copy, also read docs/CONTEXT.md. it is guidance, not authority over SPEC, DECISIONS or code.
+
 ## authority
 
 1. the owner's latest explicit instruction.

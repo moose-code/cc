@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
+import Link from "next/link";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { useFeed, useStats } from "@/lib/data";
 import { useSnapshot } from "@/lib/live";
@@ -118,6 +119,9 @@ export function Flywheel() {
             {potPct} of Statement sale proceeds fund more acquisitions, while {burnPct} buys and burns $CC
           </p>
         </div>
+        <Link href="/faq" className="fw-faq-link">
+          how it works ↗
+        </Link>
       </div>
       <div className="fw-steps">
         {steps.map((s, i) => (
