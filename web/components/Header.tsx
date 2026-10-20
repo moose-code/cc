@@ -24,6 +24,19 @@ export function Header() {
   // close the mobile menu on navigation
   useEffect(() => setOpen(false), [path]);
 
+  if (path === "/exchange") {
+    return (
+      <header className="header exchange-header">
+        <Link href="/" className="brand">
+          <CCLogo size={26} autoplay />
+          <b>CC</b>
+          <span className="brand-sub">credits → $BALANCE</span>
+        </Link>
+        <WalletButton exchange />
+      </header>
+    );
+  }
+
   return (
     <header className="header">
       <Link href="/" className="brand">
@@ -68,7 +81,7 @@ export function Header() {
 
 // Disconnected: filled "connect wallet". Connected: outlined button with the
 // account's ENS name or short address; opens the account modal.
-function WalletButton() {
+function WalletButton({ exchange = false }: { exchange?: boolean }) {
   return (
     <ConnectButton.Custom>
       {({ account, chain, mounted, openAccountModal, openChainModal, openConnectModal }) => {
@@ -86,10 +99,13 @@ function WalletButton() {
                 wrong network
               </button>
             ) : (
-              <button className="btn-outline" onClick={openAccountModal}>
-                <i className="sq" />
-                <AccountName address={account.address} />
-              </button>
+              <>
+                {exchange && <span className="exchange-account"><AccountName address={account.address} /></span>}
+                <button className="btn-outline" onClick={openAccountModal}>
+                  <i className="sq" />
+                  {exchange ? "connected" : <AccountName address={account.address} />}
+                </button>
+              </>
             )}
           </div>
         );

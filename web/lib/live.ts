@@ -622,7 +622,7 @@ export function useWalletCredits(address?: Address) {
   });
   const data = mode === "ix" ? ixq.data : chain.data;
   const scores = useMemo(() => Object.fromEntries((data ?? []).map((c) => [c.id.toString(), c.score])) as Record<string, bigint>, [data]);
-  return { data: data ?? [], scores, ready: data !== undefined };
+  return { data: data ?? [], scores, ready: data !== undefined, error: mode === "ix" ? ixq.error : chain.error };
 }
 
 // The balance token and its decimals, undefined while the Core has no module.
