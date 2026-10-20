@@ -354,7 +354,7 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 
 ### 9.7 swap panel
 
-Live only: slot0, quoter, hook fee, balances, allowances, receipts. Phase 2 adds I `price_hourly` for a 24 h change and a chart, replacing the archive `getSlot0` read.
+Live only: slot0, quoter, hook fee, balances, allowances, receipts. The price change beside the price is D from L `StateView.getSlot0` now against `getSlot0` at the block 7,200 back; for a pool younger than that, against the `sqrtPriceX96` of its L PoolManager `Initialize` log (`eth_getLogs` in spans under 5,000 blocks, kept in localStorage), labelled since launch. The market cap links to the token's DexScreener page and the token contract to evm.now. Phase 2 adds I `price_hourly` for a 24 h change and a chart, replacing the archive `getSlot0` read.
 
 ### 9.8 page metadata and share images
 

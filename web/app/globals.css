@@ -3874,3 +3874,35 @@ button.slot:disabled {
     margin: 0.225em 0;
   }
 }
+/* the 24h price change beside the price: small and muted, sign first (inks are not for text) */
+.tp-chg {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  vertical-align: 0.35em;
+}
+/* the token contract under the fee line */
+.tp-addr {
+  margin: 4px 0 0;
+}
+.tp-addr a {
+  color: var(--quiet);
+}
+.tp-addr a:hover {
+  color: var(--ink);
+}
+.tp-chg {
+  white-space: nowrap;
+}
+.tp-price a.label {
+  white-space: nowrap;
+}
+/* on a phone the price is set larger, so the change takes its own line under it */
+@media (max-width: 640px) {
+  .tp-chg {
+    display: block;
+    margin: 2px 0 0;
+    vertical-align: baseline;
+  }
+}
