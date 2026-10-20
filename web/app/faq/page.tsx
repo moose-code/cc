@@ -387,8 +387,8 @@ export default function Faq() {
         <div className="faq-visual-grid">
           <article className="faq-visual-card faq-visual-card-wide">
             <div className="faq-visual-copy">
-              <h3>more than a relisting strategy</h3>
-              <p>acquired Credits can be resold or composed into Statements. proceeds from completed sales return to buying, while trading fees can fund new bids independently. when enabled, $BALANCE opens another path back to acquiring Credits.</p>
+              <h3>built around credits</h3>
+              <p>creditcycle acquires Credits from holders, CreditStrategy and OpenSea. acquired Credits can be resold or composed into Statements. sales replenish the ETH pot and fund CC buybacks and burns. $CC trading fees add new buying power, and $BALANCE can fund more acquisitions when enabled.</p>
             </div>
             <InventoryPaths />
             <small>both sale routes still depend on buyers, and their price floors can leave inventory unsold.</small>
