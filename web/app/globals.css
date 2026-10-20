@@ -346,6 +346,14 @@ a:hover {
   line-height: 1.55;
   color: var(--muted);
 }
+.fw-intro .fw-faq-link {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--c);
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .fw-steps {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr) 56px) minmax(0, 1fr);
