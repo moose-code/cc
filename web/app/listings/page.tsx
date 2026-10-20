@@ -68,9 +68,7 @@ export default function ListingsPage() {
   const meta = data
     ? `${rows.length} listed · ${atBid} at bid · ${within(0.1)} within 10% · ${within(0.25)} within 25%` +
       (data.covers > 0 ? ` · pot covers ${data.covers}${data.capped ? `, this ${data.bucketSeconds === 60 ? "minute" : "bucket"} ${data.fits}` : ""}` : "")
-    : error
-      ? "listings unavailable: the chain read failed"
-      : "reading listings…";
+    : undefined;
   // the bid range of the listed credits: the rate at the lowest and the highest listed score
   const scores = rows.map((r) => r.score).filter((s) => s > 0n);
   const lo = scores.length ? scores.reduce((a, b) => (b < a ? b : a)) : undefined;

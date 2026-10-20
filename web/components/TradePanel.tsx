@@ -26,13 +26,9 @@ const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as numbe
 
 export function TradePanel({ market }: { market?: Market }) {
   const live = useCoinLive();
-  if (!market && live === false) return <p className="muted">$CC is not live yet</p>;
-  return <TradeBody market={market} />;
-}
-
-function TradeBody({ market }: { market?: Market }) {
+  const prelaunch = !market && (!engineDeployed || live === false);
   const { market: cc, error: ccPoolError } = useCcMarket();
-  const m = market ?? cc;
+  const m = market ?? (engineDeployed && live === true ? cc : undefined);
   const { data: perEth } = useTokensPerEth(m);
   const { address, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
@@ -41,7 +37,7 @@ function TradeBody({ market }: { market?: Market }) {
   const snap = useSnapshot().data;
   const { run, pending, err, steps, reset } = useTx();
 
-  const tag = m ? `$${m.symbol.replace(/^\$/, "").toUpperCase()}` : "";
+  const tag = `$${(m?.symbol ?? "cc").replace(/^\$/, "").toUpperCase()}`;
   const dec = m?.decimals ?? 18;
   const hooked = m != null && m.key.hooks !== zeroAddress;
   const hookFee = useHookFeeBps(m).data;
@@ -170,8 +166,10 @@ function TradeBody({ market }: { market?: Market }) {
   const wrongChain = address != null && chainId !== chain.id;
   const needApprove = side === "sell" && (!plan[0].done || !plan[1].done);
   const approveLabel = !plan[0].done ? `approve ${tag}` : "approve Permit2";
-  const gate = !market && ccPoolError
-    ? { label: "pool configuration error", off: true }
+  const gate = !market && (prelaunch || live === undefined)
+    ? { label: prelaunch ? "trading opens soon" : "loading pool", off: true }
+    : !market && ccPoolError
+      ? { label: "pool configuration error", off: true }
     : !m
       ? { label: "loading pool", off: true }
       : !address
@@ -200,7 +198,7 @@ function TradeBody({ market }: { market?: Market }) {
   const inWallet = busy && active?.status === "wallet";
   const swapPending = busy && active?.status === "pending" && active.label === side ? active : undefined;
   const swapIng = side === "buy" ? "buying" : "selling";
-  const label = busy
+  const label = prelaunch ? gate.label : busy
     ? inWallet || !active
       ? "waiting for wallet…"
       : swapPending
@@ -266,7 +264,7 @@ function TradeBody({ market }: { market?: Market }) {
     if (cur < 0) cur = 2;
     return names.map((name, i) => ({ name, hash: st[i].hash, state: st[i].status === "done" ? "done" : i === cur ? "cur" : "todo" }));
   })();
-  const showSteps = side === "sell" && !result && hasAmount && !over && (withApprovals ? steps.length === 3 : needApprove);
+  const showSteps = m != null && side === "sell" && !result && hasAmount && !over && (withApprovals ? steps.length === 3 : needApprove);
 
   const notice =
     result && result.potWei != null && snap && snap.ethRate > 0n

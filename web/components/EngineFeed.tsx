@@ -3,7 +3,7 @@
 import { useFeed, useHistoryDown } from "@/lib/data";
 import { useBlockTs, useScan } from "@/lib/engine";
 import type { FeedEvent, FeedKind } from "@/lib/events";
-import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
+import { STATEMENT_SIZE } from "@/lib/config";
 import { potPoints, useCreditTraits, useHead, useNow, useScores, useSnapshot } from "@/lib/live";
 import { useAcquireTx } from "@/lib/useAcquire";
 import { useListings } from "@/lib/useListings";
@@ -16,6 +16,7 @@ import Link from "next/link";
 import { relTime, eth, evmNowTx, rating, commas } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
+import { CCLogo } from "./CCLogo";
 
 const MARK: Record<FeedKind, string> = {
   credit: "m",
@@ -106,13 +107,6 @@ export function EngineFeed() {
   const { data: scores } = useScores(ids);
   const { data: traits } = useCreditTraits(ids);
 
-  if (!engineDeployed)
-    return (
-      <section className="ledger">
-        <p className="muted">engine not deployed.</p>
-      </section>
-    );
-
   return (
     <section className="ledger">
       <div className="ledger-head">
@@ -146,6 +140,7 @@ export function EngineFeed() {
             {shown.map((e) => (
               <Row key={e.key} e={e} now={now} score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined} mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined} />
             ))}
+            {shown.length === 0 && <EmptyLedger />}
           </div>
           {historyDown && <p className="muted ix-down">history unavailable</p>}
           {total > limit && (
@@ -156,6 +151,30 @@ export function EngineFeed() {
         </>
       )}
     </section>
+  );
+}
+
+function EmptyLedger() {
+  return (
+    <>
+      {[
+        { ink: "m", entry: "first credit", detail: "bought once the pot covers the bid" },
+        { ink: "y", entry: "first statement", detail: `composed after ${STATEMENT_SIZE} credits` },
+      ].map(({ ink, entry, detail }) => (
+        <div key={ink} className="ledger-cols ledger-row ledger-placeholder">
+          <span className="when">—</span>
+          <span className="entry"><i className={`mark ${ink}`} aria-hidden />{entry}</span>
+          <span className="ref"><i className="ledger-placeholder-tile" aria-hidden /><span>{detail}</span></span>
+          <span className="plates" />
+          <span className="num rate">—</span>
+          <span className="num">—</span>
+        </div>
+      ))}
+      <div className="ledger-empty">
+        <CCLogo size={72} autoplay />
+        <span>no entries yet</span>
+      </div>
+    </>
   );
 }
 
@@ -173,9 +192,7 @@ function ListingsPanel() {
     <>
       <ListingsStatus market={data?.market} strategy={data?.strategyStatus} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
       <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} />
-      {!data && !error && <p className="muted">reading listings…</p>}
-      {!data && error && <p className="muted">listings unavailable: the chain read failed.</p>}
-      {data && rows.length === 0 && <p className="muted">no listings in the current view.</p>}
+      {data && rows.length === 0 && <p className="lstatus">no listings in the current view.</p>}
       {shown < rows.length && (
         <button className="action more" onClick={() => setShown((n) => n + LISTINGS_PAGE)}>
           {`show more (${rows.length - shown} more)`}

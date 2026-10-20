@@ -651,6 +651,79 @@ a:hover {
 }
 
 /* ledger */
+.prelaunch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  min-height: 44px;
+  padding: 0 24px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-size: 12px;
+}
+.prelaunch-message {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.prelaunch-message .mark {
+  flex: none;
+  width: 8px;
+  height: 8px;
+}
+.prelaunch-message strong {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.prelaunch-bar > span,
+.prelaunch-message > span {
+  color: var(--faint);
+}
+.ledger-placeholder,
+.ledger-placeholder .when {
+  color: var(--faint);
+}
+.ledger-placeholder .entry .mark {
+  width: 8px;
+  height: 8px;
+  background: none;
+  border: 1px solid var(--m);
+}
+.ledger-placeholder .entry .mark.y {
+  border-color: var(--y);
+}
+.ledger-placeholder-tile {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px dashed var(--disabled);
+}
+.ledger-placeholder .ref > span {
+  overflow-wrap: anywhere;
+}
+.ledger-empty {
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 860px) {
+  .prelaunch-bar {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+  .prelaunch-message {
+    flex-wrap: wrap;
+  }
+  .prelaunch-message > span {
+    flex-basis: 100%;
+  }
+}
 .ledger {
   grid-area: ledger;
   min-width: 0;
@@ -3420,7 +3493,7 @@ button.slot:disabled {
 
 /* ---- listings page ------------------------------------------------------- */
 
-/* the status lines of a listings surface: coverage, freshness, stream and failure state */
+/* Loading and failure labels share the table inset in the feed. */
 .lstatus {
   overflow-wrap: anywhere;
   margin: 0 0 12px;
@@ -3428,13 +3501,6 @@ button.slot:disabled {
   line-height: 1.6;
   color: var(--muted);
 }
-.lstatus .quiet {
-  color: var(--quiet);
-}
-.lstatus .warn {
-  color: var(--ink);
-}
-
 .ltable-row {
   display: grid;
   grid-template-columns: 28px minmax(72px, 1fr) 112px 64px 88px 88px 80px;
