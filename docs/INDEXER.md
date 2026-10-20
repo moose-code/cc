@@ -323,6 +323,8 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | history: composed, restyled, anchor moved, sold, redeemed | I `activity`, `statement_format`, `anchor_move` |
 | holder | I `statement.owner` |
 | art | I `statement.tokenUri` |
+| forming statement (an id at or past the next one): page, credits, state | L snapshot `nextStatementId`, `pileSize`, `page.ready`, `paused`, `creditWindow`; the pile from I `credit` held by the Core, oldest first (chain mode: `Core.pilePage`, first 200); D page `id - nextStatementId` of 80 (`web/lib/forming.ts`) |
+| forming cost, rating and compose estimate | D sum of the page's I `credit.cost` (chain mode: `creditInfo`) and I `credit.score` (indexer mode only); D `composeEta` from the page's newest acquisition time and I `stats_hourly` buy rate |
 
 ### 9.6 sell, compose, balance, keeper
 

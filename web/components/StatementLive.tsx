@@ -11,7 +11,8 @@ import { Breadcrumb } from "./Shell";
 import { Fact, HeroArt, HistLine, type Ink } from "./Detail";
 import { NotDeployed } from "./NotDeployed";
 import { useStatementRating } from "./Cards";
-import { core, engineDeployed, statements } from "@/lib/config";
+import { FormingStatement } from "./StatementForming";
+import { core, engineDeployed, statements, STATEMENT_SIZE } from "@/lib/config";
 import { useHistoryDown, useStatementIndex, useStatementView } from "@/lib/data";
 import type { StatementRecord } from "@/lib/events";
 import { useBlockTs } from "@/lib/engine";
@@ -52,11 +53,17 @@ export function LiveStatement({ id }: { id: number }) {
   const format = rec?.format ?? composed?.format;
   const creditCount = composed?.ids.length ?? (meta?.attrs.Credits != null ? Number(meta.attrs.Credits) : undefined);
 
-  // prev and next among the known statements, newest first
-  const ids = [...new Set([...held.map((x) => x.sid), ...index.map((r) => r.id)])].sort((a, b) => b - a);
+  // prev and next among the known and forming statements, newest first. Every pile page with a credit is forming:
+  // ids nextStatementId to nextStatementId + ceil(pileSize / 80) - 1.
+  const nextSid = snap?.nextStatementId;
+  const formingIds = snap && nextSid != null ? Array.from({ length: Math.ceil(Number(snap.pileSize) / STATEMENT_SIZE) }, (_, k) => nextSid + k) : [];
+  const ids = [...new Set([...formingIds, ...held.map((x) => x.sid), ...index.map((r) => r.id)])].sort((a, b) => b - a);
   const at = ids.indexOf(id);
   const prevHref = at > 0 ? `/statements/${ids[at - 1]}` : undefined;
   const nextHref = at >= 0 && at < ids.length - 1 ? `/statements/${ids[at + 1]}` : undefined;
+
+  // an id the Core has not minted yet: the page of the pile forming toward it
+  if (snap && nextSid != null && id >= nextSid && !known) return <FormingStatement id={id} snap={snap} prevHref={prevHref} nextHref={nextHref} />;
 
   const ink: Ink = s ? "y" : redeemed ? "c" : "k";
   const holder: ReactNode = s ? (

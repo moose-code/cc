@@ -3638,3 +3638,8 @@ button.slot:disabled {
     margin: 0 16px 12px;
   }
 }
+
+/* a forming statement at hero size: the art frame carries the outline and crop marks */
+.art-frame > .forming-art {
+  outline: 0;
+}

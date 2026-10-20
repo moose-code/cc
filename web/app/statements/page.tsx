@@ -13,6 +13,7 @@ import { useBlockTs } from "@/lib/engine";
 import { useTokenMeta } from "@/lib/art";
 import { useNow, usePile, useSnapshot, useStatements } from "@/lib/live";
 import { etaLabel } from "@/lib/compose-eta";
+import { formingPages, formingWhen } from "@/lib/forming";
 import { agoLabel, eth, signedPct } from "@/lib/format";
 
 const PAGE = 24;
@@ -71,23 +72,14 @@ export default function StatementsPage() {
   const rest = items.filter((i) => i.state !== "for sale" && i.state !== "at floor");
   const count = (s: StatementState) => items.filter((i) => i.state === s).length;
   const next = eta.at(0);
-  // statements forming in the pile, before they compose: full pages of credits are "upcoming" (waiting for the newest
-  // credit to clear the sale window), the partial page is still "building". FIFO, so page k is credits k*size..(k+1)*size.
-  const pileIds = (pile ?? []).map((c) => c.id);
-  const pileIncomplete = snap != null && pileIds.length < Number(snap.pileSize);
-  const fullPages = Math.floor(pileIds.length / STATEMENT_SIZE);
-  const forming: { kind: "upcoming" | "building"; ids: number[]; foot: string }[] = [];
-  for (let k = 0; k < fullPages; k++) {
-    const e = eta.at(k * STATEMENT_SIZE);
-    forming.push({
-      kind: "upcoming",
-      ids: pileIds.slice(k * STATEMENT_SIZE, (k + 1) * STATEMENT_SIZE),
-      foot: snap?.paused ? "engine paused" : e == null ? "composes next" : e.seconds <= 0 ? "ready to compose" : `composes in ${etaLabel(e)}`,
-    });
-  }
-  const remainder = pileIds.length % STATEMENT_SIZE;
-  if (remainder > 0 && !pileIncomplete)
-    forming.push({ kind: "building", ids: pileIds.slice(fullPages * STATEMENT_SIZE), foot: `${STATEMENT_SIZE - remainder} more Credits` });
+  // statements forming in the pile, before they compose: page k of the pile is statement nextStatementId + k
+  const { pages: forming, incomplete: pileIncomplete } = formingPages({
+    ids: (pile ?? []).map((c) => c.id),
+    pileSize: snap ? Number(snap.pileSize) : 0,
+    size: STATEMENT_SIZE,
+    nextSid: snap?.nextStatementId,
+    ready: snap?.page.ready ?? false,
+  });
 
   const meta = [
     `${forSale.length} for sale`,
@@ -143,8 +135,15 @@ export default function StatementsPage() {
               </span>
             </div>
             <div className="cgrid">
-              {forming.map((f, i) => (
-                <FormingCard key={i} kind={f.kind} ids={f.ids} size={STATEMENT_SIZE} foot={f.foot} />
+              {forming.map((f) => (
+                <FormingCard
+                  key={f.k}
+                  kind={f.kind}
+                  sid={f.sid}
+                  ids={f.ids}
+                  size={STATEMENT_SIZE}
+                  foot={formingWhen(f, eta.at(f.k * STATEMENT_SIZE), Boolean(snap?.paused), STATEMENT_SIZE)}
+                />
               ))}
             </div>
           </section>

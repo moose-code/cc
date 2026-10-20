@@ -193,6 +193,15 @@ Same layout as credit detail.
   2. **Restyle.** `current: 3`, the copy, and an 8-segment format picker 0–7. The button stays disabled until the user picks a different format **and** holds `minCcToChoose`; it reads `restyle to format n`.
   3. **Redeem.** Always visible while held and `balanceOn`. Disabled until `atFloor && redeemOn`, with the right-side caption `opens at floor · ~5h`; when enabled it reads `redeem for $BALANCE`.
 
+### 05a Forming statement (`components/StatementForming.tsx`)
+A statement id the Core has not minted yet: `id >= nextStatementId` (Statements supply plus one). Default compose takes the 80 oldest pile credits and ids are sequential, so page `k = id - nextStatementId` of the pile, credits `k*80` to `k*80+79` oldest first, is that statement while it forms. The `/statements` **forming** cards are its thumbnails and link here; the index and this page share one page split (`web/lib/forming.ts`).
+
+- **States.** `in progress`: the page has fewer than 80 credits (only the last page). `upcoming`: 80 credits, waiting for the newest to clear the sale window, or for an earlier page to compose first. `ready to compose`: page 0, full and past the window (`snapshot.page.ready`). `engine paused` replaces the time while the Core is paused. An id past the last page with credits reads `not forming yet`; a page the chain-mode pile read did not reach (the 200 credit cap) reads `unavailable until the full pile loads`.
+- **Main column.** The hero is the thumbnail's art at hero size: the page's actual Credit tiles in the 8×10 sheet grid, empty slots blank, on white with crop marks. Facts: state, credits `52 / 80`, engine cost so far (sum of the page's credit costs), credit rating so far (sum of their scores, which is the rating the statement will carry; indexer mode only, else `—`), format `set at compose`. History: `now` forming line, newest credit bought, first credit bought, each linking its credit.
+- **Full-width band.** The page's credits as the 16-column grid, linking each credit, captioned `gathering in the order the engine bought them`.
+- **Rail** (ink Y, hollow status mark). Status and a copy line for the state. Then the compose box: `composes in` a countdown (full page) or `~25h` estimate (filling page, buy rate plus window), the 8×10 mini map of filled slots, and for `k > 0` the caption `after statement N`. Page 0 when ready shows `compose statement` (`Core.compose()`, random format; the compose page keeps the format choice). While the credit sale is on, a caption says the membership is provisional: a credit bought out of the pile leaves the page and the next oldest moves in, and `composeChosen` (off at launch) can take credits out of order.
+- **Navigation.** Prev and next run across forming and composed ids, newest first. When the statement composes, the same URL turns into the composed detail on the next refresh.
+
 ### 06 Swap states (`TradePanel.tsx`)
 The panel, top to bottom:
 1. `$CC price` and `mkt cap ↗`;

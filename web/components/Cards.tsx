@@ -5,6 +5,7 @@ import { CreditTile, StatementTile } from "./Tiles";
 import { ArtFrame } from "./Shell";
 import { commas, eth, rating } from "@/lib/format";
 import { useTokenMeta } from "@/lib/art";
+import type { FormingKind } from "@/lib/forming";
 
 export type StatementState = "for sale" | "at floor" | "sold" | "redeemed" | "not held";
 
@@ -30,30 +31,46 @@ export function StateMark({ state }: { state: StatementState }) {
   );
 }
 
-// A statement forming in the pile, before it is composed (no id or art of its own yet). `upcoming` is a full page of
-// credits waiting for its newest credit to clear the sale window; otherwise the page is still filling. The grid shows
-// the actual Credits gathered toward the page of `size`, empty slots for the rest.
-export function FormingCard({ kind, ids, size, foot }: { kind: "upcoming" | "building"; ids: number[]; size: number; foot: string }) {
+// The art of a statement still forming: the actual Credits of its page in the 8 x 10 sheet grid a composed statement
+// uses, empty slots for the rest, on white.
+export function FormingArt({ ids, size }: { ids: number[]; size: number }) {
+  return (
+    <div className="forming-art">
+      <div className="forming-grid">
+        {Array.from({ length: size }, (_, i) =>
+          i < ids.length ? (
+            <span key={ids[i]} className="forming-slot">
+              <CreditTile id={ids[i]} />
+            </span>
+          ) : (
+            <span key={`e${i}`} className="forming-slot empty" />
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
+// A statement forming in the pile, before it is composed (no art of its own yet). `building` is a page still filling;
+// otherwise the page is full and waits for its newest credit to clear the sale window or for an earlier page. Links to
+// its detail at `sid`, the id it will take, once the next statement id is read.
+export function FormingCard({ kind, sid, ids, size, foot }: { kind: FormingKind; sid?: number; ids: number[]; size: number; foot: string }) {
+  const label = kind === "building" ? "in progress" : "upcoming statement";
+  const href = sid != null ? `/statements/${sid}` : undefined;
   return (
     <div className="ccard forming-card">
-      <div className="ccard-art">
-        <div className="forming-art">
-          <div className="forming-grid">
-            {Array.from({ length: size }, (_, i) =>
-              i < ids.length ? (
-                <span key={ids[i]} className="forming-slot">
-                  <CreditTile id={ids[i]} />
-                </span>
-              ) : (
-                <span key={`e${i}`} className="forming-slot empty" />
-              ),
-            )}
-          </div>
+      {href ? (
+        <Link href={href} className="ccard-art" aria-label={`statement ${sid}, ${label}`}>
+          <FormingArt ids={ids} size={size} />
+        </Link>
+      ) : (
+        <div className="ccard-art">
+          <FormingArt ids={ids} size={size} />
         </div>
-      </div>
+      )}
       <div className="ccard-body">
         <div className="scard-head">
-          <span>{kind === "upcoming" ? "upcoming statement" : "in progress"}</span>
+          {href ? <Link href={href}>{label}</Link> : <span>{label}</span>}
           <small>
             {ids.length} / {size}
           </small>
