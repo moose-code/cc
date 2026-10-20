@@ -227,7 +227,7 @@ function InventoryPaths() {
       >
         <title id="faq-paths-title">the CC flywheel</title>
         <desc id="faq-paths-description">
-          CC trading fees fill an ETH buying pot that acquires Credits. Credits can be sold individually
+          CC trading fees fill an ETH buying pot that acquires Credits through OpenSea listings, CreditStrategy, and direct sales. Credits can be sold individually
           or composed in groups of 80 into Statements. Successful ETH sales return funds to the ETH
           buying pot and allocate funds for CC buybacks, keeping the cycle going. When the optional
           BALANCE integration is active and Statements are eligible, Statements may instead be redeemed
@@ -236,6 +236,9 @@ function InventoryPaths() {
         <defs>
           <marker id="faq-paths-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
             <path d="M0 0 L9 4.5 L0 9 Z" fill="#e5007e" stroke="none" />
+          </marker>
+          <marker id="faq-paths-source-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M0 0 L9 4.5 L0 9 Z" fill="#8a877e" stroke="none" />
           </marker>
         </defs>
 
@@ -265,6 +268,19 @@ function InventoryPaths() {
           <rect x="728" y="84" width="218" height="62" fill="#f6f5f0" stroke="#d9d7cf" strokeWidth={1.7} />
           <text x="837" y="115" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">Credits acquired</text>
         </g>
+        <g className="faq-paths-sources" aria-label="Credit acquisition routes">
+          <text x="1115" y="43" fill="#8a877e" fontSize={11} fontWeight={400} textAnchor="middle">acquisition routes</text>
+          <path d="M1005 72 H975 M1005 115 H975 M1005 158 H975 M975 72 V158"
+            fill="none" stroke="#8a877e" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M975 115 H951" fill="none" stroke="#8a877e" strokeWidth={1.7} strokeLinecap="round"
+            markerEnd="url(#faq-paths-source-arrow)" />
+          <rect x="1005" y="54" width="220" height="36" fill="#ffffff" stroke="#d9d7cf" strokeWidth={1.3} />
+          <text x="1115" y="72" fill="#1a1a1a" fontSize={13} textAnchor="middle" dominantBaseline="middle">OpenSea</text>
+          <rect x="1005" y="97" width="220" height="36" fill="#ffffff" stroke="#d9d7cf" strokeWidth={1.3} />
+          <text x="1115" y="115" fill="#1a1a1a" fontSize={13} textAnchor="middle" dominantBaseline="middle">CreditStrategy</text>
+          <rect x="1005" y="140" width="220" height="36" fill="#ffffff" stroke="#d9d7cf" strokeWidth={1.3} />
+          <text x="1115" y="158" fill="#1a1a1a" fontSize={13} textAnchor="middle" dominantBaseline="middle">direct sales</text>
+        </g>
         <g className="faq-paths-box faq-paths-credit-box">
           <rect x="245" y="233" width="270" height="74" fill="#f6f5f0" stroke="#00a3e0" strokeWidth={2} />
           <text x="380" y="270" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">individual Credit sale</text>
@@ -287,7 +303,7 @@ function InventoryPaths() {
         <g className="faq-paths-box faq-paths-outcome-box">
           <rect x="260" y="403" width="686" height="73" fill="#f6f5f0" stroke="#d9d7cf" strokeWidth={1.7} />
           <text x="603" y="428" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">NFT sales return ETH to the buying pot</text>
-          <text x="603" y="453" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">and fund later CC buybacks</text>
+          <text x="603" y="453" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">and fund CC buybacks and burns</text>
         </g>
         <g className="faq-paths-annotations" aria-hidden="true">
           <text x="104" y="302" fill="#e5007e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">ETH</text>
