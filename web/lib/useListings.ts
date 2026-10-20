@@ -87,6 +87,8 @@ export function useListings() {
       const [res, w0, w2, w3, clock] = await Promise.all([
         c.multicall({
           ...mc,
+          // The website RPC rejects a 100-row Multicall3 payload at the shared batch size, hiding every acquire action.
+          batchSize: 4_096,
           blockNumber: snap.blockNumber,
           allowFailure: true,
           contracts: [
