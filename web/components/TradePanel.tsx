@@ -8,12 +8,28 @@ import { engineDeployed, chain } from "@/lib/config";
 import { useCcMarket, potShareBps, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { commas, eth, evmNowAddress, evmNowTx, leftLabel, shortAddr, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
+import { commas, eth, evmNowAddress, evmNowTx, leftLabel, shortAddr, tokens, usd, usdCompact, usdPrice, usdPriceParts } from "@/lib/format";
 
 // The token's DexScreener page (chart, pool and market data) on Ethereum.
 const dexScreener = (token: string) => `https://dexscreener.com/ethereum/${token.toLowerCase()}`;
-// A price change in percent with its sign and one decimal: "+2.4%", "-0.8%".
-const pctChange = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(1)}%`;
+// A price change in percent with its sign and two decimals: "+3.87%", "−0.80%".
+const pctChange = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
+
+// The price, with a sub-cent price's zero count set as a small digit low beside the zero ($0.0₄983), so the
+// significant digits stay the size of the price.
+function PriceText({ usd: v }: { usd: number }) {
+  const p = usdPriceParts(v);
+  if (p.zeros == null) return <>{p.text}</>;
+  return (
+    <span aria-label={usdPrice(v)}>
+      {p.text}
+      <span className="tp-zeros" aria-hidden>
+        {p.zeros}
+      </span>
+      {p.sig}
+    </span>
+  );
+}
 import { lsGet, lsSet } from "@/lib/cache";
 import { useCoinLive, useNow, useSnapshot } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
@@ -292,15 +308,26 @@ export function TradePanel({ market }: { market?: Market }) {
         <div>
           <div className="label">{tag} price</div>
           <div className="tp-big">
-            {tokenUsd != null ? <span className="fx-in">{usdPrice(tokenUsd)}</span> : statsWait ? <Sk w="6ch" /> : "—"}
+            {tokenUsd != null ? (
+              <span className="fx-in">
+                <PriceText usd={tokenUsd} />
+              </span>
+            ) : statsWait ? (
+              <Sk w="6ch" />
+            ) : (
+              "—"
+            )}
             {change != null ? (
-              <span className="tp-chg fx-in" title={changeSince === "launch" ? "price change since the pool opened" : "price change over 24 hours"}>
-                {pctChange(change)} {changeSince === "launch" ? "since launch" : "24h"}
+              <span
+                className={`tp-chg fx-in ${change >= 0 ? "up" : "down"}`}
+                title={changeSince === "launch" ? "change since the pool opened" : "change over 24 hours"}
+              >
+                {pctChange(change)}
               </span>
             ) : (
               changeWait && (
                 <span className="tp-chg">
-                  <Sk w="9ch" />
+                  <Sk w="6ch" />
                 </span>
               )
             )}

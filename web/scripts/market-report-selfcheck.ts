@@ -1,7 +1,7 @@
 // Runnable check for the credits market report (web/lib/market-report.ts). No chain needed.
 //   npm run check
 import assert from "node:assert/strict";
-import { BANDS, BUCKET_WEI, bandOf, bandReport, medianOf, medianOfBuckets, vsMedian } from "../lib/market-report.ts";
+import { BANDS, BUCKET_WEI, bandOf, bandReport, cheapestByBand, medianOf, medianOfBuckets, vsMedian } from "../lib/market-report.ts";
 
 const pts = (p: number) => BigInt(p) * 10_000n;
 
@@ -37,6 +37,20 @@ const pts = (p: number) => BigInt(p) * 10_000n;
   assert.equal(r.sales, 10);
   assert.ok(r.change != null && Math.abs(r.change - ((600.5 / 500.5 - 1) * 100)) < 1e-9);
   assert.equal(Math.round(vsMedian(103n, 100n)), 3);
+}
+
+// promise: the cheapest ask per band skips unscored and unpriced asks, so a band reads only real asks
+{
+  const m = cheapestByBand([
+    { price: 50n, score: pts(610) },
+    { price: 40n, score: pts(620) },
+    { price: 10n, score: null },
+    { price: 0n, score: pts(605) },
+    { price: 70n, score: pts(720) },
+  ]);
+  assert.equal(m.get(2), 40n);
+  assert.equal(m.get(4), 70n);
+  assert.equal(m.has(0), false);
 }
 
 console.log("market report selfcheck ok");

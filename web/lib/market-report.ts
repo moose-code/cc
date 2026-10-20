@@ -68,3 +68,16 @@ export function bandReport(band: Band, week: Map<bigint, number>, prior: Map<big
 
 // A price against a median, in percent ("+3%" means 3% above it).
 export const vsMedian = (price: bigint, median: bigint): number => (Number(price) / Number(median) - 1) * 100;
+
+// The lowest price per band among priced, scored asks (the engine's own credits for sale, or the market's OpenSea and
+// CreditStrategy asks): band key to wei. An ask without a score or price is left out.
+export function cheapestByBand(asks: { price: bigint; score?: bigint | null }[]): Map<number, bigint> {
+  const m = new Map<number, bigint>();
+  for (const a of asks) {
+    if (a.score == null || a.price <= 0n) continue;
+    const k = bandOf(a.score).key;
+    const cur = m.get(k);
+    if (cur == null || a.price < cur) m.set(k, a.price);
+  }
+  return m;
+}

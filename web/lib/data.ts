@@ -6,7 +6,8 @@
 
 import { useMemo } from "react";
 import { engineDeployed } from "./config";
-import { BANDS, BUCKET_WEI, WEEK_S, bandOf, bandReport, type BandReport } from "./market-report";
+import { BANDS, BUCKET_WEI, WEEK_S, bandOf, bandReport, cheapestByBand, type BandReport } from "./market-report";
+import { useMarketView } from "./market-view";
 import { useBlockTs, useScan } from "./engine";
 import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
 import {
@@ -308,4 +309,20 @@ export function useMarketReport(): MarketReport {
     }
     return { bands: BANDS.map((b) => bandReport(b, week[b.key], prior[b.key])), loading: pending || !ready || scoresLoading, basis: "latest" };
   }, [mode, ixq.data, pending, head, chainSales, scores, ready, scoresLoading]);
+}
+
+/** The market's cheapest ask per rating band: the keeper's market view (its best OpenSea asks by price per point and
+ * the CreditStrategy rows, each with its score) through the shared /api/listings poll. `available` is false while the
+ * site has no keeper view. */
+export function useMarketAsks(): { asks: Map<number, bigint>; loading: boolean; available: boolean } {
+  const { data, isPending, isError } = useMarketView();
+  return useMemo(() => {
+    const view = data?.available ? data.view : undefined;
+    const now = Math.floor(Date.now() / 1000);
+    const asks = [
+      ...(view?.rows ?? []).filter((r) => r.endTime === 0 || r.endTime > now),
+      ...(view?.strategy.rows ?? []),
+    ].map((r) => ({ price: BigInt(r.price), score: r.score == null ? null : BigInt(r.score) }));
+    return { asks: cheapestByBand(asks), loading: engineDeployed && isPending && !isError, available: Boolean(view) };
+  }, [data, isPending, isError]);
 }
