@@ -8,6 +8,7 @@ import { useEns } from "@/lib/ens";
 import { commas, shortAddr } from "@/lib/format";
 import { usePotPage } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
+import { Val } from "./Skeleton";
 
 const NAV = [
   { href: "/credits", label: "credits" },
@@ -99,13 +100,18 @@ function AccountName({ address }: { address: string }) {
 }
 
 // The points the pot covers and the current bid, beside the wallet on every page.
+// Until the snapshot answers both figures are skeletons of their usual width, so the row does not grow leftward.
 function PotPage() {
   const { pts, per1 } = usePotPage();
   return (
     <div className="hdr-next">
       <span className="hdr-next-label">pot covers</span>
-      <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
-      {per1 && <span className="hdr-next-bid">· current bid {per1} ETH / 1 pt</span>}
+      <b>
+        <Val ready={pts != null} w="11ch">{pts != null && `${commas(pts)} pts`}</Val>
+      </b>
+      <span className="hdr-next-bid">
+        · current bid <Val ready={per1 != null} w="9ch">{per1}</Val> ETH / 1 pt
+      </span>
     </div>
   );
 }

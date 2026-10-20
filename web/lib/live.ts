@@ -136,7 +136,7 @@ async function readCredits(client: Client, s: Snapshot, ids: bigint[]): Promise<
 // The credits the engine holds, oldest first (the compose order). Indexer mode: the list, costs, acquisition times and
 // scores come from the indexer (no 200 credit cap), the price is read live (creditPrice falls every second) and `past`
 // follows chain time. Chain mode: the first PILE_PAGE credits of Core.pilePage, read with creditInfo, pastWindow and
-// creditPrice.
+// creditPrice. `loading` is true until the source answers.
 export function usePile() {
   const client = usePublicClient();
   const { data: s } = useSnapshot();
@@ -178,7 +178,14 @@ export function usePile() {
       past: !saleOn || c.acquiredAt + s.creditWindow <= now,
     }));
   }, [mode, s, base, saleOn, prices.data, now]);
-  return { data: mode === "ix" ? ixData : chain.data ?? [] };
+  // loading: the source has not answered yet, so an empty list is not an empty pile
+  const loading =
+    !s ||
+    mode === "checking" ||
+    (mode === "ix"
+      ? (base === undefined && !held.isError) || (saleOn && (base?.length ?? 0) > 0 && !prices.data && !prices.isError)
+      : chain.data === undefined && !chain.isError);
+  return { data: mode === "ix" ? ixData : chain.data ?? [], loading };
 }
 
 // One credit, in the pile or not (chain mode) or only in the pile (indexer mode). undefined until loaded.

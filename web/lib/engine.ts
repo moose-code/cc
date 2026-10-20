@@ -211,5 +211,6 @@ export function useScan() {
       return p;
     },
   });
-  return { ...q, data: q.data ?? EMPTY_SCAN };
+  // ready: a scan has answered (until then data is the empty scan, which must not read as an empty history)
+  return { ...q, data: q.data ?? EMPTY_SCAN, ready: q.data !== undefined };
 }

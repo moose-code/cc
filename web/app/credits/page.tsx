@@ -6,6 +6,7 @@ import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { ArtFrame, PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
+import { EmptyNote, Sk, SkCard, SkSideSec } from "@/components/Skeleton";
 import { useComposeEta } from "@/components/ComposeEta";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { howLabel } from "@/lib/indexer";
@@ -24,7 +25,7 @@ type Sort = "newest" | "price" | "rating";
 // Credits held by the engine, newest first. While the credit sale is on, each has a falling price
 // (controller.creditPrice) and can be bought. Selection feeds the buy box in the rail.
 export default function CreditsPage() {
-  const { data: pile } = usePile();
+  const { data: pile, loading } = usePile();
   const historyDown = useHistoryDown();
   const { data: snap } = useSnapshot();
   const { data: scan } = useScan();
@@ -62,13 +63,14 @@ export default function CreditsPage() {
 
   if (!engineDeployed) return <NotDeployed />;
 
-  const meta = [
+  // nothing about the pile is shown until it has loaded: no "0 held" while it is read
+  const meta = loading ? undefined : [
     `${pile.length} held by engine`,
     snap && `bid ${eth(snap.ethRate, 5)} ETH / 100 pts`,
     eta.perHour != null && eta.perHour > 0 && `${rateLabel(eta.perHour)} bought an hour${eta.recent ? ", recent pace" : ""}`,
     eta.at(0) && `next statement composes in ${etaLabel(eta.at(0))}`,
     historyDown && "history unavailable",
-  ].filter(Boolean);
+  ].filter(Boolean).join(" · ");
 
   const card = (c: PileCredit, index: number) => {
     const on = sel.has(c.id);
@@ -108,7 +110,7 @@ export default function CreditsPage() {
   return (
     <div className="split">
       <div className="split-main">
-        <PageHead title="credits" ink="m" meta={meta.join(" · ")}>
+        <PageHead title="credits" ink="m" meta={meta} metaW="58ch" metaLines={3}>
           <Link href="/sell" className="ulink">
             sell yours →
           </Link>
@@ -130,7 +132,33 @@ export default function CreditsPage() {
         </PageHead>
 
         <div className="split-pad">
-          {view === "grid" ? (
+          {loading ? (
+            view === "grid" ? (
+              <div className="cgrid" aria-busy="true">
+                {Array.from({ length: 12 }, (_, i) => (
+                  <SkCard key={i} rows={3} />
+                ))}
+              </div>
+            ) : (
+              <div className="ctable" aria-busy="true">
+                {Array.from({ length: 12 }, (_, i) => (
+                  <div key={i} className="ctable-row" aria-hidden>
+                    <span />
+                    <Sk block w="28px" h="28px" />
+                    <Sk w="12ch" />
+                    <Sk w="5ch" />
+                    <Sk w="6ch" />
+                    <Sk w="6ch" />
+                    <Sk w="8ch" className="hide-sm" />
+                    <Sk w="6ch" className="hide-sm" />
+                    <Sk w="6ch" />
+                  </div>
+                ))}
+              </div>
+            )
+          ) : pile.length === 0 ? (
+            <EmptyNote>the engine holds no credits right now. credits it buys queue here until they compose.</EmptyNote>
+          ) : view === "grid" ? (
             <div className="cgrid">{visible.map(({ c, index }) => card(c, index))}</div>
           ) : (
             <div className="ctable">
@@ -175,20 +203,23 @@ export default function CreditsPage() {
               })}
             </div>
           )}
-          <div className="more-row">
-            <span className="muted">
-              showing {Math.min(shown, rows.length)} of {rows.length}
-            </span>
-            {shown < rows.length && (
-              <button className="linkbtn" onClick={() => setShown((n) => n + PAGE)}>
-                load more
-              </button>
-            )}
-          </div>
+          {!loading && rows.length > 0 && (
+            <div className="more-row">
+              <span className="muted">
+                showing {Math.min(shown, rows.length)} of {rows.length}
+              </span>
+              {shown < rows.length && (
+                <button className="linkbtn" onClick={() => setShown((n) => n + PAGE)}>
+                  load more
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       <aside className="side">
+        {!snap && <SkSideSec label="buy credits" lines={3} kv={2} action />}
         {saleOn && snap && (
           <section className="side-sec">
             <div className="label">buy credits</div>

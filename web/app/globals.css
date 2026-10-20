@@ -22,6 +22,8 @@
   --k: #1a1a1a;
   /* credit and statement art prints on white in both themes */
   --art: #ffffff;
+  /* the tint of art still loading: on white in both themes, so it is fixed too */
+  --art-wait: #1a1a1a;
 
   --mono: var(--font-plex), ui-monospace, "SF Mono", "Menlo", "Monaco",
     "Cascadia Code", "Roboto Mono", monospace;
@@ -2328,6 +2330,7 @@ button.tp-row:disabled {
 .compose-bar i {
   position: absolute;
   inset: 0 auto 0 0;
+  transition: width 400ms ease-out;
   background: var(--y);
 }
 /* the forming statement: 8 wide x 10 tall, the real sheet layout */
@@ -3690,4 +3693,184 @@ button.slot:disabled {
 /* a forming statement at hero size: the art frame carries the outline and crop marks */
 .art-frame > .forming-art {
   outline: 0;
+}
+
+/* ---- loading and motion ------------------------------------------------------
+   web/design/README.md "loading and motion". A skeleton is a flat block in the text colour at low strength, square
+   like the print grid, pulsing slowly in step with every other skeleton; it holds the box of what it stands for. New
+   content fades in once. Route content fades in on navigation. Reduced motion keeps the skeletons still and drops
+   the fades. */
+
+.sk {
+  display: inline-block;
+  vertical-align: -0.12em;
+  height: 0.95em;
+  max-width: 100%;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  animation: sk-pulse 1.6s ease-in-out infinite;
+}
+.sk-block {
+  display: block;
+  height: auto;
+}
+.sk-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+  padding: 0.2em 0;
+}
+.sk-lines .sk {
+  display: block;
+}
+@keyframes sk-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.fx-in {
+  animation: fx-in 220ms ease-out both;
+}
+@keyframes fx-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* route content: a column that fills the space between header and footer, so the footer stays at the bottom while a
+   page loads and grows, and fades in on each navigation */
+.route {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-width: 0;
+  animation: route-in 180ms ease-out both;
+}
+@keyframes route-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.route > .home,
+.route > .detail-page,
+.route > .page-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+}
+.home > .home-body,
+.detail-page > .detail-split {
+  flex: 1 0 auto;
+}
+
+/* skeleton card: the box of a credit or statement card */
+.sk-card {
+  pointer-events: none;
+}
+.sk-card .sk-art {
+  aspect-ratio: 1;
+}
+.sk-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.sk-card-row:first-child {
+  margin-top: 0;
+  font-size: 16px;
+}
+
+/* art still loading: the tile pulses in its own box; loaded art fades in */
+.tile-empty.tile-wait {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--art-wait) 7%, var(--art));
+  animation: sk-pulse 1.6s ease-in-out infinite;
+}
+.tile-in {
+  animation: fx-in 260ms ease-out both;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk,
+  .tile-empty.tile-wait {
+    animation: none;
+  }
+  .fx-in,
+  .tile-in,
+  .route {
+    animation: none;
+  }
+}
+/* a group of live cells (the compose grid) waiting for its first read */
+.pulse {
+  animation: sk-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+  }
+}
+.empty-note {
+  margin: 0;
+  padding: 32px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+/* the hero art frame while a detail route loads: a square of the art's tone */
+.sk-art-frame {
+  aspect-ratio: 1;
+  background: color-mix(in srgb, var(--art-wait) 6%, var(--art));
+}
+/* the listings histogram before the first read: bars in the skeleton tone */
+.lhist-sk .lhist-bar i,
+.lhist-sk .lhist-col:first-child .lhist-bar i {
+  background: color-mix(in srgb, currentColor 9%, transparent);
+}
+/* skeleton cards and table thumbnails take the art's white tone, as the loaded art will */
+.sk-card .sk-art {
+  background: color-mix(in srgb, var(--art-wait) 5%, var(--art));
+}
+.head-band-main {
+  min-width: 0;
+  max-width: 100%;
+}
+.head-band-meta .sk-wrap {
+  display: none;
+}
+/* on a phone each skeleton line takes one text line (1.4em) of the meta, so two of them match a wrapped meta */
+@media (max-width: 640px) {
+  .head-band-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-height: calc(var(--meta-lines, 1) * 1.4em);
+  }
+  .head-band-meta .sk,
+  .head-band-meta .sk + .sk-wrap {
+    display: block;
+    margin: 0.225em 0;
+  }
 }

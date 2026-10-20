@@ -9,7 +9,8 @@ import { CreditTile, StatementTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { Addr } from "@/components/Addr";
 import { Breadcrumb } from "@/components/Shell";
-import { Fact, HeroArt, HistLine, type Ink } from "@/components/Detail";
+import { Fact, HeroArt, HistLine, SkFacts, SkHistory, type Ink } from "@/components/Detail";
+import { Sk } from "@/components/Skeleton";
 import { NotDeployed } from "@/components/NotDeployed";
 import { useComposeEta } from "@/components/ComposeEta";
 import { core, credits, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
@@ -50,7 +51,7 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
   const { data: pile } = usePile();
   const now = useNow();
   const d = useCreditDetail(id);
-  const { data: meta } = useTokenMeta("credit", id);
+  const { data: meta, isPending: metaPending } = useTokenMeta("credit", id);
   const historyDown = useHistoryDown();
   if (!engineDeployed) return <NotDeployed />;
 
@@ -98,14 +99,16 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
 
       <div className="detail-split">
         <div className="detail-body">
-          <HeroArt tile={<CreditTile id={id} />} image={meta?.image} file={`credit-${id}.svg`} address={credits} />
+          <HeroArt tile={<CreditTile id={id} />} image={meta?.image} file={`credit-${id}.svg`} address={credits} loading={metaPending} />
 
           <div className="detail-right">
             <div className="label">credit</div>
             <h1 className="detail-id">#{id}</h1>
 
-            {known && (
-              <dl className="dfacts">
+            {d.loading && <SkFacts keys={["credit rating", "plates", "holder", "paid by engine", "got by", "acquired", "transaction id"]} />}
+            {d.loading && <SkHistory n={2} />}
+            {!d.loading && known && (
+              <dl className="dfacts fx-in">
                 <Fact k="credit rating" v={score != null ? rating(score) : "—"} />
                 {mask != null && (
                   <Fact
@@ -141,8 +144,8 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
             )}
 
             {historyDown && <p className="muted ix-down">history unavailable</p>}
-            {(evts.length > 0 || state === "sale" || state === "floor") && (
-              <section className="dhist">
+            {!d.loading && (evts.length > 0 || state === "sale" || state === "floor") && (
+              <section className="dhist fx-in">
                 <div className="label">history</div>
                 <div className="dhist-rows">
                   {state === "sale" && c && (
@@ -163,7 +166,20 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
         <aside className={`side ink-${ink}`}>
           <section className="side-sec">
             <div className="label">status</div>
-            <Status state={state} last={last} window={window} />
+            {d.loading ? (
+              <>
+                <div className="status-line">
+                  <Sk w="14ch" />
+                </div>
+                <p className="side-copy">
+                  <Sk w="80%" />
+                </p>
+              </>
+            ) : (
+              <div className="fx-in">
+                <Status state={state} last={last} window={window} />
+              </div>
+            )}
           </section>
           {inPile && snap && <ComposeBox id={id} pile={pile} snap={snap} />}
           {inPile && snap && saleOn && c && (

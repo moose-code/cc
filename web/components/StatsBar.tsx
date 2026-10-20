@@ -7,6 +7,7 @@ import { useBalanceToken, useSnapshot } from "@/lib/live";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { BALANCE_SYMBOL, commas, eth } from "@/lib/format";
 import { Tween } from "./EngineFeed";
+import { Sk, SkLines } from "./Skeleton";
 
 const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
 
@@ -22,26 +23,38 @@ export function StatsBar() {
       ? commas(Number(formatUnits(snap.balanceAvailable, dec)))
       : "—";
   const burnedPct = s ? (s.ccBurned / LAUNCH_SUPPLY_CC) * 100 : 0;
+  // a figure not read yet is a skeleton and each sub line keeps its row, so the cells do not grow when data arrives
+  const wait = <Sk w="4ch" />;
+  const sub = (ready: boolean, text: ReactNode, w = "10ch") => <small>{ready ? <span className="fx-in">{text}</span> : <Sk w={w} />}</small>;
   return (
     <div className="stats">
       <Cell ink="m" label="credits held">
-        {on ? commas(Number(snap.pileSize)) : "—"}
-        {on && s && <small>{commas(s.composed * STATEMENT_SIZE)} composed</small>}
+        {on ? <span className="fx-in">{commas(Number(snap.pileSize))}</span> : wait}
+        {sub(on && !!s, s && `${commas(s.composed * STATEMENT_SIZE)} composed`)}
       </Cell>
       <Cell ink="y" label="statements held">
-        {on ? commas(snap.held.length) : "—"}
-        {on && s && <small>{commas(s.composed)} created</small>}
+        {on ? <span className="fx-in">{commas(snap.held.length)}</span> : wait}
+        {sub(on && !!s, s && `${commas(s.composed)} created`)}
       </Cell>
       <Cell ink="c" label={BALANCE_SYMBOL}>
-        {!on ? "—" : snap.balanceOn ? balance : <span className="stat-wait">awaiting deployment</span>}
+        {!on ? wait : snap.balanceOn ? <span className="fx-in">{balance}</span> : <span className="stat-wait fx-in">awaiting deployment</span>}
       </Cell>
       <Cell ink="k" label="$CC burned">
-        {engineDeployed && s ? commas(s.ccBurned) : "—"}
-        {engineDeployed && s && <small>{commas(burnedPct, 2)}%</small>}
+        {engineDeployed && s ? <span className="fx-in">{commas(s.ccBurned)}</span> : wait}
+        {sub(engineDeployed && !!s, `${commas(burnedPct, 2)}%`, "4ch")}
       </Cell>
       <Cell ink="pot" label="pot">
-        {on ? <Tween wei={snap.potWithPending} /> : "—"}
-        {on && <small>ETH · {eth(snap.potRoom)} buying room · {eth(snap.reserve)} reserved</small>}
+        {on ? <Tween wei={snap.potWithPending} /> : <Sk w="7ch" />}
+        {/* the room and reserve line wraps to two lines in the pot cell; its skeleton holds both */}
+        {on ? (
+          <small className="fx-in">
+            ETH · {eth(snap.potRoom)} buying room · {eth(snap.reserve)} reserved
+          </small>
+        ) : (
+          <small>
+            <SkLines n={2} w="16ch" />
+          </small>
+        )}
       </Cell>
     </div>
   );

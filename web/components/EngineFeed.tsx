@@ -16,6 +16,7 @@ import { relTime, eth, evmNowTx, rating, commas } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
 import { CCLogo } from "./CCLogo";
+import { Sk } from "./Skeleton";
 
 const MARK: Record<FeedKind, string> = {
   credit: "m",
@@ -81,10 +82,10 @@ export function EngineProgress() {
         <div className="progress-head">
           <span>next statement</span>
           <b>
-            {ready} / {STATEMENT_SIZE} credits
+            {snap ? <span className="fx-in">{ready}</span> : <Sk w="2ch" />} / {STATEMENT_SIZE} credits
           </b>
         </div>
-        <div className="progress-cells">
+        <div className={`progress-cells${snap ? "" : " pulse"}`}>
           {Array.from({ length: STATEMENT_SIZE }, (_, i) => (
             <i key={i} className={i < ready ? "on" : undefined} />
           ))}
@@ -98,7 +99,7 @@ export function EngineFeed() {
   const now = useNow();
   const [limit, setLimit] = useState(PAGE);
   const [view, setView] = useState<FeedView>("ledger");
-  const { events: shown, total } = useFeed("all", limit);
+  const { events: shown, total, loading } = useFeed("all", limit);
   const historyDown = useHistoryDown();
   // one batched read for the credits on screen
   const ids = [...new Set(shown.flatMap((e) => (e.tile?.kind === "credit" ? [BigInt(e.tile.id)] : [])))];
@@ -138,7 +139,7 @@ export function EngineFeed() {
             {shown.map((e) => (
               <Row key={e.key} e={e} now={now} score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined} mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined} />
             ))}
-            {shown.length === 0 && <EmptyLedger />}
+            {shown.length === 0 && (loading ? <LoadingLedger /> : <EmptyLedger />)}
           </div>
           {historyDown && <p className="muted ix-down">history unavailable</p>}
           {total > limit && (
@@ -149,6 +150,37 @@ export function EngineFeed() {
         </>
       )}
     </section>
+  );
+}
+
+// Rows of the ledger's shape while history loads; the empty state shows only once the source answered with no rows.
+function LoadingLedger() {
+  return (
+    <div aria-busy="true">
+      {Array.from({ length: 10 }, (_, i) => (
+        <div key={i} className="ledger-cols ledger-row ledger-sk" aria-hidden style={{ opacity: 1 - i * 0.07 }}>
+          <span className="when">
+            <Sk w="5ch" />
+          </span>
+          <span className="entry">
+            <Sk w="13ch" />
+          </span>
+          <span className="ref">
+            <Sk block w="24px" h="24px" />
+            <Sk w="12ch" />
+          </span>
+          <span className="plates">
+            <Sk w="7ch" />
+          </span>
+          <span className="num rate">
+            <Sk w="5ch" />
+          </span>
+          <span className="num">
+            <Sk w="6ch" />
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -187,7 +219,7 @@ function ListingsPanel() {
   return (
     <>
       <ListingsStatus market={data?.market} strategy={data?.strategyStatus} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
-      <ListingsTable rows={rows.slice(0, shown)} />
+      <ListingsTable rows={rows.slice(0, shown)} loading={!data && !error} />
       {data && rows.length === 0 && <p className="lstatus">no listings in the current view.</p>}
       {shown < rows.length && (
         <button className="action more" onClick={() => setShown((n) => n + LISTINGS_PAGE)}>

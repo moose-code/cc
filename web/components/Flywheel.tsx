@@ -8,6 +8,7 @@ import { useCcMarket, useHookFeeBps } from "@/lib/market";
 import { BALANCE_SYMBOL } from "@/lib/format";
 import { CreditTile } from "./Tiles";
 import { Tween } from "./EngineFeed";
+import { Sk } from "./Skeleton";
 
 // bps as a percent, up to two decimals: 900 -> "9", 990 -> "9.9"
 const pct = (bps: number) => (bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 });
@@ -27,9 +28,11 @@ const Arrow = ({ n }: { n: number }) => (
 // TODO: "full mechanics" link; the app has no mechanics page to point at.
 export function Flywheel() {
   const { data: snap } = useSnapshot();
-  const { events: latest } = useFeed("credits", 1);
+  const { events: latest, loading: feedLoading } = useFeed("credits", 1);
   const { market } = useCcMarket();
   const { data: fee } = useHookFeeBps(market);
+  // until the snapshot answers the live figures are skeletons; the split line keeps its row, so nothing below moves
+  const pot = snap ? <Tween wei={snap.potWithPending} /> : <Sk w="6ch" />;
   const balanceOn = !!snap?.balanceOn;
 
   const creditId = latest.find((e) => e.tile?.kind === "credit")?.tile?.id;
@@ -37,8 +40,17 @@ export function Flywheel() {
   // split of a statement sale after the artist and operator cuts, in bps
   const split = snap ? { buyback: snap.settings.saleToBuybackBps, pot: 10000 - snap.settings.saleToBuybackBps } : undefined;
 
-  // the standing engine share; the launch fee window is left out of the explainer
-  const tradeLine = fee ? `${pct(fee.engineBaseBps)}% of every trade goes to the engine` : "a share of every trade goes to the engine";
+  // the standing engine share; the launch fee window is left out of the explainer. A fee still loading is a skeleton;
+  // no pool or a failed read keeps the general wording
+  const tradeLine = fee ? (
+    `${pct(fee.engineBaseBps)}% of every trade goes to the engine`
+  ) : market && fee === undefined ? (
+    <>
+      <Sk w="5ch" /> of every trade goes to the engine
+    </>
+  ) : (
+    "a share of every trade goes to the engine"
+  );
 
   const steps = [
     {
@@ -62,15 +74,13 @@ export function Flywheel() {
           fees collect here
           <span className="fw-mpot">
             {" · "}
-            <b>
-              <Tween wei={snap?.potWithPending} /> ETH
-            </b>
+            <b>{pot} ETH</b>
           </span>
         </>
       ),
       glyph: (
         <span className="fw-chip">
-          <Tween wei={snap?.potWithPending} />
+          {pot}
           <small>ETH</small>
         </span>
       ),
@@ -79,14 +89,14 @@ export function Flywheel() {
       title: "buy credits",
       line: "a standing bid, priced by credit rating",
       glyph: (
-        <span className="fw-thumb">{creditId != null && <CreditTile id={creditId} />}</span>
+        <span className="fw-thumb">{creditId != null ? <CreditTile id={creditId} /> : feedLoading && <Sk block w="100%" h="100%" />}</span>
       ),
     },
     {
       title: "compose",
       line: `${STATEMENT_SIZE} credits make one statement`,
       glyph: (
-        <span className="fw-cells" aria-hidden>
+        <span className={`fw-cells${snap ? "" : " pulse"}`} aria-hidden>
           {Array.from({ length: STATEMENT_SIZE }, (_, i) => (
             <i key={i} className={i < filled ? "on" : undefined} />
           ))}
@@ -133,21 +143,17 @@ export function Flywheel() {
             </div>
           </Fragment>
         ))}
-        {split && (
-          <>
-            <div className="fw-ret" aria-hidden />
-            <div className="fw-ret-end" aria-hidden />
-            <div className="fw-split">
-              <span>
-                <b>{pct(split.pot)}%</b> of statement sales back to the pot
-              </span>
-              <i aria-hidden>·</i>
-              <span>
-                <b>{pct(split.buyback)}%</b> buys and burns $CC
-              </span>
-            </div>
-          </>
-        )}
+        <div className="fw-ret" aria-hidden />
+        <div className="fw-ret-end" aria-hidden />
+        <div className="fw-split">
+          <span>
+            <b>{split ? <span className="fx-in">{pct(split.pot)}%</span> : <Sk w="3ch" />}</b> of statement sales back to the pot
+          </span>
+          <i aria-hidden>·</i>
+          <span>
+            <b>{split ? <span className="fx-in">{pct(split.buyback)}%</span> : <Sk w="3ch" />}</b> buys and burns $CC
+          </span>
+        </div>
       </div>
     </section>
   );
