@@ -188,7 +188,7 @@ test("listing: swept only after it has been sweepable for the listing delay (dec
   assert.deepEqual(t2.calls[0].args, [SEAPORT_ADAPTER, 7n, "0x1234"]);
   const immediate = decide(state({ timestamp: 1_000n }), [l], gas("1"), policy({}, 0), new Map());
   assert.deepEqual(doorsOf(immediate), ["buyListing"]);
-  assert.equal(immediate.calls[0].note.ageSec, 0n);
+  assert.equal(immediate.calls[0].note?.ageSec, 0n);
 });
 
 test("listing: a listing that leaves the sweepable set restarts its delay; a new price is a new listing", () => {
