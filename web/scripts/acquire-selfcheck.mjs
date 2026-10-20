@@ -9,14 +9,14 @@ const consumer = pathToFileURL(join(web, "lib/useAcquire.ts")).href;
 const rules = pathToFileURL(join(web, "lib/acquire.ts")).href;
 const stubs = {
   react: "export const useEffect=()=>{}; export const useState=x=>[x,()=>{}];",
-  wagmi: "export const useAccount=()=>({}); export const usePublicClient=()=>({});",
+  wagmi: "export const useAccount=()=>globalThis.__acquireFixture.account??{}; export const usePublicClient=()=>globalThis.__acquireFixture.client??{};",
   "@rainbow-me/rainbowkit": "export const useConnectModal=()=>({});",
   "./config": "export const core='0x1',strategy='0x2',strategyAdapter='0x3',seaportAdapter='0x4',strategyStartBlock=1n;",
   "./abis": "export const coreAbi=[],strategyAbi=[{},{}];",
   "./live": "export const useSnapshot=()=>({data:{paused:false}}); export const creditScores=async()=>[];",
   "./indexer": "export const getIxMode=()=> 'chain'; export const fetchStrategyListings=async()=>[]; export const fetchScoresIx=async()=>new Map();",
   "./market-view": "export const readMarketView=async()=>{globalThis.__acquireFixture.reads++;return globalThis.__acquireFixture.market;};",
-  "./tx": "export const useTx=()=>({run:()=>{throw Error('unexpected transaction')},pending:false});",
+  "./tx": "export const useTx=()=>({run:(...args)=>globalThis.__acquireFixture.txRun?.(...args)??Promise.reject(Error('unexpected transaction')),pending:false});",
 };
 register("data:text/javascript," + encodeURIComponent(`
 const stubs=${JSON.stringify(stubs)};
@@ -33,7 +33,7 @@ export async function load(url,ctx,next){
 }`));
 const { parseView } = await import(pathToFileURL(join(web, "lib/listings-api.ts")).href);
 const { gatherListings, useAcquireTx } = await import(consumer);
-const { preparedForAcquire, compareListingPricePerPoint } = await import(rules);
+const { cheapestOpenSeaEligible, preparedForAcquire, compareListingPricePerPoint } = await import(rules);
 const body = {
   chainId: 1, core: "0x" + "1".repeat(40), seaportAdapter: "0x" + "2".repeat(40), builtAt: 3000,
   status: { source: "api", complete: true, lastFullAt: 1000, publishedAt: 2000, streamJoined: true, gap: false, queuedUpdates: 0, queuedRemovals: 0, retryAt: null, lastFailure: null },
@@ -91,3 +91,32 @@ const tied = [
 tied.sort((a,b)=>(a.gap-b.gap)||compareListingPricePerPoint(a,b));
 assert.equal(tied[0].source,"opensea");
 assert.ok(compareListingPricePerPoint({id:1n,price:1n,score:0n},{id:2n,price:100n,score:1n})>0);
+
+// promise: bulk acquires only the cheapest eligible OpenSea asks, never more than selected, and stops on a stale later ask.
+const asks = [
+  { id: 3n, source: "strategy", price: 30n, params: "0x", bid: 40n, clears: true },
+  { id: 2n, source: "opensea", price: 20n, params: "0x1234", bid: 40n, clears: false, prepared: true },
+  { id: 1n, source: "opensea", price: 10n, params: "0x1234", bid: 40n, clears: true, prepared: true },
+  { id: 4n, source: "opensea", price: 1n, params: "0x", bid: 40n, clears: true, prepared: false },
+  { id: 5n, source: "opensea", price: 30n, params: "0x", bid: 40n, clears: true, prepared: true, orderHash: "0x" + "5".repeat(64) },
+];
+assert.deepEqual(cheapestOpenSeaEligible(asks).map(l => l.id), [1n, 5n]);
+assert.deepEqual(asks.map(l => l.id), [3n, 2n, 1n, 4n, 5n], "sorting leaves table order alone");
+const sends = [];
+globalThis.__acquireFixture.account = { address: "0x" + "a".repeat(40) };
+globalThis.__acquireFixture.client = {
+  readContract: async () => { throw Error("Strategy quote read in OpenSea bulk"); },
+  simulateContract: async () => ({}),
+};
+globalThis.__acquireFixture.txRun = async (fn, plan) => {
+  await fn(async (req) => { sends.push(req.args[1]); return "0x" + "a".repeat(64); });
+  assert.equal(plan.length, sends.length);
+};
+globalThis.fetch = async () => ({ json: async () => ({ price: "30", params: "0x1234" }) });
+await useAcquireTx(1n).buyMany(cheapestOpenSeaEligible(asks));
+assert.deepEqual(sends, [1n, 5n]);
+sends.length = 0;
+globalThis.fetch = async () => ({ json: async () => ({ price: "31", params: "0x1234" }) });
+await assert.rejects(useAcquireTx(1n).buyMany(cheapestOpenSeaEligible(asks)), /stopped after 1 of 2: ask changed/);
+assert.deepEqual(sends, [1n], "the more expensive changed ask is never sent");
+globalThis.fetch = originalFetch;

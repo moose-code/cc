@@ -8,6 +8,7 @@ import { NotDeployed } from "@/components/NotDeployed";
 import { engineDeployed, SCORE_PER_100_POINTS } from "@/lib/config";
 import { countdown, useHead, useNow, useSnapshot } from "@/lib/live";
 import { useAcquireTx } from "@/lib/useAcquire";
+import { cheapestOpenSeaEligible } from "@/lib/acquire";
 import { useListings, type ListingsData } from "@/lib/useListings";
 import { nextRise } from "@/lib/climb";
 import { BALANCE_SYMBOL, eth, evmNowTx } from "@/lib/format";
@@ -50,11 +51,15 @@ export default function ListingsPage() {
   const { data, error, isFetching, refetch, dataUpdatedAt } = useListings();
   const { data: snap } = useSnapshot();
   const { data: head } = useHead();
-  const { buy, available, pending, err, done } = useAcquireTx(head?.n);
+  const { buy, buyMany, available, pending, err, done } = useAcquireTx(head?.n);
   const [shown, setShown] = useState(PAGE);
+  const [bulkCount, setBulkCount] = useState(1);
   const { data: fills } = useFillsTodayIx(head?.ts);
 
   const rows = data?.rows ?? [];
+  const eligible = cheapestOpenSeaEligible(available(rows));
+  const bulkMax = eligible.length;
+  const selected = Math.min(bulkCount, bulkMax);
   const counts = useMemo(() => {
     const n = BUCKETS.map(() => 0);
     for (const r of rows) n[BUCKETS.findIndex((b) => r.gap <= b.max)]++;
@@ -98,17 +103,24 @@ export default function ListingsPage() {
   return (
     <div>
       <PageHead title="listings" ink="m" meta={metaFull}>
-        {done ? (
-          <a className="hdr-acq-done" href={evmNowTx(done.hash)} target="_blank" rel="noreferrer">
-            acquired #{done.id.toString()} ↗
-          </a>
-        ) : (
-          err && <span className="hdr-acq-err">{err}</span>
-        )}
+        {done && <a className="hdr-acq-done" href={evmNowTx(done.hash)} target="_blank" rel="noreferrer">
+          {done.target > 1 ? `acquired ${done.count}/${done.target} · latest #${done.id.toString()}` : `acquired #${done.id.toString()}`} ↗
+        </a>}
+        {err && <span className="hdr-acq-err">{err}</span>}
       </PageHead>
 
       <div className="split-pad">
         <ListingsStatus market={data?.market} strategy={data?.strategyStatus} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
+        <div className="lbulk">
+          <label htmlFor="bulk-count">cheapest OpenSea by ETH · {selected} of {eligible.length} eligible</label>
+          <input id="bulk-count" type="range" min="1" max={Math.max(1, bulkMax)} value={Math.max(1, selected)}
+            onChange={(e) => setBulkCount(Number(e.target.value))} disabled={pending || bulkMax === 0} />
+          <button className="hdr-acq" disabled={pending || bulkMax === 0}
+            onClick={() => buyMany(eligible.slice(0, selected))}>
+            {pending ? "acquiring…" : `acquire cheapest ${selected} on OpenSea`}
+          </button>
+          <span className="caption">{bulkMax === 0 ? "no eligible OpenSea listings" : "one wallet approval per NFT · engine pot pays asks; wallet pays gas"}</span>
+        </div>
         {rows.length > 0 && (
           <div className="lhist" aria-label="listings by price over bid">
             {BUCKETS.map((b, i) => (
@@ -123,7 +135,7 @@ export default function ListingsPage() {
           </div>
         )}
 
-        <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} />
+        <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} showGap />
         {data && rows.length === 0 && <p className="caption">no listings in the current view.</p>}
 
         <div className="more-row">
