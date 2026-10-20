@@ -13,11 +13,11 @@ import { commas, eth, evmNowAddress, evmNowTx, leftLabel, shortAddr, tokens, usd
 // The token's DexScreener page (chart, pool and market data) on Ethereum.
 const dexScreener = (token: string) => `https://dexscreener.com/ethereum/${token.toLowerCase()}`;
 // A price change in percent with its sign and two decimals: "+3.87%", "−0.80%".
-const pctChange = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
+export const pctChange = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
 
-// The price, with a sub-cent price's zero count set as a small digit low beside the zero ($0.0₄983), so the
+// The price, with a sub-cent price's zero count set as a small raised digit beside the zero ($0.0⁴983), so the
 // significant digits stay the size of the price.
-function PriceText({ usd: v }: { usd: number }) {
+export function PriceText({ usd: v }: { usd: number }) {
   const p = usdPriceParts(v);
   if (p.zeros == null) return <>{p.text}</>;
   return (
@@ -46,7 +46,8 @@ const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as numbe
 // Router; `market` defaults to the coin. A sell first grants the token
 // allowance to Permit2 and the Permit2 allowance to the router when they are short.
 
-export function TradePanel({ market }: { market?: Market }) {
+// `pick`: a side chosen outside the panel (the mobile trade dock); each new object selects its side once.
+export function TradePanel({ market, pick }: { market?: Market; pick?: { side: "buy" | "sell" } }) {
   const live = useCoinLive();
   const prelaunch = !market && (!engineDeployed || live === false);
   const { market: cc, error: ccPoolError } = useCcMarket();
@@ -92,6 +93,9 @@ export function TradePanel({ market }: { market?: Market }) {
   };
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  useEffect(() => {
+    if (pick && !pending) edit(() => setSide(pick.side));
+  }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pay, setPay] = useState(""); // empty reads as 0
   type Result = { kind: "bought" | "sold"; amount: string; usd?: string; paid: string; paidLabel: string; potWei?: bigint; hash: `0x${string}` };
   const [result, setResult] = useState<Result | null>(null);
@@ -536,7 +540,9 @@ export function TradePanel({ market }: { market?: Market }) {
       )}
 
       {m && !hookFee?.active && (
-        <p className="tp-fee caption">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
+        <p className="tp-fee caption">
+          trading fee {parseFloat((feeBps / 100).toFixed(2))}%{!market && " · a share funds credit acquisitions"}
+        </p>
       )}
       {m && (
         <p className="tp-addr caption">

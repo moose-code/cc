@@ -4,7 +4,7 @@ import { useFeed, useHistoryDown } from "@/lib/data";
 import { useBlockTs, useScan } from "@/lib/engine";
 import type { FeedEvent, FeedKind } from "@/lib/events";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { potPoints, useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
+import { useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
 import { useListings } from "@/lib/useListings";
 import { ListingsTable } from "./ListingsTable";
 import { ListingsStatus } from "./ListingsStatus";
@@ -21,9 +21,12 @@ import { Sk } from "./Skeleton";
 const MARK: Record<FeedKind, string> = {
   credit: "m",
   composed: "y",
-  sold: "divider",
+  sold: "c",
   redeemed: "c",
+  burned: "k",
 };
+
+const MOBILE_ROWS = 6; // rows the one-scroll mobile home shows before "view full ledger" (see .ledger.short)
 
 const PLATES = ["C", "M", "Y", "K"]; // bit 0 to 3 of CreditTraits.mask; a set bit is a printed plate
 
@@ -64,13 +67,23 @@ export function Tween({ wei }: { wei: bigint | undefined }) {
 }
 
 
-// Pot figures for the header. Only room above the reserve buys Credits, and the artist payment comes on top.
-export function usePotPage() {
+// The current eth bid per point for the header: ethRate is per 100 points.
+export function useBid() {
   const { data: snap } = useSnapshot();
-  const bidRoom = snap ? (snap.potRoom * 10_000n) / BigInt(10_000 + snap.settings.buyToArtistBps) : undefined;
-  const pts = snap && bidRoom != null ? potPoints(bidRoom, snap.ethRate) : undefined;
-  const per1 = snap ? eth(snap.ethRate / 100n, 7) : undefined;
-  return { pts, per1 };
+  return snap ? eth(snap.ethRate / 100n, 7) : undefined;
+}
+
+// The spendable pot (Core.room: the pot less the processing reserve), at the top of the home rail.
+export function PotRow() {
+  const { data: snap } = useSnapshot();
+  return (
+    <div className="pot-row">
+      <span>pot</span>
+      <b>
+        {snap ? <Tween wei={snap.potRoom} /> : engineDeployed ? <Sk w="6ch" /> : "—"} <small>ETH</small>
+      </b>
+    </div>
+  );
 }
 
 export function EngineProgress() {
@@ -99,6 +112,7 @@ export function EngineFeed() {
   const now = useNow();
   const [limit, setLimit] = useState(PAGE);
   const [view, setView] = useState<FeedView>("ledger");
+  const [full, setFull] = useState(false); // mobile: the reader asked for the full ledger
   const { events: shown, total, loading } = useFeed("all", limit);
   const historyDown = useHistoryDown();
   // one batched read for the credits on screen
@@ -107,13 +121,9 @@ export function EngineFeed() {
   const { data: traits, loading: traitsLoading } = useCreditTraits(ids);
 
   return (
-    <section className="ledger">
+    <section className={full ? "ledger" : "ledger short"}>
       <div className="ledger-head">
         <h2>{view === "listings" ? "listings" : "engine ledger"}</h2>
-        <span className="live">
-          <i className="mark c" />
-          live
-        </span>
         <div className="seg" role="group" aria-label="feed view">
           {(["ledger", "listings"] as FeedView[]).map((v) => (
             <button key={v} className={v === view ? "on" : undefined} onClick={() => setView(v)}>
@@ -150,6 +160,11 @@ export function EngineFeed() {
             {shown.length === 0 && (loading ? <LoadingLedger /> : <EmptyLedger />)}
           </div>
           {historyDown && <p className="muted ix-down">history unavailable</p>}
+          {shown.length > MOBILE_ROWS && (
+            <button className="action more ledger-full" onClick={() => setFull(true)}>
+              view full ledger
+            </button>
+          )}
           {total > limit && (
             <button className="action more" onClick={() => setLimit(limit + PAGE)}>
               {`show more (${total - limit} older)`}
@@ -247,6 +262,8 @@ function Row({ e, now, score, mask, scoreWait, maskWait }: { e: FeedEvent; now: 
   const rec = sid != null && e.kind === "composed" && e.label !== "statement restyled" ? scan.statements[sid]?.composed : undefined;
   const composed = e.composed ?? (rec ? { format: rec.format, credits: rec.ids.length, cost: rec.cost } : undefined);
   const stmt = composed != null && e.label !== "statement restyled";
+  // a sold statement shows its rating like a composed one
+  const rated = stmt || (e.kind === "sold" && sid != null);
   const when = ts != null ? relTime(ts, now) : "—";
   return (
     <div className={`ledger-cols ledger-row${stmt ? " stmt" : ""}`}>
@@ -266,8 +283,14 @@ function Row({ e, now, score, mask, scoreWait, maskWait }: { e: FeedEvent; now: 
       <span className="ref">
         {e.tile?.kind === "credit" && <CreditTile id={e.tile.id} />}
         {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
+        {e.kind === "burned" && (
+          <i className="tile-burn" aria-hidden>
+            CC
+          </i>
+        )}
         <span className="ref-text">
           {e.link && <Link href={e.link.href}>{e.link.text}</Link>}
+          {e.title && <b>{e.title}</b>}
           {stmt ? (
             <span className="caption">
               {`format ${composed.format} · ${composed.credits} credits · cost ${eth(composed.cost)} ETH`}
@@ -297,7 +320,7 @@ function Row({ e, now, score, mask, scoreWait, maskWait }: { e: FeedEvent; now: 
           : maskWait && <Sk w="7ch" />}
       </span>
       <span className="num rate">
-        {score != null ? rating(score) : stmt && sid != null ? <StatementRating sid={sid} raw={e.rating} /> : scoreWait ? <Sk w="5ch" /> : ""}
+        {score != null ? rating(score) : rated && sid != null ? <StatementRating sid={sid} raw={e.rating} /> : scoreWait ? <Sk w="5ch" /> : ""}
       </span>
       <span className="num">{e.eth ?? ""}</span>
     </div>
