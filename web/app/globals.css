@@ -499,10 +499,12 @@ a:hover {
   align-self: end;
   justify-self: center;
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 12px;
   padding: 0 12px;
   background: var(--paper);
-  font-size: 12px;
+  font-size: 11px;
   transform: translateY(50%);
 }
 .fw-split i {
