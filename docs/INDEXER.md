@@ -278,7 +278,7 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | value | source |
 |---|---|
 | pre-launch banner and disabled CC trading | L `useCoinLive()` checks bytecode at snapshot `coin` through the read-only website RPC API, polling every 15 seconds until code exists; an unset Core also uses pre-launch. Unknown status remains disabled/loading. The banner disappears and normal market discovery resumes when live becomes true, without a reload |
-| empty-ledger artwork and placeholder rows | D presentation only while `useFeed` has no rows, before or after coin launch; placeholders are not transactions. The existing reduced-motion-aware `CCLogo` is reused. Listings remains the default until transaction-backed feed entries exist; a manual view choice persists |
+| empty-ledger artwork and placeholder rows | D presentation only while `useFeed` has no rows, before or after coin launch; placeholders are not transactions. The existing reduced-motion-aware `CCLogo` is reused. Ledger is the default feed view; a manual choice of Listings persists through polling |
 | credits held, statements held | L snapshot `pileSize`, `heldStatements` |
 | $BALANCE held by engine | L module `available()` (also I `engine.balanceAvailable`, minute scale) |
 | $CC burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
