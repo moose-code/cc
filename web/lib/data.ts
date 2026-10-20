@@ -6,6 +6,7 @@
 
 import { useMemo } from "react";
 import { engineDeployed } from "./config";
+import { BANDS, BUCKET_WEI, WEEK_S, bandOf, bandReport, type BandReport } from "./market-report";
 import { useBlockTs, useScan } from "./engine";
 import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
 import {
@@ -16,6 +17,7 @@ import {
   useCreditRow,
   useFeedIx,
   useIxMode,
+  useMarketIx,
   useStatementDetailIx,
   useStatementRowsIx,
   useStatsIx,
@@ -256,4 +258,54 @@ export function useStatementView(id: number): { rec?: StatementView; owner?: str
   const rec: StatementView | undefined =
     mode === "ix" ? (d ?? undefined) : chainRec ? { ...chainRec, format: chainRec.restyled.at(-1)?.format ?? chainRec.composed?.format } : undefined;
   return { rec, owner: owner ?? undefined, isPending: pending };
+}
+
+// ---- credits market report ----------------------------------------------------------------------------------
+
+export interface MarketReport {
+  bands: BandReport[];
+  loading: boolean;
+  basis: "week" | "latest"; // week: every purchase of the 14 days (indexer); latest: the newest CHAIN_SALES (chain mode)
+}
+
+const CHAIN_SALES = 200; // chain mode: newest purchases scored live (scores are a multicall per credit)
+const BLOCKS_PER_WEEK = BigInt(WEEK_S / 12);
+
+/** What the engine paid for Credits by rating band (lib/market-report.ts): purchases at the eth bid or from a listing,
+ * the last 7 days against the 7 before. Indexer mode counts every purchase in SQL; chain mode reads the newest
+ * CHAIN_SALES of the scan with their scores. */
+export function useMarketReport(): MarketReport {
+  const mode = useIxMode();
+  const { data: head } = useHead();
+  const ixq = useMarketIx(mode === "ix" ? head?.ts : undefined);
+  const { data: scan, ready } = useScan();
+  const chainSales = useMemo(() => {
+    if (mode !== "chain" || !head) return [];
+    const from = head.n - 2n * BLOCKS_PER_WEEK;
+    const out: { id: number; cost: bigint; block: bigint }[] = [];
+    for (const [id, evts] of Object.entries(scan.credits))
+      for (const e of evts) if (e.t === "bought" && (e.how === "eth bid" || e.how === "listing") && e.block != null && e.block >= from) out.push({ id: Number(id), cost: e.cost, block: e.block });
+    return out.sort((a, b) => (a.block > b.block ? -1 : 1)).slice(0, CHAIN_SALES);
+  }, [mode, head, scan.credits]);
+  const { data: scores, loading: scoresLoading } = useScores(chainSales.map((s) => BigInt(s.id)));
+  const pending = useHistoryPending(ixq);
+  return useMemo(() => {
+    const week = BANDS.map(() => new Map<bigint, number>());
+    const prior = BANDS.map(() => new Map<bigint, number>());
+    if (mode === "ix") {
+      for (const r of ixq.data ?? []) (r.period === 0 ? week : prior)[r.band]?.set(r.bucket, r.n);
+      return { bands: BANDS.map((b) => bandReport(b, week[b.key], prior[b.key])), loading: pending, basis: "week" };
+    }
+    // the indexer check: the source is not known yet, so the report waits (and keeps the usual basis)
+    if (mode === "checking") return { bands: BANDS.map((b) => bandReport(b, week[b.key], prior[b.key])), loading: true, basis: "week" };
+    // chain mode: exact prices, put through the same report by bucketing each sale on its own
+    const edge = (head?.n ?? 0n) - BLOCKS_PER_WEEK;
+    const add = (m: Map<bigint, number>, cost: bigint) => m.set(cost / BUCKET_WEI, (m.get(cost / BUCKET_WEI) ?? 0) + 1);
+    for (const s of chainSales) {
+      const score = scores?.[String(s.id)];
+      if (score == null) continue;
+      add((s.block >= edge ? week : prior)[bandOf(score).key], s.cost);
+    }
+    return { bands: BANDS.map((b) => bandReport(b, week[b.key], prior[b.key])), loading: pending || !ready || scoresLoading, basis: "latest" };
+  }, [mode, ixq.data, pending, head, chainSales, scores, ready, scoresLoading]);
 }

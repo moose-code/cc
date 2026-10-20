@@ -17,6 +17,7 @@ import { formatUnits } from "viem";
 import { chain, core, engineDeployed, indexerUrl, STATEMENT_SIZE } from "./config";
 import { eth, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
 import { indexedBlockForChain } from "./indexer-health";
+import { BANDS, BUCKET_WEI, POINT, WEEK_S } from "./market-report";
 import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
 import * as schema from "./indexer-schema";
 import type { AcquiredHow } from "./indexer-schema";
@@ -166,6 +167,35 @@ export function useFillsTodayIx(headTs: number | undefined) {
       return { eth: rows.reduce((n, r) => n + Number(r.eth), 0), balance: rows.reduce((n, r) => n + Number(r.balance), 0) };
     },
     { enabled: day != null },
+  );
+}
+
+/** The credits market report's histogram (lib/market-report.ts): engine purchases at the eth bid or from a listing,
+ * by rating band, week (0 the last 7 days, 1 the 7 before) and price bucket of BUCKET_WEI, counted. The SQL API has
+ * no percentile function, so the median is read from the counts. `headTs` is taken to the 10 minutes. */
+export function useMarketIx(headTs: number | undefined) {
+  const at = headTs == null ? undefined : Math.floor(headTs / 600) * 600;
+  return useIx(
+    ["market", at],
+    async (db) => {
+      const week = BigInt(WEEK_S);
+      const since = BigInt(at!) - 2n * week;
+      const edge = BigInt(at!) - week;
+      // constants are inlined (numbers computed here, never input) so the selected and grouped expressions are the
+      // same text; bound parameters would number them apart and Postgres would not match them
+      const lit = (n: bigint | number) => sql.raw(String(n));
+      // each expression is named: the client maps result columns by name, and two unnamed `case` columns collide
+      const band = sql<number>`case ${sql.join(BANDS.slice(1).map((b) => sql`when ${credit.score} < ${lit(BigInt(b.lo) * POINT)} then ${lit(b.key - 1)} `))}else ${lit(BANDS.length - 1)} end`.as("rating_band"); // not "band": the credit table has a band column
+      const period = sql<number>`case when ${credit.acquiredAt} >= ${lit(edge)} then 0 else 1 end`.as("sale_week");
+      const bucket = sql<string>`(${credit.costBasis} / ${lit(BUCKET_WEI)})::bigint`.as("price_bucket");
+      const rows = await db
+        .select({ band, period, bucket, n: count() })
+        .from(credit)
+        .where(and(gte(credit.acquiredAt, since), inArray(credit.acquiredHow, ["eth_bid", "listing"])))
+        .groupBy(band, period, bucket);
+      return rows.map((r) => ({ band: Number(r.band), period: Number(r.period), bucket: BigInt(r.bucket), n: Number(r.n) }));
+    },
+    { enabled: at != null },
   );
 }
 

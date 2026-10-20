@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "check": "node --experimental-strip-types scripts/selfcheck.ts && node --experimental-strip-types scripts/v4-selfcheck.ts && node --experimental-strip-types scripts/cap-selfcheck.ts && node --experimental-strip-types scripts/forming-selfcheck.ts && node scripts/run-history-selfcheck.mjs && node scripts/listings-route.test.mjs && node scripts/walletconnect-qr.test.mjs && node --experimental-strip-types scripts/acquire-selfcheck.mjs && node --experimental-strip-types scripts/indexer-health.test.mjs && npm run check:schema",
+    "check": "node --experimental-strip-types scripts/selfcheck.ts && node --experimental-strip-types scripts/v4-selfcheck.ts && node --experimental-strip-types scripts/cap-selfcheck.ts && node --experimental-strip-types scripts/forming-selfcheck.ts && node --experimental-strip-types scripts/market-report-selfcheck.ts && node scripts/run-history-selfcheck.mjs && node scripts/listings-route.test.mjs && node scripts/walletconnect-qr.test.mjs && node --experimental-strip-types scripts/acquire-selfcheck.mjs && node --experimental-strip-types scripts/indexer-health.test.mjs && npm run check:schema",
     "check:docs": "node scripts/gen-docs-catalog.mjs --check && node --experimental-strip-types scripts/docs-selfcheck.mjs",
     "gen:docs": "node scripts/gen-docs-catalog.mjs",
     "check:schema": "if [ -d ../indexer/node_modules ]; then tsc -p scripts/tsconfig.guard.json; else echo 'check:schema skipped (indexer deps not installed)'; fi",
