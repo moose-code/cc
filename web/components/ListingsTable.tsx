@@ -12,17 +12,18 @@ type Acquire = {
   buy: (rows: ListingRow[]) => void;
   available: (rows: ListingRow[]) => ListingRow[];
   pending: boolean;
+  activeId?: bigint;
 };
 
 // The listings table: every Credit on the CreditStrategy or OpenSea, closest to the engine's bid first. Shared by the
 // listings page and the landing feed tab. A row that clears can be acquired through Core.buyListing.
-export function ListingsTable({ rows, acquire }: { rows: ListingRow[]; acquire?: Acquire }) {
+export function ListingsTable({ rows, acquire, showGap = false }: { rows: ListingRow[]; acquire?: Acquire; showGap?: boolean }) {
   const bal = useBalanceToken();
   const balanceEth = useBalanceInEth();
   const { data: snap } = useSnapshot();
   const balanceActive = Boolean(snap?.balanceOn && snap.settings.balanceBidOn);
   return (
-    <div className={`ltable${balanceActive ? " balance-active" : ""}`}>
+    <div className={`ltable${balanceActive ? " balance-active" : ""}${showGap ? " with-gap" : ""}`}>
       <div className="ltable-row ltable-head">
         <span />
         <span>credit</span>
@@ -30,6 +31,7 @@ export function ListingsTable({ rows, acquire }: { rows: ListingRow[]; acquire?:
         <span className="num hide-sm">rating</span>
         <span className="num">price ETH</span>
         <span className="num hide-sm">bid ETH</span>
+        {showGap && <span className="num">over/under</span>}
         {balanceActive && <span className="num hide-sm">balance bid</span>}
         <span />
       </div>
@@ -48,6 +50,9 @@ export function ListingsTable({ rows, acquire }: { rows: ListingRow[]; acquire?:
             {r.live ? "" : "~"}
             {eth(r.bid)}
           </span>
+          {showGap && <span className="num" title="asking price relative to ETH bid">
+            {Number.isFinite(r.gap) ? `${r.gap > 0 ? "+" : ""}${(r.gap * 100).toFixed(1)}%` : "—"}
+          </span>}
           {balanceActive && (
             <span className="num muted hide-sm">
               {r.balanceBid ? `${r.live ? "" : "~"}${formatBalance(r.balanceBid, bal)}` : "—"}
@@ -58,7 +63,7 @@ export function ListingsTable({ rows, acquire }: { rows: ListingRow[]; acquire?:
             {!preparedForAcquire(r) && <span className="muted" title="The keeper has not prepared fulfillment for this order.">unprepared</span>}
             {acquire && preparedForAcquire(r) && r.clears && acquire.available([r]).length > 0 && (
               <button className="hdr-acq" onClick={() => acquire.buy([r])} disabled={acquire.pending}>
-                {acquire.pending ? "…" : "acquire"}
+                {acquire.pending && acquire.activeId === r.id ? "…" : "acquire"}
               </button>
             )}
           </span>

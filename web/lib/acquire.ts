@@ -14,6 +14,12 @@ export interface Listing {
 
 export const preparedForAcquire = (l: Listing): boolean => l.source === "strategy" || l.prepared === true;
 
+/** Eligible OpenSea asks in absolute ETH order, independent of the table's bid-gap order. */
+export function cheapestOpenSeaEligible<T extends Listing & { clears: boolean }>(rows: T[]): T[] {
+  return rows.filter((r) => r.source === "opensea" && r.clears && preparedForAcquire(r)).sort((a, b) =>
+    a.price < b.price ? -1 : a.price > b.price ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
 export interface StrategyReadStatus { pending: boolean; publishedAt?: number; error?: string }
 
 export interface Priced extends Listing {
