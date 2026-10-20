@@ -16,14 +16,14 @@ type Acquire = {
 };
 
 // The listings table: every Credit on the CreditStrategy or OpenSea, closest to the engine's bid first. Shared by the
-// listings page and the landing feed tab. A row that clears can be acquired through Core.buyListing.
+// listings page and the landing feed tab. Acquisition is available only when the listings page supplies its handler.
 export function ListingsTable({ rows, acquire, showGap = false }: { rows: ListingRow[]; acquire?: Acquire; showGap?: boolean }) {
   const bal = useBalanceToken();
   const balanceEth = useBalanceInEth();
   const { data: snap } = useSnapshot();
   const balanceActive = Boolean(snap?.balanceOn && snap.settings.balanceBidOn);
   return (
-    <div className={`ltable${balanceActive ? " balance-active" : ""}${showGap ? " with-gap" : ""}`}>
+    <div className={`ltable${balanceActive ? " balance-active" : ""}${showGap ? " with-gap" : ""}${acquire ? " with-action" : ""}`}>
       <div className="ltable-row ltable-head">
         <span />
         <span>credit</span>
@@ -33,7 +33,7 @@ export function ListingsTable({ rows, acquire, showGap = false }: { rows: Listin
         <span className="num hide-sm">bid ETH</span>
         {showGap && <span className="num">over/under</span>}
         {balanceActive && <span className="num hide-sm">balance bid</span>}
-        <span />
+        {acquire && <span />}
       </div>
       {rows.map((r) => (
         <div key={`${r.source}:${r.id}`} className={`ltable-row${r.clears ? " on" : ""}`}>
@@ -59,14 +59,14 @@ export function ListingsTable({ rows, acquire, showGap = false }: { rows: Listin
               {r.balanceBid && balanceEth(r.balanceBid) != null && <span className="sub">~{eth(balanceEth(r.balanceBid)!)} ETH</span>}
             </span>
           )}
-          <span className="lact">
+          {acquire && <span className="lact">
             {!preparedForAcquire(r) && <span className="muted" title="The keeper has not prepared fulfillment for this order.">unprepared</span>}
-            {acquire && preparedForAcquire(r) && r.clears && acquire.available([r]).length > 0 && (
+            {preparedForAcquire(r) && r.clears && acquire.available([r]).length > 0 && (
               <button className="hdr-acq" onClick={() => acquire.buy([r])} disabled={acquire.pending}>
                 {acquire.pending && acquire.activeId === r.id ? "…" : "acquire"}
               </button>
             )}
-          </span>
+          </span>}
         </div>
       ))}
     </div>
