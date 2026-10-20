@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
+import Link from "next/link";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { useFeed } from "@/lib/data";
 import { useSnapshot } from "@/lib/live";
