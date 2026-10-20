@@ -173,12 +173,14 @@ const questions: Question[] = [
     ),
   },
   {
-    question: "does CC need BALANCE to work?",
+    question: "how does $BALANCE fit into the flywheel?",
     answer: (
       <p>
-        no. the initial cycle uses ETH to buy Credits and sell Credits and Statements. separate contract features can
-        support the BALANCE ecosystem later, but they depend on external deployment and operator activation. CC’s
-        ETH acquisition and resale cycle can operate without them.
+        the ETH cycle can run on its own. once the separate $BALANCE module and bid are active, an eligible Statement
+        can be redeemed for $BALANCE instead of sold for ETH. those tokens stay in the module and can fund a separate
+        $BALANCE bid for more Credits. this returns newly acquired Credits to the same inventory and composition
+        process, without requiring CC to sell that Statement on the NFT market. redemption does not refill the ETH
+        buying pot, and the additional route depends on the external redemption system and sellers accepting $BALANCE.
       </p>
     ),
   },
@@ -215,24 +217,84 @@ function BidIllustration() {
 
 function InventoryPaths() {
   return (
-    <div className="faq-paths" role="img" aria-label="trading fees fund the buying pot, which acquires Credits. acquired Credits can be resold individually or composed into Statements that are sold. successful sale proceeds fund more acquisitions and CC buybacks">
-      <div className="faq-paths-chain">
-        <span>$CC trading fees</span>
-        <b aria-hidden="true">→</b>
-        <span>buying pot</span>
-        <b aria-hidden="true">→</b>
-        <span>Credits acquired</span>
-      </div>
-      <div className="faq-paths-branches" aria-hidden="true">
-        <span>↙</span>
-        <span>↘</span>
-      </div>
-      <div className="faq-paths-options">
-        <span>individual Credit sale</span>
-        <span>80 Credits become a Statement for sale</span>
-      </div>
-      <div className="faq-paths-return" aria-hidden="true">↓</div>
-      <div className="faq-paths-outcome">completed sales return ETH to the pot and fund CC buybacks</div>
+    <div className="faq-paths" tabIndex={0} aria-label="scrollable diagram of the CC flywheel">
+      <svg
+        className="faq-paths-diagram"
+        viewBox="0 0 1360 510"
+        role="img"
+        aria-labelledby="faq-paths-title faq-paths-description"
+      >
+        <title id="faq-paths-title">the CC flywheel</title>
+        <desc id="faq-paths-description">
+          CC trading fees fill an ETH buying pot that acquires Credits. Credits can be sold individually
+          or composed in groups of 80 into Statements. Successful ETH sales return funds to the ETH
+          buying pot and allocate funds for CC buybacks, keeping the cycle going. When the optional
+          BALANCE integration is active and Statements are eligible, Statements may instead be redeemed
+          for BALANCE. A BALANCE funded bid can then acquire more Credits, continuing a separate cycle.
+        </desc>
+        <defs>
+          <marker id="faq-paths-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M0 0 L9 4.5 L0 9 Z" className="faq-paths-arrowhead" />
+          </marker>
+        </defs>
+
+        <g className="faq-paths-connections" aria-hidden="true">
+          <path d="M445 115 H493" />
+          <path d="M678 115 H728" />
+          <path d="M840 146 V189 H380 V233" />
+          <path d="M840 189 H775 V233" />
+          <path d="M380 307 V366 H455 V403" />
+          <path d="M775 307 V403" />
+          <path d="M946 271 H995" className="faq-paths-optional" />
+          <path d="M1140 307 V403" className="faq-paths-optional" />
+
+          <path d="M260 440 H151 V49 H584 V83" className="faq-paths-recycle" />
+          <path d="M1289 439 H1322 V19 H840 V83" className="faq-paths-optional faq-paths-recycle" />
+        </g>
+
+        <g className="faq-paths-box">
+          <rect x="245" y="84" width="200" height="62" />
+          <text x="345" y="115">$CC trading fees</text>
+        </g>
+        <g className="faq-paths-box">
+          <rect x="493" y="84" width="185" height="62" />
+          <text x="585" y="115">ETH buying pot</text>
+        </g>
+        <g className="faq-paths-box">
+          <rect x="728" y="84" width="218" height="62" />
+          <text x="837" y="115">Credits acquired</text>
+        </g>
+        <g className="faq-paths-box faq-paths-credit-box">
+          <rect x="245" y="233" width="270" height="74" />
+          <text x="380" y="270">individual Credit sale</text>
+        </g>
+        <g className="faq-paths-box faq-paths-statement-box">
+          <rect x="605" y="233" width="341" height="74" />
+          <text x="775" y="261">80 Credits become</text>
+          <text x="775" y="284">one Statement</text>
+        </g>
+        <g className="faq-paths-box faq-paths-balance-box">
+          <rect x="995" y="233" width="294" height="74" />
+          <text x="1142" y="257">redeem for $BALANCE</text>
+          <text x="1142" y="281" className="faq-paths-small">when active and eligible</text>
+        </g>
+        <g className="faq-paths-box faq-paths-balance-box">
+          <rect x="995" y="403" width="294" height="73" />
+          <text x="1142" y="428">buy more Credits</text>
+          <text x="1142" y="453">with $BALANCE</text>
+        </g>
+        <g className="faq-paths-box faq-paths-outcome-box">
+          <rect x="260" y="403" width="686" height="73" />
+          <text x="603" y="428">NFT sales return ETH to the buying pot</text>
+          <text x="603" y="453">and fund later CC buybacks</text>
+        </g>
+        <g className="faq-paths-annotations" aria-hidden="true">
+          <text x="104" y="302">ETH</text>
+          <text x="104" y="320">cycles back</text>
+          <text x="813" y="355">ETH sale</text>
+          <text x="1085" y="366" className="faq-paths-balance-caption">optional $BALANCE path</text>
+        </g>
+      </svg>
     </div>
   );
 }
@@ -309,7 +371,7 @@ export default function Faq() {
           <article className="faq-visual-card faq-visual-card-wide">
             <div className="faq-visual-copy">
               <h3>more than a relisting strategy</h3>
-              <p>each Credit has a second path through composition. trading fees can keep funding new bids while older inventory is still waiting for a buyer.</p>
+              <p>acquired Credits can be resold or composed into Statements. proceeds from completed sales return to buying, while trading fees can fund new bids independently. when enabled, $BALANCE opens another path back to acquiring Credits.</p>
             </div>
             <InventoryPaths />
             <small>both sale routes still depend on buyers, and their price floors can leave inventory unsold.</small>
