@@ -197,7 +197,7 @@ export const docPages: DocPage[] = [
     group: "Guides",
     title: "Lifecycle",
     eyebrow: "Guide / operating model",
-    summary: "Shared operations, settings, and common call conditions.",
+    summary: "Permissionless maintenance and historical quotes.",
     sections: [
       {
         id: "automation",
@@ -213,24 +213,6 @@ export const docPages: DocPage[] = [
         points: [
           "SettingsSet, SaleSet, and CreditSaleSet change how later quotes should be interpreted.",
           "A current view is not a historical quote. Read at the historical block or replay the relevant settings and events.",
-        ],
-      },
-      {
-        id: "authority",
-        title: "Authority and locks",
-        points: [
-          "The owner can change economic settings immediately, pause acquisitions, composition, sales, Credit swaps and buybacks, select a controller, manage adapters, and nominate a successor.",
-          "Read Core.paused() before an intake, composition, sale, Credit swap or buyback. Funding, fee booking, escrow collection and reads remain live during a pause.",
-          "Paused time does not count toward Statement age or ETH bid climb. The Credit composition window continues in wall time.",
-          "Controller, adapter, and successor locks are one-way. Read their onchain flags rather than assuming they have been applied.",
-        ],
-      },
-      {
-        id: "failure",
-        title: "Common failure conditions",
-        points: [
-          "ReturnLocked and SpendCapReached can block an ETH sale even while bidOf is positive.",
-          "Paused blocks intake, composition, sales, Credit swaps and buybacks. InWindow, NotReady and BelowFloor identify separate timing or floor conditions.",
         ],
       },
     ],
