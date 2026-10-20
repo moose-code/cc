@@ -8,7 +8,12 @@ import { engineDeployed, chain } from "@/lib/config";
 import { useCcMarket, potShareBps, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { commas, eth, evmNowAddress, evmNowTx, leftLabel, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
+import { commas, eth, evmNowAddress, evmNowTx, leftLabel, shortAddr, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
+
+// The token's DexScreener page (chart, pool and market data) on Ethereum.
+const dexScreener = (token: string) => `https://dexscreener.com/ethereum/${token.toLowerCase()}`;
+// A price change in percent with its sign and one decimal: "+2.4%", "-0.8%".
+const pctChange = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(1)}%`;
 import { lsGet, lsSet } from "@/lib/cache";
 import { useCoinLive, useNow, useSnapshot } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
@@ -45,10 +50,12 @@ export function TradePanel({ market }: { market?: Market }) {
   const now = useNow();
   const feeBps = hooked ? hookFee?.bps ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
 
-  const { priceUsd: tokenUsd, ethUsd, marketCap, loading: statsLoading, capLoading } = useMarketStats(m);
+  const { priceUsd: tokenUsd, ethUsd, marketCap, change, changeSince, loading: statsLoading, capLoading, changeLoading } = useMarketStats(m);
   // price and cap: a skeleton while a pool is known but its reads are out; the dash before launch or after a failed read
   const statsWait = !prelaunch && (m == null ? live !== false : statsLoading);
   const capWait = !prelaunch && (m == null ? live !== false : capLoading);
+  // the price change: spot now against the spot a day ago, or against the opening price for a pool younger than that
+  const changeWait = !prelaunch && (m == null ? live !== false : changeLoading);
 
   // slippage tolerance in bps, kept in localStorage; a custom percent is applied once it is within 0.1 to 50
   const [slipBps, setSlipBps] = useState(100);
@@ -284,11 +291,24 @@ export function TradePanel({ market }: { market?: Market }) {
       <div className="tp-price">
         <div>
           <div className="label">{tag} price</div>
-          <div className="tp-big">{tokenUsd != null ? <span className="fx-in">{usdPrice(tokenUsd)}</span> : statsWait ? <Sk w="6ch" /> : "—"}</div>
+          <div className="tp-big">
+            {tokenUsd != null ? <span className="fx-in">{usdPrice(tokenUsd)}</span> : statsWait ? <Sk w="6ch" /> : "—"}
+            {change != null ? (
+              <span className="tp-chg fx-in" title={changeSince === "launch" ? "price change since the pool opened" : "price change over 24 hours"}>
+                {pctChange(change)} {changeSince === "launch" ? "since launch" : "24h"}
+              </span>
+            ) : (
+              changeWait && (
+                <span className="tp-chg">
+                  <Sk w="9ch" />
+                </span>
+              )
+            )}
+          </div>
         </div>
         <div className="tp-cap">
           {m ? (
-            <a className="label" href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
+            <a className="label" href={dexScreener(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} chart on DexScreener`}>
               mkt cap ↗
             </a>
           ) : (
@@ -490,6 +510,13 @@ export function TradePanel({ market }: { market?: Market }) {
 
       {m && !hookFee?.active && (
         <p className="tp-fee caption">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
+      )}
+      {m && (
+        <p className="tp-addr caption">
+          <a href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
+            {tag} {shortAddr(m.token)} ↗
+          </a>
+        </p>
       )}
       {!market && ccPoolError && <p className="panel-note tp-note" role="alert">{ccPoolError}</p>}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}

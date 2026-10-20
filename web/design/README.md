@@ -214,12 +214,13 @@ A statement id the Core has not minted yet: `id >= nextStatementId` (Statements 
 
 ### 06 Swap states (`TradePanel.tsx`)
 The panel, top to bottom:
-1. `$CC price` and `mkt cap ↗`;
+1. `$CC price` with the 24h change beside it (`+2.4% 24h`, muted, spot now against the spot 7,200 blocks earlier; for a younger pool `since launch`, against the opening price of its PoolManager `Initialize` event), and `mkt cap ↗`, linking to the token's DexScreener page;
 2. the buy|sell toggle (36px);
 3. the input box on `--surface` with a 1px `--divider` border and two crop marks: a **you pay** field and a **you receive** field;
 4. detail rows;
 5. an optional notice;
-6. the button.
+6. the button;
+7. the `trading fee` caption, then the token contract (`$CC 0x28ef…c789 ↗`) linking to evm.now.
 **The price impact row is removed.**
 
 **Field details:**
