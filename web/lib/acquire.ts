@@ -1,5 +1,5 @@
-// Selection of the listing the header acquire button buys (owner decision 134). Pure: no chain or react imports, so
-// scripts/selfcheck.ts runs it.
+// Listing affordability rules of Core.buyListing for the listings surfaces (owner decision 134). Pure: no chain or
+// react imports, so scripts/selfcheck.ts runs it.
 
 export type AcquireSource = "strategy" | "opensea";
 
@@ -15,22 +15,6 @@ export interface Priced extends Listing {
   bid: bigint; // Core.bidOf(id)
 }
 
-/**
- * Listings the Core would accept: price at or below the credit's bid and at or below the pot (Core.buyListing
- * reverts AboveBid and PotTooSmall otherwise). Best first: the largest bid minus price, then the lowest price.
- * Nothing clears while the Core is retired.
- */
-export function clearing(list: Priced[], pot: bigint, retired: boolean): Priced[] {
-  if (retired) return [];
-  return list
-    .filter((l) => l.price > 0n && l.price <= l.bid && l.price <= pot)
-    .sort((a, b) => {
-      const ma = a.bid - a.price;
-      const mb = b.bid - b.price;
-      return ma === mb ? (a.price < b.price ? -1 : a.price > b.price ? 1 : 0) : ma > mb ? -1 : 1;
-    });
-}
-
 /** Cheapest listing per credit id, so a credit listed on two venues is checked once at its best price. */
 export function cheapestPerId(list: Listing[]): Listing[] {
   const best = new Map<bigint, Listing>();
@@ -39,24 +23,6 @@ export function cheapestPerId(list: Listing[]): Listing[] {
     if (!cur || l.price < cur.price) best.set(l.id, l);
   }
   return [...best.values()];
-}
-
-/**
- * Candidates worth a live read, from all listings and a bid estimate per id. The estimate is Core.bidOf:
- * ethRate() * score / scorePer100Points with floor division. The snapshot ethRate is the price state clamped to
- * `(booked pot + pending pot share - reserve) / (1 + artist royalty)`. Ranked by estimated margin
- * (estimated bid minus price), the first `n` kept.
- */
-export function shortlist(list: Listing[], ethRate: bigint, scorePer100Points: bigint, scores: Map<bigint, bigint>, n: number): Listing[] {
-  if (scorePer100Points === 0n) return [];
-  return cheapestPerId(list)
-    .flatMap((l) => {
-      const s = scores.get(l.id);
-      return s == null ? [] : [{ l, margin: (ethRate * s) / scorePer100Points - l.price }];
-    })
-    .sort((a, b) => (a.margin === b.margin ? 0 : a.margin > b.margin ? -1 : 1))
-    .slice(0, n)
-    .map((x) => x.l);
 }
 
 /** `Core.spendState()` of the current bucket; `capped` is false when `spendCapBps` is 10_000 (the Core skips the check). */

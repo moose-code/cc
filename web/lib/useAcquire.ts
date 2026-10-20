@@ -1,27 +1,25 @@
 "use client";
 
-// The listing the header acquire button buys (owner decision 134). Candidates come from the CreditStrategy
-// (indexer table strategy_listing; in chain mode a browser scan of its two events) and from the OpenSea route. They
-// are shortlisted by an estimated bid, read at one snapshot block (price, owner, Core.bidOf, buying room) and filtered by lib/acquire.ts.
-// One query per chain head; the route caches OpenSea for 20 s on the server.
+// Listing acquisition through Core.buyListing (owner decision 134). Candidates come from the CreditStrategy (indexer
+// table strategy_listing; in chain mode a browser scan of its two events) and from the keeper's market view through
+// the website API. The listings page reads them at one block and filters with lib/acquire.ts; a purchase fetches the
+// order's prepared fulfillment and simulates the call before sending.
 
 import { useEffect, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { useAccount, usePublicClient } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { type Address } from "viem";
-import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, strategy, strategyAdapter, strategyStartBlock } from "./config";
-import { coreAbi, creditsAbi, strategyAbi } from "./abis";
-import { creditScores, MULTICALL3, readSnapshot, useHead, useSnapshot } from "./live";
-import { fetchScoresIx, fetchStrategyListings, getIxMode, useIxMode } from "./indexer";
+import { core, strategy, strategyAdapter, seaportAdapter, strategyStartBlock } from "./config";
+import { coreAbi, strategyAbi } from "./abis";
+import { creditScores, useSnapshot } from "./live";
+import { fetchScoresIx, fetchStrategyListings, getIxMode } from "./indexer";
+import { readMarketView, type MarketOut } from "./market-view";
 import { useTx } from "./tx";
-import { clearing, fitsBucket, shortlist, type Listing, type Priced, type SpendRoom } from "./acquire";
+import { type Listing, type Priced, type SpendRoom } from "./acquire";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
-const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
-const SHORTLIST = 6;
 const MAX_SCORE_READS = 600;
-const FULFILL_TRIES = 3; // OpenSea fulfillments fetched per query, best estimated margin first
 const CHUNK = 5_000n; // blocks per getLogs call
 const RESCAN = 12n; // blocks re-read behind the last scanned block (reorg window)
 
@@ -93,31 +91,14 @@ export function spendCost(price: bigint, bid: bigint, pot: bigint, keeperFee: bi
   return price + (left < 0n ? 0n : left < fee ? left : fee);
 }
 
-/** Name of the contract error in a viem error, else its short message. */
-function revertReason(e: unknown): string {
-  for (let cur = e as { cause?: unknown; data?: { errorName?: string }; shortMessage?: string } | undefined, i = 0; cur && i < 6; cur = cur.cause as typeof cur, i++) {
-    if (cur.data?.errorName) return cur.data.errorName;
-  }
-  return (e as { shortMessage?: string })?.shortMessage ?? "reverted";
-}
-
 // ---- candidate gathering, shared with the /listings page --------------------------------------------------------
 
-/** OpenSea route entries: id, total price, order hash, expiry; `max` is the route's bound on the list. */
-export async function fetchOpenSea(): Promise<{ listings: { id: string; price: string; orderHash: string; expiry: number }[]; max: number }> {
-  try {
-    const body = await (await fetch("/api/listings")).json();
-    return { listings: body.listings ?? [], max: body.max ?? 0 };
-  } catch {
-    return { listings: [], max: 0 };
-  }
-}
-
 /**
- * Every listing of both venues and the scores the indexer already holds. Strategy listings come from the indexer
- * (decision 133: the chain scan when it is unconfigured or failing); OpenSea from the server route, unexpired only.
+ * Every listing of both venues and the scores already known. Strategy listings come from the indexer (decision 133:
+ * the chain scan when it is unconfigured or failing); OpenSea asks from the keeper's market view through the website
+ * API (lib/market-view.ts), unexpired only, with the keeper's cached immutable scores.
  */
-export async function gatherListings(c: Client, head: bigint): Promise<{ listings: Listing[]; known: Map<bigint, bigint>; osMax: number }> {
+export async function gatherListings(c: Client, head: bigint, qc: QueryClient): Promise<{ listings: Listing[]; known: Map<bigint, bigint>; market?: MarketOut }> {
   const listings: Listing[] = [];
   const known = new Map<bigint, bigint>();
   let strat: { id: bigint; price: bigint }[] | undefined;
@@ -132,155 +113,32 @@ export async function gatherListings(c: Client, head: bigint): Promise<{ listing
   }
   strat ??= [...(await scanStrategy(c, head)).entries()].map(([id, price]) => ({ id, price }));
   for (const r of strat) listings.push({ id: r.id, price: r.price, source: "strategy", params: "0x" });
-  const os = await fetchOpenSea();
+  let market: MarketOut | undefined;
+  try {
+    market = await readMarketView(qc);
+  } catch {
+    /* the website API failed: strategy listings only, the status line says so */
+  }
   const now = Math.floor(Date.now() / 1000);
-  for (const l of os.listings) if (l.expiry > now) listings.push({ id: BigInt(l.id), price: BigInt(l.price), source: "opensea", params: "0x", orderHash: l.orderHash });
-  return { listings, known, osMax: os.max };
+  for (const l of market?.view?.rows ?? []) {
+    if (l.endTime !== 0 && l.endTime <= now) continue;
+    const id = BigInt(l.id);
+    if (l.score != null && !known.has(id)) known.set(id, BigInt(l.score));
+    listings.push({ id, price: BigInt(l.price), source: "opensea", params: "0x", orderHash: l.hash });
+  }
+  return { listings, known, market };
 }
 
-/** Scores for `ids`: the indexer's credit table first, the chain for the rest. */
+/** Scores for `ids`: the known ones first, the indexer's credit table next, the chain for the rest. */
 export async function scoresFor(c: Client, ids: bigint[], known: Map<bigint, bigint>): Promise<Map<bigint, bigint>> {
   if (getIxMode() === "ix") {
     try {
-      for (const [id, s] of await fetchScoresIx(ids.filter((id) => !known.has(id)))) known.set(id, s);
+      for (const [id, s] of await fetchScoresIx(ids.filter((id) => !known.has(id) && !scoreCache.has(id)))) known.set(id, s);
     } catch {
       /* scores are read from the chain below */
     }
   }
   return scoresOf(c, ids, known);
-}
-
-// ---- the hook -------------------------------------------------------------------------------------------------
-
-export interface Diag {
-  id: string;
-  source: string;
-  price: string;
-  bid: string;
-  est: string; // estimate from the snapshot rate and the score, the shortlist key
-  clears: boolean;
-}
-
-export function useAcquireCandidate() {
-  const { address } = useAccount();
-  const client = usePublicClient();
-  const mode = useIxMode();
-  const { data: head } = useHead();
-  const on = engineDeployed && Boolean(client) && Boolean(strategyAdapter) && head != null && mode !== "checking";
-
-  const q = useQuery<{ cleared: Priced[]; top: Diag[]; waiting: number; nextIn: number; reverted?: string }>({
-    queryKey: ["acquire", mode, head?.n?.toString(), address],
-    enabled: on,
-    staleTime: 10_000,
-    retry: 0,
-    placeholderData: keepPreviousData,
-    queryFn: async () => {
-      try {
-      const c = client!;
-      const snap = await readSnapshot(c, core!);
-      if (snap.paused) return { cleared: [], top: [], waiting: 0, nextIn: 0 };
-
-      // 1. listings and known scores
-      const { listings, known } = await gatherListings(c, head!.n);
-
-      // 2. shortlist by estimated margin over every listing
-      const ids = [...new Set(listings.map((l) => l.id))];
-      const scores = await scoresFor(c, ids, known);
-      const est = (id: bigint) => (snap.ethRate * (scores.get(id) ?? 0n)) / SCORE_PER_100_POINTS;
-      const picked = shortlist(listings, snap.ethRate, SCORE_PER_100_POINTS, scores, SHORTLIST);
-      if (!picked.length) return { cleared: [], top: [], waiting: 0, nextIn: 0 };
-
-      // 3. live read of the shortlist
-      const cc = { address: core!, abi: coreAbi } as const;
-      const res = await c.multicall({
-        ...mc,
-        blockNumber: snap.blockNumber,
-        allowFailure: true,
-        contracts: [
-          { ...cc, functionName: "retired" },
-          { ...cc, functionName: "allowedAdapter", args: [strategyAdapter!] },
-          { ...cc, functionName: "allowedAdapter", args: [seaportAdapter ?? strategyAdapter!] },
-          { ...cc, functionName: "spendState" },
-          ...picked.flatMap((l) => [
-            { ...cc, functionName: "bidOf", args: [l.id] },
-            { address: credits, abi: creditsAbi, functionName: "ownerOf", args: [l.id] },
-            { address: strategy, abi: strategyAbi, functionName: "nftForSale", args: [l.id] },
-          ] as const),
-        ] as any, // mixed contracts; results are cast by position below
-      });
-      const val = <T,>(i: number) => (res[i].status === "success" ? ((res[i] as { result: unknown }).result as T) : undefined);
-      // Snapshot buying room includes pending income once; the bid and listing reads use its block.
-      const pot = snap.potRoom;
-      const retired = val<boolean>(0) ?? true;
-      const allowed: Record<Listing["source"], boolean> = { strategy: val<boolean>(1) ?? false, opensea: Boolean(seaportAdapter) && (val<boolean>(2) ?? false) };
-
-      const room = spendRoom(val<readonly [bigint, bigint, bigint]>(3), snap.settings, head!.ts + (Date.now() - head!.at) / 1000);
-      const fee = snap.settings.keeperFee;
-
-      const priced: Priced[] = [];
-      picked.forEach((l, i) => {
-        const bid = val<bigint>(4 + 3 * i);
-        const owner = val<Address>(5 + 3 * i);
-        const live = val<bigint>(6 + 3 * i);
-        if (bid == null || owner == null || !allowed[l.source]) return;
-        if (l.source === "strategy") {
-          if (!live || owner.toLowerCase() !== strategy.toLowerCase()) return;
-          priced.push({ ...l, price: live, bid });
-        } else if (owner.toLowerCase() !== core!.toLowerCase()) priced.push({ ...l, bid });
-      });
-      // 4. fulfillment data for the best OpenSea candidates that clear; the price is re-checked against it
-      const first = clearing(priced, pot, retired);
-      let tries = 0;
-      let waiting = 0; // clears on bid and pot, over the bucket's spend cap
-      const cleared: Priced[] = [];
-      for (const l of first) {
-        if (!fitsBucket(room, spendCost(l.price, l.bid, pot, fee))) {
-          waiting++;
-          continue;
-        }
-        if (l.source !== "opensea") {
-          cleared.push(l);
-          continue;
-        }
-        if (tries++ >= FULFILL_TRIES) continue;
-        try {
-          const f = (await (await fetch(`/api/listings?fulfill=${l.orderHash}`)).json()) as { price?: string; params?: `0x${string}` };
-          if (!f.params || !f.price) continue;
-          const p = { ...l, price: BigInt(f.price), params: f.params };
-          if (clearing([p], pot, retired).length) {
-            if (fitsBucket(room, spendCost(p.price, p.bid, pot, fee))) cleared.push(p);
-            else waiting++;
-          }
-        } catch {
-          /* this order is skipped */
-        }
-      }
-      const top = [...priced]
-        .sort((a, b) => Number(b.bid - b.price - (a.bid - a.price)))
-        .map((l) => ({ id: l.id.toString(), source: l.source, price: l.price.toString(), bid: l.bid.toString(), est: est(l.id).toString(), clears: first.includes(l) }));
-      // 5. the first candidate whose call simulates enables the button; a revert is reported instead of sent
-      let reverted: string | undefined;
-      let ready: Priced[] = [];
-      for (const l of cleared) {
-        try {
-          await c.simulateContract({ address: core!, abi: coreAbi, functionName: "buyListing", args: [adapterOf(l), l.id, l.params], account: address });
-          ready = [l];
-          break;
-        } catch (e) {
-          reverted ??= `#${l.id} ${revertReason(e)}`;
-        }
-      }
-      // eslint-disable-next-line no-console
-      console.debug("[acquire] shortlist " + JSON.stringify({ pot: pot.toString(), retired, cleared: cleared.length, waiting, reverted, top }));
-      return { cleared: ready, top, waiting, nextIn: room.nextIn, reverted: ready.length ? undefined : reverted };
-
-      } catch (e) {
-        console.warn("[acquire] listing read failed", e);
-        return { cleared: [], top: [], waiting: 0, nextIn: 0 };
-      }
-    },
-  });
-  return { cleared: q.data?.cleared ?? [], top: q.data?.top ?? [], waiting: q.data?.waiting ?? 0, nextIn: q.data?.nextIn ?? 0, reverted: q.data?.reverted, block: head?.n };
 }
 
 /** `params` and adapter of a candidate for Core.buyListing. */
