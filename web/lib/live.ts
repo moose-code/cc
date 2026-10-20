@@ -180,11 +180,12 @@ export function usePile() {
   }, [mode, s, base, saleOn, prices.data, now]);
   // loading: the source has not answered yet, so an empty list is not an empty pile
   const loading =
-    !s ||
+    engineDeployed &&
+    (!s ||
     mode === "checking" ||
     (mode === "ix"
       ? (base === undefined && !held.isError) || (saleOn && (base?.length ?? 0) > 0 && !prices.data && !prices.isError)
-      : chain.data === undefined && !chain.isError);
+      : chain.data === undefined && !chain.isError));
   return { data: mode === "ix" ? ixData : chain.data ?? [], loading };
 }
 

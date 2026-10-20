@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
-import { STATEMENT_SIZE } from "@/lib/config";
+import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { useFeed } from "@/lib/data";
 import { useSnapshot } from "@/lib/live";
 import { useCcMarket, useHookFeeBps } from "@/lib/market";
@@ -32,7 +32,8 @@ export function Flywheel() {
   const { market } = useCcMarket();
   const { data: fee } = useHookFeeBps(market);
   // until the snapshot answers the live figures are skeletons; the split line keeps its row, so nothing below moves
-  const pot = snap ? <Tween wei={snap.potWithPending} /> : <Sk w="6ch" />;
+  const pot = snap ? <Tween wei={snap.potWithPending} /> : engineDeployed ? <Sk w="6ch" /> : "—";
+  const wait = (w: string) => (engineDeployed ? <Sk w={w} /> : "—");
   const balanceOn = !!snap?.balanceOn;
 
   const creditId = latest.find((e) => e.tile?.kind === "credit")?.tile?.id;
@@ -96,7 +97,7 @@ export function Flywheel() {
       title: "compose",
       line: `${STATEMENT_SIZE} credits make one statement`,
       glyph: (
-        <span className={`fw-cells${snap ? "" : " pulse"}`} aria-hidden>
+        <span className={`fw-cells${snap || !engineDeployed ? "" : " pulse"}`} aria-hidden>
           {Array.from({ length: STATEMENT_SIZE }, (_, i) => (
             <i key={i} className={i < filled ? "on" : undefined} />
           ))}
@@ -147,11 +148,11 @@ export function Flywheel() {
         <div className="fw-ret-end" aria-hidden />
         <div className="fw-split">
           <span>
-            <b>{split ? <span className="fx-in">{pct(split.pot)}%</span> : <Sk w="3ch" />}</b> of statement sales back to the pot
+            <b>{split ? <span className="fx-in">{pct(split.pot)}%</span> : wait("3ch")}</b> of statement sales back to the pot
           </span>
           <i aria-hidden>·</i>
           <span>
-            <b>{split ? <span className="fx-in">{pct(split.buyback)}%</span> : <Sk w="3ch" />}</b> buys and burns $CC
+            <b>{split ? <span className="fx-in">{pct(split.buyback)}%</span> : wait("3ch")}</b> buys and burns $CC
           </span>
         </div>
       </div>

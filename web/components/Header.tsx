@@ -9,6 +9,7 @@ import { commas, shortAddr } from "@/lib/format";
 import { usePotPage } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
 import { Val } from "./Skeleton";
+import { engineDeployed } from "@/lib/config";
 
 const NAV = [
   { href: "/credits", label: "credits" },
@@ -103,6 +104,14 @@ function AccountName({ address }: { address: string }) {
 // Until the snapshot answers both figures are skeletons of their usual width, so the row does not grow leftward.
 function PotPage() {
   const { pts, per1 } = usePotPage();
+  // no engine configured: nothing will load, the figures read as a dash
+  if (!engineDeployed)
+    return (
+      <div className="hdr-next">
+        <span className="hdr-next-label">pot covers</span>
+        <b>—</b>
+      </div>
+    );
   return (
     <div className="hdr-next">
       <span className="hdr-next-label">pot covers</span>

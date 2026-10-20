@@ -3,7 +3,7 @@
 import { useFeed, useHistoryDown } from "@/lib/data";
 import { useBlockTs, useScan } from "@/lib/engine";
 import type { FeedEvent, FeedKind } from "@/lib/events";
-import { STATEMENT_SIZE } from "@/lib/config";
+import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { potPoints, useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
 import { useListings } from "@/lib/useListings";
 import { ListingsTable } from "./ListingsTable";
@@ -82,10 +82,10 @@ export function EngineProgress() {
         <div className="progress-head">
           <span>next statement</span>
           <b>
-            {snap ? <span className="fx-in">{ready}</span> : <Sk w="2ch" />} / {STATEMENT_SIZE} credits
+            {snap ? <span className="fx-in">{ready}</span> : engineDeployed ? <Sk w="2ch" /> : 0} / {STATEMENT_SIZE} credits
           </b>
         </div>
-        <div className={`progress-cells${snap ? "" : " pulse"}`}>
+        <div className={`progress-cells${snap || !engineDeployed ? "" : " pulse"}`}>
           {Array.from({ length: STATEMENT_SIZE }, (_, i) => (
             <i key={i} className={i < ready ? "on" : undefined} />
           ))}

@@ -24,8 +24,10 @@ export function StatsBar() {
       : "—";
   const burnedPct = s ? (s.ccBurned / LAUNCH_SUPPLY_CC) * 100 : 0;
   // a figure not read yet is a skeleton and each sub line keeps its row, so the cells do not grow when data arrives
-  const wait = <Sk w="4ch" />;
-  const sub = (ready: boolean, text: ReactNode, w = "10ch") => <small>{ready ? <span className="fx-in">{text}</span> : <Sk w={w} />}</small>;
+  // without an engine nothing loads: values read as a dash and the sub lines are left out
+  const wait = engineDeployed ? <Sk w="4ch" /> : "—";
+  const sub = (ready: boolean, text: ReactNode, w = "10ch") =>
+    engineDeployed && <small>{ready ? <span className="fx-in">{text}</span> : <Sk w={w} />}</small>;
   return (
     <div className="stats">
       <Cell ink="m" label="credits held">
@@ -44,16 +46,18 @@ export function StatsBar() {
         {sub(engineDeployed && !!s, `${commas(burnedPct, 2)}%`, "4ch")}
       </Cell>
       <Cell ink="pot" label="pot">
-        {on ? <Tween wei={snap.potWithPending} /> : <Sk w="7ch" />}
+        {on ? <Tween wei={snap.potWithPending} /> : engineDeployed ? <Sk w="7ch" /> : "—"}
         {/* the room and reserve line wraps to two lines in the pot cell; its skeleton holds both */}
         {on ? (
           <small className="fx-in">
             ETH · {eth(snap.potRoom)} buying room · {eth(snap.reserve)} reserved
           </small>
         ) : (
-          <small>
-            <SkLines n={2} w="16ch" />
-          </small>
+          engineDeployed && (
+            <small>
+              <SkLines n={2} w="16ch" />
+            </small>
+          )
         )}
       </Cell>
     </div>

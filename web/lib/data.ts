@@ -5,6 +5,7 @@
 // and the live reads. Components call these hooks and never branch on the mode.
 
 import { useMemo } from "react";
+import { engineDeployed } from "./config";
 import { useBlockTs, useScan } from "./engine";
 import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
 import {
@@ -38,6 +39,7 @@ export function useHistoryDown(): boolean {
 function useHistoryPending(ix: { data?: unknown; isError: boolean }): boolean {
   const mode = useIxMode();
   const scan = useScan();
+  if (!engineDeployed) return false; // no engine: no source will answer, the history is empty
   if (mode === "checking") return true;
   if (mode === "ix") return ix.data === undefined && !ix.isError;
   return !scan.ready && !scan.isError;
