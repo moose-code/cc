@@ -25,6 +25,12 @@ export function DocsPage({ page }: { page: DocPage }) {
               <a href={`https://etherscan.io/address/${page.mainnetAddress}`} target="_blank" rel="noreferrer">{page.mainnetAddress} ↗</a>
             </div>
           )}
+          {page.mainnetAddresses?.map(({ label, address }) => (
+            <div className="docs-source" key={address}>
+              <span>{label} · Ethereum mainnet</span>
+              <a href={`https://etherscan.io/address/${address}`} target="_blank" rel="noreferrer">{address} ↗</a>
+            </div>
+          ))}
           {page.source && (
             <div className="docs-source">
               <span>Source interface</span>

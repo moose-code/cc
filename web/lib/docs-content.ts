@@ -26,6 +26,7 @@ export type DocPage = {
   sourceSnapshot?: string;
   sourceRevision?: string;
   mainnetAddress?: string;
+  mainnetAddresses?: { label: string; address: string }[];
   sections: DocSection[];
 };
 
@@ -71,6 +72,7 @@ export const docPages: DocPage[] = [
     title: "Credits",
     eyebrow: "Guide / Credits",
     summary: "Read prices and scores, buy and sell Credits, swap pile Credits, and sweep listings.",
+    mainnetAddress: "0x97630aA70AB14ed9883B41dAfccBc11349723043",
     sections: [
       {
         id: "read-credit",
@@ -143,6 +145,7 @@ export const docPages: DocPage[] = [
     title: "Statements",
     eyebrow: "Guide / Statements",
     summary: "Read Statement prices and scores, compose, buy, and restyle held Statements.",
+    mainnetAddress: "0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b",
     sections: [
       {
         id: "read-statement",
@@ -384,6 +387,10 @@ export const docPages: DocPage[] = [
     eyebrow: "Contract / venue boundary",
     summary: "An adapter prices one venue listing and returns the exact call the Core may execute. The Core approves adapters one by one.",
     source: "src/interfaces/IListingAdapter.sol",
+    mainnetAddresses: [
+      { label: "CreditStrategyAdapter", address: "0x5757788D0A6dF507dba064d66532F0b630Be1dc9" },
+      { label: "SeaportBasicAdapter", address: "0x40302D497436bcC03e0Af2138Ec325C68DF3B0c8" },
+    ],
     sections: [
       {
         id: "interface",
