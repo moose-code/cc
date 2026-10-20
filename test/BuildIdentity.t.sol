@@ -4,6 +4,8 @@ pragma solidity ^0.8.28;
 import {Fixture} from "./utils/Fixture.sol";
 import {ICoreOpsLib} from "../src/interfaces/ICoreOpsLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
+import {CreditSale, Quote} from "../src/interfaces/Interfaces.sol";
+import {Phase2BalanceTokenStandin} from "./standins/Phase2BalanceTokenStandin.sol";
 
 /// @notice proof that the suite exercises the production build. tests and scripts compile on the default profile (no
 /// via_ir), the production contracts on the via_ir profile (foundry.toml). this test fails unless
@@ -27,6 +29,10 @@ contract BuildIdentityTest is Fixture {
     uint256 internal constant SEAPORT_ADAPTER_RUNTIME = 2_536;
     uint256 internal constant STRATEGY_ADAPTER_RUNTIME = 534;
     uint256 internal constant RENDERER_RUNTIME = 4_464;
+    /// the phase 2 artifacts, deployed by the phase 2 scripts and never by the launch
+    uint256 internal constant CONTROLLER_V2_RUNTIME = 14_201;
+    uint256 internal constant TREASURY_RUNTIME = 11_821;
+    uint256 internal constant POLICY_RUNTIME = 656;
 
     function _json(string memory name) internal view returns (string memory) {
         return vm.readFile(string.concat("out/", name, ".sol/", name, ".json"));
@@ -111,23 +117,40 @@ contract BuildIdentityTest is Fixture {
     /// computations of the masked hash
     // promise: the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent computations of the masked hash
     function test_pinnedBuildHashesEqualTheArtifacts() public {
-        string[7] memory names =
-            ["Core", "CoreLib", "CoreOpsLib", "ControllerV1", "SeaportBasicAdapter", "CreditStrategyAdapter", "LogoCoinRenderer"];
-        bytes32[7] memory pins = [
+        string[10] memory names = [
+            "Core",
+            "CoreLib",
+            "CoreOpsLib",
+            "ControllerV1",
+            "SeaportBasicAdapter",
+            "CreditStrategyAdapter",
+            "LogoCoinRenderer",
+            "ControllerV2",
+            "Phase2BalanceTreasury",
+            "ProRataRedemptionPolicy"
+        ];
+        bytes32[10] memory pins = [
             BUILD_HASH_CORE,
             BUILD_HASH_CORELIB,
             BUILD_HASH_COREOPSLIB,
             BUILD_HASH_CONTROLLER,
             BUILD_HASH_SEAPORT_ADAPTER,
             BUILD_HASH_STRATEGY_ADAPTER,
-            BUILD_HASH_RENDERER
+            BUILD_HASH_RENDERER,
+            BUILD_HASH_CONTROLLER_V2,
+            BUILD_HASH_PHASE2_TREASURY,
+            BUILD_HASH_PRO_RATA_POLICY
         ];
-        for (uint256 i; i < 7; ++i) {
+        for (uint256 i; i < 10; ++i) {
             assertEq(_maskedHash(names[i]), pins[i], string.concat(names[i], ": masked hash of the artifact"));
             assertEq(artifactHash(names[i]), pins[i], string.concat(names[i], ": hash the preflight row reads"));
         }
         assertEq(keccak256(vm.getCode("CoreLib.sol:CoreLib")), BUILD_CREATION_HASH_CORELIB, "CoreLib creation code");
-        assertEq(keccak256(vm.getCode("CoreOpsLib.sol:CoreOpsLib")), BUILD_CREATION_HASH_COREOPSLIB, "CoreOpsLib creation code");
+        assertEq(
+            keccak256(vm.getCode("CoreOpsLib.sol:CoreOpsLib")),
+            BUILD_CREATION_HASH_COREOPSLIB,
+            "CoreOpsLib creation code"
+        );
     }
 
     // promise: the fixture deploys the via ir artifacts
@@ -143,6 +166,29 @@ contract BuildIdentityTest is Fixture {
         address ops = findOpsLibrary(address(core).code);
         assertTrue(ops != address(0), "the core is linked to a compiled CoreOpsLib");
         _identical(ops, "CoreOpsLib", OPS_LIB_RUNTIME);
+    }
+
+    // promise: the phase 2 contracts a deploy script creates are the via ir artifacts at their shipped sizes, under EIP-170
+    function test_phaseTwoArtifactsAreTheViaIrBuild() public {
+        address policy = vm.deployCode("ProRataRedemptionPolicy.sol:ProRataRedemptionPolicy");
+        Phase2BalanceTokenStandin token = new Phase2BalanceTokenStandin();
+        address treasury = vm.deployCode(
+            "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
+            abi.encode(address(core), address(token), policy, address(0))
+        );
+        CreditSale memory credit = CreditSale({saleOn: true, window: 14_400, spreadBps: 1_000, startBps: 15_000});
+        Quote memory none;
+        address v2 = vm.deployCode(
+            "ControllerV2.sol:ControllerV2", abi.encode(address(core), credit, none, uint32(30_000), uint32(3_600))
+        );
+        _identical(policy, "ProRataRedemptionPolicy", POLICY_RUNTIME);
+        _identical(treasury, "Phase2BalanceTreasury", TREASURY_RUNTIME);
+        _identical(v2, "ControllerV2", CONTROLLER_V2_RUNTIME);
+        assertLt(CONTROLLER_V2_RUNTIME, EIP170_LIMIT);
+        assertLt(TREASURY_RUNTIME, EIP170_LIMIT);
+        emit log_named_uint("ControllerV2 runtime bytes", CONTROLLER_V2_RUNTIME);
+        emit log_named_uint("Phase2BalanceTreasury runtime bytes", TREASURY_RUNTIME);
+        emit log_named_uint("ProRataRedemptionPolicy runtime bytes", POLICY_RUNTIME);
     }
 
     /// the deployed code size limit of EIP-170

@@ -85,6 +85,14 @@ abstract contract LaunchChecks is PostflightChecks {
     bytes32 internal constant BUILD_HASH_STRATEGY_ADAPTER =
         0xa17a41dc8c02dcbab13b02cd12d9b460efa6f8df6587144ea47d24c67da04a38;
     bytes32 internal constant BUILD_HASH_RENDERER = 0x789770d6ad6b21255e6aa816a264650ed079691ad3ee36359a2972b75b7d9be9;
+    /// @dev the phase 2 artifacts (ControllerV2, Phase2BalanceTreasury, ProRataRedemptionPolicy), pinned the same way.
+    /// none of them is part of the launch deployment; the phase 2 deploy and readback scripts compare against them
+    bytes32 internal constant BUILD_HASH_CONTROLLER_V2 =
+        0x27b071b4f5085a22820f4d560f148fb221b776c10098fa7e923a8e63d62fa7a6;
+    bytes32 internal constant BUILD_HASH_PHASE2_TREASURY =
+        0xe48d871dcfab3ca2098f923ffb711c66f4e1a153600ca18a084110f7c5031100;
+    bytes32 internal constant BUILD_HASH_PRO_RATA_POLICY =
+        0x5f6faabee10ccfb5ac36719d4cad193d7dc70ca4c56946cdf6dc6fa919ccf2ae;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
         0x78ce8391ad8231ed4eb1cc80a783918ce33ae558b72a28558bb20014f96c46c8;
     bytes32 internal constant BUILD_CREATION_HASH_COREOPSLIB =
