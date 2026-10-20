@@ -129,7 +129,8 @@ Re-pin the candidate after executable input changes, verify the affected delta a
 
 | gate | commit | result | stage | outcome |
 |---|---|---|---|---|
-| candidate | f6a5c69 | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | all | pass |
+| candidate | f6a5c69 | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | pass |
+| candidate | 95fa7a1 | docs/reviews/SERVICE-DELTA-95fa7a1-2026-10-20.md | coin,services | pass |
 | suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md | core,coin | pass |
 | deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md | core,coin | pass |
 | e2e waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | waived |
@@ -140,7 +141,7 @@ Re-pin the candidate after executable input changes, verify the affected delta a
 | review | pending | pending | coin | pending |
 | acceptance | pending | pending | coin | pending |
 | services | pending | pending | coin,services | pending |
-| review | pending | pending | services | pending |
+| review | 95fa7a1 | docs/reviews/SERVICE-DELTA-95fa7a1-2026-10-20.md | services | pass |
 | acceptance | pending | pending | services | pending |
 
 ### history (outside the gate)

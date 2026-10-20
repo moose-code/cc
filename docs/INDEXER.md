@@ -211,7 +211,9 @@ When a Credits Transfer introduces a missing token, the handler reads that block
 
 Measure backfill progress from completed handlers and historical checkpoints as well as fetched blocks. Fetch-cache progress alone does not prove that indexed rows have caught up. Backfill duration and sustained throughput remain unproven until measured on the production history; `/ready` must report completion before serving it as caught up.
 
-### 7.5 verification before launch
+### 7.5 indexer verification
+
+Decision 228 defers historical indexer acceptance beyond coin launch when the verified website chain fallback, keeper and alerts remain available. The historical verification below is not a coin-launch prerequisite under that decision; it remains unproven until replay completes. Decision 226 separately permits the bounded temporary Alchemy fallback.
 
 1. Probe each endpoint for archive support: `eth_getStorageAt` on the Core at a pinned old block returns a value.
 2. Measure each endpoint's real limit: send `eth_blockNumber` at rising rates and record the rate where 429 responses start. Set each cap to 70 % of it.
