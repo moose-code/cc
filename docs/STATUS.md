@@ -1,6 +1,6 @@
 # status
 
-Latest UI deployment (2026-10-20 UTC): PR 118 merged `bd4c78a`; PR 119 merged `24ab453`, automatically published by Netlify at 03:43:48.416 UTC (deploy `6ad6e31ba59686d982bde6c6`). Production browser checks pass for visible OpenSea rows, default Listings before ledger transactions, requested footer/columns/spacing at mobile and desktop widths, and WalletConnect QR rendering. The keeper is already owner-authorized and live with dryRun=false/delay0 (decision 240), same machine/volume, observed wallet float0.100000 ETH and empty-pot ticks sending nothing. Integrated local main `05e72ea` preserves the exact accepted contract, launch-script/config, test and deployment-record inputs. Independent delta/continuity review and affected CI passed; broad contract checks were not repeated. A transient marketplace stream gap recovered and was labelled correctly. Historical CC indexing remains deferred, not passed. **Coin-release gate records below have not been repinned:** automatic approval review rejected that update pending exact integrated-revision acceptance, requested separately. No new coin-launch GO or agent transaction is claimed by this UI entry. This entry supersedes older no-send/deferred-website statements only. [Exact live evidence and limits](reviews/PR118-UI-PRODUCTION-2026-10-19.md).
+Latest UI deployment (2026-10-20 UTC): PR 118 merged `bd4c78a`; PR 119 merged `24ab453`, automatically published by Netlify at 03:43:48.416 UTC (deploy `6ad6e31ba59686d982bde6c6`). Production browser checks pass for visible OpenSea rows, default Listings before ledger transactions, requested footer/columns/spacing at mobile and desktop widths, and WalletConnect QR rendering. The keeper is already owner-authorized and live with dryRun=false/delay0 (decision 240), same machine/volume, observed wallet float0.100000 ETH and empty-pot ticks sending nothing. Integrated local main `05e72ea` preserves the exact accepted contract, launch-script/config, test and deployment-record inputs. Independent delta/continuity review and affected CI passed; broad contract checks were not repeated. A transient marketplace stream gap recovered and was labelled correctly. Historical CC indexing remains deferred, not passed. **The owner explicitly accepted the exact integrated revision under decision 242 after the initial approval-review block.** The freeze table now records that scoped acceptance and independent delta review while retaining prior contract evidence at its actual revisions. The owner still runs and confirms the unchanged coin-launch command; no agent transaction occurred. This entry supersedes older no-send/deferred-website and pending-acceptance statements. [Exact live evidence and limits](reviews/PR118-UI-PRODUCTION-2026-10-19.md).
 
 Current final preparation (2026-10-19 America/New_York): **existing 69-minute deployment inputs pass the scoped Phase 1 technical gates**, executable candidate `62af0a2`. Canonical-Core lifecycle passed 1/1; local timing-guard coverage passed its seven case groups; wrapper tests passed 16/16; record projection/shape passed 64 offline assertions. Final read-only Tenderly Postflight and launch-only Resume both exited 0 at block 26,230,893 and produced exactly one zero-value factory launch call. Independent final review passed, including the record-persistence repair. No broad suite or signed rehearsal was repeated. The record preserves the original config/addresses and now records the owner's approved 0.0097/0.0291 rate pair and both one-hour controller timings. The keeper's 0.100000 ETH float and enforced no-send remain as last accepted; no service runtime changed. **The owner retained this existing Core and its 69% to 6.9% decay across 69 minutes (decision 237)**, superseding the intervening 15-minute request. The original deployment identity is unchanged. Exact coin-launch acceptance and per-transaction confirmation remain required. **Coin-release owner acceptance is now explicit (decision 238); the owner will execute and confirm the transaction interactively.** The exact warm production-wrapper preview also passed: one zero-value launch, dry gas 4,665,671, accepted signed limit 6,998,506, displayed maximum gas cost approximately 0.004543 ETH at the sampled 0.649-gwei ceiling. No password or transaction was involved. Service-arming authority remains separate; the keeper is still forced no-send. [Current packet](reviews/LAUNCH-OWNER-REVIEW.md).
 
@@ -140,7 +140,7 @@ Re-pin the candidate after executable input changes, verify the affected delta a
 | gate | commit | result | stage | outcome |
 |---|---|---|---|---|
 | candidate | f6a5c69 | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | pass |
-| candidate | 62af0a2 | docs/reviews/SERVICE-DELTA-95fa7a1-2026-10-20.md | coin,services | pass |
+| candidate | 05e72ea | docs/reviews/PR118-UI-PRODUCTION-2026-10-19.md | coin,services | pass |
 | suite | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md | core,coin | pass |
 | deep | a0fa1dc | docs/reviews/CANDIDATE-a0fa1dc-2026-10-19.md | core,coin | pass |
 | e2e waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | waived |
@@ -148,11 +148,11 @@ Re-pin the candidate after executable input changes, verify the affected delta a
 | final review waiver for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | waived |
 | owner acceptance for deferred Core only | 916d03c | docs/reviews/DEFERRED-CORE-OWNER-ACCEPTANCE-916d03c-2026-10-19.md | core | pass |
 | e2e | 62af0a2 | docs/reviews/SIGNED-REHEARSAL-b6f60f5-2026-10-19.md | coin | pass |
-| review | 62af0a2 | docs/reviews/LAUNCH-OWNER-REVIEW.md | coin | pass |
-| acceptance | 62af0a2 | docs/reviews/LAUNCH-OWNER-REVIEW.md | coin | pass |
-| services | fd560e6 | docs/reviews/MAINNET-SERVICES-2026-10-19.md | coin,services | pass |
-| review | 62af0a2 | docs/reviews/SERVICE-DELTA-95fa7a1-2026-10-20.md | services | pass |
-| acceptance | pending | pending | services | pending |
+| review | 05e72ea | docs/reviews/PR118-UI-PRODUCTION-2026-10-19.md | coin | pass |
+| acceptance | 05e72ea | docs/reviews/PR118-UI-PRODUCTION-2026-10-19.md | coin | pass |
+| services | 05e72ea | docs/reviews/PR118-UI-PRODUCTION-2026-10-19.md | coin,services | pass |
+| review | 05e72ea | docs/reviews/PR118-UI-PRODUCTION-2026-10-19.md | services | pass |
+| acceptance | 05e72ea | docs/reviews/PR118-UI-PRODUCTION-2026-10-19.md | services | pass |
 
 ### history (outside the gate)
 

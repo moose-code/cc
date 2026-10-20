@@ -1,5 +1,7 @@
 # Launch owner review
 
+Current service/UI addendum: [production and continuity evidence](PR118-UI-PRODUCTION-2026-10-19.md), integrated main `05e72ea`, explicitly accepted under decision 242. The owner authorized UI publication, production configuration and keeper arming; startup is dryRun=false/delay0 and the production UI/WalletConnect checks pass. This supersedes older no-send/deferred-listings/separate-arming statements below. Decision 238 remains limited to the unchanged factory action; contract, launch-script/config, test and deployment-record inputs match `62af0a2`. No agent coin launch or direct blockchain send occurred.
+
 ## Final Phase 1 operator and mutable-state review, 2026-10-20 UTC
 
 **Technical PASS for the existing 4,140-second launch configuration.** The owner subsequently retained this exact schedule and existing Core under decision 237, superseding the intervening 900-second request. No broadcast, funding, wallet unlock or keeper arming occurred.
