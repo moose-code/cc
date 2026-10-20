@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { CreditTile } from "@/components/Tiles";
+import { Sk } from "@/components/Skeleton";
 import { useBalanceToken, useSnapshot } from "@/lib/live";
 import { useBalanceInEth } from "@/lib/market";
 import type { ListingRow } from "@/lib/useListings";
@@ -17,7 +18,8 @@ type Acquire = {
 
 // The listings table: every Credit on the CreditStrategy or OpenSea, closest to the engine's bid first. Shared by the
 // listings page and the landing feed tab. Acquisition is available only when the listings page supplies its handler.
-export function ListingsTable({ rows, acquire, showGap = false }: { rows: ListingRow[]; acquire?: Acquire; showGap?: boolean }) {
+// `loading`: the listings have not answered; skeleton rows of the table's shape stand in for them.
+export function ListingsTable({ rows, acquire, showGap = false, loading = false }: { rows: ListingRow[]; acquire?: Acquire; showGap?: boolean; loading?: boolean }) {
   const bal = useBalanceToken();
   const balanceEth = useBalanceInEth();
   const { data: snap } = useSnapshot();
@@ -35,6 +37,20 @@ export function ListingsTable({ rows, acquire, showGap = false }: { rows: Listin
         {balanceActive && <span className="num hide-sm">balance bid</span>}
         {acquire && <span />}
       </div>
+      {loading &&
+        Array.from({ length: 6 }, (_, i) => (
+          <div key={`sk${i}`} className="ltable-row" aria-hidden style={{ opacity: 1 - i * 0.1 }}>
+            <Sk block w="28px" h="28px" />
+            <Sk w="12ch" />
+            <Sk w="10ch" className="hide-sm" />
+            <Sk w="5ch" className="hide-sm" />
+            <Sk w="6ch" />
+            <Sk w="6ch" className="hide-sm" />
+            {showGap && <Sk w="5ch" />}
+            {balanceActive && <Sk w="8ch" className="hide-sm" />}
+            {acquire && <span />}
+          </div>
+        ))}
       {rows.map((r) => (
         <div key={`${r.source}:${r.id}`} className={`ltable-row${r.clears ? " on" : ""}`}>
           <span className="ctable-art">

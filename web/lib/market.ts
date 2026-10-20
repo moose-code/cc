@@ -247,13 +247,13 @@ export function useEthUsd() {
 // Price in USD, market cap and the 24h change of a market. Price = pool spot x
 // the eth/usd feed; market cap = price x totalSupply; the change compares the
 // spot now with the spot DAY_BLOCKS earlier, read once per bucket with a
-// blockTag and kept in localStorage. undefined for any figure whose read fails.
+// blockTag and kept in localStorage. undefined for any figure whose read fails; `loading` while the reads are out.
 export function useMarketStats(market?: Market) {
   const client = usePublicClient();
-  const { data: perEth } = useTokensPerEth(market);
-  const { data: ethUsd } = useEthUsd();
+  const { data: perEth, isPending: spotPending } = useTokensPerEth(market);
+  const { data: ethUsd, isPending: usdPending } = useEthUsd();
   const head = useHead().data?.n;
-  const { data: supply } = useReadContract({ address: market?.token, abi: erc20Abi, functionName: "totalSupply", query: { enabled: Boolean(market) } });
+  const { data: supply, isPending: supplyPending } = useReadContract({ address: market?.token, abi: erc20Abi, functionName: "totalSupply", query: { enabled: Boolean(market) } });
 
   const ref = head != null && head > DAY_BLOCKS ? ((head - DAY_BLOCKS) / BUCKET) * BUCKET : undefined;
   const { data: perEthThen } = useQuery<number | null>({
@@ -281,5 +281,7 @@ export function useMarketStats(market?: Market) {
   const priceUsd = ethUsd != null && perEth ? ethUsd / perEth : undefined;
   const marketCap = priceUsd != null && supply != null && market ? priceUsd * Number(formatUnits(supply, market.decimals)) : undefined;
   const change = perEth && perEthThen != null ? (perEthThen / perEth - 1) * 100 : undefined;
-  return { priceUsd, ethUsd, marketCap, change };
+  // loading: a read the figures need has not answered (as opposed to answered with nothing, shown as a dash)
+  const loading = !market || spotPending || usdPending;
+  return { priceUsd, ethUsd, marketCap, change, loading, capLoading: loading || supplyPending };
 }

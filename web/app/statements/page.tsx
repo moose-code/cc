@@ -6,6 +6,7 @@ import { FormingCard, StatementCard, StateMark, useStatementRating, type Stateme
 import { StatementTile } from "@/components/Tiles";
 import { PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
+import { EmptyNote, Sk, SkCard } from "@/components/Skeleton";
 import { useComposeEta } from "@/components/ComposeEta";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { useHistoryDown, useStatementIndex, useStats } from "@/lib/data";
@@ -36,11 +37,11 @@ interface Item {
 // reaches its floor. Sold, redeemed and not held: the indexer's statement rows.
 export default function StatementsPage() {
   const { data: snap } = useSnapshot();
-  const { data: held } = useStatements();
-  const { data: index } = useStatementIndex();
+  const { data: held, isPending: heldPending } = useStatements();
+  const { data: index, loading: indexLoading } = useStatementIndex();
   const historyDown = useHistoryDown();
   const { data: stats } = useStats();
-  const { data: pile } = usePile();
+  const { data: pile, loading: pileLoading } = usePile();
   const eta = useComposeEta(pile, 15000);
   const [view, setView] = useState<View>("grid");
   const [sort, setSort] = useState<Sort>("newest");
@@ -81,7 +82,10 @@ export default function StatementsPage() {
     ready: snap?.page.ready ?? false,
   });
 
-  const meta = [
+  // held statements come from the snapshot and its multicall, the rest from history: each part shows once it answered
+  const heldLoading = !snap || heldPending;
+  const loading = heldLoading || indexLoading;
+  const meta = loading ? undefined : [
     `${forSale.length} for sale`,
     `${count("sold")} sold`,
     (snap?.balanceOn || count("redeemed") > 0) && `${count("redeemed")} redeemed`,
@@ -89,9 +93,12 @@ export default function StatementsPage() {
     stats && `${stats.composed} composed`,
     historyDown && "history unavailable",
     snap?.paused ? "composition paused" : next && `next composes in ${etaLabel(next)}`,
-  ].filter(Boolean);
+  ].filter(Boolean).join(" · ");
+  // skeleton cards: as many as the snapshot holds for sale; the history count is not known before it loads
+  const skCards = (n: number) => Array.from({ length: n }, (_, i) => <SkCard key={i} rows={2} />);
+  const restCount = stats ? Math.max(0, stats.composed - (snap?.held.length ?? 0)) : 6;
 
-  const more = (total: number) => (
+  const more = (total: number) => total > 0 && (
     <div className="more-row">
       <span className="muted">
         showing {Math.min(shown, total)} of {total}
@@ -106,7 +113,7 @@ export default function StatementsPage() {
 
   return (
     <div>
-      <PageHead title="statements" ink="y" meta={meta.join(" · ")}>
+      <PageHead title="statements" ink="y" meta={meta} metaW="52ch" metaLines={2}>
         <div className="seg" role="group" aria-label="view">
           {(["grid", "table"] as View[]).map((v) => (
             <button key={v} className={view === v ? "on" : ""} onClick={() => setView(v)}>
@@ -124,7 +131,16 @@ export default function StatementsPage() {
       </PageHead>
 
       <div className="split-pad">
-        {(forming.length > 0 || pileIncomplete) && (
+        {pileLoading && (
+          <section className="sect" aria-busy="true">
+            <div className="sect-head">
+              <b>forming</b>
+              <Sk w="40ch" className="caption" />
+            </div>
+            <div className="cgrid">{skCards(Math.max(1, Math.ceil(Number(snap?.pileSize ?? 80n) / STATEMENT_SIZE)))}</div>
+          </section>
+        )}
+        {!pileLoading && (forming.length > 0 || pileIncomplete) && (
           <section className="sect">
             <div className="sect-head">
               <b>forming</b>
@@ -155,25 +171,45 @@ export default function StatementsPage() {
                 <b>for sale</b>
                 {snap?.statementDecayHours != null && <span className="caption">price falls over {snap.statementDecayHours}h to its floor</span>}
               </div>
-              <div className="cgrid">
-                {forSale.map((i) => (
-                  <StatementCard key={i.id} id={i.id} state={i.state} price={i.price} raw={i.raw} />
-                ))}
-              </div>
+              {heldLoading ? (
+                snap?.held.length === 0 ? null : <div className="cgrid">{skCards(snap?.held.length ?? 6)}</div>
+              ) : forSale.length === 0 ? (
+                <EmptyNote>no statements for sale right now. each one lists here as soon as it composes.</EmptyNote>
+              ) : (
+                <div className="cgrid">
+                  {forSale.map((i) => (
+                    <StatementCard key={i.id} id={i.id} state={i.state} price={i.price} raw={i.raw} />
+                  ))}
+                </div>
+              )}
+              {heldLoading && snap?.held.length === 0 && <EmptyNote>no statements for sale right now. each one lists here as soon as it composes.</EmptyNote>}
             </section>
             <section className="sect">
               <div className="sect-head">
                 <b>sold &amp; redeemed</b>
                 <span className="caption">
-                  {count("sold")} sold · {count("redeemed")} redeemed
+                  {loading ? (
+                    <Sk w="18ch" />
+                  ) : (
+                    <>
+                      {count("sold")} sold · {count("redeemed")} redeemed
+                    </>
+                  )}
                 </span>
               </div>
-              <div className="cgrid">
-                {rest.slice(0, shown).map((i) => (
-                  <StatementCard key={i.id} id={i.id} state={i.state} price={i.price} raw={i.raw} />
-                ))}
-              </div>
-              {more(rest.length)}
+              {loading ? (
+                restCount > 0 && <div className="cgrid">{skCards(Math.min(PAGE, restCount))}</div>
+              ) : rest.length === 0 ? (
+                <EmptyNote>none yet. statements sold or redeemed by the engine are kept here.</EmptyNote>
+              ) : (
+                <div className="cgrid">
+                  {rest.slice(0, shown).map((i) => (
+                    <StatementCard key={i.id} id={i.id} state={i.state} price={i.price} raw={i.raw} />
+                  ))}
+                </div>
+              )}
+              {loading && restCount === 0 && <EmptyNote>none yet. statements sold or redeemed by the engine are kept here.</EmptyNote>}
+              {!loading && more(rest.length)}
             </section>
           </>
         ) : (
@@ -189,11 +225,23 @@ export default function StatementsPage() {
                 <span>state</span>
                 <span className="num hide-sm">composed</span>
               </div>
-              {items.slice(0, shown).map((i) => (
-                <Row key={i.id} i={i} />
-              ))}
+              {loading
+                ? Array.from({ length: 8 }, (_, i) => (
+                    <div key={i} className="stable-row" aria-hidden>
+                      <Sk block w="40px" h="40px" />
+                      <Sk w="12ch" />
+                      <Sk w="6ch" className="hide-xs" />
+                      <Sk w="10ch" className="hide-sm" />
+                      <Sk w="7ch" />
+                      <Sk w="5ch" className="hide-sm" />
+                      <Sk w="8ch" />
+                      <Sk w="6ch" className="hide-sm" />
+                    </div>
+                  ))
+                : items.slice(0, shown).map((i) => <Row key={i.id} i={i} />)}
+              {!loading && items.length === 0 && <EmptyNote>the engine has not composed a statement yet.</EmptyNote>}
             </div>
-            {more(items.length)}
+            {!loading && more(items.length)}
           </>
         )}
       </div>

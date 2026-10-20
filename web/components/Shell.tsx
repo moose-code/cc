@@ -1,16 +1,23 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { Sk } from "./Skeleton";
 
 // Page head band: title, meta line and a right slot for toggles and sort.
-// `ink` sets the 3px top edge (credits m, statements y).
+// `ink` sets the 3px top edge (credits m, statements y). The meta line is always there: until the page passes it
+// (meta undefined while its data loads) it is a skeleton of `metaW`, so the band keeps its height. On a phone a long
+// meta wraps: `metaLines` is the lines it takes there, reserved loaded or not, since its figures arrive one by one.
 export function PageHead({
   title,
   meta,
+  metaW = "36ch",
+  metaLines = 1,
   ink,
   children,
 }: {
   title: string;
   meta?: ReactNode;
+  metaW?: string;
+  metaLines?: number;
   ink?: "c" | "m" | "y" | "k";
   children?: ReactNode;
 }) {
@@ -18,7 +25,18 @@ export function PageHead({
     <div className={`head-band${ink ? ` ink-${ink}` : ""}`}>
       <div className="head-band-main">
         <h1>{title}</h1>
-        {meta && <div className="head-band-meta">{meta}</div>}
+        <div className="head-band-meta" style={{ "--meta-lines": metaLines } as CSSProperties}>
+          {meta == null ? (
+            <>
+              <Sk w={metaW} />
+              {Array.from({ length: metaLines - 1 }, (_, i) => (
+                <Sk key={i} w={i === metaLines - 2 ? "55%" : "100%"} className="sk-wrap" />
+              ))}
+            </>
+          ) : (
+            <span className="fx-in">{meta}</span>
+          )}
+        </div>
       </div>
       {children && <div className="head-band-slot">{children}</div>}
     </div>

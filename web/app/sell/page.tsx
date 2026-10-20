@@ -8,6 +8,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
+import { Sk, SkCard, SkLines } from "@/components/Skeleton";
 import { ArtFrame, PageHead } from "@/components/Shell";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS } from "@/lib/config";
 import { coreAbi, creditsAbi } from "@/lib/abis";
@@ -151,7 +152,7 @@ export default function SellPage() {
 
   const meta = snap
     ? `bid ${eth(bid, 5)} ETH / 100 pts · buying room ${eth(pot, 2)} ETH · ~${commas(potPoints(pot, bid))} pts at this bid before royalty`
-    : "reading the engine…";
+    : undefined;
   const plural = (k: number) => `${k} credit${k === 1 ? "" : "s"}`;
   const spendCap = snap && snap.settings.spendCapBps < 10000 && !isBal;
   const shownFills = order.slice(0, many ? FILLS_TABLE : FILLS_CARDS);
@@ -263,7 +264,7 @@ export default function SellPage() {
 
   return (
     <>
-      <PageHead title="sell to the engine" ink="k" meta={meta}>
+      <PageHead title="sell to the engine" ink="k" meta={meta} metaW="70ch" metaLines={2}>
         <span className="sell-refresh">offers refresh every 5s</span>
       </PageHead>
       <div className="split sell">
@@ -303,13 +304,13 @@ export default function SellPage() {
           <div className="sell-how">
             <div>
               <span className="muted">how offers work</span>
-              <p>each credit&apos;s offer is the bid scaled by its rating. rating 100 = {snap ? eth(bid, 5) : "—"} ETH.</p>
+              <p>each credit&apos;s offer is the bid scaled by its rating. rating 100 = {snap ? <span className="fx-in">{eth(bid, 5)}</span> : <Sk w="7ch" />} ETH.</p>
             </div>
             {examples.map((r, i) => (
               <div key={i}>
                 <span className="muted">rating {commas(r)}</span>
                 <b>
-                  {snap ? eth((bid * BigInt(r)) / 100n) : "—"} <small>ETH</small>
+                  {snap ? <span className="fx-in">{eth((bid * BigInt(r)) / 100n)}</span> : <Sk w="6ch" />} <small>ETH</small>
                 </b>
               </div>
             ))}
@@ -323,8 +324,10 @@ export default function SellPage() {
               </button>
             </div>
           ) : !ready ? (
-            <div className="sell-empty">
-              <p className="muted">reading your credits…</p>
+            <div className="sell-cards" aria-busy="true">
+              {Array.from({ length: 4 }, (_, i) => (
+                <SkCard key={i} rows={3} />
+              ))}
             </div>
           ) : list.length === 0 ? (
             <div className="sell-empty">
@@ -388,9 +391,12 @@ export default function SellPage() {
               {isBal
                 ? `the ${BALANCE_SYMBOL} bid is a posted price, ${snap ? Number(snap.balanceRate) / 100 : "…"}% of par per point: it does not drop after a credit and does not climb while idle, so a batch pays the offers added up.`
                 : "the bid drops a little after each credit the engine buys. selling several in one transaction, later credits fill at the lower bid, so the batch pays less than the offers added up."}
-              {snap && snap.settings.buyToArtistBps > 0
-                ? ` the engine pays the artist a ${snap.settings.buyToArtistBps / 100}% royalty on top of every purchase, and it comes on top of what you receive.${isBal ? " On the balance route, a payment the token cannot deliver in the sale transaction is recorded for the artist to claim." : ""}`
-                : ""}
+              {snap && snap.settings.buyToArtistBps > 0 ? (
+                <span className="fx-in">{` the engine pays the artist a ${snap.settings.buyToArtistBps / 100}% royalty on top of every purchase, and it comes on top of what you receive.${isBal ? " On the balance route, a payment the token cannot deliver in the sale transaction is recorded for the artist to claim." : ""}`}</span>
+              ) : (
+                // the royalty sentence's three lines, held until the settings are read
+                !snap && <SkLines n={3} />
+              )}
             </p>
 
             {n > 0 && (

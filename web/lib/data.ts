@@ -5,6 +5,7 @@
 // and the live reads. Components call these hooks and never branch on the mode.
 
 import { useMemo } from "react";
+import { engineDeployed } from "./config";
 import { useBlockTs, useScan } from "./engine";
 import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
 import {
@@ -22,7 +23,7 @@ import {
   type Stats,
   type StatementDetail,
 } from "./indexer";
-import { useBalanceToken, useCredit, useCreditCostToPotAt, useCreditOwner, useCreditTraits, useScores, useSnapshot, useStatementOwner, useHead, type PileCredit } from "./live";
+import { useBalanceToken, useCredit, useCreditCostToPotAt, usePile, useCreditOwner, useCreditTraits, useScores, useSnapshot, useStatementOwner, useHead, type PileCredit } from "./live";
 
 export type { Stats, FeedFilter };
 
@@ -33,18 +34,29 @@ export function useHistoryDown(): boolean {
   return mode === "chain" && scan.isError;
 }
 
+/** True until history answers: the indexer check, then the indexer query (`ix`, answered or failed) or the chain
+ * scan. While true an empty list or a missing record is not yet known to be empty or missing. */
+function useHistoryPending(ix: { data?: unknown; isError: boolean }): boolean {
+  const mode = useIxMode();
+  const scan = useScan();
+  if (!engineDeployed) return false; // no engine: no source will answer, the history is empty
+  if (mode === "checking") return true;
+  if (mode === "ix") return ix.data === undefined && !ix.isError;
+  return !scan.ready && !scan.isError;
+}
+
 // ---- stats ---------------------------------------------------------------------------------------------------
 
 export function useStats(): { data?: Stats } {
   const mode = useIxMode();
   const ixq = useStatsIx();
-  const { data: scan } = useScan();
+  const { data: scan, ready } = useScan();
   const s = scan.stats;
   return {
     data:
       mode === "ix"
         ? ixq.data
-        : mode === "chain"
+        : mode === "chain" && ready
           ? {
               ccBurned: s.ccBurned,
               artistReceived: s.artistReceived,
@@ -88,16 +100,17 @@ export function useBuyRate(): { perHour: number | undefined; recent: boolean } {
 // ---- feed ----------------------------------------------------------------------------------------------------
 
 /** Ledger rows, newest first, `limit` of them; total counts all rows of the filter. */
-export function useFeed(filter: FeedFilter, limit: number): { events: FeedEvent[]; total: number } {
+export function useFeed(filter: FeedFilter, limit: number): { events: FeedEvent[]; total: number; loading: boolean } {
   const mode = useIxMode();
   const ixq = useFeedIx(filter, limit);
   const balance = useBalanceToken();
   const { data: scan } = useScan();
+  const loading = useHistoryPending(ixq);
   return useMemo(() => {
-    if (mode === "ix") return { events: (ixq.data?.rows ?? []).map((r) => feedEvent(r, balance)), total: ixq.data?.total ?? 0 };
+    if (mode === "ix") return { events: (ixq.data?.rows ?? []).map((r) => feedEvent(r, balance)), total: ixq.data?.total ?? 0, loading };
     const all = scan.feed.filter((e) => filter === "all" || (filter === "credits" ? e.tile?.kind === "credit" : e.tile?.kind === "statement"));
-    return { events: all.slice(0, limit), total: all.length };
-  }, [mode, ixq.data, balance, scan.feed, filter, limit]);
+    return { events: all.slice(0, limit), total: all.length, loading };
+  }, [mode, ixq.data, balance, scan.feed, filter, limit, loading]);
 }
 
 // ---- credit detail -------------------------------------------------------------------------------------------
@@ -113,6 +126,7 @@ export interface CreditSale {
 }
 
 export interface CreditDetail {
+  loading: boolean; // the sources have not answered: state, facts and history are not known yet
   evts: CreditEvt[]; // oldest first
   last?: CreditEvt;
   known: boolean;
@@ -131,14 +145,19 @@ export interface CreditDetail {
 
 export function useCreditDetail(id: number): CreditDetail {
   const mode = useIxMode();
-  const { data: scan } = useScan();
+  const { data: scan, ready: scanReady } = useScan();
+  const { data: pile, loading: pileLoading } = usePile();
   const { data: snap } = useSnapshot();
   const { data: c } = useCredit(id);
   const { data: owner } = useCreditOwner(id);
   const { data: scores } = useScores([BigInt(id)]);
   const { data: traits } = useCreditTraits([BigInt(id)]);
-  const row = useCreditRow(id).data ?? undefined;
-  const hist = useCreditHistoryIx(id).data;
+  const rowQ = useCreditRow(id);
+  const row = rowQ.data ?? undefined;
+  const histQ = useCreditHistoryIx(id);
+  const hist = histQ.data;
+  const rowPending = useHistoryPending(rowQ);
+  const histPending = useHistoryPending(histQ);
   const chainEvts = scan.credits[id];
   const evts = (mode === "ix" ? hist : chainEvts) ?? [];
   const last = evts[evts.length - 1];
@@ -163,7 +182,12 @@ export function useCreditDetail(id: number): CreditDetail {
 
   const ixState = row?.state === "composed" ? "composed" : row?.state === "sold" ? "sold" : "other";
   const chainState = last?.t === "composed" ? "composed" : last?.t === "sold" ? "sold" : "other";
+  // loading: the record or its history has not answered. In chain mode the facts come from the scan and, for a pile
+  // credit only, the live credit read (a credit the engine never held has none to wait for)
+  const chainPending = mode === "chain" && (!scanReady || pileLoading || (pile.some((p) => p.id === id) && c === undefined));
+  const loading = (mode !== "chain" && (rowPending || histPending)) || chainPending || mode === "checking" || !snap;
   return {
+    loading,
     evts,
     last,
     known: mode === "ix" ? (row ? row.state !== "outside" : false) : inPile || evts.length > 0,
@@ -196,11 +220,13 @@ export interface StatementIndexItem {
 }
 
 /** Statements with a record outside the held set: composed, sold or redeemed. */
-export function useStatementIndex(): { data: StatementIndexItem[] } {
+export function useStatementIndex(): { data: StatementIndexItem[]; loading: boolean } {
   const mode = useIxMode();
   const rows = useStatementRowsIx();
   const { data: scan } = useScan();
+  const loading = useHistoryPending(rows);
   return {
+    loading,
     data: useMemo(() => {
       if (mode === "ix")
         return (rows.data ?? []).map((r) => ({ id: r.id, format: r.format, formatName: r.formatName, cost: r.cost, rating: r.rating, composedAt: r.composedAt, soldPrice: r.state === "sold" ? r.salePrice : undefined, redeemed: r.state === "redeemed" }));
@@ -218,15 +244,16 @@ export function useStatementIndex(): { data: StatementIndexItem[] } {
 
 export type StatementView = StatementRecord & { owner?: string | null; rating?: bigint; format?: number; formatName?: string | null };
 
-/** One statement's record. undefined: not composed by the engine, or still loading. */
+/** One statement's record. undefined: not composed by the engine, or still loading (isPending). */
 export function useStatementView(id: number): { rec?: StatementView; owner?: string; isPending: boolean } {
   const mode = useIxMode();
   const ixq = useStatementDetailIx(id);
   const { data: scan } = useScan();
+  const pending = useHistoryPending(ixq);
   const { data: owner } = useStatementOwner(id);
   const chainRec = scan.statements[id];
   const d: StatementDetail | null | undefined = ixq.data;
   const rec: StatementView | undefined =
     mode === "ix" ? (d ?? undefined) : chainRec ? { ...chainRec, format: chainRec.restyled.at(-1)?.format ?? chainRec.composed?.format } : undefined;
-  return { rec, owner: owner ?? undefined, isPending: mode === "ix" ? ixq.isPending : false };
+  return { rec, owner: owner ?? undefined, isPending: pending };
 }

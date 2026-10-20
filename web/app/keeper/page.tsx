@@ -4,6 +4,7 @@ import { useReadContract } from "wagmi";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
+import { Sk } from "@/components/Skeleton";
 import { coreAbi } from "@/lib/abis";
 import { core, engineDeployed } from "@/lib/config";
 import { useBalanceToken, useHead, useSnapshot } from "@/lib/live";
@@ -29,9 +30,9 @@ export default function KeeperPage() {
   });
   const last = mode === "chain" ? lastLive : engineQ.data?.lastBuybackBlock ?? undefined;
   if (!engineDeployed) return <NotDeployed />;
-  if (!s) return <main className="page detail" />;
+  if (!s) return <KeeperLoading />;
 
-  const row = (k: string, v: string) => (
+  const row = (k: string, v: React.ReactNode) => (
     <div className="r" key={k}>
       <span>{k}</span>
       <b>{v}</b>
@@ -94,10 +95,60 @@ export default function KeeperPage() {
             <p className="panel-note">the artist and the payee are paid by push on every sale and book, so there is no claim.</p>
             <div className="quote">
               {row("artist", shortAddr(s.artist))}
-              {row("artist received", stats ? `${stats.artistReceived.toFixed(4)} eth` : "—")}
+              {row("artist received", stats ? `${stats.artistReceived.toFixed(4)} eth` : <Sk w="10ch" />)}
               {row("payee", shortAddr(s.payee))}
-              {row("payee received", stats ? `${stats.payeeReceived.toFixed(4)} eth` : "—")}
+              {row("payee received", stats ? `${stats.payeeReceived.toFixed(4)} eth` : <Sk w="10ch" />)}
             </div>
+          </section>
+        </div>
+      </main>
+    </>
+  );
+}
+
+// The keeper page before the snapshot answers: the same sections with their headings, rows and buttons as skeletons.
+function KeeperLoading() {
+  const rows = (keys: string[]) => (
+    <div className="quote">
+      {keys.map((k, i) => (
+        <div className="r" key={k}>
+          <span>{k}</span>
+          <b>
+            <Sk w={["9ch", "11ch", "8ch"][i % 3]} />
+          </b>
+        </div>
+      ))}
+    </div>
+  );
+  const button = (
+    <div className="actions">
+      <Sk block w="100%" h="48px" />
+    </div>
+  );
+  return (
+    <>
+      <PageHead title="keeper" ink="k" metaW="8ch" />
+      <main className="page detail" aria-busy="true">
+        <div className="keeper">
+          <section>
+            <h2>pots</h2>
+            {rows(["bid / 100 pts", "pot", "unbooked pot fees", "reserved for processing", "buying room", "to buyback", "redeem burn pot"])}
+          </section>
+          <section>
+            <h2>book fees</h2>
+            <p className="panel-note">counts the fees the hook sent into the pot.</p>
+            {button}
+          </section>
+          <section>
+            <h2>buyback</h2>
+            {rows(["next buyback", "delay", "slice"])}
+            <p className="panel-note">swaps a slice of the buyback pot for coin and burns it.</p>
+            {button}
+          </section>
+          <section>
+            <h2>payouts</h2>
+            <p className="panel-note">the artist and the payee are paid by push on every sale and book, so there is no claim.</p>
+            {rows(["artist", "artist received", "payee", "payee received"])}
           </section>
         </div>
       </main>

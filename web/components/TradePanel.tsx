@@ -12,6 +12,7 @@ import { commas, eth, evmNowAddress, evmNowTx, leftLabel, tokens, usd, usdCompac
 import { lsGet, lsSet } from "@/lib/cache";
 import { useCoinLive, useNow, useSnapshot } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
+import { Sk } from "./Skeleton";
 
 const HOOK_FEE_BPS = 1000; // fallback when the hook reads fail
 const SLIPPAGE_PRESETS = [50, 100, 200, 500]; // bps
@@ -44,7 +45,10 @@ export function TradePanel({ market }: { market?: Market }) {
   const now = useNow();
   const feeBps = hooked ? hookFee?.bps ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
 
-  const { priceUsd: tokenUsd, ethUsd, marketCap } = useMarketStats(m);
+  const { priceUsd: tokenUsd, ethUsd, marketCap, loading: statsLoading, capLoading } = useMarketStats(m);
+  // price and cap: a skeleton while a pool is known but its reads are out; the dash before launch or after a failed read
+  const statsWait = !prelaunch && (m == null ? live !== false : statsLoading);
+  const capWait = !prelaunch && (m == null ? live !== false : capLoading);
 
   // slippage tolerance in bps, kept in localStorage; a custom percent is applied once it is within 0.1 to 50
   const [slipBps, setSlipBps] = useState(100);
@@ -280,7 +284,7 @@ export function TradePanel({ market }: { market?: Market }) {
       <div className="tp-price">
         <div>
           <div className="label">{tag} price</div>
-          <div className="tp-big">{tokenUsd != null ? usdPrice(tokenUsd) : "—"}</div>
+          <div className="tp-big">{tokenUsd != null ? <span className="fx-in">{usdPrice(tokenUsd)}</span> : statsWait ? <Sk w="6ch" /> : "—"}</div>
         </div>
         <div className="tp-cap">
           {m ? (
@@ -290,7 +294,7 @@ export function TradePanel({ market }: { market?: Market }) {
           ) : (
             <div className="label">mkt cap</div>
           )}
-          <div className="tp-big sm">{marketCap != null ? usdCompact(marketCap) : "—"}</div>
+          <div className="tp-big sm">{marketCap != null ? <span className="fx-in">{usdCompact(marketCap)}</span> : capWait ? <Sk w="6ch" /> : "—"}</div>
         </div>
       </div>
 

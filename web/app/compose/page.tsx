@@ -8,6 +8,7 @@ import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { NotDeployed } from "@/components/NotDeployed";
 import { PageHead } from "@/components/Shell";
+import { Sk, SkLines } from "@/components/Skeleton";
 import { core, engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { coreAbi, erc20Abi } from "@/lib/abis";
 import { useCoinLive, usePile, useSnapshot } from "@/lib/live";
@@ -20,7 +21,7 @@ const FORMATS = [0, 1, 2, 3, 4, 5, 6, 7];
 // of 80 credits the caller names while the owner has chosen compose on.
 export default function ComposePage() {
   const { address } = useAccount();
-  const { data: pile } = usePile();
+  const { data: pile, loading: pileLoading } = usePile();
   const { data: snap } = useSnapshot();
   const coinLive = useCoinLive();
   const [sel, setSel] = useState<Set<number>>(new Set());
@@ -57,13 +58,14 @@ export default function ComposePage() {
 
   return (
     <>
-      <PageHead title="composing next statement" ink="k" meta={`${filled} / ${size} credits`} />
+      <PageHead title="composing next statement" ink="k" meta={snap ? `${filled} / ${size} credits` : undefined} metaW="14ch" />
       <main className="page compose">
-        <div className="compose-bar">
-          <i style={{ width: `${Math.min(100, (filled / size) * 100)}%` }} />
+        <div className={`compose-bar${snap ? "" : " pulse"}`}>
+          <i style={{ width: snap ? `${Math.min(100, (filled / size) * 100)}%` : 0 }} />
         </div>
 
-        <div className="slot-grid">
+        {/* until the pile is read the slots pulse as one; filled slots then fade in with their art */}
+        <div className={`slot-grid${pileLoading ? " pulse" : ""}`}>
           {slots.map((c, i) =>
             c ? (
               <Link key={c.id} href={`/credits/${c.id}`} className="slot filled" title={`credit #${c.id}`}>
@@ -108,7 +110,7 @@ export default function ComposePage() {
             <>
               <p className="muted">
                 {!snap
-                  ? "loading…"
+                  ? <SkLines n={2} w="56ch" />
                   : filled >= size
                     ? `the newest of the ${size} oldest credits is still inside its sale window.`
                     : `${remaining} more ${remaining === 1 ? "credit" : "credits"} needed. the engine buys credits from swap fees until the statement is full, then anyone can compose it.`}

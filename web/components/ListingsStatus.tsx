@@ -19,7 +19,7 @@ export function ListingsStatus({ market, strategy, readAt, error, fetching, retr
   const now = useWall();
   const message = error
     ? readAt ? "could not refresh listings; showing the last view." : "listings unavailable."
-    : !readAt ? "reading listings…"
+    : !readAt ? undefined // the table's skeleton rows show the first read
     : market && !market.available ? "OpenSea listings unavailable."
     : strategy?.error || strategy?.pending ? "some listings are unavailable."
     : market && !viewLive(market, now) ? "listings may be delayed."

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { CreditTile } from "./Tiles";
 import { Act } from "./Act";
 import { ArtFrame, Breadcrumb, RegMark } from "./Shell";
-import { Fact, HistLine } from "./Detail";
+import { Fact, HistLine, SkFacts, SkHistory } from "./Detail";
+import { Sk } from "./Skeleton";
 import { FormingArt } from "./Cards";
 import { useComposeEta } from "./ComposeEta";
 import { core, STATEMENT_SIZE } from "@/lib/config";
@@ -20,13 +21,12 @@ const KIND_LABEL: Record<FormingKind, string> = { building: "in progress", upcom
 // pile, the credits default compose will take for it (web/lib/forming.ts). Full-size version of the /statements forming
 // card. The page turns into the composed statement's detail once the Core mints this id.
 export function FormingStatement({ id, snap, prevHref, nextHref }: { id: number; snap: Snapshot; prevHref?: string; nextHref?: string }) {
-  const { data: pile } = usePile();
+  const { data: pile, loading } = usePile();
   const eta = useComposeEta(pile);
   const size = STATEMENT_SIZE;
   const k = id - (snap.nextStatementId ?? id);
   const at = formingAt(k, { ids: pile.map((c) => c.id), pileSize: Number(snap.pileSize), size, nextSid: snap.nextStatementId, ready: snap.page.ready });
-  const loading = at.status === "unavailable" && pile.length === 0;
-  const page = at.status === "forming" ? at.page : undefined;
+  const page = !loading && at.status === "forming" ? at.page : undefined;
   const credits: PileCredit[] = page ? pile.slice(k * size, k * size + page.ids.length) : [];
   const n = credits.length;
   const cost = credits.reduce((a, c) => a + c.cost, 0n);
@@ -58,16 +58,17 @@ export function FormingStatement({ id, snap, prevHref, nextHref }: { id: number;
               <div className="label">statement</div>
               <h1 className="detail-id">{id}</h1>
 
-              {loading && <p className="side-copy">loading…</p>}
+              {loading && <SkFacts keys={["state", "credits", "engine cost", "credit rating", "format", "holder"]} />}
+              {loading && <SkHistory n={3} />}
               {!loading && at.status === "unavailable" && <p className="side-copy">this page of the pile is unavailable until the full pile loads.</p>}
-              {at.status === "empty" && <p className="side-copy">not forming yet. no Credit has reached this page of the pile.</p>}
+              {!loading && at.status === "empty" && <p className="side-copy">not forming yet. no Credit has reached this page of the pile.</p>}
               {page && (
                 <>
-                  <dl className="dfacts">
+                  <dl className="dfacts fx-in">
                     <Fact k="state" v={snap.paused ? `${KIND_LABEL[page.kind]} · engine paused` : KIND_LABEL[page.kind]} />
                     <Fact k="credits" v={`${n} / ${size}`} />
-                    <Fact k="engine cost so far" v={`${eth(cost)} ETH`} />
-                    <Fact k="credit rating so far" v={score != null ? rating(score) : "—"} />
+                    <Fact k="engine cost" v={`${eth(cost)} ETH so far`} />
+                    <Fact k="credit rating" v={score != null ? `${rating(score)} so far` : "—"} />
                     <Fact k="format" v="set at compose" />
                     <Fact k="holder" v="not minted" />
                   </dl>
@@ -108,10 +109,10 @@ export function FormingStatement({ id, snap, prevHref, nextHref }: { id: number;
             <div className="label">status</div>
             <div className="status-line">
               <span className="mark hollow" />
-              {page ? KIND_LABEL[page.kind] : loading ? "loading…" : "not forming"}
+              {page ? KIND_LABEL[page.kind] : loading ? <Sk w="12ch" /> : "not forming"}
             </div>
             {page && <p className="side-copy">{statusCopy(page.kind, k, id, size - n, snap.paused)}</p>}
-            {at.status === "empty" && (
+            {!loading && at.status === "empty" && (
               <p className="side-copy">
                 statements form 80 Credits at a time, oldest first. see the forming pages on <Link href="/statements">statements</Link>.
               </p>
