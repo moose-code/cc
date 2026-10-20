@@ -26,6 +26,7 @@ export type DocPage = {
   sourceSnapshot?: string;
   sourceRevision?: string;
   mainnetAddress?: string;
+  mainnetAddresses?: { label: string; address: string }[];
   sections: DocSection[];
 };
 
@@ -47,10 +48,17 @@ export const docPages: DocPage[] = [
         ],
       },
       {
+        id: "mainnet-record",
+        title: "Ethereum mainnet record",
+        points: [
+          "The tracked deployment record lists the Core and Controller at block 26,229,330. Their addresses are on the contract reference pages; the coin was not live at that block.",
+        ],
+      },
+      {
         id: "before-you-call",
         title: "Before a transaction",
         points: [
-          "These guides describe published contract interfaces. Check current deployment addresses and settings before sending a transaction.",
+          "Check current deployment state, contract addresses and active settings before sending a transaction.",
           "Quotes change with time, settings, and state. Simulate the call before sending it.",
           "Use a minimum output where available. Owner settings take effect immediately.",
           "Amounts use raw token units. Credit scores use 10,000 units per point. The ETH bid rate is per 100 points.",
@@ -64,13 +72,14 @@ export const docPages: DocPage[] = [
     title: "Credits",
     eyebrow: "Guide / Credits",
     summary: "Read prices and scores, buy and sell Credits, swap pile Credits, and sweep listings.",
+    mainnetAddress: "0x97630aA70AB14ed9883B41dAfccBc11349723043",
     sections: [
       {
         id: "read-credit",
         title: "Read a Credit",
         entries: [
           { signature: "Core.bidOf(uint256 id) → uint256", description: "Current ETH bid for this Credit, including its score and the live rate." },
-          { signature: "Core.spendState() → (bucket, budget, spent)", description: "Remaining ETH purchase budget in the current bucket. A positive bid does not guarantee this bucket can buy." },
+          { signature: "Core.spendState() → (bucket, budget, spent)", description: "ETH purchase budget and amount spent in the current bucket. A positive bid does not guarantee this bucket can buy." },
           { signature: "CreditScoreLens.creditScore(uint256 creditId) → uint256", description: "Credit score in ten-thousandths of a point, including for burned Credits." },
         ],
       },
@@ -79,7 +88,7 @@ export const docPages: DocPage[] = [
         title: "Buy Credits",
         points: [
           "Check creditSaleOn and choose IDs from Core.pilePage. Read ControllerV1.creditPrice for each ID, then simulate the purchase with enough ETH for the total.",
-          "The Controller refunds excess ETH. A Credit sale emits Core.CreditSold; a recently sold Credit may be subject to the return lock before it can be sold back to the engine.",
+          "The Controller refunds excess ETH. A Credit sale emits Core.CreditSold. The return lock follows that Credit through transfers and blocks its return to any Core intake door until it expires.",
         ],
         entries: [
           { signature: "ControllerV1.buyCredit(uint256 id) payable", description: "Buy one held Credit while the Credit sale is enabled. Its price declines over the sale window." },
@@ -93,6 +102,7 @@ export const docPages: DocPage[] = [
           "Approve the Core to transfer each Credit. Read bidOf, then simulate the sell call against the latest block.",
           "Use minOut to bound the ETH payment.",
           "The return lock, reserve, and spend cap may prevent a quoted sale from executing.",
+          "The ETH bid's climb pauses when the booked pot cannot fund the last fill rate for 100 points plus the artist royalty.",
         ],
         entries: [
           { signature: "Core.sellForEth(uint256[] ids, uint256 minOut)", description: "Sell one or more Credits for ETH. The caller receives the bid; the artist royalty is paid on top." },
@@ -135,13 +145,14 @@ export const docPages: DocPage[] = [
     title: "Statements",
     eyebrow: "Guide / Statements",
     summary: "Read Statement prices and scores, compose, buy, and restyle held Statements.",
+    mainnetAddress: "0x75Edd94b7e49b3bD5C8047b91F165A5e265a069b",
     sections: [
       {
         id: "read-statement",
         title: "Read a Statement",
         entries: [
           { signature: "Core.statementInfo(uint256 sid) → (held, cost, composedAt)", description: "Check custody and cost before reading a sale quote." },
-          { signature: "ControllerV1.priceOf(uint256 sid) → uint256", description: "Current ETH ask. The curve and reference can move with time and settings." },
+          { signature: "ControllerV1.priceOf(uint256 sid) → uint256", description: "Current ETH ask. Statement age excludes paused time; the curve and reference can still change." },
           { signature: "CreditScoreLens.statementScore(uint256 statementId) → uint256", description: "Stored total score across a Statement's pages, including overprints." },
         ],
       },
@@ -209,7 +220,8 @@ export const docPages: DocPage[] = [
         title: "Authority and locks",
         points: [
           "The owner can change economic settings immediately, pause acquisitions, composition, sales, Credit swaps and buybacks, select a controller, manage adapters, and nominate a successor.",
-          "Read Core.paused() before an intake, composition, sale, Credit swap or buyback. Funding, fee booking, escrow collection, redemption and reads remain live during a pause.",
+          "Read Core.paused() before an intake, composition, sale, Credit swap or buyback. Funding, fee booking, escrow collection and reads remain live during a pause.",
+          "Paused time does not count toward Statement age or ETH bid climb. The Credit composition window continues in wall time.",
           "Controller, adapter, and successor locks are one-way. Read their onchain flags rather than assuming they have been applied.",
         ],
       },
@@ -230,14 +242,16 @@ export const docPages: DocPage[] = [
     eyebrow: "Contract / custody + execution",
     summary: "The Core holds ETH and Credits, owns the bid and pile, composes Statements, and manages the engine's settings.",
     source: "src/interfaces/ICore.sol",
+    mainnetAddress: "0xcdb1889ae12074d750CD9B8531B692015465e0dD",
     sections: [
       {
         id: "quotes",
         title: "Quotes and state",
         entries: [
-          { signature: "bidOf(uint256 id) → uint256", description: "Live ETH bid for a Credit ID.", access: "view" },
+          { signature: "bidOf(uint256 id) → uint256", description: "Live ETH bid for a Credit ID, limited by available pot room.", access: "view" },
           { signature: "bidForScore(uint256 score) → uint256", description: "Live ETH bid for a raw score.", access: "view" },
           { signature: "ethRate() → uint256", description: "ETH rate for the reference score of 100 points.", access: "view" },
+          { signature: "RATE_START() → uint256", description: "Opening ETH rate per 100 points recorded by the Core.", access: "view" },
           { signature: "spendState() → (uint64 bucket, uint128 budget, uint128 spent)", description: "Current ETH purchase bucket and spend.", access: "view" },
           { signature: "pilePage(uint256 startAfter, uint256 n) → uint256[]", description: "Page through Credits held in the pile.", access: "view" },
           { signature: "heldStatements() → uint256[]", description: "Statement IDs still held by the Core.", access: "view" },
@@ -269,6 +283,7 @@ export const docPages: DocPage[] = [
         entries: [
           { signature: "book() / collectEscrow() / buyback()", description: "Book fee income, collect escrow, and burn CC with the buyback allocation.", access: "Permissionless, guarded by readiness" },
           { signature: "setSettings(Settings settings)", description: "Replace the complete settings struct, effective immediately.", access: "Owner only" },
+          { signature: "setOpeningRate(uint256 rate)", description: "Reset the opening rate, its three-times cap and the live ETH bid while the Core is active, the coin has no code, and valueModeOn is false.", access: "Owner only", errors: "OpeningRateClosed, BadRate" },
           { signature: "migrate(uint256 amount)", description: "Move the bid pot and pile to the configured successor and retire the Core.", access: "Owner only" },
         ],
       },
@@ -280,6 +295,7 @@ export const docPages: DocPage[] = [
           { signature: "ListingBought(id, adapter, caller, cost, paid, rate, toArtist)", description: "The Core swept an external listing." },
           { signature: "Composed(sid, ids, format, cost, price, caller)", description: "The pile became a Statement." },
           { signature: "StatementSoldTo(sid, buyer, price, toBuyback, toArtist, toOperator)", description: "The Core settled a Statement sale." },
+          { signature: "RateSet(rate)", description: "The owner reset the ETH bid rate." },
           { signature: "SettingsSet(settings)", description: "Owner settings change that alters subsequent calls and quotes." },
         ],
       },
@@ -292,6 +308,7 @@ export const docPages: DocPage[] = [
     eyebrow: "Contract / sale pricing",
     summary: "The Controller quotes and executes the engine's Statement and Credit sales.",
     source: "src/interfaces/IControllerV1.sol",
+    mainnetAddress: "0x222CFeFC762e4Db84226DC17d15872B2169EB10e",
     sections: [
       {
         id: "prices",
@@ -370,6 +387,10 @@ export const docPages: DocPage[] = [
     eyebrow: "Contract / venue boundary",
     summary: "An adapter prices one venue listing and returns the exact call the Core may execute. The Core approves adapters one by one.",
     source: "src/interfaces/IListingAdapter.sol",
+    mainnetAddresses: [
+      { label: "CreditStrategyAdapter", address: "0x5757788D0A6dF507dba064d66532F0b630Be1dc9" },
+      { label: "SeaportBasicAdapter", address: "0x40302D497436bcC03e0Af2138Ec325C68DF3B0c8" },
+    ],
     sections: [
       {
         id: "interface",
