@@ -20,6 +20,14 @@ export interface Priced extends Listing {
   bid: bigint; // Core.bidOf(id)
 }
 
+// Empty-pot bids tie at zero. Rank those rows by exact price per point across both venues.
+export function compareListingPricePerPoint(a: { price: bigint; score: bigint; id: bigint }, b: { price: bigint; score: bigint; id: bigint }): number {
+  if ((a.score > 0n) !== (b.score > 0n)) return a.score > 0n ? -1 : 1;
+  const left = a.price * b.score, right = b.price * a.score;
+  if (left !== right) return left < right ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 /** Cheapest listing per credit id, so a credit listed on two venues is checked once at its best price. */
 export function cheapestPerId(list: Listing[]): Listing[] {
   const best = new Map<bigint, Listing>();

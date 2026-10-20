@@ -140,7 +140,7 @@ export default function ListingsPage() {
         </div>
         <p className="caption lnote">
           gap is price over bid. bids marked ~ are estimated from the current rate and the rating; the closest 100 rows are
-          read from the chain, OpenSea order status included. clears in assumes no sales into the bid and a constant pot.
+          read from the chain, OpenSea order status included.
           OpenSea rows are the keeper&apos;s observed catalog, not an atomic marketplace snapshot; every purchase is
           simulated against the current order first.
           {snap && ` bid ${eth(snap.ethRate, 5)} ETH / 100 pts.`}
