@@ -76,6 +76,28 @@ class ApprovalTests(unittest.TestCase):
                          "stack.poolFee: 8388608"):
                 self.assertIn(item, output.getvalue())
 
+    def test_launch_display_includes_separate_rate_and_controller_signoffs(self):
+        # promise: the final display distinguishes unchanged constructor inputs from separately approved live values.
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "launch.json"
+            path.write_text(json.dumps({"rateStart": 5600000000000000, "sale": {"decayHours": 4}, "credit": {"window": 14400}}))
+            overrides = {
+                "PRELAUNCH_RATE": "9700000000000000", "PRELAUNCH_RATE_HASH": "0x" + "11" * 32,
+                "PRELAUNCH_DECAY_HOURS": "1", "PRELAUNCH_CREDIT_WINDOW": "3600",
+                "PRELAUNCH_CONTROLLER_TIMING_HASH": "0x" + "22" * 32,
+            }
+            output = io.StringIO()
+            with patch.dict(os.environ, overrides, clear=True), redirect_stdout(output):
+                launch.print_launch_config(path)
+            text = output.getvalue()
+            self.assertIn("Constructor configuration", text)
+            self.assertIn("sale.decayHours: 4", text)
+            self.assertIn("credit.window: 14400", text)
+            self.assertIn("rate: 9700000000000000 wei per 100 points; cap: 29100000000000000", text)
+            for name, value in overrides.items():
+                if name != "PRELAUNCH_RATE":
+                    self.assertIn(f"{name}: {value}", text)
+
     def test_live_output_shows_password_prompt_without_forge_dump(self):
         # promise: the operator sees the password and progress prompts while successful Forge logs stay out of the terminal.
         script = ("import sys; print('deploy.sh: start block 123, signer nonce 4'); "

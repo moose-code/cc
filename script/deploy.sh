@@ -491,14 +491,17 @@ printf '%s' "$REC" | jq --argjson chainId "$CHAIN_ID" --arg rpcUrl "$RECORD_RPC"
   configHash: $r.configHash, openingRate: $r.openingRate, openingRateHash: $r.openingRateHash,
   balanceToken: null, balanceModule: null, balancePool: null, owner: $r.owner,
   coinLive: ($launchBlock != ""), tokenDeployer: $tokenDeployer
-} + (if $launchBlock != "" then {launchBlock: ($launchBlock | tonumber)} else {} end)' >"$TMPREC"
+} + (if $launchBlock != "" then {launchBlock: ($launchBlock | tonumber)} else {} end)
+  + ($r | with_entries(select(.key == "controllerDecayHours" or .key == "controllerCreditWindow" or .key == "controllerTimingHash")))' >"$TMPREC"
 # the shape web (local-env.mjs), keeper (readRecord) and indexer (ponder.config.ts, indexer/deploy.sh) read
 jq -e '
   def addr: type == "string" and test("^0x[0-9a-fA-F]{40}$") and (ascii_downcase != "0x0000000000000000000000000000000000000000");
   (keys | sort) == (["balanceModule","balancePool","balanceToken","chainId","coinLive","tokenDeployer","controller","coin","core","credits","deployBlock",
     "configHash","openingRate","openingRateHash",
     "hook","library","opsLibrary","owner","poolFee","poolManager","renderer","rpcUrl","seaportAdapter","statements","strategyAdapter","tickSpacing"]
-    + (if .coinLive == true then ["launchBlock"] else [] end) | sort)
+    + (if .coinLive == true then ["launchBlock"] else [] end)
+    + (if has("controllerDecayHours") or has("controllerCreditWindow") or has("controllerTimingHash")
+       then ["controllerDecayHours","controllerCreditWindow","controllerTimingHash"] else [] end) | sort)
   and (.coinLive | type == "boolean")
   and (if .coinLive then (.deployBlock as $d | .launchBlock | type == "number" and . >= $d) else true end)
   and (.chainId | type == "number" and . > 0)
@@ -508,6 +511,11 @@ jq -e '
   and (.poolFee | type == "number") and (.tickSpacing | type == "number")
   and (.openingRate | type == "string" and test("^[0-9]+$"))
   and ([.configHash, .openingRateHash] | all(type == "string" and test("^0x[0-9a-fA-F]{64}$")))
+  and (if has("controllerTimingHash") then
+    (.controllerDecayHours | type == "string" and test("^[1-9][0-9]{0,4}$") and (tonumber <= 65535))
+    and (.controllerCreditWindow | type == "string" and test("^[1-9][0-9]{0,9}$") and (tonumber <= 4294967295))
+    and (.controllerTimingHash | type == "string" and test("^0x[0-9a-fA-F]{64}$"))
+    else true end)
   and (.rpcUrl == null or (.rpcUrl | type == "string"))
 ' "$TMPREC" >/dev/null || die "the record failed the shape check; nothing was written"
 [ "$(jq -r .core "$TMPREC" | tr 'A-F' 'a-f')" = "$(lc "$CORE")" ] || die "the record Core differs from the deployed Core"

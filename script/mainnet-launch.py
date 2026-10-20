@@ -99,7 +99,7 @@ def prepare_build(skip_clean):
 
 def print_launch_config(path):
     config = json.loads(path.read_text())
-    print(f"\nExact launch settings ({path}):", flush=True)
+    print(f"\nConstructor configuration ({path}):", flush=True)
 
     def show(prefix, value):
         if isinstance(value, dict):
@@ -109,6 +109,16 @@ def print_launch_config(path):
             print(f"  {prefix}: {json.dumps(value)}", flush=True)
 
     show("", config)
+    if os.environ.get("PRELAUNCH_RATE"):
+        rate = number(os.environ["PRELAUNCH_RATE"])
+        print("\nSeparate opening-rate signoff:", flush=True)
+        print(f"  rate: {rate} wei per 100 points; cap: {rate * 3} wei per 100 points", flush=True)
+        print(f"  PRELAUNCH_RATE_HASH: {os.environ.get('PRELAUNCH_RATE_HASH', 'unset')}", flush=True)
+    timing = ("PRELAUNCH_DECAY_HOURS", "PRELAUNCH_CREDIT_WINDOW", "PRELAUNCH_CONTROLLER_TIMING_HASH")
+    if any(name in os.environ for name in timing):
+        print("\nSeparate controller-timing signoff:", flush=True)
+        for name in timing:
+            print(f"  {name}: {os.environ.get(name, 'unset')}", flush=True)
 
 
 def rpc(url, method, params, *, preserve_response=False):

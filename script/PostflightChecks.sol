@@ -24,6 +24,9 @@ import {PostflightPool} from "./PostflightPool.sol";
 abstract contract PostflightChecks is PostflightPool {
     error PrelaunchRateSignoff(bytes32 want, bytes32 given);
     error PrelaunchRateOutOfBounds(uint256 rate);
+    error PrelaunchControllerTimingIncomplete();
+    error PrelaunchControllerTimingOutOfBounds(uint256 decayHours, uint256 creditWindow);
+    error PrelaunchControllerTimingSignoff(bytes32 want, bytes32 given);
 
     /// @notice the deployer of the launch from the environment (DEPLOYER), zero when not given. a test overrides it
     function _deployerEnv() internal view virtual returns (address) {
@@ -63,7 +66,11 @@ abstract contract PostflightChecks is PostflightPool {
         if (core_.code.length == 0) return;
         ICore core = ICore(payable(core_));
         _postCore(c, core);
-        _check("deferred: no pending owner", core.pendingOwner() == address(0), "owner handover must be cleared before launch");
+        _check(
+            "deferred: no pending owner",
+            core.pendingOwner() == address(0),
+            "owner handover must be cleared before launch"
+        );
         address coin = core.COIN();
         _noCode("deferred: coin has no code", coin);
         (bool okr, bool recorded) = _bool(c.stack.factory, abi.encodeCall(IArtCoinsFactoryV2.isCoin, (coin)));
@@ -73,7 +80,9 @@ abstract contract PostflightChecks is PostflightPool {
         if (deployer != address(0)) {
             _eq("core: address is the CREATE2 address of the config and the deployer", core_, coreAddress(c, deployer));
             (bool okp, address want) = _predict(c, deployer, core_);
-            _check("deferred: coin equals the factory prediction for the deployer", okp && want == coin, vm.toString(want));
+            _check(
+                "deferred: coin equals the factory prediction for the deployer", okp && want == coin, vm.toString(want)
+            );
         }
         _info("signoff: CONFIG_HASH", vm.toString(configHash(c)));
     }
@@ -105,7 +114,8 @@ abstract contract PostflightChecks is PostflightPool {
 
     /// @notice the CREATE2 address of the second linked library, from its compiled creation code
     function opsLibraryAddress() internal view returns (address) {
-        return vm.computeCreate2Address(bytes32(0), keccak256(vm.getCode("CoreOpsLib.sol:CoreOpsLib")), CREATE2_DEPLOYER);
+        return
+            vm.computeCreate2Address(bytes32(0), keccak256(vm.getCode("CoreOpsLib.sol:CoreOpsLib")), CREATE2_DEPLOYER);
     }
 
     /// @dev the creation code of the Core with the library address linked in, without constructor arguments. the artifact
@@ -311,11 +321,12 @@ abstract contract PostflightChecks is PostflightPool {
 
     /// @dev the sale settings of the controller must equal the config, like the core settings (SETTINGS_CHANGED=1 turns
     /// the row into a warning once the owner changed them)
-    function _postSale(LaunchConfig memory c, address ctl) private {
+    function _postSale(LaunchConfig memory c, address ctl) internal {
         if (ctl.code.length == 0) return;
         IControllerV1 k = IControllerV1(ctl);
+        (uint256 decayHours, uint256 creditWindow) = _approvedControllerTiming(c);
         bool same = k.markupBps() == c.sale.markupBps && k.startCapBps() == c.sale.startCapBps
-            && k.decayHours() == c.sale.decayHours && k.anchorHalfLife() == c.sale.anchorHalfLife
+            && k.decayHours() == decayHours && k.anchorHalfLife() == c.sale.anchorHalfLife
             && k.anchorMinCost() == c.sale.anchorMinCost && k.anchorMoveBps() == c.sale.anchorMoveBps;
         if (_settingsChanged()) {
             _warn(
@@ -339,7 +350,7 @@ abstract contract PostflightChecks is PostflightPool {
         } else {
             _check("controller: anchor is 10_000", anchored, vm.toString(k.anchorBps()));
         }
-        bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == c.credit.window
+        bool creditSame = k.creditSaleOn() == c.credit.saleOn && k.creditWindow() == creditWindow
             && k.creditSpreadBps() == c.credit.spreadBps && k.creditStartBps() == c.credit.startBps;
         if (_settingsChanged()) {
             _warn(
@@ -357,7 +368,11 @@ abstract contract PostflightChecks is PostflightPool {
         // The controller constructor leaves age-only redemption eligibility off. An owner switch before launch would
         // change the signed launch policy even if the other sale settings still matched the config.
         if (_settingsChanged()) {
-            _warn("warn: age eligibility is off at launch", !k.ageEligibilityOn(), "SETTINGS_CHANGED=1, owner switched it after launch");
+            _warn(
+                "warn: age eligibility is off at launch",
+                !k.ageEligibilityOn(),
+                "SETTINGS_CHANGED=1, owner switched it after launch"
+            );
         } else {
             _check("controller: age eligibility is off at launch", !k.ageEligibilityOn(), "ageEligibilityOn");
         }
@@ -366,7 +381,11 @@ abstract contract PostflightChecks is PostflightPool {
             && tol == c.quote.tolBps && stale == c.quote.referenceMaxStale && minSec == c.quote.referenceMinSeconds
             && liq == c.quote.minLiquidity;
         if (_settingsChanged()) {
-            _warn("warn: reference price settings equal the config", quoteSame, "SETTINGS_CHANGED=1, the owner changed it since launch");
+            _warn(
+                "warn: reference price settings equal the config",
+                quoteSame,
+                "SETTINGS_CHANGED=1, the owner changed it since launch"
+            );
         } else {
             _check(
                 "controller: reference price settings equal the config",
@@ -379,6 +398,47 @@ abstract contract PostflightChecks is PostflightPool {
     /// @notice the operator says the owner changed the settings since launch (SETTINGS_CHANGED=1). a test overrides it
     function _settingsChanged() internal view virtual returns (bool) {
         return vm.envOr("SETTINGS_CHANGED", uint256(0)) == 1;
+    }
+
+    /// Timing signoff changes only live expectations, preserving the constructor config and CREATE2 identities.
+    function _controllerTimingHash(LaunchConfig memory c, uint256 decayHours, uint256 creditWindow)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(keccak256("credits.prelaunchControllerTiming.v1"), configHash(c), decayHours, creditWindow)
+        );
+    }
+
+    function _validateControllerTiming(LaunchConfig memory c, uint256 decayHours, uint256 creditWindow, bytes32 given)
+        internal
+        pure
+    {
+        if (decayHours == 0 || decayHours > type(uint16).max || creditWindow == 0 || creditWindow > type(uint32).max) {
+            revert PrelaunchControllerTimingOutOfBounds(decayHours, creditWindow);
+        }
+        bytes32 want = _controllerTimingHash(c, decayHours, creditWindow);
+        if (given != want) revert PrelaunchControllerTimingSignoff(want, given);
+    }
+
+    function _timingEnvSet(string memory key) internal view returns (bool) {
+        return bytes(vm.envOr(key, string(""))).length != 0;
+    }
+
+    function _approvedControllerTiming(LaunchConfig memory c)
+        internal
+        view
+        returns (uint256 decayHours, uint256 creditWindow)
+    {
+        bool decaySet = _timingEnvSet("PRELAUNCH_DECAY_HOURS");
+        bool windowSet = _timingEnvSet("PRELAUNCH_CREDIT_WINDOW");
+        bool hashSet = _timingEnvSet("PRELAUNCH_CONTROLLER_TIMING_HASH");
+        if (!decaySet && !windowSet && !hashSet) return (c.sale.decayHours, c.credit.window);
+        if (!decaySet || !windowSet || !hashSet) revert PrelaunchControllerTimingIncomplete();
+        decayHours = vm.envUint("PRELAUNCH_DECAY_HOURS");
+        creditWindow = vm.envUint("PRELAUNCH_CREDIT_WINDOW");
+        _validateControllerTiming(c, decayHours, creditWindow, vm.envBytes32("PRELAUNCH_CONTROLLER_TIMING_HASH"));
     }
 
     /// A reset keeps the original constructor config and Core address. Its separate hash approves exactly one
