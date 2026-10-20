@@ -2,19 +2,16 @@
 
 import { Fragment } from "react";
 import Link from "next/link";
-import { statementSaleSplit } from "@/lib/sale-split";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { useFeed } from "@/lib/data";
+import { useFeed, useStats } from "@/lib/data";
 import { useSnapshot } from "@/lib/live";
-import { useCcMarket, useHookFeeBps } from "@/lib/market";
-import { BALANCE_SYMBOL } from "@/lib/format";
+import { commas } from "@/lib/format";
 import { CreditTile } from "./Tiles";
 import { Tween } from "./EngineFeed";
 import { Sk } from "./Skeleton";
 
 // bps as a percent, up to two decimals: 900 -> "9", 990 -> "9.9"
 const pct = (bps: number) => (bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 });
-const salePct = (percent: number) => percent.toLocaleString("en-US", { maximumFractionDigits: 2 });
 
 const Arrow = ({ n }: { n: number }) => (
   <div className="fw-arr" style={{ "--n": n } as React.CSSProperties} aria-hidden>
@@ -25,41 +22,32 @@ const Arrow = ({ n }: { n: number }) => (
   </div>
 );
 
-// Engine explainer band: five steps with live values and the return line from
-// sell or redeem back to the pot. The left column shares its width with the
+// Engine explainer band: five steps with live values, then the split of a statement sale under steps 02 to 05: a
+// bracket back up into the pot and a bar in proportion to the live split. The left column shares its width with the
 // first two stat cells (see .home in globals.css).
 // TODO: "full mechanics" link; the app has no mechanics page to point at.
 export function Flywheel() {
   const { data: snap } = useSnapshot();
+  const { data: stats } = useStats();
   const { events: latest, loading: feedLoading } = useFeed("credits", 1);
-  const { market } = useCcMarket();
-  const { data: fee } = useHookFeeBps(market);
-  // until the snapshot answers the live figures are skeletons; the split line keeps its row, so nothing below moves
-  const pot = snap ? <Tween wei={snap.potWithPending} /> : engineDeployed ? <Sk w="6ch" /> : "—";
+  // until the snapshot answers the live figures are skeletons; the split bar keeps its row, so nothing below moves.
+  // The pot shown is the spendable room, the pot less the processing reserve
+  const pot = snap ? <Tween wei={snap.potRoom} /> : engineDeployed ? <Sk w="6ch" /> : "—";
   const wait = (w: string) => (engineDeployed ? <Sk w={w} /> : "—");
-  const balanceOn = !!snap?.balanceOn;
 
   const creditId = latest.find((e) => e.tile?.kind === "credit")?.tile?.id;
   const filled = snap ? Number(snap.pileSize % BigInt(STATEMENT_SIZE)) : 0;
-  // gross statement sale shares, after the artist and operator cuts
-  const split = snap ? statementSaleSplit(snap.settings) : undefined;
-
-  // the standing engine share; the launch fee window is left out of the explainer. A fee still loading is a skeleton;
-  // no pool or a failed read keeps the general wording
-  const tradeLine = fee ? (
-    `${pct(fee.engineBaseBps)}% of every trade goes to the engine`
-  ) : market && fee === undefined ? (
-    <>
-      <Sk w="5ch" /> of every trade goes to the engine
-    </>
-  ) : (
-    "a share of every trade goes to the engine"
-  );
+  // split of a statement sale after the artist and operator cuts, in bps
+  const split = snap ? { buyback: snap.settings.saleToBuybackBps, pot: 10000 - snap.settings.saleToBuybackBps } : undefined;
+  const potPct = split ? <span className="fx-in">{pct(split.pot)}%</span> : wait("3ch");
+  const burnPct = split ? <span className="fx-in">{pct(split.buyback)}%</span> : wait("3ch");
+  // the bar's columns follow the live split; until it is read they hold the default 3 : 1
+  const cols = split ? `${split.pot}fr ${split.buyback}fr` : "3fr 1fr";
 
   const steps = [
     {
       title: "trade $CC",
-      line: tradeLine,
+      line: "a share of every trade goes to the engine",
       glyph: (
         <svg className="fw-bars" viewBox="0 0 36 36" aria-hidden>
           {[14, 22, 10, 26, 34].map((h, i) => (
@@ -91,7 +79,7 @@ export function Flywheel() {
     },
     {
       title: "buy credits",
-      line: "a funded bid that falls after purchases",
+      line: "a standing bid, priced by credit rating",
       glyph: (
         <span className="fw-thumb">{creditId != null ? <CreditTile id={creditId} /> : feedLoading && <Sk block w="100%" h="100%" />}</span>
       ),
@@ -108,10 +96,8 @@ export function Flywheel() {
       ),
     },
     {
-      title: balanceOn ? "sell or redeem" : "sell",
-      line: balanceOn
-        ? `statements are listed for ETH or redeemed for ${BALANCE_SYMBOL}`
-        : "statements are listed for ETH",
+      title: "sell",
+      line: "statements are listed for ETH",
       glyph: (
         <svg className="fw-ladder" viewBox="0 0 36 36" aria-hidden>
           {[36, 30, 20, 12].map((w, i) => (
@@ -126,11 +112,16 @@ export function Flywheel() {
     <section className="fw" aria-label="how the engine works">
       <div className="fw-intro">
         <h2>Credit Cycle</h2>
-        <p>
-          $CC trading fees fund a moving bid for Jack Butcher’s Credits. acquired Credits can return to collectors
-          or become Statements. completed sales help finance more purchases and CC buybacks.
-        </p>
-        <Link href="/faq" className="fw-faq-link">how it works ↗</Link>
+        <div className="fw-lines">
+          <p className="lead">every $CC trade funds an onchain collector</p>
+          <p>the engine acquires Credits at a standing bid, then combines every {STATEMENT_SIZE} into a Statement</p>
+          <p>
+            {potPct} of Statement sale proceeds fund more acquisitions, while {burnPct} buys and burns $CC
+          </p>
+        </div>
+        <Link href="/faq" className="fw-faq-link">
+          how it works ↗
+        </Link>
       </div>
       <div className="fw-steps">
         {steps.map((s, i) => (
@@ -147,22 +138,30 @@ export function Flywheel() {
             </div>
           </Fragment>
         ))}
-        <div className="fw-ret" aria-hidden />
-        <div className="fw-ret-end" aria-hidden />
-        <div className="fw-split">
-          <span>
-            <b>{split ? <span className="fx-in">{salePct(split.pot)}%</span> : wait("3ch")}</b> of each Statement sale to the pot
-          </span>
-          <i aria-hidden>·</i>
-          <span>
-            <b>{split ? <span className="fx-in">{salePct(split.buyback)}%</span> : wait("3ch")}</b> allocated to later CC buybacks
-          </span>
-          <i aria-hidden>·</i>
-          <span>
-            <b>{snap ? pct(snap.settings.saleToArtistBps) + "%" : wait("3ch")}</b> artist
-            {" · "}
-            <b>{snap ? pct(snap.settings.saleToOperatorBps) + "%" : wait("3ch")}</b> operator
-          </span>
+        <div className="fw-loop">
+          <div className="fw-bracket" aria-hidden />
+          <div className="fw-bar" style={{ gridTemplateColumns: cols }}>
+            <div className="pot">
+              <b>{potPct}</b>
+              <span>
+                back to the pot<span className="wide-only"> · funds more acquisitions</span>
+              </span>
+            </div>
+            {split?.buyback !== 0 && (
+              <div className="burn">
+                <b>{burnPct}</b>
+                <span>
+                  <span className="wide-only">buys and </span>burns $CC
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="fw-cap">
+            <span>split of each statement sale, after artist and operator cuts</span>
+            <span className="wide-only">
+              {stats ? <span className="fx-in">{commas(stats.ccBurned)}</span> : wait("4ch")} $CC burned so far
+            </span>
+          </div>
         </div>
       </div>
     </section>

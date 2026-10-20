@@ -11,13 +11,14 @@
 
 import { useSyncExternalStore } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import { createClient, and, asc, count, desc, eq, gte, inArray, min, ne, or, sql } from "@ponder/client";
+import { createClient, and, asc, count, desc, eq, gte, inArray, isNotNull, min, ne, or, sql, sum } from "@ponder/client";
 import { getTableColumns } from "drizzle-orm";
 import { formatUnits } from "viem";
 import { chain, core, engineDeployed, indexerUrl, STATEMENT_SIZE } from "./config";
-import { eth, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
+import { commas, eth, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
 import { indexedBlockForChain } from "./indexer-health";
-import type { CreditEvt, FeedEvent, StatementRecord } from "./events";
+import { BANDS, BUCKET_WEI, POINT, WEEK_S } from "./market-report";
+import { soldDetail, type CreditEvt, type FeedEvent, type StatementRecord } from "./events";
 import * as schema from "./indexer-schema";
 import type { AcquiredHow } from "./indexer-schema";
 
@@ -93,11 +94,18 @@ export interface Stats {
   payeeReceived: number; // eth, the operator cut of sales plus the pushed fee share
   composed: number;
   creditsAcquired: number; // every credit the engine took in: eth bid, balance bid, listing, adopted
+  ethToPot: number; // eth, the pot's part of statement sales with a recorded split
+  potSales: number; // the statement sales summed in ethToPot
 }
 
 export function useStatsIx() {
   return useIx(["stats"], async (db): Promise<Stats> => {
-    const r = (await db.select().from(stats).limit(1))[0];
+    // statement.toPot is set only by StatementSoldTo; a controller-only Bought sale has no split and is left out
+    const [rows, pots] = await Promise.all([
+      db.select().from(stats).limit(1),
+      db.select({ eth: sum(statement.toPot), n: count(statement.toPot) }).from(statement).where(isNotNull(statement.toPot)),
+    ]);
+    const r = rows[0];
     const eth18 = (v?: bigint) => Number(formatUnits(v ?? 0n, 18));
     return {
       ccBurned: eth18(r?.ccBurned),
@@ -105,6 +113,8 @@ export function useStatsIx() {
       payeeReceived: eth18((r?.toOperator ?? 0n) + (r?.toPayee ?? 0n)),
       composed: Number(r?.composed ?? 0n),
       creditsAcquired: Number(r?.creditsBought ?? 0n),
+      ethToPot: eth18(BigInt(pots[0]?.eth ?? 0)),
+      potSales: Number(pots[0]?.n ?? 0),
     };
   });
 }
@@ -166,6 +176,35 @@ export function useFillsTodayIx(headTs: number | undefined) {
       return { eth: rows.reduce((n, r) => n + Number(r.eth), 0), balance: rows.reduce((n, r) => n + Number(r.balance), 0) };
     },
     { enabled: day != null },
+  );
+}
+
+/** The credits market report's histogram (lib/market-report.ts): engine purchases at the eth bid or from a listing,
+ * by rating band, week (0 the last 7 days, 1 the 7 before) and price bucket of BUCKET_WEI, counted. The SQL API has
+ * no percentile function, so the median is read from the counts. `headTs` is taken to the 10 minutes. */
+export function useMarketIx(headTs: number | undefined) {
+  const at = headTs == null ? undefined : Math.floor(headTs / 600) * 600;
+  return useIx(
+    ["market", at],
+    async (db) => {
+      const week = BigInt(WEEK_S);
+      const since = BigInt(at!) - 2n * week;
+      const edge = BigInt(at!) - week;
+      // constants are inlined (numbers computed here, never input) so the selected and grouped expressions are the
+      // same text; bound parameters would number them apart and Postgres would not match them
+      const lit = (n: bigint | number) => sql.raw(String(n));
+      // each expression is named: the client maps result columns by name, and two unnamed `case` columns collide
+      const band = sql<number>`case ${sql.join(BANDS.slice(1).map((b) => sql`when ${credit.score} < ${lit(BigInt(b.lo) * POINT)} then ${lit(b.key - 1)} `))}else ${lit(BANDS.length - 1)} end`.as("rating_band"); // not "band": the credit table has a band column
+      const period = sql<number>`case when ${credit.acquiredAt} >= ${lit(edge)} then 0 else 1 end`.as("sale_week");
+      const bucket = sql<string>`(${credit.costBasis} / ${lit(BUCKET_WEI)})::bigint`.as("price_bucket");
+      const rows = await db
+        .select({ band, period, bucket, n: count() })
+        .from(credit)
+        .where(and(gte(credit.acquiredAt, since), inArray(credit.acquiredHow, ["eth_bid", "listing"])))
+        .groupBy(band, period, bucket);
+      return rows.map((r) => ({ band: Number(r.band), period: Number(r.period), bucket: BigInt(r.bucket), n: Number(r.n) }));
+    },
+    { enabled: at != null },
   );
 }
 
@@ -412,7 +451,8 @@ export type FeedFilter = "all" | "credits" | "statements";
 
 const CREDIT_KINDS: schema.ActivityKind[] = ["credit_bought", "listing_bought", "credit_adopted", "credit_swapped", "credit_sold"];
 const STATEMENT_KINDS: schema.ActivityKind[] = ["composed", "restyled", "statement_sold", "redeemed"];
-const kindsOf = (f: FeedFilter) => (f === "credits" ? CREDIT_KINDS : f === "statements" ? STATEMENT_KINDS : [...CREDIT_KINDS, ...STATEMENT_KINDS]);
+const BURN_KINDS: schema.ActivityKind[] = ["buyback"]; // the ledger shows each $CC burn
+const kindsOf = (f: FeedFilter) => (f === "credits" ? CREDIT_KINDS : f === "statements" ? STATEMENT_KINDS : [...CREDIT_KINDS, ...STATEMENT_KINDS, ...BURN_KINDS]);
 
 /** Ledger rows, newest first, with the statement's rating. total counts all rows of the filter. */
 export function useFeedIx(filter: FeedFilter, limit: number) {
@@ -433,6 +473,7 @@ export function useFeedIx(filter: FeedFilter, limit: number) {
           ts: activity.blockTimestamp,
           tx: activity.txHash,
           rating: statement.rating,
+          toPot: statement.toPot,
           mode: statement.mode,
           composedFormat: sql<string | null>`${log.args}->>'format'`,
           restyledTo: statementFormat.to,
@@ -529,11 +570,22 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         kind: "sold",
         label: "statement sold",
         link: stmtLink(sid!),
-        detail: `· ${eth(r.amount2 ?? 0n)} eth to buyback · bought by`,
+        detail: r.toPot != null ? soldDetail(r.toPot, r.amount2 ?? 0n) : "bought by",
         eth: eth(amount),
         addr: r.account ?? undefined,
         tile: { kind: "statement", id: sid! },
         rating: r.rating ?? undefined,
+      };
+    case "buyback":
+      // amount: ETH spent; amount2: $CC the Core burned in the same tx. The buyback pools every sale's share, so the
+      // burn names no source statement
+      return {
+        ...base,
+        kind: "burned",
+        label: "$CC burned",
+        title: `${commas(Number(formatUnits(r.amount2 ?? 0n, 18)))} $CC`,
+        detail: `bought with ${eth(amount)} ETH`,
+        eth: eth(amount),
       };
     default:
       return {

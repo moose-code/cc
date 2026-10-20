@@ -1,6 +1,7 @@
 import { ogContentType, ogImage, ogSize } from "@/lib/og";
+import { siteName } from "@/lib/site";
 
-export const alt = "credits engine";
+export const alt = siteName;
 export const size = ogSize;
 export const contentType = ogContentType;
 

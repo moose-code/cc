@@ -510,6 +510,26 @@ const readsPending = (n: number, mode: string, ixq: Q, chain: Q): boolean =>
     return (q.isPending || q.isPlaceholderData) && !q.isError;
   })());
 
+// Points held by the engine: the scores of the credits in the pile plus the current totals of the statements it holds
+// (ratingOf, which an overprint can change). A composed credit leaves the pile, so nothing counts twice. Scores are in
+// 1/10,000 point. undefined until every part is read: the whole pile (chain mode lists only its first PILE_PAGE), each
+// pile credit's score and the held statements.
+export function usePointsHeld(): bigint | undefined {
+  const { data: s } = useSnapshot();
+  const { data: pile, loading } = usePile();
+  const { data: scores } = useScores(pile.map((c) => BigInt(c.id)));
+  const held = useStatements();
+  if (!s || loading || pile.length !== Number(s.pileSize) || !held.isSuccess || held.data.length !== s.held.length) return undefined;
+  let total = 0n;
+  for (const c of pile) {
+    const v = c.score ?? scores?.[String(c.id)];
+    if (v == null) return undefined;
+    total += v;
+  }
+  for (const st of held.data) total += st.rating;
+  return total;
+}
+
 // Credit price floor input: controller valueOf(score) per id, id to wei. Credit floor price =
 // max(cost, value) * snap.creditFloorBps / 10000 (the controller's floorMultBps) and start = floor * snap.creditStartBps / 10000 (see Snapshot).
 // Scores are cached (useScores). valueOf follows the floor rate, so the query is keyed on the snapshot's

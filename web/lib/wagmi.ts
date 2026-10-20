@@ -3,6 +3,7 @@ import { createConfig, createConnector, http } from "wagmi";
 import { injectedWallet } from "@rainbow-me/rainbowkit/wallets";
 import { mock } from "wagmi/connectors";
 import { chain, isLocal, localAccounts, rpcUrl, wcProjectId } from "./config";
+import { siteName } from "./site";
 
 const ICON =
   "data:image/svg+xml;utf8," +
@@ -47,14 +48,14 @@ export const wagmiConfig = isLocal
           { groupName: "browser wallet", wallets: [injectedWallet] },
         ],
         {
-          appName: "credits engine",
+          appName: siteName,
           projectId: wcProjectId,
         }
       ),
       ssr: true,
     })
   : getDefaultConfig({
-      appName: "credits engine",
+      appName: siteName,
       projectId: wcProjectId,
       chains: [chain],
       transports: { [chain.id]: mainnetTransport },

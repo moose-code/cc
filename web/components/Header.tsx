@@ -5,8 +5,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useEns } from "@/lib/ens";
-import { commas, shortAddr } from "@/lib/format";
-import { usePotPage } from "./EngineFeed";
+import { shortAddr } from "@/lib/format";
+import { useBid } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
 import { Val } from "./Skeleton";
 import { engineDeployed } from "@/lib/config";
@@ -32,6 +32,9 @@ export function Header() {
         <span className={path === "/" ? "brand-sub on" : "brand-sub"}>engine</span>
       </Link>
 
+      {/* mobile: the bid sits in the header bar, left of the menu button */}
+      <Bid narrow />
+
       <button
         className="nav-toggle"
         onClick={() => setOpen((o) => !o)}
@@ -43,7 +46,7 @@ export function Header() {
         </svg>
       </button>
 
-      {/* nav, pot figures and the wallet; collapse into the hamburger menu on mobile */}
+      {/* nav, the bid and the wallet; collapse into the hamburger menu on mobile */}
       <div className={`menu${open ? " open" : ""}`}>
         <nav className="nav">
           {NAV.map((n) => (
@@ -56,7 +59,7 @@ export function Header() {
             </Link>
           ))}
         </nav>
-        <PotPage />
+        <Bid />
         <WalletButton />
       </div>
     </header>
@@ -100,28 +103,17 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// The points the pot covers and the current bid, beside the wallet on every page.
-// Until the snapshot answers both figures are skeletons of their usual width, so the row does not grow leftward.
-function PotPage() {
-  const { pts, per1 } = usePotPage();
-  // no engine configured: nothing will load, the figures read as a dash
-  if (!engineDeployed)
-    return (
-      <div className="hdr-next">
-        <span className="hdr-next-label">pot covers</span>
-        <b>—</b>
-      </div>
-    );
+// The current bid per point, beside the wallet on every page; `narrow` is the stacked copy in the mobile header bar.
+// Until the snapshot answers the figure is a skeleton of its usual width, so the row does not grow leftward.
+function Bid({ narrow }: { narrow?: boolean }) {
+  const per1 = useBid();
   return (
-    <div className="hdr-next">
-      <span className="hdr-next-label">pot covers</span>
-      <b>
-        <Val ready={pts != null} w="11ch">{pts != null && `${commas(pts)} pts`}</Val>
-      </b>
-      <span className="hdr-next-bid">
-        · current bid <Val ready={per1 != null} w="9ch">{per1}</Val> ETH / 1 pt
+    <div className={narrow ? "hdr-next hdr-bid-m" : "hdr-next"}>
+      <span className="hdr-next-label">current bid</span>
+      <span>
+        <b>{engineDeployed ? <Val ready={per1 != null} w="9ch">{per1}</Val> : "—"} ETH</b>
+        <span className="hdr-next-label"> / pt</span>
       </span>
     </div>
   );
 }
-

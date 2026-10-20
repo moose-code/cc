@@ -263,7 +263,7 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | settings, controller params | L snapshot; also I `engine.settings`, `controller` (not read by the web yet) |
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
 | reserve and the room the bids read (packet B, decision 154) | L `Core.reserve()` in the snapshot; D `potRoom` = `potWithPending` less the reserve, the clamp of the eth bid and the cap of a listing sweep |
-| buying room, processing reserve and header "pot covers" | L snapshot `potWithPending`, `reserve`, `potRoom`, `ethRate` and `settings.buyToArtistBps`; D points covered = `potPoints(potRoom * 10_000 / (10_000 + buyToArtistBps), ethRate)`. The gross pot, spendable room and reserve are labeled separately on the home and keeper pages |
+| buying room and processing reserve | L snapshot `potWithPending`, `reserve`, `potRoom`. The home shows only the spendable room as "pot" (decision 242); the keeper page labels the gross pot, room and reserve separately |
 | value mode and the quote (packet C, decision 148) | L snapshot: `settings.valueModeOn`; `noQuote` when value mode is on and the protected buy quote is unusable, while `ethRate` can use its last good value; controller `valuePerPoint(false)` and `valuePerPoint(true)` for `value.usable` and the per point values; also I `controller.quote*` (QuoteSet) |
 | balance token reference against spot (packet C, decisions 148 and 157) | L controller `referencePrice()`, `referenceTime()`, `spotPrice()` and `quote()` in the snapshot (`value.referencePrice`, `value.spot`); shown on the balance page; also I `controller.referencePrice`, `referenceSpot`, `referenceTime` at the last `ReferenceRefreshed` |
 | ETH/USD | L Chainlink |
@@ -278,12 +278,16 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | value | source |
 |---|---|
 | pre-launch banner and disabled CC trading | L `useCoinLive()` checks bytecode at snapshot `coin` through the read-only website RPC API, polling every 15 seconds until code exists; an unset Core also uses pre-launch. Unknown status remains disabled/loading. The banner disappears and normal market discovery resumes when live becomes true, without a reload |
-| empty-ledger artwork and placeholder rows | D presentation only while `useFeed` has no rows, before or after coin launch; placeholders are not transactions. The existing reduced-motion-aware `CCLogo` is reused. Ledger is the default feed view; a manual choice of Listings persists through polling. Mobile initially shows Process, with Ledger and Trade selectable |
+| empty-ledger artwork and placeholder rows | D presentation only while `useFeed` has no rows, before or after coin launch; placeholders are not transactions. The existing reduced-motion-aware `CCLogo` is reused. Ledger is the default feed view; a manual choice of Listings persists through polling. Mobile is one scroll that shows the latest 6 ledger rows until "view full ledger" (decision 242) |
 | credits held, statements held | L snapshot `pileSize`, `heldStatements` |
-| $BALANCE held by engine | L module `available()` (also I `engine.balanceAvailable`, minute scale) |
-| $CC burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
-| explainer fee wording | L hook skim and bounty (`useHookFeeBps`); D engine share |
-| statement sale split | D from I `engine.settings` |
+| $CC bought + burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
+| ETH recycled and its sale count | I sum and count of `statement.toPot` where set (only StatementSoldTo sets it); chain mode: D `price - toBuyback - toArtist - toOperator` per StatementSoldTo in the scan. A controller-only `Bought` sale has no split and is left out |
+| points held by engine | D sum of the pile credits' scores (I `credit.score`; chain mode `CreditScore.scoreOf` over `Core.pilePage`, unknown while the pile exceeds its first page) plus L `Core.ratingOf` of each held statement (current, so an overprint counts); shown as score / 10,000 |
+| pot row and step 02 chip | L snapshot `potRoom` (spendable room; the reserve is not shown) |
+| statement sale split (intro line 3, proportion bar) | L snapshot `settings.saleToBuybackBps`; the caption states it applies after the artist and operator cuts |
+| $CC burned so far (split caption) | as $CC bought + burned |
+| ledger $CC burned rows | I `activity` kind `buyback`: `amount` ETH spent, `amount2` the Core's coin burn in the same tx (`transaction_fact.coreBurn`); chain mode: `Buyback.amountIn` and the scanned coin `Transfer` to zero from the Core in the same tx. No source statement is named: a buyback pools every sale's share |
+| ledger statement sold rows | I `activity` kind `statement_sold` (`amount` price, `amount2` toBuyback) joined to `statement.toPot`; chain mode: StatementSoldTo |
 | ledger rows | Currency is I `activity.balanceToken` for BALANCE purchases/redemptions (chain mode: prior `BalanceModuleSet` in log order); amount is `BalanceFill.paid` per credit (the seller's posted payout; the artist royalty `BalanceFill.toArtist` is an additional obligation that may remain claimable debt) or `StatementRedeemed.received`. Historical metadata is used only for the matching token, otherwise show exact raw units and token address. I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
 | next credit progress | D pot over bid from L snapshot |
 | next statement progress | L snapshot `pileSize` mod 80 |
@@ -297,7 +301,11 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | paid, got by, bought time, rating | I `credit` |
 | buy rate per hour | I `stats_hourly` last 24 hourly buckets |
 | compose estimate | D from I pile position, pile size, `controller.window`, `saleOn`, buy rate |
-| header meta: bid at rating | L `ethRate` |
+| header meta | D held count from the pile; the next compose estimate (above) |
+| market report: median paid, sales and change by rating band | I `credit` where `acquiredHow` is `eth_bid` or `listing` and `acquiredAt` within 14 days, counted in SQL by rating band, week and `costBasis` bucket of 0.0001 ETH (`useMarketIx`; the SQL API has no percentile function, so D the median from the counts, `web/lib/market-report.ts`); chain mode: the newest 200 scan purchases with their scores |
+| market report: engine ask, vs median | D the cheapest held credit's L `creditPrice` per band, and each held credit's price against its band's median |
+| market report: market ask | K keeper market view through `/api/listings` (9.1): D the cheapest scored, unexpired OpenSea ask of its best rows and CreditStrategy row per band |
+| sort orders | D from the values above (`web/lib/credit-sort.ts`) |
 
 ### 9.4 credit detail
 
@@ -354,7 +362,7 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 
 ### 9.7 swap panel
 
-Live only: slot0, quoter, hook fee, balances, allowances, receipts. Phase 2 adds I `price_hourly` for a 24 h change and a chart, replacing the archive `getSlot0` read.
+Live only: slot0, quoter, hook fee, balances, allowances, receipts. The price change beside the price is D from L `StateView.getSlot0` now against `getSlot0` at the block 7,200 back; for a pool younger than that, against the `sqrtPriceX96` of its L PoolManager `Initialize` log (`eth_getLogs` in spans under 5,000 blocks, kept in localStorage), labelled since launch. The market cap links to the token's DexScreener page and the token contract to evm.now. Phase 2 adds I `price_hourly` for a 24 h change and a chart, replacing the archive `getSlot0` read.
 
 ### 9.8 page metadata and share images
 

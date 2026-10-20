@@ -8,7 +8,28 @@ import { engineDeployed, chain } from "@/lib/config";
 import { useCcMarket, potShareBps, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { commas, eth, evmNowAddress, evmNowTx, leftLabel, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
+import { commas, eth, evmNowAddress, evmNowTx, leftLabel, shortAddr, tokens, usd, usdCompact, usdPrice, usdPriceParts } from "@/lib/format";
+
+// The token's DexScreener page (chart, pool and market data) on Ethereum.
+const dexScreener = (token: string) => `https://dexscreener.com/ethereum/${token.toLowerCase()}`;
+// A price change in percent with its sign and two decimals: "+3.87%", "−0.80%".
+export const pctChange = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
+
+// The price, with a sub-cent price's zero count set as a small raised digit beside the zero ($0.0⁴983), so the
+// significant digits stay the size of the price.
+export function PriceText({ usd: v }: { usd: number }) {
+  const p = usdPriceParts(v);
+  if (p.zeros == null) return <>{p.text}</>;
+  return (
+    <span aria-label={usdPrice(v)}>
+      {p.text}
+      <span className="tp-zeros" aria-hidden>
+        {p.zeros}
+      </span>
+      {p.sig}
+    </span>
+  );
+}
 import { lsGet, lsSet } from "@/lib/cache";
 import { useCoinLive, useNow, useSnapshot } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
@@ -25,7 +46,8 @@ const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as numbe
 // Router; `market` defaults to the coin. A sell first grants the token
 // allowance to Permit2 and the Permit2 allowance to the router when they are short.
 
-export function TradePanel({ market }: { market?: Market }) {
+// `pick`: a side chosen outside the panel (the mobile trade dock); each new object selects its side once.
+export function TradePanel({ market, pick }: { market?: Market; pick?: { side: "buy" | "sell" } }) {
   const live = useCoinLive();
   const prelaunch = !market && (!engineDeployed || live === false);
   const { market: cc, error: ccPoolError } = useCcMarket();
@@ -45,10 +67,12 @@ export function TradePanel({ market }: { market?: Market }) {
   const now = useNow();
   const feeBps = hooked ? hookFee?.bps ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
 
-  const { priceUsd: tokenUsd, ethUsd, marketCap, loading: statsLoading, capLoading } = useMarketStats(m);
+  const { priceUsd: tokenUsd, ethUsd, marketCap, change, changeSince, loading: statsLoading, capLoading, changeLoading } = useMarketStats(m);
   // price and cap: a skeleton while a pool is known but its reads are out; the dash before launch or after a failed read
   const statsWait = !prelaunch && (m == null ? live !== false : statsLoading);
   const capWait = !prelaunch && (m == null ? live !== false : capLoading);
+  // the price change: spot now against the spot a day ago, or against the opening price for a pool younger than that
+  const changeWait = !prelaunch && (m == null ? live !== false : changeLoading);
 
   // slippage tolerance in bps, kept in localStorage; a custom percent is applied once it is within 0.1 to 50
   const [slipBps, setSlipBps] = useState(100);
@@ -69,6 +93,9 @@ export function TradePanel({ market }: { market?: Market }) {
   };
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  useEffect(() => {
+    if (pick && !pending) edit(() => setSide(pick.side));
+  }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pay, setPay] = useState(""); // empty reads as 0
   type Result = { kind: "bought" | "sold"; amount: string; usd?: string; paid: string; paidLabel: string; potWei?: bigint; hash: `0x${string}` };
   const [result, setResult] = useState<Result | null>(null);
@@ -284,11 +311,35 @@ export function TradePanel({ market }: { market?: Market }) {
       <div className="tp-price">
         <div>
           <div className="label">{tag} price</div>
-          <div className="tp-big">{tokenUsd != null ? <span className="fx-in">{usdPrice(tokenUsd)}</span> : statsWait ? <Sk w="6ch" /> : "—"}</div>
+          <div className="tp-big">
+            {tokenUsd != null ? (
+              <span className="fx-in">
+                <PriceText usd={tokenUsd} />
+              </span>
+            ) : statsWait ? (
+              <Sk w="6ch" />
+            ) : (
+              "—"
+            )}
+            {change != null ? (
+              <span
+                className={`tp-chg fx-in ${change >= 0 ? "up" : "down"}`}
+                title={changeSince === "launch" ? "change since the pool opened" : "change over 24 hours"}
+              >
+                {pctChange(change)}
+              </span>
+            ) : (
+              changeWait && (
+                <span className="tp-chg">
+                  <Sk w="6ch" />
+                </span>
+              )
+            )}
+          </div>
         </div>
         <div className="tp-cap">
           {m ? (
-            <a className="label" href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
+            <a className="label" href={dexScreener(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} chart on DexScreener`}>
               mkt cap ↗
             </a>
           ) : (
@@ -489,7 +540,16 @@ export function TradePanel({ market }: { market?: Market }) {
       )}
 
       {m && !hookFee?.active && (
-        <p className="tp-fee caption">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
+        <p className="tp-fee caption">
+          trading fee {parseFloat((feeBps / 100).toFixed(2))}%{!market && " · a share funds credit acquisitions"}
+        </p>
+      )}
+      {m && (
+        <p className="tp-addr caption">
+          <a href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
+            {tag} {shortAddr(m.token)} ↗
+          </a>
+        </p>
       )}
       {!market && ccPoolError && <p className="panel-note tp-note" role="alert">{ccPoolError}</p>}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}
