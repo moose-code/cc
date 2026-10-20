@@ -4,11 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useSnapshot } from "@/lib/live";
-import { useMarketView, viewLive } from "@/lib/market-view";
 import { useEns } from "@/lib/ens";
-import { commas, eth, shortAddr } from "@/lib/format";
-import { SCORE_PER_100_POINTS } from "@/lib/config";
+import { commas, shortAddr } from "@/lib/format";
 import { usePotPage } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
 
