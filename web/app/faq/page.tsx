@@ -213,6 +213,30 @@ function BidIllustration() {
   );
 }
 
+function InventoryPaths() {
+  return (
+    <div className="faq-paths" role="img" aria-label="trading fees fund the buying pot, which acquires Credits. acquired Credits can be resold individually or composed into Statements that are sold. successful sale proceeds fund more acquisitions and CC buybacks">
+      <div className="faq-paths-chain">
+        <span>$CC trading fees</span>
+        <b aria-hidden="true">→</b>
+        <span>buying pot</span>
+        <b aria-hidden="true">→</b>
+        <span>Credits acquired</span>
+      </div>
+      <div className="faq-paths-branches" aria-hidden="true">
+        <span>↙</span>
+        <span>↘</span>
+      </div>
+      <div className="faq-paths-options">
+        <span>individual Credit sale</span>
+        <span>80 Credits become a Statement for sale</span>
+      </div>
+      <div className="faq-paths-return" aria-hidden="true">↓</div>
+      <div className="faq-paths-outcome">completed sales return ETH to the pot and fund CC buybacks</div>
+    </div>
+  );
+}
+
 const allocations = [
   { title: "buying pot", percent: "72.75%", className: "pot", width: "72.75%" },
   { title: "CC buyback", percent: "24.25%", className: "buyback", width: "24.25%" },
@@ -279,9 +303,17 @@ export default function Faq() {
       <section className="faq-visuals" aria-labelledby="faq-mechanics-title">
         <div className="faq-visuals-heading">
           <span className="faq-section-num">02 / mechanics</span>
-          <h2 id="faq-mechanics-title">two things worth seeing</h2>
+          <h2 id="faq-mechanics-title">built for movement</h2>
         </div>
         <div className="faq-visual-grid">
+          <article className="faq-visual-card faq-visual-card-wide">
+            <div className="faq-visual-copy">
+              <h3>more than a relisting strategy</h3>
+              <p>each Credit has a second path through composition. trading fees can keep funding new bids while older inventory is still waiting for a buyer.</p>
+            </div>
+            <InventoryPaths />
+            <small>both sale routes still depend on buyers, and their price floors can leave inventory unsold.</small>
+          </article>
           <article className="faq-visual-card">
             <div className="faq-visual-copy">
               <h3>the bid moves</h3>
