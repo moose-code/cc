@@ -14,6 +14,17 @@
 .faq-visuals-heading { margin-bottom: 30px; }
 .faq-visual-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; padding: 1px; background: var(--divider); }
 .faq-visual-card { display: flex; flex-direction: column; min-width: 0; min-height: 350px; background: var(--surface); padding: clamp(20px, 2.4vw, 30px); }
+.faq-visual-card-wide { grid-column: 1 / -1; min-height: 330px; }
+.faq-paths { display: flex; flex-direction: column; justify-content: center; max-width: 890px; width: 100%; gap: 7px; margin: 18px auto 10px; font-size: 11px; }
+.faq-paths-chain { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; }
+.faq-paths-chain span, .faq-paths-options span, .faq-paths-outcome { padding: 13px 15px; border: 1px solid var(--divider); background: var(--paper); text-align: center; }
+.faq-paths-chain b { color: var(--m); font-size: 15px; }
+.faq-paths-branches { display: flex; justify-content: space-evenly; color: var(--m); font-size: 24px; line-height: 1.1; }
+.faq-paths-options { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 690px; width: 100%; margin: 0 auto; }
+.faq-paths-options span:first-child { border-color: var(--c); }
+.faq-paths-options span:last-child { border-color: var(--y); }
+.faq-paths-return { text-align: center; color: var(--m); font-size: 22px; line-height: 1.2; }
+.faq-paths-outcome { max-width: 550px; width: 100%; margin: 0 auto; font-weight: 600; }
 .faq-visual-copy h3 { font-size: 16px; letter-spacing: -.02em; font-weight: 600; margin: 0 0 8px; }
 .faq-visual-copy p { max-width: 440px; margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
 .faq-visual-card small { display: block; margin-top: auto; padding-top: 10px; color: var(--quiet); font-size: 10px; line-height: 1.6; }
@@ -52,6 +63,9 @@
 @media (max-width: 760px) {
   .faq-origin, .faq-questions { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-top: 44px; padding-bottom: 44px; }
   .faq-visual-grid { grid-template-columns: minmax(0, 1fr); }
+  .faq-paths-chain { gap: 5px; }
+  .faq-paths-chain span, .faq-paths-options span, .faq-paths-outcome { padding: 11px 7px; }
+  .faq-paths-options { gap: 8px; }
   .faq-visuals { padding-top: 44px; padding-bottom: 44px; }
   .faq-visual-card { min-height: 310px; }
   .faq-question-heading > p { max-width: 500px; }
