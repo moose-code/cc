@@ -6,86 +6,97 @@ import { CreditTile } from "@/components/Tiles";
 import { Act } from "@/components/Act";
 import { ArtFrame, PageHead } from "@/components/Shell";
 import { NotDeployed } from "@/components/NotDeployed";
+import { EmptyNote, Sk, SkCard, SkSideSec } from "@/components/Skeleton";
+import { MarketReport } from "@/components/MarketReport";
+import { useComposeEta } from "@/components/ComposeEta";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { usePile, useScores, useSnapshot, type PileCredit } from "@/lib/live";
-import { useMarketView, viewLive, VIEW_STALE_MS } from "@/lib/market-view";
-import { compareMarketValue, marketAsks, marketFloor } from "@/lib/credit-market-floor";
+import { howLabel } from "@/lib/indexer";
+import { useHistoryDown, useMarketAsks, useMarketReport } from "@/lib/data";
+import { bandOf, cheapestByBand, vsMedian } from "@/lib/market-report";
+import { DEFAULT_SORT, SORTS, nextSort, sortDef, sortRows, type Dir, type SortKey } from "@/lib/credit-sort";
 import { lsGet, lsSet } from "@/lib/cache";
+import { useScan } from "@/lib/engine";
+import type { CreditEvt } from "@/lib/events";
+import { usePile, useScores, useSnapshot, type PileCredit } from "@/lib/live";
 import { buyCredits } from "@/lib/buy";
-import { windowLabel } from "@/lib/compose-eta";
-import { agoLabel, eth, rating } from "@/lib/format";
+import { etaLabel, floorIn, windowLabel } from "@/lib/compose-eta";
+import { agoLabel, commas, eth, leftLabel, rating, signedPct } from "@/lib/format";
 
 const PAGE = 24;
-const STRATEGY_STALE_MS = 20 * 60_000; // twice the keeper's default 10-minute Strategy refresh
 type View = "grid" | "table";
-type Sort = "value" | "newest" | "price" | "rating";
-const SORT_KEY = "cc:credits-sort";
+const SORT_KEY = "cc:credits-sort"; // the viewer's last sort, a convenience kept in this browser
 
-// While the credit sale is on, each held Credit has a falling price (controller.creditPrice).
-// Selection feeds the buy box in the rail.
+// Credits held by the engine, best value first (lib/credit-sort.ts). While the credit sale is on, each has a falling
+// price (controller.creditPrice) and can be bought. Selection feeds the buy box in the rail.
 export default function CreditsPage() {
   const { data: pile, loading, pricing } = usePile();
+  const historyDown = useHistoryDown();
   const { data: snap } = useSnapshot();
+  const { data: scan } = useScan();
   const { data: scores, loading: scoresLoading } = useScores(pile.map((c) => BigInt(c.id)));
-  const { data: market, isError: marketError } = useMarketView();
+  const report = useMarketReport();
+  const market = useMarketAsks();
+  const [band, setBand] = useState<number | undefined>();
+  const eta = useComposeEta(pile, 15000);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [view, setView] = useState<View>("grid");
-  const [sort, setSortState] = useState<Sort>("value");
-  const [shown, setShown] = useState(PAGE);
-  const [demo, setDemo] = useState(false);
-
+  const [sort, setSortState] = useState<{ key: SortKey; dir: Dir }>({ key: DEFAULT_SORT, dir: sortDef(DEFAULT_SORT).dir });
   useEffect(() => {
-    if (process.env.NODE_ENV === "development" && new URLSearchParams(window.location.search).get("demo") === "deals") setDemo(true);
-    const saved = lsGet<{ key: Sort }>(SORT_KEY)?.key;
-    if (saved === "value" || saved === "newest" || saved === "price" || saved === "rating") setSortState(saved);
+    const saved = lsGet<{ key: SortKey; dir: Dir }>(SORT_KEY);
+    if (saved && SORTS.some((s) => s.key === saved.key) && (saved.dir === 1 || saved.dir === -1)) setSortState(saved);
   }, []);
-  const setSort = (next: Sort) => {
-    setSortState(next);
-    lsSet(SORT_KEY, { key: next, dir: next === "price" || next === "value" ? 1 : -1 });
+  const setSort = (s: { key: SortKey; dir: Dir }) => {
+    setSortState(s);
+    lsSet(SORT_KEY, s);
   };
+  const [shown, setShown] = useState(PAGE);
 
   const saleOn = snap?.creditSaleOn ?? false;
-  const score = (id: number) => scores?.[id.toString()];
-  const now = Date.now();
-  const openSeaReady = Boolean(market?.view && market.view.status.source !== "off" && !marketError && viewLive(market, now));
-  const strategyReady = Boolean(market?.view?.strategy.publishedAt && !marketError && !market.stale && market.fetchedAt != null && now - market.fetchedAt <= VIEW_STALE_MS && now - market.view.strategy.publishedAt <= STRATEGY_STALE_MS && !(market.view.strategy.lastFailure && market.view.strategy.lastFailure.at > market.view.strategy.publishedAt));
-  const asks = useMemo(() => market?.view ? marketAsks(market.view, Math.floor(Date.now() / 1000), { openSea: openSeaReady, strategy: strategyReady }) : [], [market, openSeaReady, strategyReady]);
-  const sources = [openSeaReady && "OpenSea", strategyReady && "CreditStrategy"].filter(Boolean).join(" and ");
-  const baseFloors = useMemo(() => new Map(pile.map((c) => [c.id, marketFloor(String(c.id), score(c.id) ?? 0n, asks)])), [pile, scores, asks]);
-  const floors = useMemo(() => {
-    if (!demo) return baseFloors;
-    const preview = new Map(baseFloors);
-    const factors = [125n, 120n, 110n, 80n, 75n, 70n];
-    pile.slice(0, factors.length).forEach((c, i) => { if (c.price > 0n) preview.set(c.id, c.price * factors[i] / 100n); });
-    return preview;
-  }, [baseFloors, demo, pile]);
-  const marketReady = demo || openSeaReady || strategyReady;
-  const comparable = (c: PileCredit) => marketReady ? floors.get(c.id) : undefined;
-  const below = (c: PileCredit) => saleOn && c.price > 0n && comparable(c) != null && c.price < comparable(c)!;
-  const differenceLabel = (c: PileCredit) => {
-    const floor = comparable(c);
-    if (!floor || c.price <= 0n) return "";
-    const gap = c.price > floor ? c.price - floor : floor - c.price;
-    if (gap === 0n) return "at similar price";
-    const tenths = gap * 1_000n / floor;
-    return `${tenths ? `${Number(tenths) / 10}%` : "<0.1%"} ${c.price < floor ? "less here" : "more here"}`;
+  // per credit: time until its sale window ends. at zero its price rests at the floor and compose can take it
+  const floorLabel = (c: PileCredit) => {
+    const s = floorIn(c.acquiredAt, saleOn ? snap!.creditWindow : 0, eta.now);
+    return s > 0 ? leftLabel(s) : "now";
   };
-  const compared = saleOn ? pile.filter((c) => c.price > 0n && comparable(c) != null) : [];
-  const belowCount = compared.filter(below).length;
+  const score = (id: number) => scores?.[id.toString()];
+  // while the sale is on a credit's price is above zero: a zero is a price not read yet (a skeleton) or a read that
+  // failed (a dash)
+  const priceText = (c: PileCredit) => (c.price > 0n ? eth(c.price) : pricing ? <Sk w="6ch" /> : "—");
+  // a listing against its band's median paid over the last 7 days: a skeleton while the price, score or report loads,
+  // a dash when the band had no sales
+  const vsBand = (c: PileCredit) => {
+    const sc = score(c.id);
+    const median = sc != null ? report.bands[bandOf(sc).key]?.median : undefined;
+    if (c.price > 0n && median != null) return signedPct(vsMedian(c.price, median));
+    return pricing || report.loading || (sc == null && scoresLoading) ? <Sk w="4ch" /> : "—";
+  };
+  // the engine's lowest ask now in each band, for the report
+  const engineAsks = useMemo(
+    () => (saleOn ? cheapestByBand(pile.map((c) => ({ price: c.price, score: scores?.[c.id.toString()] }))) : new Map<number, bigint>()),
+    [pile, scores, saleOn],
+  );
+  // queue position (oldest = 0) is the index in the pile; a picked band filters the list, the sort orders it
   const rows = useMemo(() => {
-    const r = pile.map((c, index) => ({ c, index })).reverse();
-    if (sort === "value" && marketReady) r.sort((a, b) => compareMarketValue({ price: a.c.price, floor: floors.get(a.c.id) }, { price: b.c.price, floor: floors.get(b.c.id) }));
-    if (sort === "price") r.sort((a, b) => a.c.price < b.c.price ? -1 : a.c.price > b.c.price ? 1 : 0);
-    if (sort === "rating") r.sort((a, b) => Number((score(b.c.id) ?? 0n) - (score(a.c.id) ?? 0n)));
-    return r;
-  }, [pile, sort, scores, floors, marketReady]);
-  const ordered = [...rows.filter(({ c }) => below(c)), ...rows.filter(({ c }) => !below(c))];
-  const visible = ordered.slice(0, shown);
-  const visibleDeals = visible.filter(({ c }) => below(c));
-  const visibleOthers = visible.filter(({ c }) => !below(c));
-  const bestDeal = [...ordered.filter(({ c }) => below(c))].sort((a, b) => compareMarketValue({ price: a.c.price, floor: floors.get(a.c.id) }, { price: b.c.price, floor: floors.get(b.c.id) }))[0]?.c;
+    const r = pile.flatMap((c, index) => {
+      const sc = scores?.[c.id.toString()];
+      if (band != null && (sc == null || bandOf(sc).key !== band)) return [];
+      const median = sc != null ? report.bands[bandOf(sc).key]?.median : undefined;
+      return [{ c, index, id: c.id, price: c.price, cost: c.cost, acquiredAt: c.acquiredAt, score: sc, median }];
+    });
+    return sortRows(r, sort.key, sort.dir);
+  }, [pile, sort, scores, band, report.bands]);
+  // a sortable table head cell: the active one shows its direction and reports it to assistive tech
+  // `short` is the label on a phone, where the columns are narrow
+  const head = (k: SortKey, label: string, cls = "", short = label) => (
+    <span className={cls} aria-sort={sort.key === k ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
+      <button className={`th-sort${sort.key === k ? " on" : ""}`} onClick={() => setSort(nextSort(sort, k))} aria-label={`sort by ${label}`}>
+        <span className="th-wide">{label}</span>
+        <span className="th-narrow">{short}</span>
+        <i aria-hidden>{sort.key === k ? (sort.dir === 1 ? "↑" : "↓") : ""}</i>
+      </button>
+    </span>
+  );
+  const visible = rows.slice(0, shown);
   const selected = pile.filter((c) => sel.has(c.id));
-  const selectedPricesReady = selected.length === sel.size && selected.every((c) => c.price > 0n);
   const total = selected.reduce((a, c) => a + c.price, 0n);
 
   const toggle = (id: number) =>
@@ -94,17 +105,26 @@ export default function CreditsPage() {
       n.has(id) ? n.delete(id) : n.add(id);
       return n;
     });
+
   if (!engineDeployed) return <NotDeployed />;
 
-  const comparisonLoading = loading || pricing || scoresLoading;
-  const meta = snap && !loading ? `${pile.length} ${saleOn ? "listed" : "held"} by the engine${demo ? " · design demo" : ""}` : "loading Credits";
+  // nothing about the pile is shown until it has loaded: no "0 held" while it is read. The bid is in the site header
+  // and what credits trade for is in the market report, so the line keeps to the pile
+  const meta = loading
+    ? undefined
+    : [
+        `${commas(pile.length)} held by engine`,
+        snap?.paused ? "composition paused" : eta.at(0) && `next statement composes in ${etaLabel(eta.at(0))}`,
+        historyDown && "history unavailable",
+      ]
+        .filter(Boolean)
+        .join(" · ");
 
-  const card = (c: PileCredit) => {
+  const card = (c: PileCredit, index: number) => {
     const on = sel.has(c.id);
     return (
-      <div key={c.id} className={`ccard${on ? " on" : ""}${below(c) ? " below-market" : ""}`}>
+      <div key={c.id} className={`ccard${on ? " on" : ""}`}>
         <Link href={`/credits/${c.id}`} className="ccard-art" aria-label={`credit #${c.id}`}>
-          {below(c) && <span className="credit-deal-badge">{differenceLabel(c)}</span>}
           <ArtFrame>
             <CreditTile id={c.id} />
           </ArtFrame>
@@ -114,50 +134,37 @@ export default function CreditsPage() {
             type="checkbox"
             className="checkbox ccard-check"
             checked={on}
-            disabled={demo || c.price === 0n}
             onChange={() => toggle(c.id)}
             aria-label={`select credit #${c.id}`}
           />
         )}
         <div className="ccard-body">
-          <div className="ccard-price"><b>{saleOn && c.price > 0n ? eth(c.price) : "—"}</b> <small>{saleOn ? "ETH" : "sale unavailable"}</small></div>
+          <div className="ccard-price">
+            <b>{saleOn ? priceText(c) : eth(c.cost)}</b> <small>{saleOn ? "ETH" : "ETH paid"}</small>
+          </div>
           <div className="ccard-row muted">
             <Link href={`/credits/${c.id}`}>#{c.id}</Link>
             <span>{score(c.id) != null ? `rating ${rating(score(c.id)!)}` : ""}</span>
           </div>
-          <div className="ccard-row ccard-eta"><span className="caption">comparable price at this rating</span><span>{comparable(c) != null ? eth(comparable(c)!) : "—"}</span></div>
-          {!below(c) && differenceLabel(c) && <div className="price-difference">{differenceLabel(c)}</div>}
+          {saleOn && (
+            <div className="ccard-row ccard-eta" title="the price against the median the engine paid in its rating band, last 7 days">
+              <span className="caption">vs median</span>
+              <span>{vsBand(c)}</span>
+            </div>
+          )}
+          <div className="ccard-row ccard-eta ccard-eta-next">
+            <span className="caption">floor in</span>
+            <span>{floorLabel(c)}</span>
+          </div>
         </div>
       </div>
     );
   };
 
-  const listingRows = (items: typeof rows) => view === "grid" ? (
-    <div className="cgrid">{items.map(({ c }) => card(c))}</div>
-  ) : (
-    <div className="ctable">
-      <div className="ctable-row ctable-head label">
-        <span>{saleOn && <span className="checkbox-ph" />}</span><span /><span>credit</span>
-        <span className="num">rating</span><span className="num">price here</span><span className="num">comparable</span>
-      </div>
-      {items.map(({ c }) => (
-        <div key={c.id} className={`ctable-row${sel.has(c.id) ? " on" : ""}${below(c) ? " below-market" : ""}`}>
-          <span>{saleOn && <input type="checkbox" className="checkbox" checked={sel.has(c.id)} disabled={demo || c.price === 0n} onChange={() => toggle(c.id)} aria-label={`select credit #${c.id}`} />}</span>
-          <span className="ctable-art"><CreditTile id={c.id} /></span>
-          <Link href={`/credits/${c.id}`}>credit #{c.id}</Link>
-          <span className="num muted">{score(c.id) != null ? rating(score(c.id)!) : ""}</span>
-          <span className="num ctable-price">{saleOn && c.price > 0n ? eth(c.price) : "—"}{differenceLabel(c) && <small className={`price-difference${below(c) ? " below-market-label" : ""}`}>{differenceLabel(c)}</small>}</span>
-          <span className="num">{comparable(c) != null ? eth(comparable(c)!) : "—"}</span>
-        </div>
-      ))}
-    </div>
-  );
-
-  const headline = !snap || loading ? "Loading Credits" : !saleOn ? "Credit sale is unavailable" : !pile.length ? "No Credits for sale yet" : comparisonLoading || !marketReady ? "Checking prices" : !compared.length ? "No similar listings to compare yet" : compared.length < pile.length ? "No confirmed cheaper listings right now." : "No Credits cost less here right now.";
-
   return (
-    <div className={`credits-sale${sel.size ? " has-selection" : ""}`}>
-        <PageHead title={saleOn ? "credits for sale" : "credits"} ink="m" meta={meta}>
+    <div className="split">
+      <div className="split-main">
+        <PageHead title="credits" ink="m" meta={meta} metaW="44ch" metaLines={1} inline>
           <div className="seg" role="group" aria-label="view">
             {(["grid", "table"] as View[]).map((v) => (
               <button key={v} className={view === v ? "on" : ""} onClick={() => setView(v)}>
@@ -167,58 +174,191 @@ export default function CreditsPage() {
           </div>
           <label className="sort">
             sort:{" "}
-            <select value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
-              <option value="value">best value</option>
-              <option value="price">lowest price</option>
-              <option value="rating">highest rating</option>
-              <option value="newest">newest</option>
+            <select value={sort.key} onChange={(e) => setSort({ key: e.target.value as SortKey, dir: sortDef(e.target.value as SortKey).dir })}>
+              {SORTS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
             </select>
           </label>
         </PageHead>
 
-        <section className={`credit-deals${bestDeal ? " has-best-deal" : ""}`} aria-label="Price comparison">
-          <div className="credit-deals-copy">
-            {demo && <div className="credit-demo-note">DESIGN DEMO · comparison prices are illustrative</div>}
-            <h2>{belowCount && saleOn && !comparisonLoading ? <><span className="credit-count-emphasis">{belowCount}</span> Credit{belowCount === 1 ? "" : "s"} {belowCount === 1 ? "costs" : "cost"} less here.</> : headline}</h2>
-            <p>{demo ? "Compared with similarly rated Credits elsewhere. Demo comparison prices are illustrative; buying from this page is disabled." : marketReady ? `Compared with observed ${sources} listings, adjusted to each Credit's rating${market?.fetchedAt ? ` · updated ${agoLabel((now - market.fetchedAt) / 1000)}` : ""}.` : "Browse current engine prices while comparison listings load."}</p>
-          </div>
-          {bestDeal && !comparisonLoading && <div className="credit-best-deal">
-            <span className="label">best value right now</span>
-            <div><Link href={`/credits/${bestDeal.id}`}>credit #{bestDeal.id}</Link><strong>{differenceLabel(bestDeal)}</strong></div>
-            <p>{eth(bestDeal.price)} ETH here · {eth(comparable(bestDeal)!)} ETH comparable at this rating</p>
-          </div>}
-        </section>
-
-        <div className="credits-sale-list">
-          {loading && <p className="muted" aria-live="polite">Loading listings…</p>}
-          {visibleDeals.length > 0 && <section className="credit-list-section" aria-label="Cheaper here">
-            <h3><span className="credit-section-mark" />cheaper here <span>{belowCount}</span></h3>
-            {listingRows(visibleDeals)}
-          </section>}
-          {visibleOthers.length > 0 && <section className="credit-list-section" aria-label="Other Credits">
-            <h3>{compared.length === pile.length && marketReady ? "same price or more than elsewhere" : "other Credits"} <span>{pile.length - belowCount}</span></h3>
-            {listingRows(visibleOthers)}
-          </section>}
-          <div className="more-row">
-            <span className="muted">
-              showing {visible.length} of {ordered.length}
-            </span>
-            {shown < ordered.length && (
-              <button className="linkbtn" onClick={() => setShown((n) => n + PAGE)}>
-                load more
-              </button>
-            )}
-          </div>
+        <div className="split-pad">
+          <MarketReport
+            report={report}
+            engineAsks={engineAsks}
+            engineLoading={loading || pricing || scoresLoading}
+            marketAsks={market.asks}
+            marketLoading={market.loading}
+            active={band}
+            onPick={setBand}
+          />
+          {loading ? (
+            view === "grid" ? (
+              <div className="cgrid" aria-busy="true">
+                {Array.from({ length: 12 }, (_, i) => (
+                  <SkCard key={i} rows={saleOn || !snap ? 4 : 3} />
+                ))}
+              </div>
+            ) : (
+              <div className="ctable" aria-busy="true">
+                {Array.from({ length: 12 }, (_, i) => (
+                  <div key={i} className="ctable-row" aria-hidden>
+                    <span />
+                    <Sk block w="28px" h="28px" />
+                    <Sk w="12ch" />
+                    <Sk w="5ch" />
+                    <Sk w="6ch" />
+                    <Sk w="4ch" />
+                    <Sk w="6ch" />
+                    <Sk w="8ch" className="hide-sm" />
+                    <Sk w="6ch" className="hide-sm" />
+                    <Sk w="6ch" />
+                  </div>
+                ))}
+              </div>
+            )
+          ) : pile.length === 0 ? (
+            <EmptyNote>the engine holds no credits right now. credits it buys queue here until they compose.</EmptyNote>
+          ) : rows.length === 0 ? (
+            <EmptyNote>no credits listed in this band right now.</EmptyNote>
+          ) : view === "grid" ? (
+            <div className="cgrid">{visible.map(({ c, index }) => card(c, index))}</div>
+          ) : (
+            <div className="ctable">
+              <div className="ctable-row ctable-head label">
+                <span>{saleOn && <span className="checkbox-ph" />}</span>
+                <span />
+                <span>credit</span>
+                {head("rating", "rating", "num")}
+                {saleOn ? head("price", "price ETH", "num", "price") : <span />}
+                {saleOn ? head("value", "vs median", "num", "vs med") : <span />}
+                {head("paid", "paid ETH", "num")}
+                <span className="hide-sm">got by</span>
+                {head("newest", "bought", "num hide-sm")}
+                {head("composing", "floor in", "num", "floor")}
+              </div>
+              {visible.map(({ c, index }) => {
+                const on = sel.has(c.id);
+                return (
+                  <div key={c.id} className={`ctable-row${on ? " on" : ""}`}>
+                    <span>
+                      {saleOn && (
+                        <input
+                          type="checkbox"
+                          className="checkbox"
+                          checked={on}
+                          onChange={() => toggle(c.id)}
+                          aria-label={`select credit #${c.id}`}
+                        />
+                      )}
+                    </span>
+                    <span className="ctable-art">
+                      <CreditTile id={c.id} />
+                    </span>
+                    <Link href={`/credits/${c.id}`}>
+                      <span className="th-wide">credit </span>#{c.id}
+                    </Link>
+                    <span className="num muted">{score(c.id) != null ? rating(score(c.id)!) : ""}</span>
+                    <span className="num ctable-price">{saleOn ? priceText(c) : ""}</span>
+                    <span className="num muted">{saleOn ? vsBand(c) : ""}</span>
+                    <span className="num muted">{eth(c.cost)}</span>
+                    <span className="muted hide-sm">{c.how ? howLabel(c.how) : gotBy(scan.credits[c.id])}</span>
+                    <span className="num muted hide-sm">{agoLabel(eta.now - c.acquiredAt)}</span>
+                    <span className="num">{floorLabel(c)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!loading && rows.length > 0 && (
+            <div className="more-row">
+              <span className="muted">
+                showing {Math.min(shown, rows.length)} of {rows.length}
+              </span>
+              {shown < rows.length && (
+                <button className="linkbtn" onClick={() => setShown((n) => n + PAGE)}>
+                  load more
+                </button>
+              )}
+            </div>
+          )}
         </div>
-        {saleOn && snap && <section className="credit-sale-help">
-          <div><span className="label">about these Credits</span><p>Each price falls for {windowLabel(snap.creditWindow)}, then rests at its floor until the Credit is composed. The {STATEMENT_SIZE} oldest Credits make the next statement once the newest leaves its sale window.</p></div>
-          <div><Link href="/sell" className="ulink">sell your credits to the engine →</Link><br /><Link href="/listings" className="ulink">credits for sale elsewhere →</Link></div>
-        </section>}
-        {sel.size > 0 && snap && <div className="credit-buy-bar">
-          <div><strong>{sel.size} Credit{sel.size === 1 ? "" : "s"} selected</strong><span>{selectedPricesReady ? `${eth(total)} ETH total · excess refunded if prices fall` : "waiting for current prices"}</span></div>
-          <button className="linkbtn" onClick={() => setSel(new Set())}>clear</button>
-          <Act label={demo ? "design demo" : snap.paused ? "engine paused" : !selectedPricesReady ? "waiting for prices" : `buy ${selected.length} credit${selected.length === 1 ? "" : "s"}`} disabled={demo || snap.paused || !saleOn || !selectedPricesReady} steps={async (write) => { await buyCredits(write, snap, selected.map((c) => c.id), total); setSel(new Set()); }} />
-        </div>}
+      </div>
+
+      <aside className="side">
+        {!snap && <SkSideSec label="buy credits" lines={3} kv={2} action />}
+        {saleOn && snap && (
+          <section className="side-sec">
+            <div className="label">buy credits</div>
+            <p className="side-copy">
+              every credit the engine buys is for sale. the price falls for {windowLabel(snap.creditWindow)}, then rests at its
+              floor until the credit is composed.
+            </p>
+            {selected.length > 0 && (
+              <ul className="sel-list">
+                {selected.map((c) => (
+                  <li key={c.id}>
+                    <CreditTile id={c.id} />
+                    <span className="sel-id">
+                      credit #{c.id}
+                      <small className="muted">{score(c.id) != null ? `rating ${rating(score(c.id)!)}` : ""}</small>
+                    </span>
+                    <span>{priceText(c)} ETH</span>
+                    <button className="x" onClick={() => toggle(c.id)} aria-label={`remove credit #${c.id}`}>
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="kv">
+              <span className="muted">selected</span>
+              <span>
+                {selected.length} credit{selected.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="kv">
+              <span className="muted">total</span>
+              <span>{eth(total)} ETH</span>
+            </div>
+            <div className="side-act">
+              <Act
+                label={snap.paused ? "engine paused" : selected.length ? `buy ${selected.length} credit${selected.length === 1 ? "" : "s"}` : "select credits"}
+                disabled={snap.paused || selected.length === 0 || selected.some((c) => c.price === 0n)}
+                steps={async (write) => {
+                  await buyCredits(write, snap, selected.map((c) => c.id), total);
+                  setSel(new Set());
+                }}
+              />
+            </div>
+            <p className="caption">prices keep falling while in window · excess refunded</p>
+          </section>
+        )}
+        <section className="side-sec">
+          <div className="label">how compose timing works</div>
+          <ol className="steps">
+            <li>credits queue in the order the engine bought them.</li>
+            <li>the {STATEMENT_SIZE} oldest make the next statement.</li>
+            <li>it composes once the newest of the {STATEMENT_SIZE} leaves its sale window.</li>
+          </ol>
+          <Link href="/sell" className="ulink">
+            sell your credits to the engine →
+          </Link>
+          <div>
+            <Link href="/listings" className="ulink">
+              credits listed for sale elsewhere →
+            </Link>
+          </div>
+        </section>
+      </aside>
     </div>
   );
+}
+
+// How the engine got a credit in chain mode: the latest bought step in its history.
+function gotBy(evts?: CreditEvt[]): string {
+  const b = [...(evts ?? [])].reverse().find((e) => e.t === "bought");
+  return b && b.t === "bought" ? b.how : "—";
 }

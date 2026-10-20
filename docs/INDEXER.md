@@ -305,7 +305,6 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | market report: median paid, sales and change by rating band | I `credit` where `acquiredHow` is `eth_bid` or `listing` and `acquiredAt` within 14 days, counted in SQL by rating band, week and `costBasis` bucket of 0.0001 ETH (`useMarketIx`; the SQL API has no percentile function, so D the median from the counts, `web/lib/market-report.ts`); chain mode: the newest 200 scan purchases with their scores |
 | market report: engine ask, vs median | D the cheapest held credit's L `creditPrice` per band, and each held credit's price against its band's median |
 | market report: market ask | K keeper market view through `/api/listings` (9.1): D the cheapest scored, unexpired OpenSea ask of its best rows and CreditStrategy row per band |
-| Credits sale comparison: current external asks | K keeper market view through `/api/listings` (9.1): scored, unexpired OpenSea asks and current CreditStrategy asks. D the lowest ETH ask normalized to the engine Credit score within 20 rating points; compare against L `creditPrice`. Suppress stale sources and mark missing comparisons as unavailable. The local design demo uses illustrative comparison prices only and disables buying. |
 | sort orders | D from the values above (`web/lib/credit-sort.ts`) |
 
 ### 9.4 credit detail
