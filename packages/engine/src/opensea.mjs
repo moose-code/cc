@@ -9,7 +9,7 @@
 //
 // the listing pages carry no signature. the listings are ranked by price over score (the order in which a bid scaled by
 // score reaches them), and the signature of the cheapest `sign` of them comes from the fulfillment_data endpoint, whose
-// parameters are the BasicOrderParameters of the order. without `rpc` the ranking is by price.
+// parameters are the BasicOrderParameters of the order. without a score lookup the ranking is by price.
 //
 // every number of an order is a decimal string. params carries the fields of BasicOrderParameters, built the way
 // test/Seaport.t.sol _basicData builds them. `hash` is the Seaport order hash OpenSea reports.
@@ -26,6 +26,12 @@ const rpcNextStart = new Map();
 class RpcUnavailable extends Error { name = "RpcUnavailable"; }
 class OpenSeaAuthFailure extends Error {
   constructor(status) { super("opensea: fulfillment authorization failed"); this.name = `OpenSeaAuth${status}`; }
+}
+export class OpenSeaUnavailable extends Error {
+  constructor() { super("opensea: API unavailable"); this.name = "OpenSeaUnavailable"; }
+}
+export class OpenSeaRateLimit extends Error {
+  constructor(retryAt) { super("opensea: rate limited; honor retry-after"); this.name = "OpenSeaRateLimit"; this.retryAt = retryAt; }
 }
 const reverted = (error) => error?.code === 3 || /execution reverted/i.test(error?.message ?? "");
 // selector of allowedRecipient(address), the public mapping getter of SeaportBasicAdapter
@@ -46,12 +52,14 @@ const word = (id) => BigInt(id).toString(16).padStart(64, "0");
  * @param {string} [o.rpc] node for single-URL dev callers
  * @param {string[]} [o.rpcUrls] ordered nodes for the allowlist, holder check and score ranking
  * @param {string} [o.adapter] SeaportBasicAdapter whose allowedRecipient is the allowlist
- * @param {number} [o.pages] listing pages of 100, default 3
- * @param {number} [o.sign] signatures fetched for the cheapest, default 40
+ * @param {number} [o.pages] listing pages of 100 for bounded dev calls, default 3
+ * @param {boolean} [o.fullScan] scan every listing page before ranking, paced to one API request per second
+ * @param {(ids: string[]) => Promise<bigint[]>} [o.getScores] immutable score lookup, called with at most 64 unique ids
+ * @param {number} [o.sign] successful signed orders kept, default 40; full scans inspect at most twice this many contenders
  * @param {string} [o.fulfiller] fulfiller address sent to fulfillment_data
  * @param {string[]} [o.allowedRecipients] allowlist without an rpc, default the OpenSea fee collector
  * @param {number} [o.horizon] seconds past the head block an order may start at and still be kept, default 86400
- * @param {number} [o.timeoutMs] maximum time for the whole refresh, default 30000
+ * @param {number} [o.timeoutMs] maximum time for the whole refresh, default 30000, or 1800000 for a full scan
  * @param {number} [o.fulfillmentTimeoutMs] maximum time per fulfillment request, default 8000
  * @param {(n: number) => Promise<void>} [o.sleep]
  */
@@ -59,10 +67,12 @@ export async function fetchListings(o) {
   const { key, adapter } = o;
   const rpcUrls = [...new Set(o.rpcUrls ?? (o.rpc ? [o.rpc] : []))];
   const hasRpc = rpcUrls.length > 0;
-  const maxPages = o.pages ?? 3;
+  const fullScan = o.fullScan === true;
+  const maxPages = fullScan ? Infinity : (o.pages ?? 3);
   const sign = o.sign ?? 40;
   const fulfiller = o.fulfiller ?? "0x1111111111111111111111111111111111111111";
-  const signal = AbortSignal.timeout(o.timeoutMs ?? 30_000);
+  const signal = AbortSignal.timeout(o.timeoutMs ?? (fullScan ? 30 * 60_000 : 30_000));
+  if (fullScan && !hasRpc && !o.getScores) throw new Error("opensea: full discovery requires scores");
   const sleep = (ms, requestSignal = signal) => o.sleep ? o.sleep(ms) : delay(ms, undefined, { signal: requestSignal });
   const envAllowed = (o.allowedRecipients ?? [OPENSEA_FEE]).map((a) => a.toLowerCase());
   const headers = { "x-api-key": key, accept: "application/json" };
@@ -122,23 +132,71 @@ export async function fetchListings(o) {
     return allowedCache.get(a);
   }
 
+  let apiNext = 0;
+  let apiQueue = Promise.resolve();
+  async function api(url, options = {}, requestSignal = signal) {
+    const run = async () => {
+      requestSignal.throwIfAborted();
+      if (fullScan) {
+        const start = Math.max(Date.now(), apiNext);
+        if (start > Date.now()) await sleep(start - Date.now(), requestSignal);
+        requestSignal.throwIfAborted();
+        apiNext = Date.now() + 1000;
+      }
+      const physicalSignal = fullScan ? AbortSignal.any([requestSignal, AbortSignal.timeout(10_000)]) : requestSignal;
+      try {
+        const res = await fetch(url, { headers, ...options, signal: physicalSignal });
+        let body;
+        if (res.ok) {
+          try { body = await res.json(); }
+          catch (error) { if (!(fullScan && options.method === "POST" && error instanceof SyntaxError)) throw error; }
+        } else await res.body?.cancel();
+        return { res, body };
+      } catch (error) { if (fullScan && !signal.aborted) throw new OpenSeaUnavailable(); throw error; }
+    };
+    if (!fullScan) return run();
+    const pending = apiQueue.then(run).catch(error => { if (signal.aborted) throw error; throw new OpenSeaUnavailable(); });
+    apiQueue = pending.catch(() => {});
+    return pending;
+  }
+  function retryMs(res, fallback) {
+    const value = res.headers.get("retry-after");
+    const ms = value == null ? fallback : /^\d+(?:\.\d+)?$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+    const wait = Math.max(fallback, Number.isFinite(ms) ? ms : fallback);
+    if (wait > 30_000) throw new OpenSeaRateLimit(Date.now() + wait);
+    return wait;
+  }
+
+  async function withinDeadline(promise) {
+    let abort;
+    try {
+      return await Promise.race([promise, new Promise((_, reject) => {
+        abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      })]);
+    } finally { signal.removeEventListener("abort", abort); }
+  }
+
   async function get(url) {
     for (let attempt = 0; attempt < 4; ++attempt) {
-      const res = await fetch(url, { headers, signal });
+      const { res, body } = await api(url);
       if (res.status === 429) {
-        await sleep(1500 * (attempt + 1));
+        const wait = retryMs(res, 1500 * (attempt + 1));
+        if (attempt === 3) throw new OpenSeaRateLimit(Date.now() + wait);
+        await sleep(wait);
         continue;
       }
       if (!res.ok) throw new Error(`opensea: HTTP ${res.status} for ${url.pathname}`);
-      return res.json();
+      return body;
     }
-    throw new Error("opensea: rate limited");
+    throw new OpenSeaRateLimit(Date.now() + 300_000);
   }
 
   // the best (cheapest) active listing of every token of the collection, cheapest first
   async function page(slug, cursor) {
-    const url = new URL(`https://api.opensea.io/api/v2/listings/collection/${slug}/best`);
-    url.searchParams.set("limit", "100");
+    const url = new URL(`https://api.opensea.io/api/v2/listings/collection/${slug}/${fullScan ? "all" : "best"}`);
+    url.searchParams.set("limit", fullScan ? "200" : "100");
     if (cursor) url.searchParams.set("next", cursor);
     return get(url);
   }
@@ -177,20 +235,24 @@ export async function fetchListings(o) {
 
   async function fulfillment(hash) {
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(o.fulfillmentTimeoutMs ?? 8_000)]);
-    let res;
+    let res, body;
     for (let attempt = 0; attempt < 4; ++attempt) {
-      res = await fetch("https://api.opensea.io/api/v2/listings/fulfillment_data", {
+      ({ res, body } = await api("https://api.opensea.io/api/v2/listings/fulfillment_data", {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify({ listing: { hash, chain: "ethereum", protocol_address: SEAPORT_16 }, fulfiller: { address: fulfiller } }),
-        signal: requestSignal,
-      });
+      }, requestSignal));
       if (res.status !== 429) break;
-      await sleep(1000 * (attempt + 1), requestSignal);
+      const wait = retryMs(res, 1000 * (attempt + 1));
+      if (fullScan || attempt === 3) throw new OpenSeaRateLimit(Date.now() + wait);
+      await sleep(wait, requestSignal);
     }
     if (res.status === 401 || res.status === 403) throw new OpenSeaAuthFailure(res.status);
-    if (!res.ok) return null;
-    const tx = (await res.json()).fulfillment_data?.transaction;
+    if (!res.ok) {
+      if (fullScan && res.status !== 400 && res.status !== 404) throw new OpenSeaUnavailable();
+      return null;
+    }
+    const tx = body?.fulfillment_data?.transaction;
     if (!tx || !tx.function?.startsWith("fulfillBasicOrder_efficient_6GL6yc")) return null;
     return tx.input_data.parameters;
   }
@@ -200,8 +262,14 @@ export async function fetchListings(o) {
   let cands = [];
   const dropped = {};
   let cursor;
+  let pages = 0;
+  let complete = false;
+  const cursors = new Set();
+  const hashes = new Set();
   for (let i = 0; i < maxPages; ++i) {
     const body = await page(slug, cursor);
+    pages++;
+    if (fullScan && !Array.isArray(body.listings)) throw new Error("opensea: malformed listing page");
     for (const l of body.listings ?? []) {
       ++fetched;
       let r;
@@ -213,52 +281,87 @@ export async function fetchListings(o) {
         continue;
       }
       if (typeof r === "string") dropped[r] = (dropped[r] ?? 0) + 1;
-      else cands.push(r);
+      else {
+        if (fullScan) {
+          if (!/^0x[0-9a-fA-F]{64}$/.test(r.hash ?? "")) { dropped["malformed listing"] = (dropped["malformed listing"] ?? 0) + 1; continue; }
+          const hash = r.hash.toLowerCase();
+          if (hashes.has(hash)) continue;
+          hashes.add(hash);
+        }
+        cands.push(r);
+      }
     }
     cursor = body.next;
-    if (!cursor) break;
+    if (fullScan && cursor != null && (typeof cursor !== "string" || !cursor.trim() || cursor !== cursor.trim())) throw new Error("opensea: malformed listing cursor");
+    if (!cursor) { complete = true; break; }
+    if (fullScan && cursors.has(cursor)) throw new Error("opensea: repeated listing cursor");
+    cursors.add(cursor);
   }
   let notHeld = 0;
-  if (hasRpc && cands.length) {
-    // keep the listings the node can fill: the offerer owns the credit now and the order has started by the head block
-    // time plus `horizon`
-    const owners = await batch(cands.map((c) => ({ to: CREDITS, data: "0x6352211e" + word(c.id) })));
+  async function held(rows) {
+    if (!hasRpc || !rows.length) return rows;
+    const owners = await batch(rows.map((c) => ({ to: CREDITS, data: "0x6352211e" + word(c.id) })));
     const head = await rpcCall({ jsonrpc: "2.0", id: 1, method: "eth_getBlockByNumber", params: ["latest", false] });
     const horizon = parseInt(head.result.timestamp, 16) + (o.horizon ?? 86400);
-    const before = cands.length;
-    cands = cands.filter((c, i) => owners[i] && ("0x" + owners[i].slice(26)).toLowerCase() === c.offerer.toLowerCase() && Number(c.startTime) <= horizon);
-    notHeld = before - cands.length;
+    const valid = rows.filter((c, i) => owners[i] && ("0x" + owners[i].slice(26)).toLowerCase() === c.offerer.toLowerCase() && Number(c.startTime) <= horizon);
+    notHeld += rows.length - valid.length;
+    return valid;
   }
-  if (hasRpc && cands.length) {
-    const sc = await scores(cands.map((c) => c.id));
-    cands.forEach((c, i) => (c.rank = sc[i] === 0n ? Infinity : Number((BigInt(c.price) * 1_000_000n) / sc[i])));
-  } else cands.forEach((c) => (c.rank = Number(BigInt(c.price) / 1_000_000_000n)));
-  cands.sort((a, b) => a.rank - b.rank);
+  if (!fullScan) cands = await held(cands);
+  if ((hasRpc || o.getScores) && cands.length) {
+    const ids = [...new Set(cands.map(c => c.id))];
+    let sc;
+    if (o.getScores) {
+      sc = [];
+      for (let i = 0; i < ids.length; i += 64) {
+        signal.throwIfAborted();
+        const part = ids.slice(i, i + 64);
+        const values = await withinDeadline(o.getScores(part));
+        signal.throwIfAborted();
+        if (!Array.isArray(values) || values.length !== part.length || values.some(v => typeof v !== "bigint" || v < 0n)) throw new RpcUnavailable("opensea: invalid score lookup");
+        sc.push(...values);
+      }
+    } else sc = await scores(ids);
+    const byId = new Map(ids.map((id, i) => [id, sc[i]]));
+    cands = cands.filter(c => byId.get(c.id) > 0n);
+    cands.forEach(c => { c.score = byId.get(c.id); });
+  }
+  cands.sort((a, b) => {
+    const left = BigInt(a.price) * (b.score ?? 1n);
+    const right = BigInt(b.price) * (a.score ?? 1n);
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
   const orders = [];
-  const top = cands.slice(0, sign);
+  const signedIds = new Set();
+  const top = fullScan ? await held(cands.slice(0, 2 * sign)) : cands.slice(0, sign);
   const fetchedParams = [];
-  for (let i = 0; i < top.length; i += 8) fetchedParams.push(...(await Promise.all(top.slice(i, i + 8).map(async (c) => {
+  const fulfillmentOf = async (c) => {
     try {
       return await fulfillment(c.hash);
     } catch (e) {
-      if (e instanceof OpenSeaAuthFailure) throw e;
+      if (e instanceof OpenSeaAuthFailure || e instanceof OpenSeaRateLimit || e instanceof OpenSeaUnavailable || (fullScan && signal.aborted)) throw e;
       dropped["fulfillment request failed"] = (dropped["fulfillment request failed"] ?? 0) + 1;
       return null;
     }
-  }))));
+  };
+  if (!fullScan) for (let i = 0; i < top.length; i += 8) fetchedParams.push(...(await Promise.all(top.slice(i, i + 8).map(fulfillmentOf))));
   for (const [i, c] of top.entries()) {
-    const p = fetchedParams[i];
+    if (orders.length >= sign) break;
+    if (fullScan && signedIds.has(c.id)) continue;
+    const p = fullScan ? await fulfillmentOf(c) : fetchedParams[i];
     if (!p) {
       dropped["no basic fulfillment data"] = (dropped["no basic fulfillment data"] ?? 0) + 1;
       continue;
     }
     try {
       orders.push({ id: c.id, price: c.price, hash: c.hash, params: basicParams(p) });
+      signedIds.add(c.id);
     } catch (e) {
       dropped["malformed fulfillment"] = (dropped["malformed fulfillment"] ?? 0) + 1;
     }
   }
-  return { fetched, fit: cands.length, notHeld, orders, dropped };
+  if (fullScan) signal.throwIfAborted();
+  return { fetched, fit: cands.length, notHeld, orders, dropped, complete, pages, validationTruncated: fullScan && cands.length > 2 * sign };
 }
 
 // BasicOrderParameters of a fulfillment_data answer, every number a decimal string

@@ -18,7 +18,7 @@ export interface Day {
 
 export const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
-function atomicJson(path: string, value: unknown) {
+export function atomicJson(path: string, value: unknown) {
   const temp = `${path}.${randomUUID()}.tmp`;
   try {
     const fd = openSync(temp, "wx", 0o600);

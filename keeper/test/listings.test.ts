@@ -1,7 +1,7 @@
 // promise: hashless and zero-price Seaport orders cannot block the keeper from ranking a valid order
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Sources } from "../src/listings.ts";
@@ -166,4 +166,87 @@ test("a valid 41st listing is checked on the next block after 40 stale listings"
   const second = await s.candidates({ ethRate: 1_000_000n } as any, 2n);
   assert.ok(second.some((l) => l.id === 41n && l.valid));
   assert.equal(checked.length, 80, "at most 40 full reads per block");
+});
+
+
+// promise: immutable scores are shared across venues and survive a restart under the same chain/contract identity.
+test("Credit score cache survives restart and rejects another chain", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-score-cache-"));
+  const cfg: any = { stateDir: dir, record: { chainId: 1 } };
+  let reads = 0;
+  const client: any = { multicall: async ({ contracts }: any) => {
+    reads++;
+    return contracts.map((c: any) => c.functionName === "seedOf" ? "0x" + "11".repeat(21) : c.functionName === "timestampOf" ? 1n : 2000n);
+  } };
+  const source = new Sources(client, cfg);
+  await (source as any).scoresOf([42n, 42n]);
+  assert.equal(reads, 2);
+  const path = join(dir, "credit-scores.json");
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")).scores, [["42", "2000"]]);
+  const restarted = new Sources(client, cfg);
+  await (restarted as any).scoresOf([42n]);
+  assert.equal(reads, 2);
+  const other = new Sources(client, { ...cfg, record: { chainId: 2 } });
+  await (other as any).scoresOf([42n]);
+  assert.equal(reads, 4);
+});
+
+// promise: a failed immutable read is never cached as zero or allowed to replace an existing score.
+test("Credit score cache preserves good values on RPC failure", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-score-failure-"));
+  const cfg: any = { stateDir: dir, record: { chainId: 1 } };
+  let fail = false;
+  const client: any = { multicall: async ({ contracts }: any) => {
+    if (fail) throw new Error("fixture RPC unavailable");
+    return contracts.map((c: any) => c.functionName === "seedOf" ? "0x" + "11".repeat(21) : c.functionName === "timestampOf" ? 1n : 2000n);
+  } };
+  const source = new Sources(client, cfg);
+  await (source as any).scoresOf([42n]);
+  fail = true;
+  await assert.rejects((source as any).scoresOf([43n]), /RPC unavailable/);
+  assert.equal((source as any).scores.get(42n), 2000n);
+  assert.equal((source as any).scores.has(43n), false);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, "credit-scores.json"), "utf8")).scores, [["42", "2000"]]);
+});
+
+// promise: one slow full-market refresh does not block ticks, duplicate discovery, or discard the last completed candidate set.
+test("OpenSea full scan runs once in the background and retains cached candidates on failure", { timeout: 2000 }, async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  let rejectFetch: ((e: Error) => void) | undefined;
+  globalThis.fetch = (() => {
+    calls++;
+    return new Promise((_resolve, reject) => { rejectFetch = reject; });
+  }) as typeof fetch;
+  const cfg: any = {
+    record: { chainId: 1, core: "0x00000000000000000000000000000000000000c0", seaportAdapter: "0x00000000000000000000000000000000000000a1" },
+    strategy: { mode: "off" }, rpcUrls: ["https://rpc.invalid"],
+    opensea: { key: "fixture", refreshSec: 300, sign: 1 },
+  };
+  const client: any = { multicall: async ({ contracts }: any) => contracts.map((c: any) => ({ status: "success", result:
+    c.functionName === "bidOf" ? 2000n : c.functionName === "price" ? ["0x0", 1000n, "0x"] : c.functionName === "ownerOf" ? offerer : [true, false, 0n, 0n] })) };
+  let now = 1_000_000_000;
+  const source = new Sources(client, cfg, () => now);
+  (source as any).scores.set(42n, 2000n);
+  (source as any).seaport = [{ venue: "seaport", adapter: cfg.record.seaportAdapter, id: 42n, price: 1000n, params: "0x", offerer, hash: "0x" + "11".repeat(32) }];
+  try {
+    assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 1n)).map(l => l.id), [42n]);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok((source as any).seaportRefresh);
+    assert.equal(calls, 1);
+    assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 2n)).map(l => l.id), [42n]);
+    assert.equal(calls, 1);
+    rejectFetch!(Object.assign(new Error("fixture API rate limit"), { retryAt: now + 600_000 }));
+    await (source as any).seaportRefresh;
+    assert.equal((source as any).seaport.length, 1);
+    assert.equal((source as any).seaportRefresh, undefined);
+    now += 301_000;
+    await source.candidates({ ethRate: 1_000_000n } as any, 3n);
+    assert.equal(calls, 1);
+  } finally {
+    rejectFetch?.(new Error("fixture cleanup"));
+    await (source as any).seaportRefresh;
+    globalThis.fetch = original;
+  }
 });

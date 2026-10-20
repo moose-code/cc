@@ -16,7 +16,7 @@ export const OWNER: Address = "0xCB43078C32423F5348Cab5885911C3B5faE217F9";
 // launch default relays (decision 139): MEV Blocker first, Flashbots Protect as the fallback
 export const DEFAULT_RELAYS = ["https://rpc.mevblocker.io", "https://rpc.flashbots.net/fast"];
 // public mainnet read fallbacks behind RPC_URLS (docs/RUNBOOK.md section 0 and .env.example list archive capable ones)
-export const PUBLIC_RPCS = ["https://gateway.tenderly.co/public/mainnet", "https://eth.drpc.org", "https://ethereum-rpc.publicnode.com"];
+export const PUBLIC_RPCS = ["https://mainnet.gateway.tenderly.co", "https://eth.drpc.org", "https://ethereum-rpc.publicnode.com"];
 
 export interface Deployment {
   chainId: number;
@@ -67,7 +67,7 @@ export interface Config {
   strategyFullRead: boolean;
   // GraphQL endpoint of the indexer, used to seed the strategy inventory on the first start
   indexerUrl?: string;
-  opensea: { key?: string; refreshSec: number; pages: number; sign: number; file?: string };
+  opensea: { key?: string; refreshSec: number; sign: number; file?: string };
   doorsOn: Set<Door>;
 }
 
@@ -232,7 +232,6 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
     opensea: {
       key: env.OPENSEA_API_KEY || undefined,
       refreshSec: num(env, "OPENSEA_REFRESH_SEC", 300),
-      pages: num(env, "OPENSEA_PAGES", 3),
       sign: num(env, "OPENSEA_SIGN", 40),
       file: env.SEAPORT_ORDERS || undefined,
     },

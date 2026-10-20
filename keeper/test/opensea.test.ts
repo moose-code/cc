@@ -1,7 +1,7 @@
 // promise: OpenSea refreshes end within their request budget and a malformed listing leaves other signed orders usable
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fetchListings, CREDITS, SEAPORT_16 } from "@cc/engine/opensea";
+import { fetchListings, CREDITS, SEAPORT_16, OpenSeaRateLimit, OpenSeaUnavailable } from "@cc/engine/opensea";
 
 const offerer = "0x00000000000000000000000000000000000000f1";
 const zero = "0x0000000000000000000000000000000000000000";
@@ -264,4 +264,267 @@ test("OpenSea:401/403 fail the refresh,400/404 retain successful sibling orders"
       assert.equal(result.dropped["no basic fulfillment data"], 1);
     }
   } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: full discovery reaches a winner after listing 300, scores each unique id in bounded chunks, and ranks before bounded live reads.
+test("OpenSea full scan: every page precedes scoring and only ranked contenders receive live reads", async () => {
+  const realFetch = globalThis.fetch;
+  let pages = 0, posts = 0;
+  const ownerIds: number[] = [], chunks: number[] = [], waits: number[] = [];
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(url); urls.push(u.pathname);
+    if (u.host === "full-ranked") {
+      assert.equal(pages, 5);
+      const body = JSON.parse(String(init?.body));
+      for (const r of Array.isArray(body) ? body : [body]) if (r.method === "eth_call") ownerIds.push(Number(BigInt("0x" + r.params[0].data.slice(10))));
+      return Response.json(Array.isArray(body) ? body.map((r: any) => rpcResult(r)).reverse() : rpcResult(body));
+    }
+    if (u.pathname.includes("/contract/")) return Response.json({ collection: "credits" });
+    if (u.pathname.endsWith("/all")) {
+      assert.equal(u.searchParams.get("limit"), "200");
+      const page = Number(u.searchParams.get("next") ?? 0); pages++;
+      return Response.json({ listings: Array.from({ length: page < 4 ? 100 : 1 }, (_, i) => rpcListing(page * 100 + i + 1)), next: page < 4 ? String(page + 1) : null });
+    }
+    posts++; return osResponse(url, init, []);
+  }) as typeof fetch;
+  try {
+    const result = await fetchListings({ key: "test", fullScan: true, rpc: "https://full-ranked", horizon: 0, sign: 1, sleep: async ms => { waits.push(ms); }, getScores: async ids => {
+      assert.equal(pages, 5); assert.equal(posts, 0); assert.equal(ownerIds.length, 0); chunks.push(ids.length);
+      return ids.map(id => id === "401" ? 1000n : 1n);
+    } });
+    assert.equal(result.complete, true); assert.equal(result.pages, 5); assert.equal(result.fetched, 401);
+    assert.deepEqual(result.orders.map(o => o.id), ["401"]);
+    assert.equal(posts, 1); assert.equal(ownerIds.length, 2); assert.equal(ownerIds[0], 401);
+    assert.equal(chunks.reduce((a, b) => a + b), 401); assert.ok(chunks.every(n => n <= 64));
+    assert.ok(!urls.some(u => u.endsWith("/best"))); assert.ok(waits.length >= 6);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: cursor loops, malformed pages and malformed continuation values fail before scoring, and repeated orders do not duplicate work.
+test("OpenSea full scan: strict completion, cursor validation, and order deduplication", async () => {
+  const realFetch = globalThis.fetch;
+  let mode = "dedupe", pages = 0, scores = 0;
+  globalThis.fetch = (async (url: string | URL) => {
+    if (new URL(url).pathname.includes("/contract/")) return Response.json({ collection: "credits" });
+    pages++;
+    if (mode === "shape") return Response.json({ next: null });
+    if (mode === "cursor") return Response.json({ listings: [], next: 7 });
+    if (mode === "loop") return Response.json({ listings: [], next: "again" });
+    return Response.json({ listings: pages === 1 ? [rpcListing(1), rpcListing(2)] : [rpcListing(2), rpcListing(3)], next: pages === 1 ? "second" : null });
+  }) as typeof fetch;
+  const options = { key: "test", fullScan: true, sign: 0, sleep: async () => {}, getScores: async (ids: string[]) => { scores += ids.length; return ids.map(() => 1n); } };
+  try {
+    const result = await fetchListings(options);
+    assert.equal(result.complete, true); assert.equal(result.pages, 2); assert.equal(result.fetched, 4); assert.equal(result.fit, 3); assert.equal(scores, 3);
+    for (mode of ["shape", "cursor", "loop"]) { pages = 0; scores = 0; await assert.rejects(fetchListings(options), /malformed|repeated/); assert.equal(scores, 0); }
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: price-per-point ordering uses exact integers, and valid zero scores exclude only their own listing.
+test("OpenSea full scan: exact ratios and zero score isolation", async () => {
+  const realFetch = globalThis.fetch;
+  const rows = [rpcListing(1), rpcListing(2), rpcListing(3)];
+  for (const [i, price] of ["9007199254740993", "9007199254740992", "1"].entries()) rows[i].protocol_data.parameters.consideration[0].startAmount = rows[i].protocol_data.parameters.consideration[0].endAmount = price;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => new URL(url).pathname.endsWith("/all") ? Response.json({ listings: rows }) : osResponse(url, init, [])) as typeof fetch;
+  try {
+    const result = await fetchListings({ key: "test", fullScan: true, sign: 1, sleep: async () => {}, getScores: async () => [1n, 1n, 0n] });
+    assert.equal(result.fit, 2); assert.deepEqual(result.orders.map(o => o.id), ["2"]);
+    for (const invalid of [[1n], [1n, -1n, 2n], [1n, 1 as any, 2n]]) await assert.rejects(fetchListings({ key: "test", fullScan: true, sign: 1, sleep: async () => {}, getScores: async () => invalid }), /invalid score/);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: stale owners and failed individual fulfillments do not hide later ranked listings, while live work remains within twice the signature budget.
+test("OpenSea full scan: advances past forty unusable orders without unbounded live work", async () => {
+  const realFetch = globalThis.fetch;
+  let ownerReads = 0, posts = 0;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.host === "full-contenders") {
+      const body = JSON.parse(String(init?.body));
+      const result = (r: any) => {
+        if (r.method === "eth_call") {
+          ownerReads++; const id = Number(BigInt("0x" + r.params[0].data.slice(10)));
+          if (id <= 20) return { jsonrpc: "2.0", id: r.id, error: { code: 3, message: "execution reverted" } };
+        }
+        return rpcResult(r);
+      };
+      return Response.json(Array.isArray(body) ? body.map(result) : result(body));
+    }
+    if (u.pathname.endsWith("/all")) return Response.json({ listings: Array.from({ length: 45 }, (_, i) => rpcListing(i + 1)) });
+    if (u.pathname.includes("/fulfillment_data")) { posts++; if (BigInt(JSON.parse(String(init?.body)).listing.hash) <= 40n) return Response.json({}, { status: 404 }); }
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  try {
+    const result = await fetchListings({ key: "test", fullScan: true, rpc: "https://full-contenders", horizon: 0, sign: 40, sleep: async () => {}, getScores: async ids => ids.map(() => 1n) });
+    assert.deepEqual(result.orders.map(o => o.id), ["41", "42", "43", "44", "45"]);
+    assert.equal(ownerReads, 45); assert.equal(posts, 25); assert.ok(ownerReads <= 80 && posts <= 80);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: a full scan serializes and paces every actual API request, including candidate fulfillment.
+test("OpenSea full scan: one API request per second and one in flight", async () => {
+  const realFetch = globalThis.fetch;
+  const starts: number[] = []; let active = 0, maximum = 0;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    starts.push(Date.now()); active++; maximum = Math.max(maximum, active);
+    await new Promise(r => setTimeout(r, 10)); active--;
+    return new URL(url).pathname.endsWith("/all") ? Response.json({ listings: [rpcListing(1)] }) : osResponse(url, init, []);
+  }) as typeof fetch;
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    await fetchListings({ key: "test", fullScan: true, sign: 1, getScores: async () => [1n] });
+    assert.equal(starts.length, 3); assert.equal(maximum, 1);
+    for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 990);
+  } finally { clearInterval(keepAlive); globalThis.fetch = realFetch; }
+});
+
+// promise: a hanging injected score lookup cannot outlive the full refresh deadline or report completion.
+test("OpenSea full scan: injected score lookup honors whole-refresh deadline", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => new URL(url).pathname.endsWith("/all") ? Response.json({ listings: [rpcListing(1)] }) : osResponse(url, init, [])) as typeof fetch;
+  const keepAlive = setInterval(() => {}, 1000);
+  try { await assert.rejects(fetchListings({ key: "test", fullScan: true, sign: 1, timeoutMs: 20, sleep: async () => {}, getScores: async () => new Promise(() => {}) }), /timeout|Timeout/i); }
+  finally { clearInterval(keepAlive); globalThis.fetch = realFetch; }
+});
+
+// promise: full scans honor API retry budgets and propagate authorization or provider failures instead of publishing an empty complete result.
+test("OpenSea full scan:429 retry pacing and global failure semantics", async () => {
+  const realFetch = globalThis.fetch;
+  let mode = "retry", pages = 0, posts = 0;
+  const waits: number[] = [];
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.host === "full-unavailable") return Response.json({}, { status: 503 });
+    if (u.pathname.endsWith("/all")) {
+      pages++;
+      if ((mode === "retry" && pages === 1) || mode === "long-retry") return Response.json({}, { status: 429, headers: { "retry-after": mode === "long-retry" ? "120" : "2" } });
+      return Response.json({ listings: [rpcListing(1)] });
+    }
+    if (u.pathname.endsWith("/fulfillment_data")) { posts++; if (mode === "auth") return Response.json({}, { status: 401 }); }
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, sign: 1, sleep: async (ms: number) => { waits.push(ms); }, getScores: async () => [1n] };
+  try {
+    const result = await fetchListings(opts);
+    assert.equal(result.complete, true); assert.equal(result.pages, 1); assert.equal(pages, 2); assert.equal(posts, 1); assert.ok(waits.includes(2000));
+    mode = "long-retry"; pages = 0; posts = 0;
+    await assert.rejects(fetchListings(opts), /retry-after/); assert.equal(pages, 1); assert.equal(posts, 0);
+    mode = "auth"; pages = 0; posts = 0;
+    await assert.rejects(fetchListings(opts), (e: any) => e.name === "OpenSeaAuth401"); assert.equal(posts, 1);
+    mode = "rpc"; pages = 0; posts = 0;
+    await assert.rejects(fetchListings({ ...opts, rpc: "https://full-unavailable" }), /RPC unavailable/); assert.equal(posts, 0);
+    await assert.rejects(fetchListings({ ...opts, getScores: async () => { throw new Error("score provider unavailable"); } }), /score provider unavailable/);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: alternative orders remain available until one succeeds, then each token occupies only one signed slot and the validation bound remains explicit.
+test("OpenSea full scan: same-token alternatives do not consume multiple signed slots", async () => {
+  const realFetch = globalThis.fetch;
+  const rows = [rpcListing(1), rpcListing(1), rpcListing(1), rpcListing(2), rpcListing(3)];
+  rows.forEach((row, i) => { row.order_hash = abiWord(100 + i); });
+  const posted: number[] = [];
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.pathname.endsWith("/all")) return Response.json({ listings: rows });
+    if (u.pathname.endsWith("/fulfillment_data")) {
+      const hash = Number(BigInt(JSON.parse(String(init?.body)).listing.hash)); posted.push(hash);
+      if (hash === 100) return Response.json({}, { status: 404 });
+    }
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  try {
+    const result = await fetchListings({ key: "test", fullScan: true, sign: 2, sleep: async () => {}, getScores: async ids => ids.map(() => 1n) });
+    assert.deepEqual(result.orders.map(o => o.id), ["1", "2"]); assert.deepEqual(posted, [100, 101, 103]);
+    assert.equal(result.complete, true); assert.equal(result.validationTruncated, true);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: exhausted page limits and fulfillment rate limits propagate a fixed typed retry deadline and stop subsequent orders.
+test("OpenSea full scan: rate limits stop orders and retain provider retry deadlines", async () => {
+  const realFetch = globalThis.fetch;
+  let mode = "fulfill-long", pageAttempts = 0, posts = 0;
+  const retryDate = new Date(Date.now() + 3_600_000).toUTCString();
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.pathname.endsWith("/all")) {
+      pageAttempts++;
+      if (mode === "page-exhausted") return Response.json({}, { status: 429 });
+      if (mode === "page-date") return Response.json({}, { status: 429, headers: { "retry-after": retryDate } });
+      return Response.json({ listings: [rpcListing(1), rpcListing(2)] });
+    }
+    if (u.pathname.endsWith("/fulfillment_data")) {
+      posts++;
+      return Response.json({ private_provider_message: "must-not-escape" }, { status: 429, headers: { "retry-after": mode === "fulfill-long" ? "600" : "1" } });
+    }
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, sign: 2, sleep: async () => {}, getScores: async (ids: string[]) => ids.map(() => 1n) };
+  try {
+    for (mode of ["fulfill-long", "fulfill-short", "page-exhausted", "page-date"]) {
+      posts = 0; pageAttempts = 0;
+      const before = Date.now();
+      await assert.rejects(fetchListings(opts), (error: unknown) => {
+        assert.ok(error instanceof OpenSeaRateLimit);
+        assert.equal(error.name, "OpenSeaRateLimit"); assert.ok(Number.isFinite(error.retryAt));
+        if (mode === "fulfill-long") assert.ok(error.retryAt >= before + 600_000);
+        else if (mode === "page-date") assert.equal(error.retryAt, Date.parse(retryDate));
+        else assert.ok(error.retryAt > before);
+        assert.doesNotMatch(String(error) + JSON.stringify(error), /must-not-escape/);
+        return true;
+      });
+      assert.equal(posts, mode.startsWith("fulfill") ? 1 : 0);
+      assert.equal(pageAttempts, mode === "page-exhausted" ? 4 : 1);
+    }
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: API outages reject a full refresh before later orders, while an individual malformed 200 response still permits a sibling order.
+test("OpenSea full scan: provider failures cannot publish an empty complete cache", async () => {
+  const realFetch = globalThis.fetch;
+  let mode = "503", posts = 0, scored = false;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.pathname.endsWith("/all")) return Response.json({ listings: [rpcListing(1), rpcListing(2)] });
+    if (u.pathname.endsWith("/fulfillment_data")) {
+      posts++;
+      if (mode === "503") return Response.json({}, { status: 503 });
+      if (mode === "network") throw new Error("private-provider-fixture must not escape");
+      if (mode === "timeout") return new Promise((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true }));
+      if (posts === 1) return new Response("malformed", { headers: { "content-type": "application/json" } });
+    }
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  const keepAlive = setInterval(() => {}, 1000);
+  const opts = { key: "test", fullScan: true, sign: 2, sleep: async () => { if (mode === "pace-timeout" && scored) await new Promise(r => setTimeout(r, 20)); }, getScores: async (ids: string[]) => { scored = true; return ids.map(() => 1n); }, fulfillmentTimeoutMs: 10 };
+  try {
+    for (mode of ["503", "network", "timeout", "pace-timeout"]) {
+      posts = 0; scored = false;
+      await assert.rejects(fetchListings(opts), (error: unknown) => {
+        assert.ok(error instanceof OpenSeaUnavailable);
+        assert.doesNotMatch(String(error) + JSON.stringify(error), /private-provider-fixture/);
+        return true;
+      });
+      assert.equal(posts, mode === "pace-timeout" ? 0 : 1);
+    }
+    mode = "malformed"; posts = 0;
+    const result = await fetchListings(opts);
+    assert.equal(result.complete, true); assert.deepEqual(result.orders.map(o => o.id), ["2"]); assert.equal(posts, 2);
+  } finally { clearInterval(keepAlive); globalThis.fetch = realFetch; }
+});
+
+// promise: API spacing follows actual dispatch time even when a pacing timer resumes later than its target.
+test("OpenSea full scan: delayed pacing waits cannot bunch physical requests", async () => {
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  let clock = realNow(); const starts: number[] = [];
+  Date.now = () => clock;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    starts.push(clock);
+    return new URL(url).pathname.endsWith("/all") ? Response.json({ listings: [rpcListing(1)] }) : osResponse(url, init, []);
+  }) as typeof fetch;
+  try {
+    await fetchListings({ key: "test", fullScan: true, sign: 1, getScores: async () => [1n], sleep: async ms => { clock += ms + 2000; } });
+    assert.equal(starts.length, 3);
+    for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 1000);
+  } finally { Date.now = realNow; globalThis.fetch = realFetch; }
 });

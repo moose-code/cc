@@ -9,11 +9,12 @@
 // and, for Seaport, the order status. The window advances so stale high-ranked listings cannot hide later ones.
 // The simulation stays the final check.
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
 import { encodeAbiParameters, getAbiItem, getAddress, type Address, type Hex, type PublicClient } from "viem";
 import { basicOrderParameters, coreAbi, creditStrategyAbi, creditsAbi, listingAdapterAbi, seaportAbi } from "@cc/engine/abis";
-import { CREDIT_STRATEGY, CREDITS, SEAPORT } from "@cc/engine/addresses";
+import { CREDIT_SCORE, CREDIT_STRATEGY, CREDITS, SEAPORT } from "@cc/engine/addresses";
 import { creditScores, mc } from "@cc/engine/snapshot";
 import { fetchListings, type BasicParams, type SignedOrder } from "@cc/engine/opensea";
 import type { Config } from "./config.ts";
@@ -21,7 +22,7 @@ import type { Listing } from "./decide.ts";
 import type { Snapshot } from "@cc/engine/snapshot";
 import { log, safeError } from "./log.ts";
 import { indexerSeed, StrategyBook, type BookChain, type Move } from "./inventory.ts";
-import type { PendingStore } from "./ledger.ts";
+import { atomicJson, type PendingStore } from "./ledger.ts";
 
 // the ids read per multicall when indexing the strategy scores
 const SCORE_READ = 1500;
@@ -77,6 +78,8 @@ export class Sources {
   private book?: StrategyBook;
   private seaport: Watched[] = [];
   private seaportAt = 0;
+  private seaportRetryAt = 0;
+  private seaportRefresh?: Promise<void>;
   // Decoded simulation faults have a short in-memory wait; receipt reverts also have a durable wait.
   private cooldown = new Map<string, number>();
   private nextCandidate = { strategy: 0, seaport: 0 };
@@ -95,18 +98,57 @@ export class Sources {
     this.cfg = cfg;
     this.now = now;
     this.pending = pending;
+    this.loadScores();
+  }
+
+  private scoreKey() {
+    return `${this.cfg.record.chainId}:${CREDITS.toLowerCase()}:${CREDIT_SCORE.toLowerCase()}`;
+  }
+
+  private loadScores() {
+    if (!this.cfg.stateDir) return;
+    try {
+      const data = JSON.parse(readFileSync(join(this.cfg.stateDir, "credit-scores.json"), "utf8"));
+      if (data.key !== this.scoreKey() || !Array.isArray(data.scores)) throw new Error("score cache identity or shape mismatch");
+      const scores = new Map<bigint, bigint>();
+      for (const row of data.scores) {
+        if (!Array.isArray(row) || row.length !== 2 || !row.every(v => typeof v === "string" && /^\d+$/.test(v))) throw new Error("invalid score cache row");
+        const [id, score] = row.map(BigInt);
+        if (id >= 2n ** 256n || score <= 0n || score >= 2n ** 256n || scores.has(id)) throw new Error("invalid score cache value");
+        scores.set(id, score);
+      }
+      this.scores = scores;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") log("warn", "credit score cache ignored", { error: safeError(error) });
+    }
+  }
+
+  private saveScores() {
+    if (!this.cfg.stateDir) return;
+    mkdirSync(this.cfg.stateDir, { recursive: true });
+    atomicJson(join(this.cfg.stateDir, "credit-scores.json"), {
+      key: this.scoreKey(), scores: [...this.scores].map(([id, score]) => [String(id), String(score)]),
+    });
   }
 
   coolDown(key: string, sec: number) {
     this.cooldown.set(key, this.now() + sec * 1000);
   }
 
-  private async scoresOf(ids: bigint[]) {
-    const missing = ids.filter((id) => !this.scores.has(id));
-    for (let i = 0; i < missing.length; i += SCORE_READ) {
-      const part = missing.slice(i, i + SCORE_READ);
-      const sc = await creditScores(this.client, part);
-      part.forEach((id, j) => this.scores.set(id, sc[j]));
+  private async scoresOf(ids: bigint[], paced = false) {
+    const missing = [...new Set(ids)].filter((id) => !this.scores.has(id));
+    const size = paced ? 64 : SCORE_READ;
+    // Full-market discovery reads only missing immutable facts, at most two multicalls per second.
+    const client = paced ? { multicall: async (args: Parameters<PublicClient["multicall"]>[0]) => {
+      await delay(500);
+      return this.client.multicall(args);
+    } } as Pick<PublicClient, "multicall"> : this.client;
+    for (let i = 0; i < missing.length; i += size) {
+      const part = missing.slice(i, i + size);
+      const sc = await creditScores(client, part);
+      if (sc.length !== part.length || sc.some(score => typeof score !== "bigint" || score < 0n)) throw new Error("invalid Credit scores");
+      part.forEach((id, j) => { if (sc[j] > 0n) this.scores.set(id, sc[j]); });
+      this.saveScores();
     }
   }
 
@@ -181,7 +223,7 @@ export class Sources {
   private async refreshSeaport() {
     const o = this.cfg.opensea;
     if (!o.file && !o.key) return;
-    if (this.now() - this.seaportAt < o.refreshSec * 1000) return;
+    if (this.now() < this.seaportRetryAt || this.now() - this.seaportAt < o.refreshSec * 1000) return;
     this.seaportAt = this.now();
     let orders: SignedOrder[];
     try {
@@ -191,17 +233,27 @@ export class Sources {
           key: o.key!,
           rpcUrls: this.cfg.rpcUrls,
           adapter: this.cfg.record.seaportAdapter,
-          pages: o.pages,
+          fullScan: true,
+          getScores: async (ids) => {
+            const tokens = ids.map(BigInt);
+            await this.scoresOf(tokens, true);
+            return tokens.map(id => this.scores.get(id) ?? 0n);
+          },
           sign: o.sign,
           horizon: 0,
         });
+        if (!r.complete) throw new Error("OpenSea full scan is incomplete");
         orders = r.orders;
-        log("info", "opensea listings fetched", { fetched: r.fetched, fit: r.fit, signed: r.orders.length, dropped: r.dropped });
+        log("info", "opensea listings fetched", { complete: r.complete, pages: r.pages, fetched: r.fetched, fit: r.fit, signed: r.orders.length, validationTruncated: r.validationTruncated, cachedScores: this.scores.size, dropped: r.dropped });
       }
       if (!Array.isArray(orders)) throw new Error("orders is not an array");
     } catch (e) {
-      log("warn", "opensea fetch failed, keeping the cached orders", { error: safeError(e) });
+      const retryAt = (e as { retryAt?: number }).retryAt;
+      if (typeof retryAt === "number" && Number.isFinite(retryAt)) this.seaportRetryAt = Math.max(this.seaportRetryAt, retryAt);
+      log("warn", "opensea fetch failed, keeping the cached orders", { complete: false, retryAt: this.seaportRetryAt || undefined, error: safeError(e) });
       return;
+    } finally {
+      this.seaportAt = this.now();
     }
     // A malformed cached or API order must not block the other signed orders or the rest of the tick.
     const watched: Watched[] = [];
@@ -235,7 +287,14 @@ export class Sources {
 
   // Read one rotating window per venue at the block. The cap bounds RPC work per tick and every ranked listing gets a turn.
   async candidates(snap: Snapshot, blockNumber: bigint): Promise<Listing[]> {
-    await Promise.all([this.refreshStrategy(), this.refreshSeaport()]);
+    await this.refreshStrategy();
+    if (this.cfg.opensea.file) await this.refreshSeaport();
+    else if (!this.seaportRefresh && this.cfg.opensea.key && this.now() >= this.seaportRetryAt && this.now() - this.seaportAt >= this.cfg.opensea.refreshSec * 1000) {
+      // A complete market scan can take minutes; independent Core doors keep running during discovery.
+      this.seaportRefresh = this.refreshSeaport().catch(error => {
+        log("warn", "opensea background refresh failed", { complete: false, error: safeError(error) });
+      }).finally(() => { this.seaportRefresh = undefined; });
+    }
     const ref = 1_000_000n;
     const t = this.now();
     const pick = (venue: "strategy" | "seaport", ws: Watched[]) => {

@@ -17,7 +17,7 @@ kill_timeout = "30s"
   KEYSTORE_PASSWORD_FILE = "/run/secrets/keeper-password"
   KEEPER_ADDRESS = "0x6b9411DD51DF1E41015cD8293C1BBC3E881a4aee"
   STATE_DIR = "/data"
-  RPC_URLS = "https://gateway.tenderly.co/public/mainnet,https://eth.drpc.org,https://ethereum-rpc.publicnode.com"
+  RPC_URLS = "https://mainnet.gateway.tenderly.co,https://eth.drpc.org,https://ethereum-rpc.publicnode.com"
   INDEXER_URL = "https://cc-indexer-mainnet.fly.dev"
 
 [[mounts]]

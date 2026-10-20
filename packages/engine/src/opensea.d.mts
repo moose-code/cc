@@ -4,6 +4,15 @@ export declare const CREDITS: string;
 export declare const SEAPORT_16: string;
 export declare const OPENSEA_FEE: string;
 
+export declare class OpenSeaUnavailable extends Error {
+  constructor();
+}
+
+export declare class OpenSeaRateLimit extends Error {
+  retryAt: number;
+  constructor(retryAt: number);
+}
+
 // BasicOrderParameters of Seaport 1.6, every number a decimal string
 export interface BasicParams {
   considerationToken: string;
@@ -35,6 +44,9 @@ export interface SignedOrder {
 
 export interface FetchResult {
   fetched: number;
+  complete: boolean;
+  pages: number;
+  validationTruncated: boolean;
   fit: number;
   notHeld: number;
   orders: SignedOrder[];
@@ -47,6 +59,8 @@ export declare function fetchListings(o: {
   rpcUrls?: string[];
   adapter?: string;
   pages?: number;
+  fullScan?: boolean;
+  getScores?: (ids: string[]) => Promise<bigint[]>;
   sign?: number;
   fulfiller?: string;
   allowedRecipients?: string[];
