@@ -129,6 +129,7 @@ export function Flywheel() {
           sells. every {STATEMENT_SIZE} become a statement, which {balanceOn ? "sells or redeems" : "sells"} to refill
           the pot.
         </p>
+        <Link href="/faq" className="fw-faq-link">how it works ↗</Link>
       </div>
       <div className="fw-steps">
         {steps.map((s, i) => (
