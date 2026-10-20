@@ -2,14 +2,14 @@
 // per statement histories. Pure functions over decoded logs.
 
 import { formatUnits } from "viem";
-import { BALANCE_SYMBOL, eth, formatBalance, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
+import { BALANCE_SYMBOL, commas, eth, formatBalance, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
 
 export { BALANCE_SYMBOL, formatBalance };
 export type { BalanceTokenInfo };
 
 // Rows from the chain scan carry `block` (its timestamp is read per shown row); rows from the indexer carry `ts`.
 
-export type FeedKind = "credit" | "composed" | "sold" | "redeemed";
+export type FeedKind = "credit" | "composed" | "sold" | "redeemed" | "burned";
 
 export interface FeedEvent {
   key: string;
@@ -24,6 +24,7 @@ export interface FeedEvent {
   tile?: { kind: "credit"; id: number } | { kind: "statement"; id: number };
   addr?: string; // an address closing the detail (buyer), ENS-ified
   link?: { text: string; href: string }; // names the credit or statement, leads the detail cell
+  title?: string; // leads the detail cell of a row with no page to link (a $CC burn)
   rating?: bigint; // statement rows from the indexer
   composed?: { format: number; credits: number; cost: bigint }; // composed rows from the indexer
 }
@@ -40,6 +41,8 @@ export interface Stats {
   buybacks: number;
   ethIntoCredits: number; // sum of EthRateFill.spent and ValueRateFill.spent
   ccBurned: number;
+  ethToPot: number; // the pot's part of StatementSoldTo sales (price less buyback, artist and operator), eth
+  potSales: number; // the StatementSoldTo sales summed in ethToPot; a controller-only Bought sale has no split
   feesBooked: number; // sum of FeesAdded, eth
   artistReceived: number; // sum of the artist cut (StatementSoldTo and CreditSold toArtist), eth
   payeeReceived: number; // the operator cut of sales plus the pushed fee share, eth
@@ -98,6 +101,7 @@ export interface ScanInput {
   logs: any[]; // decoded logs of the Core and the controllers, sorted by block and log index
   head: bigint;
   burned: bigint; // total coin burned by the core
+  burns?: Map<string, bigint>; // coin burned by the core per tx hash, read beside each Buyback
   modes: Map<string, ComposeMode>; // Composed tx hash -> compose / composeChosen
   balanceToken?: BalanceTokenInfo;
 }
@@ -115,11 +119,16 @@ export function emptyStats(): Stats {
     buybacks: 0,
     ethIntoCredits: 0,
     ccBurned: 0,
+    ethToPot: 0,
+    potSales: 0,
     feesBooked: 0,
     artistReceived: 0,
     payeeReceived: 0,
   };
 }
+
+// The detail of a statement sale row: the pot's part and the buyback's part, then the buyer.
+export const soldDetail = (toPot: bigint, toBuyback: bigint) => `· ${eth(toPot)} ETH to the pot · ${eth(toBuyback)} to buyback · bought by`;
 
 export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["credits"]; statements: Scan["statements"]; rows: FeedEvent[] } {
   const { logs, head } = inp;
@@ -243,15 +252,18 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
       }
       case "StatementSoldTo": {
         const sid = Number(a.sid);
-        st(sid).sold = { buyer: a.buyer, price: a.price, toBuyback: a.toBuyback, toArtist: a.toArtist, toOperator: a.toOperator, block, tx };
+        const toPot = (a.price as bigint) - (a.toBuyback as bigint) - (a.toArtist as bigint) - (a.toOperator as bigint);
+        st(sid).sold = { buyer: a.buyer, price: a.price, toBuyback: a.toBuyback, toArtist: a.toArtist, toOperator: a.toOperator, toPot, block, tx };
         stats.sold++;
+        stats.potSales++;
+        stats.ethToPot += Number(formatUnits(toPot, 18));
         stats.artistReceived += Number(formatUnits(a.toArtist, 18));
         stats.payeeReceived += Number(formatUnits(a.toOperator, 18));
         row({
           kind: "sold",
           label: "statement sold",
           link: stmtLink(sid),
-          detail: `· ${eth(a.toBuyback)} eth to buyback · bought by`,
+          detail: soldDetail(toPot, a.toBuyback),
           eth: eth(a.price),
           addr: a.buyer,
           tile: { kind: "statement", id: sid },
@@ -289,9 +301,13 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
       }
 
       // ---- engine events that feed the stats --------------------------------
-      case "Buyback":
+      case "Buyback": {
         stats.buybacks++;
+        // the buyback pools the buyback share of every sale, so the burn names no source statement
+        const burned = inp.burns?.get(tx);
+        row({ kind: "burned", label: "$CC burned", title: burned != null ? `${commas(Number(formatUnits(burned, 18)))} $CC` : "$CC", detail: `bought with ${eth(a.amountIn)} ETH`, eth: eth(a.amountIn) });
         break;
+      }
       case "FeesAdded":
         stats.feesBooked += Number(formatUnits(a.amount, 18));
         stats.payeeReceived += Number(formatUnits(a.toPayee, 18));

@@ -25,7 +25,7 @@
   /* the tint of art still loading: on white in both themes, so it is fixed too */
   --art-wait: #1a1a1a;
   /* a price change, up and down: the only colour on text besides the inks' marks */
-  --up: #1f9d55;
+  --up: #0e8040;
   --down: #d13b3b;
 
   --mono: var(--font-plex), ui-monospace, "SF Mono", "Menlo", "Monaco",
@@ -276,10 +276,27 @@ a:hover {
   color: var(--ink);
   font-weight: 600;
 }
-/* the mobile header holds the logo, connect and the menu toggle */
+.hdr-bid-m {
+  display: none;
+}
+/* the mobile header holds the logo, the bid as two stacked lines and the menu toggle */
 @media (max-width: 860px) {
   .hdr-next {
     display: none;
+  }
+  .header .hdr-bid-m {
+    order: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+    height: auto;
+    margin-left: auto;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+  .hdr-bid-m + .nav-toggle {
+    margin: 0 -10px 0 0;
   }
 }
 .wallet.pending {
@@ -347,11 +364,22 @@ a:hover {
   font-weight: 600;
   line-height: 1.25;
 }
-.fw-intro p {
-  margin: 16px 0 0;
+.fw-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--muted);
+  text-wrap: pretty;
+}
+.fw-lines p {
+  margin: 0;
+}
+.fw-lines .lead {
+  color: var(--ink);
+  font-weight: 500;
 }
 .fw-steps {
   display: grid;
@@ -460,22 +488,22 @@ a:hover {
   background: var(--ink);
 }
 
-/* return line from step 05 back to step 02 */
-.fw-ret,
-.fw-ret-end,
-.fw-split {
+/* split of a statement sale under steps 02 to 05: a bracket back up into the pot, then a bar in the live proportion */
+.fw-loop {
   grid-row: 2;
+  grid-column: 3 / 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 18px;
 }
-.fw-ret {
-  grid-column: 3 / 9;
+.fw-bracket {
   position: relative;
-  height: 18px;
-  margin: 14px 0 0 18px;
+  height: 14px;
   border: 1px solid var(--ink);
-  border-right: 0;
   border-top: 0;
 }
-.fw-ret::before {
+.fw-bracket::before {
   content: "";
   position: absolute;
   left: -5px;
@@ -484,32 +512,42 @@ a:hover {
   border-top: 0;
   border-bottom: 7px solid var(--ink);
 }
-.fw-ret-end {
-  grid-column: 9;
-  width: 18px;
-  height: 18px;
-  margin-top: 14px;
+.fw-bar {
+  display: grid;
+  min-height: 34px;
   border: 1px solid var(--ink);
-  border-left: 0;
-  border-top: 0;
 }
-.fw-split {
-  grid-column: 3 / 10;
-  align-self: end;
-  justify-self: center;
+.fw-bar > div {
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
   padding: 0 12px;
-  background: var(--paper);
+  overflow: hidden;
   font-size: 12px;
-  transform: translateY(50%);
+  white-space: nowrap;
 }
-.fw-split i {
-  font-style: normal;
-  color: var(--faint);
+.fw-bar b {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
-.fw-split b {
-  font-weight: 600;
+.fw-bar .pot {
+  background: var(--surface);
+}
+.fw-bar .burn {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.fw-cap {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--quiet);
+}
+.fw-cap > span:last-child {
+  font-variant-numeric: tabular-nums;
 }
 
 /* stats row */
@@ -542,6 +580,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 .stat-cell .mark {
   display: block;
@@ -578,17 +617,24 @@ a:hover {
   white-space: nowrap;
   color: var(--faint);
 }
-.stat-cell.ink-pot {
+.stat-cell.ink-pts {
   background: var(--ink);
   color: var(--on-ink);
   border-left: 0;
 }
-.stat-cell.ink-pot .label {
+.stat-cell.ink-pts .label {
   color: var(--on-ink);
   opacity: 0.7;
 }
-.stat-cell.ink-pot .value small {
+.stat-cell.ink-pts .value small,
+.stat-cell.ink-pts .stat-note {
   color: var(--faint);
+}
+.stat-cell .stat-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* body: stats and ledger on the left, rail on the right */
@@ -610,13 +656,33 @@ a:hover {
   padding: 24px;
   border: 0;
 }
+.pot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--structure);
+  font-size: 13px;
+}
+.pot-row > span {
+  color: var(--muted);
+}
+.pot-row b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pot-row small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
 .progress {
   display: flex;
   flex-direction: column;
   gap: 18px;
   padding: 20px 24px;
   border-bottom: 1px solid var(--structure);
-  box-shadow: inset 0 3px 0 var(--ink);
 }
 .progress-row {
   display: flex;
@@ -772,13 +838,6 @@ a:hover {
   color: var(--ink);
   font-weight: 600;
 }
-.live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--muted);
-}
 .ledger-table {
   margin: 0 24px;
 }
@@ -846,6 +905,26 @@ a:hover {
 }
 .ledger-row.stmt .ref-text a {
   font-weight: 600;
+}
+.ref-text b {
+  font-weight: 600;
+}
+/* a $CC burn: an ink square in place of art */
+.tile-burn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+}
+.ledger .ledger-full {
+  display: none;
 }
 .ref-text .detail {
   font-size: 12px;
@@ -929,8 +1008,8 @@ a:hover {
 }
 .tp-big {
   margin-top: 4px;
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 .tp-big.sm {
@@ -1454,7 +1533,13 @@ button.tp-row:disabled {
 
 /* ---- responsive ----------------------------------------------------------- */
 
-.home-tabs {
+/* the trade sheet and the dock exist only at 860px and below; wider, the sheet wrapper is transparent */
+.sheet {
+  display: contents;
+}
+.sheet-grab,
+.sheet-scrim,
+.dock {
   display: none;
 }
 
@@ -1477,129 +1562,125 @@ button.tp-row:disabled {
 }
 
 @media (max-width: 860px) {
-  .home-tabs {
-    display: flex;
-    border-bottom: 1px solid var(--structure);
-  }
-  .home-tabs button {
-    flex: 1;
-    height: 52px;
-    border: 0;
-    border-bottom: 3px solid transparent;
-    background: none;
-    color: var(--muted);
-    font: inherit;
-    font-size: 14px;
-    cursor: pointer;
-  }
-  .home-tabs button[aria-selected="true"] {
-    border-bottom-color: var(--ink);
-    color: var(--ink);
-    font-weight: 600;
-  }
-  .home[data-tab="ledger"] :is(.fw, .stats, .rail),
-  .home[data-tab="trade"] :is(.fw, .stats, .ledger),
-  .home[data-tab="process"] :is(.rail, .ledger) {
+  .wide-only {
     display: none;
   }
+  /* one scroll: points and stats, the cycle, pot, next statement, then the ledger */
+  .home {
+    display: flex;
+    flex-direction: column;
+  }
+  .home-body,
+  .rail {
+    display: contents;
+  }
+  .stats {
+    order: 1;
+  }
   .fw {
-    grid-template-columns: minmax(0, 1fr);
+    order: 2;
+    display: block;
+  }
+  .pot-row {
+    order: 3;
+    height: 48px;
+    padding: 0 16px;
+    border-bottom-color: var(--divider);
+  }
+  .progress {
+    order: 4;
+    padding: 18px 16px 20px;
+  }
+  .ledger {
+    order: 5;
   }
   .fw-intro {
-    padding: 24px 16px 0;
+    padding: 22px 16px 0;
     border-right: 0;
   }
   .fw-intro h2 {
-    font-size: 18px;
+    font-size: 22px;
   }
+  .fw-lines {
+    margin-top: 6px;
+  }
+  .fw-lines p:not(.lead) {
+    display: none;
+  }
+  /* the steps as a vertical list: 40px glyph column, dashed separators, no arrows */
   .fw-steps {
-    grid-template-columns: 56px minmax(0, 1fr) 24px;
-    column-gap: 16px;
-    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 16px 20px;
   }
-  .fw-glyph {
-    grid-column: 1;
-    grid-row: calc(var(--n) * 2 - 1);
-    justify-content: center;
-    align-items: center;
-    height: 52px;
+  .fw-arr {
+    display: none;
   }
   .fw-step {
-    display: contents;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 14px;
+    align-items: center;
+    padding: 10px 0;
+  }
+  .fw-arr + .fw-step {
+    border-top: 1px dashed var(--divider);
+  }
+  .fw-glyph {
+    align-items: center;
+    min-height: 32px;
+  }
+  .fw-bars,
+  .fw-ladder {
+    width: 28px;
+    height: 28px;
+  }
+  .fw-thumb {
+    width: 26px;
+    height: 26px;
   }
   .fw-text {
-    grid-column: 2;
-    grid-row: calc(var(--n) * 2 - 1);
     margin-top: 0;
-    min-height: 52px;
+  }
+  .fw-line {
+    margin-top: 3px;
   }
   .fw-chip {
-    width: 48px;
-    padding: 0;
+    height: 22px;
+    padding: 0 6px;
+    font-size: 10px;
   }
-  .fw-chip > * {
+  .fw-chip small {
     display: none;
   }
   .fw-mpot {
     display: inline;
   }
   .fw-mpot b {
-    font-weight: 600;
-    color: var(--ink);
+    font-weight: 400;
   }
-  .fw-arr {
-    grid-column: 1;
-    grid-row: calc(var(--n) * 2);
-    justify-content: center;
-    height: 24px;
-    padding: 0;
+  .fw-loop {
+    margin-top: 12px;
   }
-  .fw-arr svg {
-    width: 20px;
-    transform: rotate(90deg);
-  }
-  .fw-ret {
-    grid-column: 3;
-    grid-row: 3 / 9;
-    height: auto;
-    margin: 26px 0 0;
-    border: 1px solid var(--ink);
-    border-left: 0;
-    border-bottom: 0;
-  }
-  .fw-ret::before {
-    left: -1px;
-    top: -5px;
-    border: 4.5px solid transparent;
-    border-left: 0;
-    border-right: 7px solid var(--ink);
-  }
-  .fw-ret-end {
-    grid-column: 3;
-    grid-row: 9;
-    width: auto;
-    height: 26px;
-    margin: 0;
-    border: 1px solid var(--ink);
-    border-left: 0;
-    border-top: 0;
-  }
-  .fw-split {
-    grid-column: 1 / -1;
-    grid-row: 10;
-    flex-direction: column;
-    gap: 4px;
-    justify-self: stretch;
-    align-self: auto;
-    margin-top: 20px;
-    padding: 16px 0 0;
-    border-top: 1px dashed var(--divider);
-    background: none;
-    font-size: 13px;
-    transform: none;
-  }
-  .fw-split i {
+  .fw-bracket {
     display: none;
+  }
+  .fw-bar {
+    min-height: 44px;
+  }
+  .fw-bar > div {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 1px;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .fw-bar b {
+    font-size: 15px;
+  }
+  .fw-cap {
+    white-space: normal;
   }
 
   .stats {
@@ -1614,27 +1695,120 @@ button.tp-row:disabled {
   .stat-cell:nth-child(n + 3) {
     border-top: 1px solid var(--divider);
   }
-  .stat-cell.ink-pot {
-    grid-column: 1 / -1;
+  .stats {
+    border-bottom-color: var(--structure);
   }
-  .rail {
-    display: flex;
-    flex-direction: column;
+  /* the points panel leads, full width, over the 2 x 2 cells */
+  .stat-cell.ink-pts {
+    order: -1;
+    grid-column: 1 / -1;
+    padding: 18px 16px 20px;
+    border-top: 0;
+  }
+  .stat-cell.ink-pts .value {
+    margin-top: 10px;
+    font-size: 34px;
+    font-weight: 600;
+  }
+  /* the trade panel as a bottom sheet over an ink scrim, opened from the dock */
+  .sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 61;
+    display: block;
+    max-height: 92vh;
+    overflow-y: auto;
+    background: var(--paper);
+    border-top: 1px solid var(--structure);
+    visibility: hidden;
+    transform: translateY(100%);
+  }
+  .home[data-sheet="open"] .sheet {
+    visibility: visible;
+    transform: none;
+  }
+  .sheet-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(26, 26, 26, 0.45);
+  }
+  .home[data-sheet="open"] .sheet-scrim {
+    display: block;
+  }
+  .sheet-grab {
+    display: block;
+    width: 100%;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+  .sheet-grab::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 0 auto;
+    background: var(--disabled);
   }
   .rail .trade {
-    padding: 24px 16px;
+    padding: 4px 16px calc(28px + env(safe-area-inset-bottom));
+  }
+  /* the docked trade bar; the page keeps room for it under the footer */
+  .dock {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 55;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+    background: var(--paper);
+    border-top: 1px solid var(--structure);
+  }
+  body:has(.dock) {
+    padding-bottom: calc(68px + env(safe-area-inset-bottom));
+  }
+  .dock-price {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .dock-price .label {
+    font-size: 10px;
+  }
+  .dock-big {
+    font-size: 18px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .dock-big .tp-chg {
+    margin-left: 8px;
+    font-size: 13px;
+  }
+  .seg.dock-seg {
+    display: grid;
+    flex: none;
+    grid-template-columns: 1fr 1fr;
+    width: 168px;
+    height: 44px;
+    font-weight: 600;
   }
   .tp-seg {
     width: 100%;
     height: 44px;
   }
   .tp-price .tp-big:not(.sm) {
-    font-size: 30px;
-  }
-  .progress {
-    order: 2;
-    padding: 20px 16px;
-    border-top: 1px solid var(--structure);
+    font-size: 26px;
   }
   .ledger-head {
     flex-wrap: wrap;
@@ -1655,35 +1829,80 @@ button.tp-row:disabled {
   .ledger .more {
     margin: 16px;
   }
+  /* the latest MOBILE_ROWS rows (the header row is child 1), then "view full ledger" */
+  .ledger.short .ledger-table > .ledger-row:nth-child(n + 8),
+  .ledger.short .more:not(.ledger-full) {
+    display: none;
+  }
+  .ledger.short .ledger-full {
+    display: block;
+  }
 }
 
 @media (max-width: 640px) {
   .ledger-th {
     display: none;
   }
+  /* art, then "marker label · time" over the ref, then ETH over the rating */
   .ledger-cols {
-    grid-template-columns: 44px minmax(0, 1fr) 80px;
+    grid-template-columns: 44px auto minmax(0, 1fr) auto;
     grid-template-areas:
-      "when entry eth"
-      "when ref ref";
-    row-gap: 4px;
-    padding: 8px 0;
+      "art entry when eth"
+      "art text text rate";
+    column-gap: 12px;
+    row-gap: 3px;
+    padding: 10px 0;
   }
-  .ledger-row .when {
-    grid-area: when;
-    align-self: start;
+  .ledger-row .ref {
+    display: contents;
+  }
+  .ledger-row .ref > :not(.ref-text) {
+    grid-area: art;
+    justify-self: center;
+  }
+  .ledger-row .ref .tile-statement {
+    width: 38px;
+  }
+  .ledger-row .ref-text {
+    grid-area: text;
+  }
+  .ledger-row .ref-text > :is(a, b, span:only-child) {
+    overflow: hidden;
+    font-weight: 600;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .ledger-row .ref-text :is(.detail, .caption):not(:only-child) {
+    display: none;
   }
   .ledger-row .entry {
     grid-area: entry;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
   }
-  .ledger-row .ref {
-    grid-area: ref;
+  .ledger-row .entry .mark {
+    width: 7px;
+    height: 7px;
+  }
+  .ledger-row .when {
+    grid-area: when;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--muted);
+  }
+  .ledger-row .when::before {
+    content: "· ";
   }
   .ledger-row .num:last-child {
     grid-area: eth;
   }
   .ledger-row .rate {
-    display: none;
+    grid-area: rate;
+    font-size: 11px;
+    color: var(--quiet);
   }
 }
 
@@ -3894,7 +4113,7 @@ button.slot:disabled {
 /* the price change beside the price, on its baseline: smaller and lighter than the price, green up and red down */
 .tp-chg {
   margin-left: 12px;
-  font-size: 0.62em;
+  font-size: 0.64em;
   font-weight: 400;
   color: var(--muted);
 }
@@ -3904,11 +4123,12 @@ button.slot:disabled {
 .tp-chg.down {
   color: var(--down);
 }
-/* a sub-cent price's zero count, a small digit set low beside the zero */
+/* a sub-cent price's zero count, a small raised digit beside the zero */
 .tp-zeros {
-  font-size: 0.55em;
+  font-size: 0.43em;
   font-weight: 500;
-  vertical-align: -0.28em;
+  vertical-align: 0.9em;
+  line-height: 0;
   margin: 0 0.06em;
 }
 /* the token contract under the fee line */

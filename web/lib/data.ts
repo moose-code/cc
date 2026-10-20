@@ -66,6 +66,8 @@ export function useStats(): { data?: Stats } {
               payeeReceived: s.payeeReceived,
               composed: s.composed,
               creditsAcquired: s.creditsEth + s.creditsBalance + s.creditsListing + s.creditsAdopted,
+              ethToPot: s.ethToPot,
+              potSales: s.potSales,
             }
           : undefined,
   };
