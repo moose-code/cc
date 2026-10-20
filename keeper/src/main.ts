@@ -12,6 +12,7 @@ import { decide, type Intended, type Listing, type Policy, type Skip } from "./d
 import { Executor, type Outcome, type Signer } from "./exec.ts";
 import { Breaker, Ledger, PendingStore } from "./ledger.ts";
 import { Sources } from "./listings.ts";
+import { startMarketServer } from "./market-view.ts";
 import { readKeystore } from "./keystore.ts";
 import { alert } from "./alert.ts";
 import { log, safeError } from "./log.ts";
@@ -189,6 +190,9 @@ async function main() {
     return;
   }
   sources.startStream();
+  // the website reads discovery through this view; a failed listen leaves the keeper's own doors running
+  if (cfg.marketView.port) startMarketServer({ ...cfg.marketView, port: cfg.marketView.port, source: sources,
+    onError: (e) => void alert(cfg.alertWebhook, "market-view", "market view server failed; website listings are not served", { error: safeError(e) }) });
   let last = -1n;
   let lastAt = 0;
   let failures = 0;
