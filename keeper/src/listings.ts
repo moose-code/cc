@@ -189,7 +189,7 @@ export class Sources {
       else {
         const r = await fetchListings({
           key: o.key!,
-          rpc: this.cfg.rpcUrls[0],
+          rpcUrls: this.cfg.rpcUrls,
           adapter: this.cfg.record.seaportAdapter,
           pages: o.pages,
           sign: o.sign,

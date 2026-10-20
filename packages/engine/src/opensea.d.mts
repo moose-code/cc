@@ -44,6 +44,7 @@ export interface FetchResult {
 export declare function fetchListings(o: {
   key: string;
   rpc?: string;
+  rpcUrls?: string[];
   adapter?: string;
   pages?: number;
   sign?: number;

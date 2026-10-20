@@ -21,6 +21,13 @@ export const SEAPORT_16 = "0x0000000000000068f116a894984e2db1123eb395";
 export const OPENSEA_FEE = "0x0000a26b00c1f0df003000390027140000faa719";
 const ZERO = "0x0000000000000000000000000000000000000000";
 const ZERO32 = "0x" + "0".repeat(64);
+const RPC_BATCH_SIZE = 20;
+const rpcNextStart = new Map();
+class RpcUnavailable extends Error { name = "RpcUnavailable"; }
+class OpenSeaAuthFailure extends Error {
+  constructor(status) { super("opensea: fulfillment authorization failed"); this.name = `OpenSeaAuth${status}`; }
+}
+const reverted = (error) => error?.code === 3 || /execution reverted/i.test(error?.message ?? "");
 // selector of allowedRecipient(address), the public mapping getter of SeaportBasicAdapter
 const SELECTOR = "0xdb846026";
 // CreditScore and the selectors of seedOf(uint256), timestampOf(uint256), scoreOf(bytes21,uint64)
@@ -36,7 +43,8 @@ const word = (id) => BigInt(id).toString(16).padStart(64, "0");
 /**
  * @param {object} o
  * @param {string} o.key OpenSea API key, from the caller's environment only
- * @param {string} [o.rpc] node for the allowlist, the holder check and the score ranking
+ * @param {string} [o.rpc] node for single-URL dev callers
+ * @param {string[]} [o.rpcUrls] ordered nodes for the allowlist, holder check and score ranking
  * @param {string} [o.adapter] SeaportBasicAdapter whose allowedRecipient is the allowlist
  * @param {number} [o.pages] listing pages of 100, default 3
  * @param {number} [o.sign] signatures fetched for the cheapest, default 40
@@ -48,7 +56,9 @@ const word = (id) => BigInt(id).toString(16).padStart(64, "0");
  * @param {(n: number) => Promise<void>} [o.sleep]
  */
 export async function fetchListings(o) {
-  const { key, rpc, adapter } = o;
+  const { key, adapter } = o;
+  const rpcUrls = [...new Set(o.rpcUrls ?? (o.rpc ? [o.rpc] : []))];
+  const hasRpc = rpcUrls.length > 0;
   const maxPages = o.pages ?? 3;
   const sign = o.sign ?? 40;
   const fulfiller = o.fulfiller ?? "0x1111111111111111111111111111111111111111";
@@ -58,22 +68,56 @@ export async function fetchListings(o) {
   const headers = { "x-api-key": key, accept: "application/json" };
 
   async function rpcCall(body) {
-    const r = await fetch(rpc, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
-    return r.json();
+    const requests = Array.isArray(body) ? body : [body];
+    for (const url of rpcUrls) {
+      try {
+        signal.throwIfAborted();
+        const start = Math.max(Date.now(), rpcNextStart.get(url) ?? 0);
+        rpcNextStart.set(url, start + 250);
+        if (start > Date.now()) await delay(start - Date.now(), undefined, { signal });
+        signal.throwIfAborted();
+        const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(8_000)]);
+        const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: requestSignal });
+        if (!response.ok) throw new RpcUnavailable("opensea: RPC HTTP failure");
+        const value = await response.json();
+        if (Array.isArray(body) !== Array.isArray(value)) throw new RpcUnavailable("opensea: RPC response shape");
+        const rows = Array.isArray(value) ? value : [value];
+        const byId = new Map(rows.map((row) => [row?.id, row]));
+        if (rows.length !== requests.length || byId.size !== requests.length) throw new RpcUnavailable("opensea: RPC response IDs");
+        for (const request of requests) {
+          const row = byId.get(request.id);
+          if (!row || row.jsonrpc !== "2.0" || ("error" in row) === ("result" in row)) throw new RpcUnavailable("opensea: RPC response ID");
+          if (row.error) {
+            if (request.method !== "eth_call" || !reverted(row.error)) throw new RpcUnavailable("opensea: RPC provider failure");
+          } else if (request.method === "eth_call" ? !/^0x[0-9a-fA-F]{64}$/.test(row.result ?? "")
+            : !/^0x[0-9a-fA-F]+$/.test(row.result?.timestamp ?? "")) throw new RpcUnavailable("opensea: RPC result shape");
+        }
+        return value;
+      } catch (error) {
+        if (signal.aborted) throw error;
+      }
+    }
+    throw new RpcUnavailable("opensea: RPC unavailable");
   }
   async function batch(calls) {
-    const r = await rpcCall(calls.map((c, i) => ({ jsonrpc: "2.0", id: i, method: "eth_call", params: [c, "latest"] })));
-    return r.sort((a, b) => a.id - b.id).map((x) => x.result);
+    const out = [];
+    for (let offset = 0; offset < calls.length; offset += RPC_BATCH_SIZE) {
+      const part = calls.slice(offset, offset + RPC_BATCH_SIZE);
+      const rows = await rpcCall(part.map((c, id) => ({ jsonrpc: "2.0", id, method: "eth_call", params: [c, "latest"] })));
+      out.push(...rows.sort((a, b) => a.id - b.id).map((row) => row.error ? undefined : row.result));
+    }
+    return out;
   }
 
   const allowedCache = new Map();
   async function allowed(addr) {
     const a = addr.toLowerCase();
-    if (!rpc || !adapter) return envAllowed.includes(a);
+    if (!hasRpc || !adapter) return envAllowed.includes(a);
     if (!allowedCache.has(a)) {
       const data = SELECTOR + a.slice(2).padStart(64, "0");
       const r = await rpcCall({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: adapter, data }, "latest"] });
-      allowedCache.set(a, BigInt(r.result ?? "0x0") !== 0n);
+      if (r.error) throw new RpcUnavailable("opensea: allowlist read failed");
+      allowedCache.set(a, BigInt(r.result) !== 0n);
     }
     return allowedCache.get(a);
   }
@@ -144,6 +188,7 @@ export async function fetchListings(o) {
       if (res.status !== 429) break;
       await sleep(1000 * (attempt + 1), requestSignal);
     }
+    if (res.status === 401 || res.status === 403) throw new OpenSeaAuthFailure(res.status);
     if (!res.ok) return null;
     const tx = (await res.json()).fulfillment_data?.transaction;
     if (!tx || !tx.function?.startsWith("fulfillBasicOrder_efficient_6GL6yc")) return null;
@@ -163,7 +208,7 @@ export async function fetchListings(o) {
       try {
         r = await convert(l);
       } catch (e) {
-        if (signal.aborted) throw e;
+        if (signal.aborted || e instanceof RpcUnavailable) throw e;
         dropped["malformed listing"] = (dropped["malformed listing"] ?? 0) + 1;
         continue;
       }
@@ -174,7 +219,7 @@ export async function fetchListings(o) {
     if (!cursor) break;
   }
   let notHeld = 0;
-  if (rpc && cands.length) {
+  if (hasRpc && cands.length) {
     // keep the listings the node can fill: the offerer owns the credit now and the order has started by the head block
     // time plus `horizon`
     const owners = await batch(cands.map((c) => ({ to: CREDITS, data: "0x6352211e" + word(c.id) })));
@@ -184,7 +229,7 @@ export async function fetchListings(o) {
     cands = cands.filter((c, i) => owners[i] && ("0x" + owners[i].slice(26)).toLowerCase() === c.offerer.toLowerCase() && Number(c.startTime) <= horizon);
     notHeld = before - cands.length;
   }
-  if (rpc && cands.length) {
+  if (hasRpc && cands.length) {
     const sc = await scores(cands.map((c) => c.id));
     cands.forEach((c, i) => (c.rank = sc[i] === 0n ? Infinity : Number((BigInt(c.price) * 1_000_000n) / sc[i])));
   } else cands.forEach((c) => (c.rank = Number(BigInt(c.price) / 1_000_000_000n)));
@@ -196,6 +241,7 @@ export async function fetchListings(o) {
     try {
       return await fulfillment(c.hash);
     } catch (e) {
+      if (e instanceof OpenSeaAuthFailure) throw e;
       dropped["fulfillment request failed"] = (dropped["fulfillment request failed"] ?? 0) + 1;
       return null;
     }
