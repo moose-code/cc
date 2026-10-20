@@ -4,6 +4,33 @@ export declare const CREDITS: string;
 export declare const SEAPORT_16: string;
 export declare const OPENSEA_FEE: string;
 
+export declare class OpenSeaPending extends Error {
+  retryAt: number;
+  hash?: string;
+  constructor(retryAt: number, hash?: string);
+}
+
+export interface MarketCandidate {
+  id: string;
+  price: string;
+  hash: string;
+  offerer: string;
+  startTime: string;
+  endTime: string;
+}
+
+export interface MarketBook {
+  rows: Map<string, MarketCandidate>;
+  signed: Map<string, SignedOrder>;
+  complete: boolean;
+  slug?: string;
+  identity?: string;
+  lastFullAt: number;
+  apiNext: number;
+}
+
+export declare function createMarketBook(): MarketBook;
+
 export declare class OpenSeaUnavailable extends Error {
   constructor();
 }
@@ -44,6 +71,9 @@ export interface SignedOrder {
 
 export interface FetchResult {
   fetched: number;
+  mode: "full" | "incremental";
+  bookSize: number;
+  reusedParams: number;
   complete: boolean;
   pages: number;
   validationTruncated: boolean;
@@ -60,6 +90,10 @@ export declare function fetchListings(o: {
   adapter?: string;
   pages?: number;
   fullScan?: boolean;
+  book?: MarketBook;
+  updates?: string[];
+  removals?: string[];
+  reconcile?: boolean;
   getScores?: (ids: string[]) => Promise<bigint[]>;
   sign?: number;
   fulfiller?: string;

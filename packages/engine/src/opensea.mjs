@@ -23,6 +23,11 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 const ZERO32 = "0x" + "0".repeat(64);
 const RPC_BATCH_SIZE = 20;
 const rpcNextStart = new Map();
+const bookQueues = new WeakMap();
+export function createMarketBook() { return { rows: new Map(), signed: new Map(), complete: false, lastFullAt: 0, apiNext: 0 }; }
+export class OpenSeaPending extends Error {
+  constructor(retryAt, hash) { super("opensea: order not indexed yet"); this.name = "OpenSeaPending"; this.retryAt = retryAt; this.hash = hash; }
+}
 class RpcUnavailable extends Error { name = "RpcUnavailable"; }
 class OpenSeaAuthFailure extends Error {
   constructor(status) { super("opensea: fulfillment authorization failed"); this.name = `OpenSeaAuth${status}`; }
@@ -55,6 +60,10 @@ const word = (id) => BigInt(id).toString(16).padStart(64, "0");
  * @param {number} [o.pages] listing pages of 100 for bounded dev calls, default 3
  * @param {boolean} [o.fullScan] scan every listing page before ranking, paced to one API request per second
  * @param {(ids: string[]) => Promise<bigint[]>} [o.getScores] immutable score lookup, called with at most 64 unique ids
+ * @param {object} [o.book] caller-owned catalog and prepared order cache, from createMarketBook
+ * @param {string[]} [o.updates] hashes to refresh from canonical order details
+ * @param {string[]} [o.removals] hashes to remove before applying updates
+ * @param {boolean} [o.reconcile] replace the catalog from a complete collection scan
  * @param {number} [o.sign] successful signed orders kept, default 40; full scans inspect at most twice this many contenders
  * @param {string} [o.fulfiller] fulfiller address sent to fulfillment_data
  * @param {string[]} [o.allowedRecipients] allowlist without an rpc, default the OpenSea fee collector
@@ -68,6 +77,16 @@ export async function fetchListings(o) {
   const rpcUrls = [...new Set(o.rpcUrls ?? (o.rpc ? [o.rpc] : []))];
   const hasRpc = rpcUrls.length > 0;
   const fullScan = o.fullScan === true;
+  const book = o.book;
+  if (book && !fullScan) throw new Error("opensea: market book requires full scan mode");
+  const mode = book?.complete && !o.reconcile ? "incremental" : "full";
+  const hashesOf = values => [...new Set((values ?? []).map(hash => {
+    if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error("opensea: invalid update hash");
+    return hash.toLowerCase();
+  }))];
+  const updates = hashesOf(o.updates);
+  const removals = hashesOf(o.removals);
+  if (updates.length > 1000 || removals.length > 20_000) throw new Error("opensea: too many updates");
   const maxPages = fullScan ? Infinity : (o.pages ?? 3);
   const sign = o.sign ?? 40;
   const fulfiller = o.fulfiller ?? "0x1111111111111111111111111111111111111111";
@@ -76,6 +95,10 @@ export async function fetchListings(o) {
   const sleep = (ms, requestSignal = signal) => o.sleep ? o.sleep(ms) : delay(ms, undefined, { signal: requestSignal });
   const envAllowed = (o.allowedRecipients ?? [OPENSEA_FEE]).map((a) => a.toLowerCase());
   const headers = { "x-api-key": key, accept: "application/json" };
+  const identity = JSON.stringify(["ethereum", CREDITS, SEAPORT_16, adapter?.toLowerCase() ?? null, fulfiller.toLowerCase(), [...envAllowed].sort(), o.horizon ?? 86400]);
+  if (book && ((book.identity && book.identity !== identity) || (!book.identity && (book.complete || book.rows.size || book.signed.size)))) throw new Error("opensea: market book identity mismatch");
+  let stagedRows = book ? new Map([...book.rows].map(([hash, row]) => [hash, { ...row }])) : undefined;
+  const stagedSigned = new Map(book?.signed ?? []);
 
   async function rpcCall(body) {
     const requests = Array.isArray(body) ? body : [body];
@@ -138,10 +161,11 @@ export async function fetchListings(o) {
     const run = async () => {
       requestSignal.throwIfAborted();
       if (fullScan) {
-        const start = Math.max(Date.now(), apiNext);
+        const start = Math.max(Date.now(), book?.apiNext ?? apiNext);
         if (start > Date.now()) await sleep(start - Date.now(), requestSignal);
         requestSignal.throwIfAborted();
         apiNext = Date.now() + 1000;
+        if (book) book.apiNext = apiNext;
       }
       const physicalSignal = fullScan ? AbortSignal.any([requestSignal, AbortSignal.timeout(10_000)]) : requestSignal;
       try {
@@ -155,8 +179,9 @@ export async function fetchListings(o) {
       } catch (error) { if (fullScan && !signal.aborted) throw new OpenSeaUnavailable(); throw error; }
     };
     if (!fullScan) return run();
-    const pending = apiQueue.then(run).catch(error => { if (signal.aborted) throw error; throw new OpenSeaUnavailable(); });
+    const pending = (book ? bookQueues.get(book) ?? Promise.resolve() : apiQueue).then(run).catch(error => { if (signal.aborted) throw error; throw new OpenSeaUnavailable(); });
     apiQueue = pending.catch(() => {});
+    if (book) bookQueues.set(book, apiQueue);
     return pending;
   }
   function retryMs(res, fallback) {
@@ -178,7 +203,7 @@ export async function fetchListings(o) {
     } finally { signal.removeEventListener("abort", abort); }
   }
 
-  async function get(url) {
+  async function get(url, allowMissing = false) {
     for (let attempt = 0; attempt < 4; ++attempt) {
       const { res, body } = await api(url);
       if (res.status === 429) {
@@ -187,6 +212,7 @@ export async function fetchListings(o) {
         await sleep(wait);
         continue;
       }
+      if (allowMissing && res.status === 404) return undefined;
       if (!res.ok) throw new Error(`opensea: HTTP ${res.status} for ${url.pathname}`);
       return body;
     }
@@ -213,6 +239,7 @@ export async function fetchListings(o) {
     if (p.orderType > 1) return "restricted order type";
     if (p.consideration.length === 0 || !p.consideration.every(native)) return "consideration is not native eth";
     if (!same(p.consideration[0].recipient, p.offerer)) return "first payout is not the offerer";
+    if (!/^\d+$/.test(String(p.startTime ?? "")) || !/^\d+$/.test(String(p.endTime ?? ""))) return "malformed order time";
     if (Number(p.endTime) <= Date.now() / 1000) return "expired";
     const extra = p.consideration.slice(1);
     for (const c of extra) {
@@ -220,7 +247,7 @@ export async function fetchListings(o) {
     }
     const price = p.consideration.reduce((s, c) => s + BigInt(c.startAmount), 0n);
     if (price <= 0n) return "nonpositive price";
-    return { id: off.identifierOrCriteria, price: price.toString(), offerer: p.offerer, startTime: String(p.startTime), hash: l.order_hash };
+    return { id: off.identifierOrCriteria, price: price.toString(), offerer: p.offerer, startTime: String(p.startTime), endTime: String(p.endTime), hash: l.order_hash };
   }
 
   // score of every id through batched eth_calls; ids that do not exist map to 0
@@ -257,16 +284,22 @@ export async function fetchListings(o) {
     return tx.input_data.parameters;
   }
 
-  const slug = (await get(new URL(`https://api.opensea.io/api/v2/chain/ethereum/contract/${CREDITS}`))).collection;
+  function inactive(order) {
+    for (const flag of ["cancelled", "canceled", "finalized", "marked_invalid"]) if (order[flag] !== undefined && typeof order[flag] !== "boolean") throw new Error("opensea: malformed order status");
+    if (order.status !== undefined && !["ACTIVE", "INACTIVE", "FULFILLED", "EXPIRED", "CANCELLED", "CANCELED"].includes(order.status)) throw new Error("opensea: malformed order status");
+    return ["INACTIVE", "FULFILLED", "EXPIRED", "CANCELLED", "CANCELED"].includes(order.status) || order.cancelled || order.canceled || order.finalized || order.marked_invalid;
+  }
+  const slug = book?.slug ?? (await get(new URL(`https://api.opensea.io/api/v2/chain/ethereum/contract/${CREDITS}`))).collection;
+  if (typeof slug !== "string" || !slug.length) throw new Error("opensea: malformed collection identity");
   let fetched = 0;
   let cands = [];
   const dropped = {};
   let cursor;
   let pages = 0;
-  let complete = false;
+  let complete = mode === "incremental";
   const cursors = new Set();
   const hashes = new Set();
-  for (let i = 0; i < maxPages; ++i) {
+  for (let i = 0; mode === "full" && i < maxPages; ++i) {
     const body = await page(slug, cursor);
     pages++;
     if (fullScan && !Array.isArray(body.listings)) throw new Error("opensea: malformed listing page");
@@ -274,7 +307,7 @@ export async function fetchListings(o) {
       ++fetched;
       let r;
       try {
-        r = await convert(l);
+        r = fullScan && inactive(l) ? "inactive" : await convert(l);
       } catch (e) {
         if (signal.aborted || e instanceof RpcUnavailable) throw e;
         dropped["malformed listing"] = (dropped["malformed listing"] ?? 0) + 1;
@@ -296,6 +329,32 @@ export async function fetchListings(o) {
     if (!cursor) { complete = true; break; }
     if (fullScan && cursors.has(cursor)) throw new Error("opensea: repeated listing cursor");
     cursors.add(cursor);
+  }
+  if (book) {
+    if (mode === "full") stagedRows = new Map(cands.map(row => [row.hash.toLowerCase(), { ...row, hash: row.hash.toLowerCase() }]));
+    for (const hash of removals) { stagedRows.delete(hash); stagedSigned.delete(hash); }
+    for (const hash of updates) {
+      const body = await get(new URL(`https://api.opensea.io/api/v2/orders/chain/ethereum/protocol/${SEAPORT_16}/${hash}`), true);
+      if (body === undefined) {
+        if (!stagedRows.has(hash)) throw new OpenSeaPending(Date.now() + 5000, hash);
+        stagedRows.delete(hash); stagedSigned.delete(hash); continue;
+      }
+      fetched++;
+      const order = body?.order;
+      const chain = typeof order?.chain === "string" ? order.chain : order?.chain?.name;
+      const offer = order?.protocol_data?.parameters?.offer;
+      if (!order || typeof order.order_hash !== "string" || order.order_hash.toLowerCase() !== hash || typeof order.protocol_address !== "string" || !same(order.protocol_address, SEAPORT_16) || (order.chain !== undefined && chain !== "ethereum")) throw new Error("opensea: order identity mismatch");
+      if (offer !== undefined && (!Array.isArray(offer) || offer.length !== 1 || typeof offer[0].token !== "string" || !same(offer[0].token, CREDITS))) throw new Error("opensea: order identity mismatch");
+      if (inactive(order)) { stagedRows.delete(hash); stagedSigned.delete(hash); continue; }
+      if (!offer) throw new Error("opensea: malformed order details");
+      const row = await convert(order);
+      if (typeof row === "string") { stagedRows.delete(hash); stagedSigned.delete(hash); continue; }
+      if (stagedRows.has(hash) && stagedRows.get(hash).id !== row.id) throw new Error("opensea: order identity mismatch");
+      stagedRows.set(hash, { ...row, hash });
+    }
+    for (const [hash, row] of stagedRows) if (Number(row.endTime) <= Date.now() / 1000) { stagedRows.delete(hash); stagedSigned.delete(hash); }
+    for (const hash of stagedSigned.keys()) if (!stagedRows.has(hash)) stagedSigned.delete(hash);
+    cands = [...stagedRows.values()].map(row => ({ ...row }));
   }
   let notHeld = 0;
   async function held(rows) {
@@ -333,7 +392,11 @@ export async function fetchListings(o) {
   });
   const orders = [];
   const signedIds = new Set();
-  const top = fullScan ? await held(cands.slice(0, 2 * sign)) : cands.slice(0, sign);
+  const contenders = cands.slice(0, fullScan ? 2 * sign : sign);
+  const checked = fullScan ? await held(contenders.filter(row => !stagedSigned.has(row.hash))) : contenders;
+  const valid = new Set(checked.map(row => row.hash));
+  const top = fullScan ? contenders.filter(row => stagedSigned.has(row.hash) || valid.has(row.hash)) : contenders;
+  let reusedParams = 0;
   const fetchedParams = [];
   const fulfillmentOf = async (c) => {
     try {
@@ -348,20 +411,28 @@ export async function fetchListings(o) {
   for (const [i, c] of top.entries()) {
     if (orders.length >= sign) break;
     if (fullScan && signedIds.has(c.id)) continue;
-    const p = fullScan ? await fulfillmentOf(c) : fetchedParams[i];
+    const prepared = book ? stagedSigned.get(c.hash) : undefined;
+    if (prepared) reusedParams++;
+    const p = prepared?.params ?? (fullScan ? await fulfillmentOf(c) : fetchedParams[i]);
     if (!p) {
       dropped["no basic fulfillment data"] = (dropped["no basic fulfillment data"] ?? 0) + 1;
       continue;
     }
     try {
-      orders.push({ id: c.id, price: c.price, hash: c.hash, params: basicParams(p) });
+      const order = { id: c.id, price: c.price, hash: c.hash, params: basicParams(p) };
+      orders.push(order);
+      if (book) stagedSigned.set(c.hash, order);
       signedIds.add(c.id);
     } catch (e) {
       dropped["malformed fulfillment"] = (dropped["malformed fulfillment"] ?? 0) + 1;
     }
   }
   if (fullScan) signal.throwIfAborted();
-  return { fetched, fit: cands.length, notHeld, orders, dropped, complete, pages, validationTruncated: fullScan && cands.length > 2 * sign };
+  if (book) {
+    book.rows = stagedRows; book.signed = stagedSigned; book.complete = complete; book.slug = slug; book.identity = identity;
+    if (mode === "full") book.lastFullAt = Date.now();
+  }
+  return { fetched, fit: cands.length, notHeld, orders, dropped, complete, pages, validationTruncated: fullScan && cands.length > 2 * sign, mode, bookSize: stagedRows?.size ?? cands.length, reusedParams };
 }
 
 // BasicOrderParameters of a fulfillment_data answer, every number a decimal string

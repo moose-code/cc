@@ -214,10 +214,10 @@ test("Credit score cache preserves good values on RPC failure", async () => {
 test("OpenSea full scan runs once in the background and retains cached candidates on failure", { timeout: 2000 }, async () => {
   const original = globalThis.fetch;
   let calls = 0;
-  let rejectFetch: ((e: Error) => void) | undefined;
+  let resolveFetch: ((response: Response) => void) | undefined;
   globalThis.fetch = (() => {
     calls++;
-    return new Promise((_resolve, reject) => { rejectFetch = reject; });
+    return new Promise((resolve) => { resolveFetch = resolve; });
   }) as typeof fetch;
   const cfg: any = {
     record: { chainId: 1, core: "0x00000000000000000000000000000000000000c0", seaportAdapter: "0x00000000000000000000000000000000000000a1" },
@@ -226,10 +226,12 @@ test("OpenSea full scan runs once in the background and retains cached candidate
   };
   const client: any = { multicall: async ({ contracts }: any) => contracts.map((c: any) => ({ status: "success", result:
     c.functionName === "bidOf" ? 2000n : c.functionName === "price" ? ["0x0", 1000n, "0x"] : c.functionName === "ownerOf" ? offerer : [true, false, 0n, 0n] })) };
-  let now = 1_000_000_000;
+  let now = Date.now();
   const source = new Sources(client, cfg, () => now);
   (source as any).scores.set(42n, 2000n);
   (source as any).seaport = [{ venue: "seaport", adapter: cfg.record.seaportAdapter, id: 42n, price: 1000n, params: "0x", offerer, hash: "0x" + "11".repeat(32) }];
+  const lines: any[] = [];
+  setSink(line => lines.push(JSON.parse(line)));
   try {
     assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 1n)).map(l => l.id), [42n]);
     await new Promise(resolve => setImmediate(resolve));
@@ -237,16 +239,115 @@ test("OpenSea full scan runs once in the background and retains cached candidate
     assert.equal(calls, 1);
     assert.deepEqual((await source.candidates({ ethRate: 1_000_000n } as any, 2n)).map(l => l.id), [42n]);
     assert.equal(calls, 1);
-    rejectFetch!(Object.assign(new Error("fixture API rate limit"), { retryAt: now + 600_000 }));
+    resolveFetch!(new Response(null, { status: 429, headers: { "retry-after": "600" } }));
     await (source as any).seaportRefresh;
     assert.equal((source as any).seaport.length, 1);
     assert.equal((source as any).seaportRefresh, undefined);
+    assert.ok(lines.some(line => line.alert === "opensea" && line.error === "OpenSeaRateLimit"));
     now += 301_000;
     await source.candidates({ ethRate: 1_000_000n } as any, 3n);
     assert.equal(calls, 1);
   } finally {
-    rejectFetch?.(new Error("fixture cleanup"));
+    resolveFetch?.(new Response(null, { status: 503 }));
     await (source as any).seaportRefresh;
     globalThis.fetch = original;
+    setSink(line => process.stdout.write(line + "\n"));
   }
+});
+
+// promise: cancellation floods perform no REST work for unknown orders and immediately quarantine a known candidate.
+test("stream changes coalesce and ignore unrelated cancellation floods", () => {
+  const source: any = new Sources({} as any, { record: { chainId: 1 }, strategy: { mode: "off" }, opensea: { refreshSec: 300 } } as any);
+  source.market.complete = true;
+  const hash = "0x" + "11".repeat(32);
+  source.market.rows.set(hash, { id: "42" });
+  source.seaport = [{ id: 42n, hash }];
+  for (let i = 0; i < 6000; i++) source.marketChanged({ event: "item_cancelled", hash: "0x" + BigInt(i + 100).toString(16).padStart(64, "0") });
+  assert.equal(source.marketChanges.size, 0);
+  source.marketChanged({ event: "item_listed", hash });
+  const earlier = source.marketChanges.get(hash).revision;
+  source.marketChanged({ event: "item_cancelled", hash });
+  assert.equal(source.seaport.length, 0);
+  assert.equal(source.marketChanges.size, 1);
+  assert.ok(source.marketChanges.get(hash).revision > earlier);
+  assert.equal(source.marketChanges.get(hash).remove, true);
+  assert.ok(source.blocked.has(hash));
+});
+
+// promise: transfers received during a baseline remain pending, and a stream gap or outage cannot masquerade as a current book.
+test("stream transfers and gap reconciliation remain due", () => {
+  let now = 2_000_000;
+  const source: any = new Sources({} as any, { record: { chainId: 1 }, opensea: { refreshSec: 300 } } as any, () => now);
+  source.seaport = [{ id: 42n }];
+  source.marketChanged({ event: "item_transferred", id: 42n });
+  assert.equal(source.seaport.length, 0);
+  assert.ok(source.transferred.has("42"));
+  source.transferred.clear();
+  source.market.complete = true;
+  source.market.lastFullAt = now;
+  source.reconciledGeneration = source.gapGeneration;
+  source.streamJoined = true;
+  assert.equal(source.marketDue(), false);
+  now += 301_000;
+  assert.equal(source.marketDue(), false);
+  source.streamJoined = false;
+  assert.equal(source.marketDue(), true);
+  source.streamJoined = true;
+  source.gapGeneration++;
+  assert.equal(source.marketDue(), true);
+  source.seaportRetryAt = now + 60_000;
+  assert.equal(source.marketDue(), false);
+});
+
+// promise: a transfer received during a baseline cannot be republished when that older request completes.
+test("a transfer during discovery stays quarantined at publication", { timeout: 8000 }, async () => {
+  const original = globalThis.fetch;
+  const hash = "0x" + "11".repeat(32);
+  const endTime = String(Math.floor(Date.now() / 1000) + 86400);
+  let release: (() => void) | undefined;
+  let pageReached: (() => void) | undefined;
+  const reached = new Promise<void>(resolve => { pageReached = resolve; });
+  const paused = new Promise<void>(resolve => { release = resolve; });
+  const listing = { order_hash: hash, protocol_address: "0x0000000000000068f116a894984e2db1123eb395", protocol_data: { parameters: {
+    offerer, orderType: 0, startTime: "1", endTime,
+    offer: [{ itemType: 2, token: params.offerToken, identifierOrCriteria: "42", startAmount: "1", endAmount: "1" }],
+    consideration: [{ itemType: 0, token: params.considerationToken, recipient: offerer, startAmount: "1000", endAmount: "1000" }],
+  } } };
+  globalThis.fetch = (async (url: any) => {
+    if (String(url).includes("/contract/")) return Response.json({ collection: "credits" });
+    if (String(url).includes("/all?")) { pageReached!(); await paused; return Response.json({ listings: [listing], next: null }); }
+    return Response.json({ fulfillment_data: { transaction: { function: "fulfillBasicOrder_efficient_6GL6yc", input_data: { parameters: { ...params, endTime } } } } });
+  }) as typeof fetch;
+  const cfg: any = { record: { chainId: 1, seaportAdapter: "0x00000000000000000000000000000000000000a1" },
+    strategy: { mode: "off" }, rpcUrls: [], opensea: { key: "fixture", refreshSec: 300, sign: 1 } };
+  const source: any = new Sources({} as any, cfg);
+  source.scores.set(42n, 2000n);
+  try {
+    const pass = source.refreshSeaport();
+    await reached;
+    source.marketChanged({ event: "item_transferred", id: 42n });
+    release!();
+    await pass;
+    assert.equal(source.market.complete, true);
+    assert.equal(source.market.rows.size, 1);
+    assert.equal(source.seaport.length, 0);
+    assert.ok(source.transferred.has("42"));
+  } finally { release?.(); globalThis.fetch = original; }
+});
+
+// promise: overflow requires a fresh complete reconciliation and cannot immediately publish from an older pass.
+test("stream buffer overflow fences discovery until reconciliation is due", () => {
+  let now = 2_000_000;
+  const source: any = new Sources({} as any, { record: { chainId: 1 }, opensea: { refreshSec: 300 } } as any, () => now);
+  source.market.complete = true;
+  source.market.lastFullAt = now;
+  source.lastFullAttempt = now;
+  source.streamJoined = true;
+  for (let i = 0; i <= 20_000; i++) source.marketChanged({ event: "item_listed", hash: "0x" + BigInt(i).toString(16).padStart(64, "0") });
+  assert.equal(source.marketChanges.size, 0);
+  assert.equal(source.overflowGeneration, 1);
+  assert.equal(source.overflowed, true);
+  assert.equal(source.marketDue(), false);
+  now += 60_000;
+  assert.equal(source.marketDue(), true);
 });

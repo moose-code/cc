@@ -177,16 +177,18 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
   const pending = new PendingStore(cfg.stateDir);
   const breaker = new Breaker(cfg.breakerThreshold, cfg.breakerPauseSec);
   const policy: Policy = { doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec };
-  const keeper = new Keeper(client, cfg, fixed, new Sources(client, cfg, Date.now, pending), new Executor(client, cfg, policy, signer, ledger, breaker, pending), policy);
-  return { cfg, client, keeper };
+  const sources = new Sources(client, cfg, Date.now, pending);
+  const keeper = new Keeper(client, cfg, fixed, sources, new Executor(client, cfg, policy, signer, ledger, breaker, pending), policy);
+  return { cfg, client, keeper, sources };
 }
 
 async function main() {
-  const { cfg, client, keeper } = await build();
+  const { cfg, client, keeper, sources } = await build();
   if (process.argv.includes("--once")) {
     await keeper.tick();
     return;
   }
+  sources.startStream();
   let last = -1n;
   let lastAt = 0;
   let failures = 0;

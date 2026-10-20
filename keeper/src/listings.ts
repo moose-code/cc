@@ -16,13 +16,15 @@ import { encodeAbiParameters, getAbiItem, getAddress, type Address, type Hex, ty
 import { basicOrderParameters, coreAbi, creditStrategyAbi, creditsAbi, listingAdapterAbi, seaportAbi } from "@cc/engine/abis";
 import { CREDIT_SCORE, CREDIT_STRATEGY, CREDITS, SEAPORT } from "@cc/engine/addresses";
 import { creditScores, mc } from "@cc/engine/snapshot";
-import { fetchListings, type BasicParams, type SignedOrder } from "@cc/engine/opensea";
+import { createMarketBook, fetchListings, type BasicParams, type SignedOrder } from "@cc/engine/opensea";
 import type { Config } from "./config.ts";
 import type { Listing } from "./decide.ts";
 import type { Snapshot } from "@cc/engine/snapshot";
 import { log, safeError } from "./log.ts";
 import { indexerSeed, StrategyBook, type BookChain, type Move } from "./inventory.ts";
 import { atomicJson, type PendingStore } from "./ledger.ts";
+import { startOpenSeaStream, type MarketChange } from "./opensea-stream.ts";
+import { alert } from "./alert.ts";
 
 // the ids read per multicall when indexing the strategy scores
 const SCORE_READ = 1500;
@@ -80,6 +82,20 @@ export class Sources {
   private seaportAt = 0;
   private seaportRetryAt = 0;
   private seaportRefresh?: Promise<void>;
+  private market = createMarketBook();
+  private marketChanges = new Map<string, { revision: number; remove: boolean }>();
+  private transferred = new Set<string>();
+  private blocked = new Set<string>();
+  private pendingUntil = new Map<string, number>();
+  private marketRevision = 0;
+  private gapGeneration = 0;
+  private overflowGeneration = 0;
+  private overflowed = false;
+  private reconciledGeneration = -1;
+  private lastFullAttempt = 0;
+  private stream?: ReturnType<typeof startOpenSeaStream>;
+  private streamJoined = false;
+  private streamReady = false;
   // Decoded simulation faults have a short in-memory wait; receipt reverts also have a durable wait.
   private cooldown = new Map<string, number>();
   private nextCandidate = { strategy: 0, seaport: 0 };
@@ -99,6 +115,58 @@ export class Sources {
     this.now = now;
     this.pending = pending;
     this.loadScores();
+  }
+
+  startStream() {
+    if (this.stream || this.cfg.record.chainId !== 1 || this.cfg.opensea.file || !this.cfg.opensea.key) return;
+    this.stream = startOpenSeaStream({
+      key: this.cfg.opensea.key,
+      onChange: (change) => this.marketChanged(change),
+      onGap: () => { this.gapGeneration++; },
+      onStatus: (joined) => {
+        this.streamJoined = joined;
+        log("info", "opensea stream status", { joined });
+      },
+    });
+  }
+
+  private marketChanged(change: MarketChange) {
+    const hash = change.hash?.toLowerCase();
+    const remove = ["item_cancelled", "order_invalidate", "item_sold", "item_transferred"].includes(change.event);
+    if (change.event === "item_transferred" && change.id !== undefined) {
+      this.transferred.add(String(change.id));
+      this.seaport = this.seaport.filter(order => order.id !== change.id);
+    }
+    if (hash && (!remove || this.market.rows.has(hash) || this.marketChanges.has(hash) || !this.market.complete)) {
+      this.marketChanges.set(hash, { revision: ++this.marketRevision, remove });
+      if (remove) {
+        this.blocked.add(hash);
+        this.seaport = this.seaport.filter(order => order.hash?.toLowerCase() !== hash);
+      }
+    }
+    // Unknown cancellation floods must not turn into REST requests or an unbounded event buffer.
+    if (this.marketChanges.size + this.transferred.size > 20_000) {
+      this.marketChanges.clear();
+      this.transferred.clear();
+      this.pendingUntil.clear();
+      this.blocked.clear();
+      this.gapGeneration++;
+      this.overflowGeneration++;
+      this.overflowed = true;
+      log("warn", "opensea stream queue overflow, reconciliation required");
+    }
+  }
+
+  private marketDue() {
+    const now = this.now();
+    if (now < this.seaportRetryAt) return false;
+    if (this.overflowed) return now - this.lastFullAttempt >= 60_000;
+    const interval = this.streamJoined ? 30 * 60_000 : this.cfg.opensea.refreshSec * 1000;
+    return !this.market.complete || now - this.market.lastFullAt >= interval
+      || (this.gapGeneration !== this.reconciledGeneration && now - this.lastFullAttempt >= 60_000)
+      || [...this.market.rows.values()].some(order => Number(order.endTime) * 1000 <= now)
+      || (([...this.marketChanges].some(([hash, change]) => change.remove || (this.pendingUntil.get(hash) ?? 0) <= now)
+        || this.transferred.size > 0) && now - this.seaportAt >= 5000);
   }
 
   private scoreKey() {
@@ -223,17 +291,40 @@ export class Sources {
   private async refreshSeaport() {
     const o = this.cfg.opensea;
     if (!o.file && !o.key) return;
-    if (this.now() < this.seaportRetryAt || this.now() - this.seaportAt < o.refreshSec * 1000) return;
+    if (o.file ? this.now() - this.seaportAt < o.refreshSec * 1000 : !this.marketDue()) return;
     this.seaportAt = this.now();
     let orders: SignedOrder[];
     try {
       if (o.file) orders = JSON.parse(readFileSync(o.file, "utf8")).orders;
       else {
+        if (this.stream && !this.streamReady) {
+          await this.stream.ready;
+          this.streamReady = true;
+        }
+        if (this.market.complete) for (const id of this.transferred) {
+          for (const [hash, order] of this.market.rows) if (order.id === id) {
+            this.marketChanges.set(hash, { revision: ++this.marketRevision, remove: true });
+            this.blocked.add(hash);
+          }
+        }
+        if (this.market.complete) this.transferred.clear();
+        const interval = this.streamJoined ? 30 * 60_000 : o.refreshSec * 1000;
+        const reconcile = !this.market.complete || this.now() - this.market.lastFullAt >= interval
+          || (this.gapGeneration !== this.reconciledGeneration && this.now() - this.lastFullAttempt >= 60_000);
+        const generation = this.gapGeneration;
+        const overflow = this.overflowGeneration;
+        if (reconcile) this.lastFullAttempt = this.now();
+        const changes = [...this.marketChanges].filter(([, change]) => change.remove);
+        changes.push(...[...this.marketChanges].filter(([hash, change]) => !change.remove && (this.pendingUntil.get(hash) ?? 0) <= this.now()).slice(0, 32));
         const r = await fetchListings({
           key: o.key!,
           rpcUrls: this.cfg.rpcUrls,
           adapter: this.cfg.record.seaportAdapter,
           fullScan: true,
+          book: this.market,
+          reconcile,
+          updates: changes.filter(([, change]) => !change.remove).map(([hash]) => hash),
+          removals: changes.filter(([, change]) => change.remove).map(([hash]) => hash),
           getScores: async (ids) => {
             const tokens = ids.map(BigInt);
             await this.scoresOf(tokens, true);
@@ -243,14 +334,29 @@ export class Sources {
           horizon: 0,
         });
         if (!r.complete) throw new Error("OpenSea full scan is incomplete");
-        orders = r.orders;
-        log("info", "opensea listings fetched", { complete: r.complete, pages: r.pages, fetched: r.fetched, fit: r.fit, signed: r.orders.length, validationTruncated: r.validationTruncated, cachedScores: this.scores.size, dropped: r.dropped });
+        if (overflow !== this.overflowGeneration) throw Object.assign(new Error("opensea: stream buffer overflow during pass"), { retryAt: this.now() + 1000 });
+        if (reconcile) this.overflowed = false;
+        if (reconcile) this.reconciledGeneration = generation;
+        for (const [hash, change] of changes) if (this.marketChanges.get(hash)?.revision === change.revision) {
+          this.marketChanges.delete(hash);
+          this.blocked.delete(hash);
+          this.pendingUntil.delete(hash);
+        }
+        // Notifications received during the pass must not resurrect a quarantined order.
+        orders = r.orders.filter(order => !this.blocked.has(order.hash.toLowerCase()) && !this.transferred.has(order.id));
+        log("info", "opensea listings fetched", { mode: reconcile ? "full" : "incremental", streamJoined: this.streamJoined,
+          complete: r.complete, pages: r.pages, fetched: r.fetched, fit: r.fit, signed: orders.length,
+          validationTruncated: r.validationTruncated, bookSize: r.bookSize, reusedParams: r.reusedParams, cachedScores: this.scores.size, queued: this.marketChanges.size,
+          gap: this.gapGeneration !== this.reconciledGeneration, dropped: r.dropped });
       }
       if (!Array.isArray(orders)) throw new Error("orders is not an array");
     } catch (e) {
       const retryAt = (e as { retryAt?: number }).retryAt;
-      if (typeof retryAt === "number" && Number.isFinite(retryAt)) this.seaportRetryAt = Math.max(this.seaportRetryAt, retryAt);
+      const pendingHash = (e as { name?: string; hash?: string }).name === "OpenSeaPending" ? (e as { hash?: string }).hash : undefined;
+      if (pendingHash) this.pendingUntil.set(pendingHash, this.now() + 30_000);
+      this.seaportRetryAt = Math.max(this.seaportRetryAt, pendingHash ? this.now() + 1000 : typeof retryAt === "number" && Number.isFinite(retryAt) ? retryAt : this.now() + o.refreshSec * 1000);
       log("warn", "opensea fetch failed, keeping the cached orders", { complete: false, retryAt: this.seaportRetryAt || undefined, error: safeError(e) });
+      if (!pendingHash) void alert(this.cfg.alertWebhook, "opensea", "OpenSea discovery failed; keeping cached orders and backing off", { error: safeError(e), retryAt: this.seaportRetryAt });
       return;
     } finally {
       this.seaportAt = this.now();
@@ -281,7 +387,7 @@ export class Sources {
         log("warn", "malformed seaport order skipped", { id: String(x?.id ?? "unknown") });
       }
     }
-    this.seaport = watched;
+    this.seaport = watched.filter(order => !this.blocked.has(order.hash!.toLowerCase()) && !this.transferred.has(String(order.id)));
     await this.scoresOf(this.seaport.map((w) => w.id));
   }
 
@@ -289,7 +395,7 @@ export class Sources {
   async candidates(snap: Snapshot, blockNumber: bigint): Promise<Listing[]> {
     await this.refreshStrategy();
     if (this.cfg.opensea.file) await this.refreshSeaport();
-    else if (!this.seaportRefresh && this.cfg.opensea.key && this.now() >= this.seaportRetryAt && this.now() - this.seaportAt >= this.cfg.opensea.refreshSec * 1000) {
+    else if (!this.seaportRefresh && this.cfg.opensea.key && this.marketDue()) {
       // A complete market scan can take minutes; independent Core doors keep running during discovery.
       this.seaportRefresh = this.refreshSeaport().catch(error => {
         log("warn", "opensea background refresh failed", { complete: false, error: safeError(error) });

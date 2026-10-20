@@ -1,7 +1,7 @@
 // promise: OpenSea refreshes end within their request budget and a malformed listing leaves other signed orders usable
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fetchListings, CREDITS, SEAPORT_16, OpenSeaRateLimit, OpenSeaUnavailable } from "@cc/engine/opensea";
+import { fetchListings, CREDITS, SEAPORT_16, OpenSeaRateLimit, OpenSeaUnavailable, createMarketBook, OpenSeaPending } from "@cc/engine/opensea";
 
 const offerer = "0x00000000000000000000000000000000000000f1";
 const zero = "0x0000000000000000000000000000000000000000";
@@ -269,6 +269,7 @@ test("OpenSea:401/403 fail the refresh,400/404 retain successful sibling orders"
 // promise: full discovery reaches a winner after listing 300, scores each unique id in bounded chunks, and ranks before bounded live reads.
 test("OpenSea full scan: every page precedes scoring and only ranked contenders receive live reads", async () => {
   const realFetch = globalThis.fetch;
+  const book = createMarketBook();
   let pages = 0, posts = 0;
   const ownerIds: number[] = [], chunks: number[] = [], waits: number[] = [];
   const urls: string[] = [];
@@ -289,11 +290,11 @@ test("OpenSea full scan: every page precedes scoring and only ranked contenders 
     posts++; return osResponse(url, init, []);
   }) as typeof fetch;
   try {
-    const result = await fetchListings({ key: "test", fullScan: true, rpc: "https://full-ranked", horizon: 0, sign: 1, sleep: async ms => { waits.push(ms); }, getScores: async ids => {
+    const result = await fetchListings({ key: "test", fullScan: true, book, rpc: "https://full-ranked", horizon: 0, sign: 1, sleep: async ms => { waits.push(ms); }, getScores: async ids => {
       assert.equal(pages, 5); assert.equal(posts, 0); assert.equal(ownerIds.length, 0); chunks.push(ids.length);
       return ids.map(id => id === "401" ? 1000n : 1n);
     } });
-    assert.equal(result.complete, true); assert.equal(result.pages, 5); assert.equal(result.fetched, 401);
+    assert.equal(result.complete, true); assert.equal(result.pages, 5); assert.equal(result.fetched, 401); assert.equal(book.rows.size, 401);
     assert.deepEqual(result.orders.map(o => o.id), ["401"]);
     assert.equal(posts, 1); assert.equal(ownerIds.length, 2); assert.equal(ownerIds[0], 401);
     assert.equal(chunks.reduce((a, b) => a + b), 401); assert.ok(chunks.every(n => n <= 64));
@@ -527,4 +528,160 @@ test("OpenSea full scan: delayed pacing waits cannot bunch physical requests", a
     assert.equal(starts.length, 3);
     for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 1000);
   } finally { Date.now = realNow; globalThis.fetch = realFetch; }
+});
+
+// promise: a market book retains every eligible listing, uses incremental canonical updates, reuses signed parameters, and expires/removes stale rows without API polling.
+test("OpenSea market book: full baseline, warm reuse, new winner, cancellation, and expiry", async () => {
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  const book = createMarketBook();
+  const counts = { pages: 0, orders: 0, posts: 0, contract: 0 };
+  let cancelled = false;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.pathname.includes("/contract/")) { counts.contract++; return Response.json({ collection: "credits" }); }
+    if (u.pathname.endsWith("/all")) { counts.pages++; return Response.json({ listings: [rpcListing(1), rpcListing(2)] }); }
+    if (u.pathname.includes("/orders/chain/")) {
+      counts.orders++;
+      return Response.json({ order: cancelled ? { order_hash: abiWord(3), protocol_address: SEAPORT_16, chain: "ethereum", status: "CANCELLED" } : { ...rpcListing(3), chain: "ethereum", status: "ACTIVE" } });
+    }
+    counts.posts++; return osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, book, sign: 1, sleep: async () => {}, getScores: async (ids: string[]) => ids.map(id => id === "3" ? 100n : 1n) };
+  try {
+    const first = await fetchListings(opts);
+    assert.equal(first.mode, "full"); assert.equal(book.complete, true); assert.equal(book.rows.size, 2); assert.equal(book.signed.size, 1); assert.ok(book.lastFullAt > 0);
+    const before = { ...counts };
+    const warm = await fetchListings(opts);
+    assert.deepEqual(counts, before); assert.equal(warm.mode, "incremental"); assert.equal(warm.pages, 0); assert.equal(warm.bookSize, 2); assert.equal(warm.reusedParams, 1);
+    const updated = await fetchListings({ ...opts, updates: [abiWord(3), abiWord(3)] });
+    assert.deepEqual(updated.orders.map(o => o.id), ["3"]); assert.equal(book.rows.size, 3); assert.equal(counts.orders, 1); assert.equal(counts.posts, before.posts + 1); assert.equal(counts.pages, 1); assert.equal(counts.contract, 1);
+    cancelled = true;
+    const removed = await fetchListings({ ...opts, updates: [abiWord(3)] });
+    assert.deepEqual(removed.orders.map(o => o.id), ["1"]); assert.equal(book.rows.has(abiWord(3)), false); assert.equal(book.signed.has(abiWord(3)), false);
+    const requests = { ...counts };
+    await fetchListings({ ...opts, removals: [abiWord(2)] });
+    assert.deepEqual(counts, requests); assert.equal(book.rows.has(abiWord(2)), false);
+    Date.now = () => 10_000_000_000_000;
+    const expired = await fetchListings(opts);
+    assert.equal(expired.complete, true); assert.equal(book.rows.size, 0); assert.equal(book.signed.size, 0); assert.deepEqual(expired.orders, []); assert.deepEqual(counts, requests);
+  } finally { Date.now = realNow; globalThis.fetch = realFetch; }
+});
+
+// promise: failed incremental passes do not publish partial rows or prepared orders, and wrong order/contract/chain identities never enter a book.
+test("OpenSea market book: atomic failure and canonical identity validation", async () => {
+  const realFetch = globalThis.fetch;
+  const book = createMarketBook(); let mode = "baseline";
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.pathname.endsWith("/all")) return Response.json({ listings: [rpcListing(1)] });
+    if (u.pathname.includes("/orders/chain/")) {
+      const hash = u.pathname.split("/").at(-1)!;
+      if (mode === "atomic" && hash === abiWord(4)) return Response.json({}, { status: 503 });
+      const order: any = { ...rpcListing(Number(BigInt(hash))), chain: "ethereum", status: "ACTIVE" };
+      if (mode === "hash") order.order_hash = abiWord(99);
+      if (mode === "protocol") order.protocol_address = zero;
+      if (mode === "collection") order.protocol_data.parameters.offer[0].token = zero;
+      if (mode === "chain") order.chain = "base";
+      if (mode === "empty-chain") order.chain = {};
+      if (mode === "status") order.status = "UNRECOGNIZED";
+      if (mode === "wrapper") return Response.json(order);
+      return Response.json({ order });
+    }
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, book, sign: 1, sleep: async () => {}, getScores: async (ids: string[]) => ids.map(() => 1n) };
+  try {
+    await fetchListings(opts);
+    const rows = book.rows, signed = book.signed, fullAt = book.lastFullAt;
+    mode = "atomic";
+    await assert.rejects(fetchListings({ ...opts, updates: [abiWord(3), abiWord(4)], removals: [abiWord(1)] }), /HTTP 503/);
+    assert.equal(book.rows, rows); assert.equal(book.signed, signed); assert.equal(book.rows.size, 1); assert.equal(book.lastFullAt, fullAt);
+    for (mode of ["hash", "protocol", "collection", "chain", "empty-chain", "status", "wrapper"]) {
+      await assert.rejects(fetchListings({ ...opts, updates: [abiWord(3)] }), /identity|status/);
+      assert.equal(book.rows, rows); assert.equal(book.signed, signed);
+    }
+    await assert.rejects(fetchListings({ ...opts, fulfiller: zero }), /book identity/);
+    await assert.rejects(fetchListings({ ...opts, adapter: zero }), /book identity/);
+    assert.equal(book.rows, rows);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: an unknown stream order's 404 is retryable without acknowledging it, while canonical absence can remove an already known order.
+test("OpenSea market book: REST indexing race retains unknown hash and known 404 removes", async () => {
+  const realFetch = globalThis.fetch;
+  const book = createMarketBook(); let gets = 0;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith("/all")) return Response.json({ listings: [rpcListing(1)] });
+    if (path.includes("/orders/chain/")) { gets++; return Response.json({}, { status: 404 }); }
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, book, sign: 1, sleep: async () => {}, getScores: async () => [1n] };
+  try {
+    await fetchListings(opts); const rows = book.rows;
+    const before = Date.now();
+    await assert.rejects(fetchListings({ ...opts, updates: [abiWord(2)] }), (error: unknown) => {
+      assert.ok(error instanceof OpenSeaPending); assert.equal(error.hash, abiWord(2)); assert.ok(error.retryAt >= before + 5000); return true;
+    });
+    assert.equal(book.rows, rows); assert.equal(book.rows.size, 1);
+    const removed = await fetchListings({ ...opts, updates: [abiWord(1)] });
+    assert.equal(removed.complete, true); assert.equal(book.rows.size, 0); assert.equal(book.signed.size, 0); assert.equal(gets, 2);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: an explicit reconciliation replaces stale catalog entries and applies queued removals, rather than retaining only a prepared shortlist.
+test("OpenSea market book: reconciliation replaces catalog and honors removals", async () => {
+  const realFetch = globalThis.fetch;
+  const book = createMarketBook(); let second = false, pages = 0;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    if (new URL(url).pathname.endsWith("/all")) { pages++; return Response.json({ listings: second ? [rpcListing(2), rpcListing(3)] : [rpcListing(1), rpcListing(2)] }); }
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, book, sign: 1, sleep: async () => {}, getScores: async (ids: string[]) => ids.map(() => 1n) };
+  try {
+    await fetchListings(opts); second = true;
+    const result = await fetchListings({ ...opts, reconcile: true, removals: [abiWord(3)] });
+    assert.equal(result.mode, "full"); assert.equal(pages, 2); assert.deepEqual([...book.rows.keys()], [abiWord(2)]); assert.equal(book.signed.has(abiWord(1)), false);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// promise: API spacing survives failed passes and applies across all calls sharing one book.
+test("OpenSea market book: shared pacing survives update failures", async () => {
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  const book = createMarketBook(); let clock = realNow(), fail = false;
+  const starts: number[] = [];
+  Date.now = () => clock;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    starts.push(clock); const u = new URL(url);
+    if (u.pathname.endsWith("/all")) return Response.json({ listings: [rpcListing(1)] });
+    if (u.pathname.includes("/orders/chain/")) return fail ? Response.json({}, { status: 503 }) : Response.json({ order: { ...rpcListing(2), chain: "ethereum", status: "ACTIVE" } });
+    return osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, book, sign: 1, sleep: async (ms: number) => { clock += ms; }, getScores: async (ids: string[]) => ids.map(id => id === "2" ? 100n : 1n) };
+  try {
+    await fetchListings(opts); fail = true;
+    await assert.rejects(fetchListings({ ...opts, updates: [abiWord(2)] }), /HTTP 503/); fail = false;
+    await fetchListings({ ...opts, updates: [abiWord(2)] });
+    assert.equal(starts.length, 6);
+    for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 1000);
+  } finally { Date.now = realNow; globalThis.fetch = realFetch; }
+});
+
+// promise: a bounded negative-event flood removes known hashes without REST work or blocking the next catalog pass.
+test("OpenSea market book: twenty-thousand removals use zero REST requests", async () => {
+  const realFetch = globalThis.fetch;
+  const book = createMarketBook(); let requests = 0;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    requests++;
+    return new URL(url).pathname.endsWith("/all") ? Response.json({ listings: [rpcListing(1)] }) : osResponse(url, init, []);
+  }) as typeof fetch;
+  const opts = { key: "test", fullScan: true, book, sign: 1, sleep: async () => {}, getScores: async () => [1n] };
+  try {
+    await fetchListings(opts); const before = requests;
+    const removals = Array.from({ length: 20_000 }, (_, i) => abiWord(i + 1));
+    const result = await fetchListings({ ...opts, removals });
+    assert.equal(result.mode, "incremental"); assert.equal(result.complete, true); assert.equal(book.rows.size, 0); assert.equal(book.signed.size, 0); assert.equal(requests, before);
+    await assert.rejects(fetchListings({ ...opts, removals: [...removals, abiWord(20_001)] }), /too many updates/);
+    assert.equal(requests, before);
+  } finally { globalThis.fetch = realFetch; }
 });
