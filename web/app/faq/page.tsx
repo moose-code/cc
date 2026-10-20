@@ -1,22 +1,34 @@
-import type { Metadata, ReactNode } from "next";
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import "./faq.css";
 
 export const metadata: Metadata = {
   title: "FAQ",
-  description: "How CC acquires Credits, makes Statements, pays artist royalties, and uses trading fees.",
+  description: "Why CC keeps buying Credits, how inventory circulates, and where fees and royalties go.",
 };
 
 type Question = { question: string; answer: ReactNode };
 
 const questions: Question[] = [
   {
-    question: "what is CC doing with Credits?",
+    question: "what is CC trying to build around Credits?",
     answer: (
       <p>
-        CC uses ETH from coin trading to place a standing bid for Credits. it buys eligible Credits from holders and market
-        listings, offers acquired Credits for resale, and can compose groups of 80 into Statements. proceeds from its
-        NFT sales replenish the buying pot and fund later CC buybacks.
+        a recurring market participant. $CC trading fees fund a standing bid for Credits. the engine acquires them
+        by rating, offers individual Credits back to collectors, and assembles eligible groups of 80 into Statements.
+        completed NFT sales return ETH to the buying pot and set aside ETH for future CC buybacks.
+      </p>
+    ),
+  },
+  {
+    question: "is this just a system for buying and relisting NFTs?",
+    answer: (
+      <p>
+        relisting is one path, but the engine is designed for continued turnover. an acquired Credit enters a sale
+        window with a declining ask. after that window, unsold Credits can be composed into Statements that have their
+        own descending sale prices. completed sales fund further acquisitions and CC buybacks. neither path requires
+        a buyer to accept a permanently increasing markup, although each sale still has a floor.
       </p>
     ),
   },
@@ -28,6 +40,18 @@ const questions: Question[] = [
         points, then scales it to that Credit. the rate rises with time when the buying pot can fund another acquisition.
         buying a Credit pushes the rate down. higher rated Credits cost more and move the rate more. the rate, limits, and
         timing can be changed by the operator.
+      </p>
+    ),
+  },
+  {
+    question: "what happens if Credit prices fall?",
+    answer: (
+      <p>
+        the bid responds to actual acquisitions. each fill lowers its rate, and new $CC trading fees can replenish
+        the buying pot even when older inventory has not sold. resale prices also decline over their windows, but
+        they stop at floors tied to recorded cost and value. a deep market decline can leave Credits or Statements
+        unsold, slowing capital recycling and CC buybacks. the system is designed to keep participating through
+        changing markets, but continuous sales are never guaranteed.
       </p>
     ),
   },
@@ -224,8 +248,8 @@ export default function Faq() {
         <span className="faq-eyebrow">cc / start here</span>
         <h1>credits, on repeat.</h1>
         <p>
-          trades in $CC finance a system that buys Credits, returns some to the market, composes others into
-          Statements, and uses the proceeds to keep going.
+          $CC trading supports a standing buyer for Jack Butcher’s Credits. acquisitions change its bid, inventory
+          moves through resale or composition, and successful sales help finance the next round.
         </p>
       </header>
 
@@ -247,7 +271,7 @@ export default function Faq() {
           </p>
           <p className="faq-links">
             <a href="https://jack.art/credits/" target="_blank" rel="noreferrer">explore Credits ↗</a>
-            <a href="https://jack.art/credits/rating/" target="_blank" rel="noreferrer">how ratings work ↗</a>
+            <a href="https://jack.art/credits/rating" target="_blank" rel="noreferrer">how ratings work ↗</a>
           </p>
         </div>
       </section>
