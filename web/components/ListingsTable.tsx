@@ -29,8 +29,8 @@ export function ListingsTable({ rows, acquire, showGap = false }: { rows: Listin
         <span>credit</span>
         <span className="hide-sm">source</span>
         <span className="num hide-sm">rating</span>
-        <span className="num">price ETH</span>
-        <span className="num hide-sm">bid ETH</span>
+        <span className="num">{acquire ? "price ETH" : "listed"}</span>
+        <span className="num hide-sm">{acquire ? "bid ETH" : "our bid"}</span>
         {showGap && <span className="num">over/under</span>}
         {balanceActive && <span className="num hide-sm">balance bid</span>}
         {acquire && <span />}
