@@ -152,13 +152,16 @@ Order from top: header, **explainer band**, stats row, then the 2-column body (l
 - Statement row: on `--surface` with `--structure` top and bottom rules. It has a 56px thumbnail, `statement 180`, and the meta line `format 4 · 80 credits · cost 0.5378 ETH`.
 
 ### 02 Credits index (`Credits grid`, `Credits table`)
-One list of **all credits held by the engine**, newest first, paginated (`showing 24 of 96 · load more`). No grouping, no filters, no plate letters.
+One list of **all credits held by the engine**, newest first, paginated (`showing 24 of 96 · load more`). No plate letters.
+- **Head:** the title with a short meta on its line, `304 held by engine · next statement composes in ~2m`; the view toggle and sort on the right. The bid lives in the site header and what credits trade for in the market report, so neither repeats here.
+- **Market report** (`components/MarketReport.tsx`, `web/lib/market-report.ts`), above the grid: a bordered row of cells on `--surface`. The intro cell, `MARKET · 7D` and `what the engine paid, median by rating. pick a band to filter the listings.`, then one cell per rating band: `under 500`, `500–599`, `600–649`, `650–699`, `700+` (sized to where credits trade; most rate 600 to 650). A band cell: `rating 600–649`, the median the engine paid at its bid or from a listing over the last 7 days (`0.0381 ETH`, 20/600), the change against the 7 days before with the sales (`+4.2% · 507 sales`, the change only with 5 or more prior sales), and `listed from 0.0444`, the cheapest held credit in the band now (`none listed`). A band cell is a filter for the grid: the picked one carries the 3px `--m` edge, picking it again clears it, and an empty pick reads `no credits listed in this band right now.` In chain mode the report reads the newest 200 purchases and says `MARKET · LATEST 200`. Below 1300px the intro takes its own row; below 860px the bands go two to a row.
 - **Grid:** 6 columns, 12px gap. Card on `--surface`, 1px `--hairline` border (`--ink` when selected, with a ✓ box top-left on the art). Under the art, from top:
   1. **price** `0.0121` 16/600 + `ETH` 11 `--muted` (the price leads the card);
   2. `#14727` on the left and `rating 61` on the right (12 `--muted`; always the full word "rating");
-  3. a dashed rule, then `composes` on the left (11 `--quiet`) and the estimate on the right (`~25h`, `--ink`).
+  3. while the credit sale is on, a dashed rule, then `vs market` and the price against its band's 7-day median (`+51%`);
+  4. `floor in` on the left (11 `--quiet`) and the time on the right (`--ink`).
   - No "for sale" label and no arrows on cards.
-- **Table:** columns `checkbox · art 28 · credit · rating · price ETH · paid ETH · got by · bought · composes`. The unit lives in the header, so cells show bare numbers.
+- **Table:** columns `checkbox · art 28 · credit · rating · price ETH · paid ETH · got by · bought · composes`; the price cell carries `+51% vs mkt` under it. The unit lives in the header, so cells show bare numbers.
 - **Rail:**
   - **Buy credits** (shown while `creditSaleOn`): a short explainer, the selected list (thumbnail, `credit #id`, `rating n`, price `ETH`, ×), selected count and total, the `buy 2 credits` button, and `prices keep falling while in window · excess refunded`.
   - Under it, **how compose timing works**: three numbered lines, then `sell your credits to the engine →`.

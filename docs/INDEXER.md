@@ -297,7 +297,9 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | paid, got by, bought time, rating | I `credit` |
 | buy rate per hour | I `stats_hourly` last 24 hourly buckets |
 | compose estimate | D from I pile position, pile size, `controller.window`, `saleOn`, buy rate |
-| header meta: bid at rating | L `ethRate` |
+| header meta | D held count from the pile; the next compose estimate (above) |
+| market report: median paid, sales and change by rating band | I `credit` where `acquiredHow` is `eth_bid` or `listing` and `acquiredAt` within 14 days, counted in SQL by rating band, week and `costBasis` bucket of 0.0001 ETH (`useMarketIx`; the SQL API has no percentile function, so D the median from the counts, `web/lib/market-report.ts`); chain mode: the newest 200 scan purchases with their scores |
+| market report: listed from, vs market | D the cheapest held credit's L `creditPrice` per band, and each listing's price against its band's median |
 
 ### 9.4 credit detail
 

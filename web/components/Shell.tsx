@@ -11,6 +11,7 @@ export function PageHead({
   meta,
   metaW = "36ch",
   metaLines = 1,
+  inline = false,
   ink,
   children,
 }: {
@@ -18,11 +19,12 @@ export function PageHead({
   meta?: ReactNode;
   metaW?: string;
   metaLines?: number;
+  inline?: boolean; // the meta on the title's line, for a short meta
   ink?: "c" | "m" | "y" | "k";
   children?: ReactNode;
 }) {
   return (
-    <div className={`head-band${ink ? ` ink-${ink}` : ""}`}>
+    <div className={`head-band${ink ? ` ink-${ink}` : ""}${inline ? " inline" : ""}`}>
       <div className="head-band-main">
         <h1>{title}</h1>
         <div className="head-band-meta" style={{ "--meta-lines": metaLines } as CSSProperties}>
