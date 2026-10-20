@@ -320,7 +320,7 @@ The record carries chain id 1, so the evm.now links of this node point at chain 
 
 | priority | door | when |
 |---|---|---|
-| 1 | `buyListing(adapter, id, params)` | a CreditStrategy or Seaport listing has sat under `bidOf(id)` and under the pot, net of the keeper's cost, for `LISTING_DELAY_SEC` (2 minutes, decision 137), the order is open and its offerer still holds the credit; best gap first. while `spendCapBps` is under 10,000 the keeper reads `spendState()` and skips a listing whose price plus keeper payment the bucket budget cannot take (the first purchase of a bucket always passes) until the next bucket; a `SpendCapReached` simulation is a wait |
+| 1 | `buyListing(adapter, id, params)` | a CreditStrategy or Seaport listing has sat under `bidOf(id)` and under the pot, net of the keeper's cost, for `LISTING_DELAY_SEC` (0 seconds in mainnet launch config, decision 234; generic fallback 120 seconds), the order is open and its offerer still holds the credit; best gap first. while `spendCapBps` is under 10,000 the keeper reads `spendState()` and skips a listing whose price plus keeper payment the bucket budget cannot take (the first purchase of a bucket always passes) until the next bucket; a `SpendCapReached` simulation is a wait |
 | 2 | `buyback()` | `ethToBuyback` above 0, `lastBuybackBlock + buybackDelay` reached, the slice at least `2 * maxPay` and the scaled fee covering the tip |
 | 3 | `compose()` | `nextPage()` ready; paid 3 gwei plus 0.0003 eth (decision 138), so it waits above about 3 gwei |
 | 4 | `collectEscrow()` | the fee escrow holds more for the Core than the gas of the claim |
@@ -342,7 +342,7 @@ every value is an environment variable; nothing secret is written to a file by t
 | `MAX_BASEFEE_GWEI_<DOOR>`, `MAX_PRIORITY_GWEI_<DOOR>` | 5 for `BUY_LISTING` and `BUYBACK`, 3 for the rest; tip 0.05, 0.02 for `COMPOSE` | per door ceiling and tip (`MAX_BASEFEE_GWEI` and `MAX_PRIORITY_GWEI` set all). the keeper refuses to send while the pending base fee exceeds the ceiling; its signed `maxFeePerGas` is ceiling plus tip, so a later base fee rise can still consume some tip |
 | `MARGIN_ETH` | 0.00005 | what a paid door must clear above its own cost |
 | `DAILY_BUDGET_ETH` | 0.2 | the net eth (gas spent minus Core payments) the wallet may lose per UTC day; a send whose gross cost does not fit waits |
-| `LISTING_DELAY_SEC` | 120 | decision 137 |
+| `LISTING_DELAY_SEC` | 120 | mainnet launch override 0 seconds (decision 234); increase if bot competition appears |
 | `BOOK_MIN_ETH` | 0.01 | once the payee share is latched, the keeper books when the pending income (Core balance above the booked pots) exceeds this |
 | `BOOK_MIN_SEC` | 600 | the keeper's last book must be older than this for the latched book above, so booked state follows income at a bounded gas cost |
 | `STRATEGY_IDS` | `Credits.tokensOf(strategy)` | the CreditStrategy ids to watch, or `off`; refreshed every `STRATEGY_REFRESH_SEC` (600). The default set is kept by delta from the Credits Transfer logs of the strategy (state file `STATE_DIR/strategy-inventory.json`), with a rolling re-read of 300 prices per refresh and a full read once a day |
