@@ -1,0 +1,124 @@
+.exchange-header.header {
+  min-height: 64px;
+  height: 64px;
+  padding: 0 32px;
+  border-bottom: 0;
+  background: linear-gradient(to right, #f6f5f0 64%, #1a1a1a 64%);
+  color: #1a1a1a;
+}
+.exchange-header .brand { color: #1a1a1a; }
+.exchange-header .brand b { font-size: 19px; }
+.exchange-header .cc-logo i { mix-blend-mode: multiply; }
+.exchange-header .brand-sub { margin-left: 28px; color: #77766e; }
+.exchange-header .wallet { color: #f6f5f0; }
+.exchange-header .exchange-account { color: #a6a39a; font-size: 13px; }
+.exchange-header .btn-outline { color: #f6f5f0; border-color: #d9d7cf; background: transparent; }
+.exchange-header .btn-fill { color: #1a1a1a; background: #ffd400; border-color: #ffd400; }
+.exchange-header .sq { background: #00a3e0; }
+
+.exchange-page {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 64fr) minmax(0, 36fr);
+  min-height: calc(100svh - 96px);
+  background: #f6f5f0;
+  color: #1a1a1a;
+  color-scheme: light;
+}
+.exchange-inventory { min-width: 0; padding: 92px 8% 100px; }
+.exchange-inventory-inner { width: 100%; max-width: 800px; margin: 0 auto; }
+.exchange-inventory h1 { margin: 0 0 68px; font-size: clamp(25px, 2.15vw, 42px); font-weight: 600; line-height: 1.3; letter-spacing: -1.2px; }
+.exchange-list-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 18px; font-size: 14px; }
+.exchange-list-heading strong { font-size: 16px; }
+.exchange-list-heading span { color: #77766e; }
+.exchange-select-all { min-height: 24px; padding: 0; flex-shrink: 0; font: inherit; color: inherit; border: 0; background: transparent; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.exchange-select-all:disabled { color: #77766e; cursor: default; }
+.exchange-table-frame { border: 1px solid #45453f; background: #fff; }
+.exchange-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.exchange-table th { font-weight: 400; text-align: left; }
+.exchange-table thead th { padding: 16px 0; border-bottom: 1px solid #45453f; color: #77766e; font-size: 13px; }
+.exchange-table thead th:first-child { padding-left: 28px; }
+.exchange-table thead th:nth-child(2) { text-align: right; width: 84px; }
+.exchange-table thead th:last-child { width: 76px; }
+.exchange-table tbody th, .exchange-table tbody td { border-bottom: 1px solid #e4e2db; }
+.exchange-table tbody tr:last-child th, .exchange-table tbody tr:last-child td { border-bottom: 0; }
+.exchange-table .is-selected { background: #fafaf7; }
+.exchange-table tbody th { padding: 15px 0 15px 28px; }
+.exchange-credit { display: flex; align-items: center; gap: 24px; cursor: pointer; min-width: 0; }
+.exchange-credit strong { display: block; font-size: 17px; overflow-wrap: anywhere; }
+.exchange-credit small { display: block; margin-top: 6px; max-width: 240px; color: #77766e; font-size: 11px; }
+.exchange-art { display: block; width: 76px; height: 76px; flex: 0 0 76px; background: #fff; }
+.exchange-art > *, .exchange-art .tile-credit { display: block; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+.exchange-rating { font-size: 20px; font-weight: 600; text-align: right; }
+.exchange-selection { text-align: center; }
+.exchange-selection input { width: 24px; height: 24px; margin: 0; accent-color: #1a1a1a; cursor: pointer; vertical-align: middle; }
+.exchange-selection input:disabled, .exchange-table .is-unavailable .exchange-credit { cursor: default; }
+.exchange-table .is-unavailable { color: #77766e; }
+.exchange-empty { margin: 0; padding: 32px 28px; color: #77766e; line-height: 1.7; }
+.exchange-inventory-status { color: #77766e; font-size: 12px; line-height: 1.7; }
+
+.exchange-summary { display: flex; min-width: 0; flex-direction: column; justify-content: space-between; padding: 92px 11% 32px; background: #1a1a1a; color: #f6f5f0; }
+.exchange-quote-status { margin: 0 0 28px; padding: 14px 16px; border: 1px solid #55554d; border-left: 3px solid #ffd400; color: #f6f5f0; font-size: 12px; line-height: 1.7; }
+.exchange-eyebrow { margin: 0 0 36px; color: #a6a39a; font-size: 14px; }
+.exchange-total { font-size: clamp(42px, 5.4vw, 108px); line-height: 1.15; font-weight: 500; letter-spacing: -4px; overflow-wrap: anywhere; }
+.exchange-currency { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 23px; font-weight: 600; }
+.exchange-currency i { width: 12px; height: 12px; background: #ffd400; }
+.exchange-breakdown { margin: 42px 0 0; font-size: 13px; }
+.exchange-breakdown > div { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 15px 0; border-top: 1px solid #383834; color: #aaa79d; }
+.exchange-breakdown dt { min-width: 0; }
+.exchange-breakdown dd { margin: 0; text-align: right; color: #f6f5f0; overflow-wrap: anywhere; }
+.exchange-breakdown .exchange-breakdown-total { color: #f6f5f0; font-weight: 600; }
+.exchange-breakdown-total dd { white-space: normal; }
+.exchange-explanation { margin: 34px 0 28px; color: #aaa79d; font-size: 12px; line-height: 1.8; }
+.exchange-slippage { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #aaa79d; font-size: 11px; }
+.exchange-slippage > div { display: flex; gap: 4px; }
+.exchange-slippage button { padding: 6px 8px; font: inherit; color: #f6f5f0; background: transparent; border: 1px solid #55554d; cursor: pointer; }
+.exchange-slippage button[aria-pressed="true"] { border-color: #ffd400; color: #ffd400; }
+.exchange-slippage button:disabled { cursor: default; opacity: 0.6; }
+.exchange-minimum { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-top: 16px; color: #aaa79d; font-size: 11px; }
+.exchange-minimum strong { text-align: right; color: #f6f5f0; font-weight: 400; overflow-wrap: anywhere; }
+.exchange-submit { padding-top: 64px; }
+.exchange-submit > button, .exchange-submit > .btn-fill { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 66px; height: auto; padding: 18px; color: #1a1a1a; background: #ffd400; border: 1px solid #ffd400; font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; text-align: center; }
+.exchange-submit > button:disabled { cursor: default; opacity: 0.45; }
+.exchange-submit > p { margin: 14px 0 0; color: #aaa79d; font-size: 11px; line-height: 1.7; }
+.exchange-submit .exchange-error { margin: 0 0 16px; color: #ffc3b3; overflow-wrap: anywhere; }
+.exchange-page button:focus-visible, .exchange-page input:focus-visible, .exchange-header button:focus-visible, .exchange-header a:focus-visible { outline: 3px solid #00a3e0; outline-offset: 4px; }
+.exchange-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+@media (max-width: 1100px) {
+  .exchange-inventory { padding: 72px 6% 80px; }
+  .exchange-summary { padding: 72px 8% 28px; }
+  .exchange-credit { gap: 14px; }
+  .exchange-credit strong { font-size: 15px; }
+  .exchange-table tbody th, .exchange-table thead th:first-child { padding-left: 18px; }
+  .exchange-table thead th:nth-child(2) { width: 65px; }
+  .exchange-table thead th:last-child { width: 60px; }
+  .exchange-art { width: 60px; height: 60px; flex-basis: 60px; }
+  .exchange-list-heading { flex-wrap: wrap; gap: 10px; }
+  .exchange-slippage { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 760px) {
+  .exchange-header.header { padding: 0 20px; background: #f6f5f0; }
+  .exchange-header .wallet { order: 2; color: #1a1a1a; }
+  .exchange-header .brand-sub { display: none; }
+  .exchange-header .btn-outline { color: #1a1a1a; border-color: #1a1a1a; }
+  .exchange-header .exchange-account { display: none; }
+  .exchange-page { display: block; }
+  .exchange-inventory { padding: 44px 20px 48px; }
+  .exchange-inventory h1 { margin-bottom: 40px; font-size: 28px; letter-spacing: -0.8px; max-width: 440px; }
+  .exchange-summary { min-height: 640px; padding: 40px 24px 32px; }
+  .exchange-summary-content { width: 100%; }
+  .exchange-eyebrow { margin-bottom: 22px; }
+  .exchange-total { font-size: clamp(44px, 12vw, 78px); letter-spacing: -2px; }
+  .exchange-slippage { flex-direction: row; align-items: center; }
+  .exchange-table tbody th, .exchange-table thead th:first-child { padding-left: 12px; }
+  .exchange-table thead th:nth-child(2) { width: 57px; }
+  .exchange-table thead th:last-child { width: 46px; }
+  .exchange-credit { gap: 12px; }
+  .exchange-credit strong { font-size: 12px; }
+  .exchange-art { width: 48px; height: 48px; flex-basis: 48px; }
+  .exchange-rating { font-size: 16px; }
+  .exchange-selection input { width: 24px; height: 24px; }
+  .exchange-list-heading { font-size: 11px; }
+  .exchange-list-heading strong { font-size: 14px; }
+}

@@ -4,10 +4,8 @@ import { useState } from "react";
 import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { CANCELLED, txError } from "@cc/engine/errors";
-
-// Gas limit = node estimate * 1.25. Prices move with block time, so a call can
-// take a longer path at execution than at estimation; the margin covers it.
-const GAS_BUFFER_BPS = 12500n;
+import { waitForSuccessfulReceipt } from "./tx-receipt";
+import { submitWithGasBuffer } from "./tx-submit";
 
 export type Write = (req: any) => Promise<`0x${string}`>;
 
@@ -17,8 +15,8 @@ export type Plan = { label: string; done?: boolean };
 
 export { CANCELLED, txError } from "@cc/engine/errors";
 
-// run(steps, plan): `steps` receives `write`, which sets `gas` from
-// estimateContractGas times GAS_BUFFER_BPS, sends with the connected account and
+// run(steps, plan, consentIsCurrent): `steps` receives `write`, which sets `gas` from
+// estimateContractGas plus 25 percent, checks supplied consent before sending and
 // waits for the receipt. Each `write` call advances to the next plan entry that
 // is not `done` and reports it in `steps` as wallet, pending (with the hash),
 // done or failed (a cancelled one returns to todo). After the run every query
@@ -37,7 +35,7 @@ export function useTx() {
     setSteps([]);
   };
 
-  const run = async (fn: (write: Write) => Promise<void>, plan: Plan[] = []) => {
+  const run = async (fn: (write: Write) => Promise<void>, plan: Plan[] = [], consentIsCurrent = () => true) => {
     setErr(null);
     setPending(true);
     setSteps(plan.map((p) => ({ label: p.label, status: p.done ? "done" : "todo" })));
@@ -49,11 +47,13 @@ export function useTx() {
       do cur++;
       while (plan[cur]?.done);
       patch({ status: "wallet" });
-      const est = await client.estimateContractGas({ ...req, account: address });
-      const hash = await writeContractAsync({ ...req, gas: (est * GAS_BUFFER_BPS + 9999n) / 10000n });
+      const hash = await submitWithGasBuffer(
+        () => client.estimateContractGas({ ...req, account: address }),
+        (gas) => writeContractAsync({ ...req, gas }),
+        consentIsCurrent,
+      );
       patch({ status: "pending", hash });
-      const receipt = await client.waitForTransactionReceipt({ hash });
-      if (receipt.status !== "success") throw new Error("transaction reverted");
+      await waitForSuccessfulReceipt(client, hash);
       patch({ status: "done" });
       return hash;
     };

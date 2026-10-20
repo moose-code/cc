@@ -1,0 +1,120 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useAccount, useConfig, usePublicClient } from "wagmi";
+import { getAccount } from "wagmi/actions";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
+import type { Address } from "viem";
+import { ExchangeView } from "@/components/ExchangeView";
+import { chain, core, credits, engineDeployed } from "@/lib/config";
+import { exchangeAmount, exchangeQuote, sellExchange } from "@/lib/exchange";
+import { rating, type BalanceTokenInfo } from "@/lib/format";
+import { useBalanceToken, useSnapshot, useWalletCredits, type Snapshot } from "@/lib/live";
+import { useTx } from "@/lib/tx";
+import "./exchange.css";
+
+export default function ExchangePage() {
+  const { address, isConnected, chainId } = useAccount();
+  // A wallet or network change discards the old selection and its accepted quote.
+  return <Exchange key={`${address}:${chainId}`} account={isConnected ? address : undefined} chainId={chainId} />;
+}
+
+function Exchange({ account, chainId }: { account?: Address; chainId?: number }) {
+  const client = usePublicClient();
+  const config = useConfig();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const { openConnectModal } = useConnectModal();
+  const snapshot = useSnapshot();
+  const liveToken = useBalanceToken();
+  const wallet = useWalletCredits(account);
+  const [selected, setSelected] = useState(new Set<number>());
+  const [slippage, setSlippage] = useState(50);
+  const [review, setReview] = useState<{
+    market: Snapshot; token: BalanceTokenInfo; wallet: typeof wallet.data; selected: Set<number>; slippage: number;
+  }>();
+  const market = review?.market ?? snapshot.data;
+  const token = review?.token ?? liveToken;
+  const rows = review?.wallet ?? wallet.data;
+  const selection = review?.selected ?? selected;
+  const tolerance = review?.slippage ?? slippage;
+  const { run, pending, err } = useTx();
+  const order = rows.filter((credit) => selection.has(credit.id));
+  const quote = exchangeQuote(market, order.map((credit) => credit.score), tolerance);
+  const decimals = token?.address === market?.balanceToken ? token?.decimals : undefined;
+  const amount = (value: bigint | undefined, precise = false) => value === undefined || decimals === undefined
+    ? "—" : exchangeAmount(value, decimals, precise ? decimals : 6);
+  const wrongChain = Boolean(account && chainId !== chain.id);
+  const available = Boolean(engineDeployed && market?.balanceOn && market.settings.balanceBidOn && decimals !== undefined);
+  const quoteAvailable = Boolean(available && quote && !quote.reason && !snapshot.error);
+  const selectedRating = rating(order.reduce((total, credit) => total + credit.score, 0n));
+  const status = pending ? "Your selection and minimum payout are held while you confirm in your wallet."
+    : !engineDeployed ? "The exchange is not configured."
+    : !account ? "Connect your wallet to view your Credits."
+    : wrongChain ? `Switch your wallet to ${chain.name} to exchange Credits.`
+    : wallet.error ? "Unable to load your Credits. Please try again."
+    : !wallet.ready ? "Loading your Credits…"
+    : rows.length === 0 ? "No Credits in this wallet."
+    : snapshot.error ? "Unable to read the live exchange. Please try again."
+    : !market ? "Reading the exchange…"
+    : !available ? "BALANCE exchange is not open yet. Your Credits stay in your wallet."
+    : quote?.reason;
+  const blocked = !account || wrongChain || !wallet.ready || Boolean(wallet.error || snapshot.error) || !available || !quote || Boolean(quote.reason) || order.length === 0 || quote.minOut <= 0n;
+  const allSelected = rows.length > 0 && order.length === rows.length;
+  const label = pending ? "confirming exchange…"
+    : !available ? "exchange not open yet"
+    : order.length === 0 ? "select Credits to exchange"
+    : `sell ${order.length} credit${order.length === 1 ? "" : "s"}`;
+
+  async function sell() {
+    if (blocked || pending || !account || !client || !core || !market || !token || !quote) return;
+    const accepted = {
+      account, core, credits, chainId: chain.id,
+      ids: order.map((credit) => BigInt(credit.id)),
+      minOut: quote.minOut, token: market.balanceToken,
+    };
+    setReview({ market, token, wallet: [...rows], selected: new Set(selection), slippage: tolerance });
+    const consentIsCurrent = () => {
+      const current = getAccount(config);
+      return mounted.current && current.address === account && current.chainId === chain.id;
+    };
+    await run(async (write) => {
+      await sellExchange(client, write, accepted, consentIsCurrent);
+      setSelected(new Set());
+    }, [], consentIsCurrent);
+    setReview(undefined);
+  }
+
+  return <ExchangeView
+    rows={rows.map((credit) => ({
+      id: credit.id, rating: rating(credit.score),
+      gross: amount(market?.balanceUnit ? credit.score * market.balanceUnit : undefined),
+      selected: selection.has(credit.id),
+    }))}
+    walletReady={wallet.ready}
+    connected={Boolean(account)}
+    selectionCount={order.length}
+    quoteAvailable={quoteAvailable}
+    selectedRating={selectedRating}
+    total={amount(quoteAvailable && order.length > 0 ? quote?.total : undefined)}
+    fee={quoteAvailable && quote && order.length > 0 ? `−${amount(quote.fee)}` : market ? `${(10_000 - Number(market.balanceRate)) / 100}%` : "—"}
+    adjustment={quoteAvailable && quote && order.length > 0 && quote.adjustment > 0n ? `−${amount(quote.adjustment)}` : undefined}
+    minimum={amount(quoteAvailable && order.length > 0 ? quote?.minOut : undefined, true)}
+    rate={market ? `${Number(market.balanceRate) / 100}%` : "the posted rate"}
+    slippageBps={tolerance}
+    onSlippageChange={setSlippage}
+    onToggle={(id) => setSelected((previous) => {
+      const next = new Set(previous);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    })}
+    onSelectAll={() => setSelected(new Set(allSelected ? [] : wallet.data.map((credit) => credit.id)))}
+    allSelected={allSelected}
+    busy={pending}
+    status={status ?? (order.length === 0 ? "Select Credits to see their payout." : undefined)}
+    error={err ?? undefined}
+    action={!account
+      ? <button type="button" onClick={openConnectModal}>connect wallet</button>
+      : <button type="button" disabled={blocked || pending} onClick={sell}>{label}</button>}
+  />;
+}
