@@ -25,7 +25,7 @@ type Sort = "newest" | "price" | "rating";
 // Credits held by the engine, newest first. While the credit sale is on, each has a falling price
 // (controller.creditPrice) and can be bought. Selection feeds the buy box in the rail.
 export default function CreditsPage() {
-  const { data: pile, loading } = usePile();
+  const { data: pile, loading, pricing } = usePile();
   const historyDown = useHistoryDown();
   const { data: snap } = useSnapshot();
   const { data: scan } = useScan();
@@ -43,6 +43,9 @@ export default function CreditsPage() {
     return s > 0 ? leftLabel(s) : "now";
   };
   const score = (id: number) => scores?.[id.toString()];
+  // while the sale is on a credit's price is above zero: a zero is a price not read yet (a skeleton) or a read that
+  // failed (a dash)
+  const priceText = (c: PileCredit) => (c.price > 0n ? eth(c.price) : pricing ? <Sk w="6ch" /> : "—");
   // queue position (oldest = 0) is the index in the pile, which the list order keeps
   const rows = useMemo(() => {
     const r = pile.map((c, index) => ({ c, index })).reverse();
@@ -92,7 +95,7 @@ export default function CreditsPage() {
         )}
         <div className="ccard-body">
           <div className="ccard-price">
-            <b>{eth(saleOn ? c.price : c.cost)}</b> <small>{saleOn ? "ETH" : "ETH paid"}</small>
+            <b>{saleOn ? priceText(c) : eth(c.cost)}</b> <small>{saleOn ? "ETH" : "ETH paid"}</small>
           </div>
           <div className="ccard-row muted">
             <Link href={`/credits/${c.id}`}>#{c.id}</Link>
@@ -193,7 +196,7 @@ export default function CreditsPage() {
                     </span>
                     <Link href={`/credits/${c.id}`}>credit #{c.id}</Link>
                     <span className="num muted">{score(c.id) != null ? rating(score(c.id)!) : ""}</span>
-                    <span className="num ctable-price">{saleOn ? eth(c.price) : ""}</span>
+                    <span className="num ctable-price">{saleOn ? priceText(c) : ""}</span>
                     <span className="num muted">{eth(c.cost)}</span>
                     <span className="muted hide-sm">{c.how ? howLabel(c.how) : gotBy(scan.credits[c.id])}</span>
                     <span className="num muted hide-sm">{agoLabel(eta.now - c.acquiredAt)}</span>
@@ -236,7 +239,7 @@ export default function CreditsPage() {
                       credit #{c.id}
                       <small className="muted">{score(c.id) != null ? `rating ${rating(score(c.id)!)}` : ""}</small>
                     </span>
-                    <span>{eth(c.price)} ETH</span>
+                    <span>{priceText(c)} ETH</span>
                     <button className="x" onClick={() => toggle(c.id)} aria-label={`remove credit #${c.id}`}>
                       ×
                     </button>
@@ -257,7 +260,7 @@ export default function CreditsPage() {
             <div className="side-act">
               <Act
                 label={snap.paused ? "engine paused" : selected.length ? `buy ${selected.length} credit${selected.length === 1 ? "" : "s"}` : "select credits"}
-                disabled={snap.paused || selected.length === 0}
+                disabled={snap.paused || selected.length === 0 || selected.some((c) => c.price === 0n)}
                 steps={async (write) => {
                   await buyCredits(write, snap, selected.map((c) => c.id), total);
                   setSel(new Set());

@@ -149,9 +149,9 @@ export default function CreditDetail({ params }: { params: { id: string } }) {
                 <div className="label">history</div>
                 <div className="dhist-rows">
                   {state === "sale" && c && (
-                    <HistLine mark="m" text="for sale, price falling" value={`${eth(c.price)} ETH`} when="now" />
+                    <HistLine mark="m" text="for sale, price falling" value={c.price > 0n ? `${eth(c.price)} ETH` : <Sk w="9ch" />} when="now" />
                   )}
-                  {state === "floor" && c && <HistLine mark="k" text="at floor" value={`${eth(c.price)} ETH`} when="now" />}
+                  {state === "floor" && c && <HistLine mark="k" text="at floor" value={c.price > 0n ? `${eth(c.price)} ETH` : <Sk w="9ch" />} when="now" />}
                   {[...evts].reverse().map((e, i) => (
                     <Step key={`${e.tx}-${i}`} e={e} />
                   ))}
@@ -318,7 +318,7 @@ function PriceBox({
         <div>
           <div className="label">price</div>
           <div className="big-price">
-            {eth(c.price)} <small>ETH</small>
+            {c.price > 0n ? eth(c.price) : <Sk w="6ch" />} <small>ETH</small>
           </div>
         </div>
         <div className="price-note">{left > 0 ? <>falling<br />floor in {countdown(left)}</> : "at floor"}</div>
@@ -340,7 +340,8 @@ function PriceBox({
         </>
       )}
       <div className="side-act">
-        <Act label={snap.paused ? "engine paused" : "buy credit"} disabled={snap.paused} steps={(write) => buyCredits(write, snap, [id], c.price)} />
+        {/* a price of 0 is one not read yet: buying waits for it */}
+        <Act label={snap.paused ? "engine paused" : "buy credit"} disabled={snap.paused || c.price === 0n} steps={(write) => buyCredits(write, snap, [id], c.price)} />
       </div>
     </section>
   );

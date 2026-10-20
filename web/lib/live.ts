@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useReadContract, usePublicClient } from "wagmi";
 import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, numberToHex, zeroAddress, type Address } from "viem";
-import { atBlock, creditScores, mc, MULTICALL3, pendingIncome, readSnapshot, type Snapshot } from "@cc/engine/snapshot";
+import { atBlock, mc as engineMc, MULTICALL3, pendingIncome, readSnapshot, type Snapshot } from "@cc/engine/snapshot";
 import { CREDIT_SCORE } from "@cc/engine/addresses";
 import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, statements } from "./config";
@@ -21,7 +21,37 @@ import type { BalanceTokenInfo } from "./format";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
-export { MULTICALL3, creditScores, readSnapshot } from "@cc/engine/snapshot";
+export { MULTICALL3, readSnapshot } from "@cc/engine/snapshot";
+
+// The website's RPC API takes a request body of at most 128 KiB (lib/rpc-handler.ts). viem's multicall batchSize
+// counts only the calls' own calldata, while the Multicall3 encoding adds about 188 bytes a call, so the shared 16 KB
+// chunk of 36 byte per-id calls (455 of them) encodes to about 200 KB and is refused, failing every call of the chunk.
+// 4 KB of calldata per request (wagmi's batching merges concurrent multicalls up to the same size) is at most 113
+// per-id calls, about 51 KB of hex. Every per-credit multicall of the website uses this.
+export const RPC_BATCH_BYTES = 4_096;
+export const mc = { ...engineMc, batchSize: RPC_BATCH_BYTES } as const;
+
+// CreditScore.scoreOf(seedOf, timestampOf) per id, in input order: the engine helper's reads with the website's
+// batch size. wagmi batches multicalls, merging concurrent ones of the same batch size up to that size, so a read
+// at the engine's 16 KB size merges into requests the RPC API refuses (200 credits' seed reads are about 180 KB).
+export async function creditScores(client: Client, ids: bigint[], blockNumber?: bigint): Promise<bigint[]> {
+  if (ids.length === 0) return [];
+  const seeds = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: false,
+    contracts: ids.flatMap((id) => [
+      { address: credits, abi: seedAbi, functionName: "seedOf", args: [id] },
+      { address: credits, abi: seedAbi, functionName: "timestampOf", args: [id] },
+    ] as const),
+  });
+  return client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: false,
+    contracts: ids.map((_, i) => ({ address: CREDIT_SCORE, abi: scoreAbi, functionName: "scoreOf", args: [seeds[2 * i] as `0x${string}`, seeds[2 * i + 1] as bigint] }) as const),
+  });
+}
 export type { Snapshot } from "@cc/engine/snapshot";
 const PILE_PAGE = 200n; // ponytail: first 200 pile credits only, page with pilePage(startAfter) if the pile grows past it
 
@@ -170,7 +200,7 @@ export function usePile() {
     },
   });
   const ixData: PileCredit[] = useMemo(() => {
-    if (mode !== "ix" || !s || !base || (saleOn && base.length > 0 && !prices.data)) return [];
+    if (mode !== "ix" || !s || !base) return [];
     return base.map((c) => ({
       ...c,
       inPile: true,
@@ -178,15 +208,15 @@ export function usePile() {
       past: !saleOn || c.acquiredAt + s.creditWindow <= now,
     }));
   }, [mode, s, base, saleOn, prices.data, now]);
-  // loading: the source has not answered yet, so an empty list is not an empty pile
+  // loading: the source has not answered yet, so an empty list is not an empty pile. pricing: the list is known but the
+  // live prices are still being read (indexer mode reads them after the list, in chunks), so a price of 0 is unread
   const loading =
     engineDeployed &&
     (!s ||
     mode === "checking" ||
-    (mode === "ix"
-      ? (base === undefined && !held.isError) || (saleOn && (base?.length ?? 0) > 0 && !prices.data && !prices.isError)
-      : chain.data === undefined && !chain.isError));
-  return { data: mode === "ix" ? ixData : chain.data ?? [], loading };
+    (mode === "ix" ? base === undefined && !held.isError : chain.data === undefined && !chain.isError));
+  const pricing = mode === "ix" && saleOn && (base?.length ?? 0) > 0 && !prices.data && !prices.isError;
+  return { data: mode === "ix" ? ixData : chain.data ?? [], loading, pricing };
 }
 
 // One credit, in the pile or not (chain mode) or only in the pile (indexer mode). undefined until loaded.
@@ -458,6 +488,7 @@ export function useScores(ids: bigint[]) {
     queryKey: ["scores-of", key],
     enabled: engineDeployed && Boolean(client) && ids.length > 0 && mode === "chain",
     staleTime: Infinity,
+    placeholderData: keepPreviousData, // a new id keeps the others' scores on screen while the list is read again
     queryFn: async () => {
       const scores = await creditScores(client!, ids);
       const m: Record<string, bigint> = {};
@@ -467,8 +498,17 @@ export function useScores(ids: bigint[]) {
   });
   const ixq = useCreditTraitsIx(mode === "ix" ? ids.map(Number) : []);
   const ixScores = useMemo(() => (ixq.data ? Object.fromEntries(Object.entries(ixq.data).map(([id, r]) => [id, r.score])) : undefined), [ixq.data]);
-  return { data: mode === "ix" ? ixScores : chain.data };
+  return { data: mode === "ix" ? ixScores : chain.data, loading: readsPending(ids.length, mode, ixq, chain) };
 }
+
+// A per-credit read (scores, traits) whose ids are not all in hand yet: the indexer check, or the source's query (its
+// previous answer kept while it reads a changed list) has not answered. A failed read is not pending.
+type Q = { isPending: boolean; isPlaceholderData: boolean; isError: boolean };
+const readsPending = (n: number, mode: string, ixq: Q, chain: Q): boolean =>
+  engineDeployed && n > 0 && (mode === "checking" || (() => {
+    const q = mode === "ix" ? ixq : chain;
+    return (q.isPending || q.isPlaceholderData) && !q.isError;
+  })());
 
 // Credit price floor input: controller valueOf(score) per id, id to wei. Credit floor price =
 // max(cost, value) * snap.creditFloorBps / 10000 (the controller's floorMultBps) and start = floor * snap.creditStartBps / 10000 (see Snapshot).
@@ -514,6 +554,7 @@ export function useCreditTraits(ids: bigint[]) {
     queryKey: ["traits-of", key],
     enabled: engineDeployed && Boolean(client) && ids.length > 0 && mode === "chain",
     staleTime: Infinity,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const seeds = await client!.multicall({
         ...mc,
@@ -541,7 +582,7 @@ export function useCreditTraits(ids: bigint[]) {
     () => (ixq.data ? (Object.fromEntries(Object.entries(ixq.data).map(([id, r]) => [id, { mask: r.mask, active: r.active, occupied: r.occupied, eights: r.eights, band: r.band }])) as Record<string, CreditTraits>) : undefined),
     [ixq.data]
   );
-  return { data: mode === "ix" ? ixTraits : chain.data };
+  return { data: mode === "ix" ? ixTraits : chain.data, loading: readsPending(ids.length, mode, ixq, chain) };
 }
 
 // Credits owned by a wallet with their scores, lowest id first. Indexer mode: the credit table's owner column. Chain

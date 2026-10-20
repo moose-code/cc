@@ -13,7 +13,7 @@ import { seaportAbi } from "@cc/engine/abis";
 import { SEAPORT } from "@cc/engine/addresses";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, seaportAdapter, strategy, strategyAdapter } from "./config";
 import { coreAbi, creditsAbi, strategyAbi } from "./abis";
-import { MULTICALL3, readSnapshot, useHead } from "./live";
+import { mc, readSnapshot, useHead } from "./live";
 import { useIxMode } from "./indexer";
 import { bucketCount, cheapestPerId, compareListingPricePerPoint, fitsBucket, type Priced, type StrategyReadStatus } from "./acquire";
 import { gatherListings, scoresFor, spendCost, spendRoom } from "./useAcquire";
@@ -23,7 +23,6 @@ import { clearsIn, type ClearsIn, type ClimbState } from "./climb";
 
 const LIVE = 100; // rows (smallest estimated gap first) whose bid and listing are re-read from the chain
 const READ_MS = 12_000; // one chain read per block time while a listings surface is open
-const mc = { multicallAddress: MULTICALL3, batchSize: 16_384 } as const;
 
 export interface ListingRow extends Priced {
   score: bigint;
@@ -86,9 +85,7 @@ export function useListings() {
       const word = (i: bigint) => c.getStorageAt({ address: core!, slot: numberToHex(ETH_ANCHOR_SLOT + i, { size: 32 }), blockNumber: snap.blockNumber });
       const [res, w0, w2, w3, clock] = await Promise.all([
         c.multicall({
-          ...mc,
-          // The website RPC rejects a 100-row Multicall3 payload at the shared batch size, hiding every acquire action.
-          batchSize: 4_096,
+          ...mc, // sized to the website RPC body limit (lib/live.ts RPC_BATCH_BYTES)
           blockNumber: snap.blockNumber,
           allowFailure: true,
           contracts: [
