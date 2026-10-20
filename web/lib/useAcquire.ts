@@ -126,6 +126,7 @@ export function useAcquireTx(block: bigint | undefined) {
   const { run, pending, err } = useTx();
   const [dropped, setDropped] = useState<{ block?: bigint; keys: string[] }>({ keys: [] });
   const [done, setDone] = useState<{ id: bigint; hash: `0x${string}`; count: number; target: number }>();
+  const [activeId, setActiveId] = useState<bigint>();
 
   const live = dropped.block === block ? dropped.keys : [];
   const available = <T extends Listing>(list: T[]) => paused ? [] : list.filter((l) => preparedForAcquire(l) && !live.includes(keyOf(l)));
@@ -141,6 +142,7 @@ export function useAcquireTx(block: bigint | undefined) {
     if (paused) return;
     if (!address) return openConnectModal?.();
     setDone(undefined);
+    setActiveId(!bulk && candidates.length === 1 ? candidates[0].id : undefined);
     return run(async (write) => {
       const bad: string[] = [];
       let count = 0;
@@ -185,9 +187,9 @@ export function useAcquireTx(block: bigint | undefined) {
       } finally {
         if (bad.length) setDropped((d) => ({ block, keys: [...(d.block === block ? d.keys : []), ...bad] }));
       }
-    }, Array.from({ length: target }, (_, i) => ({ label: bulk ? `acquire ${i + 1} of ${target}` : "acquire" })));
+    }, Array.from({ length: target }, (_, i) => ({ label: bulk ? `acquire ${i + 1} of ${target}` : "acquire" }))).finally(() => setActiveId(undefined));
   };
   const buy = (candidates: Priced[]) => purchase(candidates, 1, false);
   const buyMany = (candidates: Priced[]) => purchase(candidates, candidates.length, true);
-  return { buy, buyMany, available, pending, err, done };
+  return { buy, buyMany, available, pending, activeId, err, done };
 }

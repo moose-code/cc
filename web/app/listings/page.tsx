@@ -51,7 +51,7 @@ export default function ListingsPage() {
   const { data, error, isFetching, refetch, dataUpdatedAt } = useListings();
   const { data: snap } = useSnapshot();
   const { data: head } = useHead();
-  const { buy, buyMany, available, pending, err, done } = useAcquireTx(head?.n);
+  const { buy, buyMany, available, pending, activeId, err, done } = useAcquireTx(head?.n);
   const [shown, setShown] = useState(PAGE);
   const [bulkCount, setBulkCount] = useState(1);
   const { data: fills } = useFillsTodayIx(head?.ts);
@@ -135,7 +135,7 @@ export default function ListingsPage() {
           </div>
         )}
 
-        <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} showGap />
+        <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending, activeId }} showGap />
         {data && rows.length === 0 && <p className="caption">no listings in the current view.</p>}
 
         <div className="more-row">

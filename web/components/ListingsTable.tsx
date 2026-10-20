@@ -12,6 +12,7 @@ type Acquire = {
   buy: (rows: ListingRow[]) => void;
   available: (rows: ListingRow[]) => ListingRow[];
   pending: boolean;
+  activeId?: bigint;
 };
 
 // The listings table: every Credit on the CreditStrategy or OpenSea, closest to the engine's bid first. Shared by the
@@ -62,7 +63,7 @@ export function ListingsTable({ rows, acquire, showGap = false }: { rows: Listin
             {!preparedForAcquire(r) && <span className="muted" title="The keeper has not prepared fulfillment for this order.">unprepared</span>}
             {acquire && preparedForAcquire(r) && r.clears && acquire.available([r]).length > 0 && (
               <button className="hdr-acq" onClick={() => acquire.buy([r])} disabled={acquire.pending}>
-                {acquire.pending ? "…" : "acquire"}
+                {acquire.pending && acquire.activeId === r.id ? "…" : "acquire"}
               </button>
             )}
           </span>
