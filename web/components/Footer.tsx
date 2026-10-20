@@ -62,6 +62,7 @@ export function Footer() {
       <span>
         block <Val ready={block != null} w="10ch">{block != null && commas(Number(block))}</Val>
       </span>
+      <Link href="/faq">faq</Link>
       <Link href="/docs">docs</Link>
       <span>
         by{" "}
