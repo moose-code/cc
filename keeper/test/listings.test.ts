@@ -351,3 +351,52 @@ test("stream buffer overflow fences discovery until reconciliation is due", () =
   now += 60_000;
   assert.equal(source.marketDue(), true);
 });
+
+// promise: repeated cancellations for a published absent order are acknowledged without REST work and cannot keep an unknown-negative queue alive.
+test("repeated negative events drain after the order is published absent", () => {
+  const original = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = (async () => { requests++; throw new Error("unexpected REST request"); }) as typeof fetch;
+  const source: any = new Sources({} as any, { record: { chainId: 1 }, strategy: { mode: "off" }, opensea: { refreshSec: 300 } } as any);
+  const hash = "0x" + "77".repeat(32);
+  source.market.complete = true;
+  source.market.rows.set(hash, { id: "42" });
+  try {
+    source.marketChanged({ event: "item_cancelled", hash });
+    const snapshot = [...source.marketChanges];
+    source.pendingUntil.set(hash, Date.now() + 30_000);
+    source.market.rows.delete(hash); // The successful SDK publication applied the snapshot removal.
+    source.marketChanged({ event: "order_invalidate", hash });
+    assert.ok(source.marketChanges.get(hash).revision > snapshot[0][1].revision);
+    source.ackMarketChanges(snapshot);
+    assert.equal(source.marketChanges.size, 0); assert.equal(source.blocked.has(hash), false); assert.equal(source.pendingUntil.has(hash), false);
+    for (let i = 0; i < 1000; i++) source.marketChanged({ event: "item_cancelled", hash });
+    assert.equal(source.marketChanges.size, 0); assert.equal(requests, 0);
+  } finally { globalThis.fetch = original; }
+});
+
+// promise: acknowledging an older removal never drops a newer positive update or clears quarantine while the published book still contains that order.
+test("removal acknowledgments preserve newer positive updates and known-order quarantine", () => {
+  const source: any = new Sources({} as any, { record: { chainId: 1 }, strategy: { mode: "off" }, opensea: { refreshSec: 300 } } as any);
+  const hash = "0x" + "88".repeat(32);
+  source.market.complete = true;
+  source.market.rows.set(hash, { id: "42" });
+  source.marketChanged({ event: "item_cancelled", hash });
+  const removal = [...source.marketChanges];
+  source.market.rows.delete(hash);
+  source.marketChanged({ event: "item_listed", hash });
+  const positiveRevision = source.marketChanges.get(hash).revision;
+  source.ackMarketChanges(removal);
+  assert.equal(source.marketChanges.get(hash).revision, positiveRevision);
+  assert.equal(source.marketChanges.get(hash).remove, false); assert.equal(source.blocked.has(hash), true);
+  source.market.rows.set(hash, { id: "42" });
+  source.marketChanged({ event: "item_cancelled", hash });
+  const knownRemoval = [...source.marketChanges];
+  source.marketChanged({ event: "order_invalidate", hash });
+  source.ackMarketChanges(knownRemoval);
+  assert.equal(source.marketChanges.size, 1); assert.equal(source.marketChanges.get(hash).remove, true); assert.equal(source.blocked.has(hash), true);
+  const current = [...source.marketChanges];
+  source.market.rows.delete(hash);
+  source.ackMarketChanges(current);
+  assert.equal(source.marketChanges.size, 0); assert.equal(source.blocked.has(hash), false);
+});

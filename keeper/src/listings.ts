@@ -157,6 +157,17 @@ export class Sources {
     }
   }
 
+  private ackMarketChanges(changes: ReadonlyArray<readonly [string, { revision: number; remove: boolean }]>) {
+    for (const [hash, change] of changes) {
+      const latest = this.marketChanges.get(hash);
+      // Repeated removals are already satisfied once publication leaves the order absent; newer positive updates are not.
+      if (!latest || (latest.revision !== change.revision && !(change.remove && latest.remove && !this.market.rows.has(hash)))) continue;
+      this.marketChanges.delete(hash);
+      this.blocked.delete(hash);
+      this.pendingUntil.delete(hash);
+    }
+  }
+
   private marketDue() {
     const now = this.now();
     if (now < this.seaportRetryAt) return false;
@@ -337,16 +348,14 @@ export class Sources {
         if (overflow !== this.overflowGeneration) throw Object.assign(new Error("opensea: stream buffer overflow during pass"), { retryAt: this.now() + 1000 });
         if (reconcile) this.overflowed = false;
         if (reconcile) this.reconciledGeneration = generation;
-        for (const [hash, change] of changes) if (this.marketChanges.get(hash)?.revision === change.revision) {
-          this.marketChanges.delete(hash);
-          this.blocked.delete(hash);
-          this.pendingUntil.delete(hash);
-        }
+        this.ackMarketChanges(changes);
         // Notifications received during the pass must not resurrect a quarantined order.
         orders = r.orders.filter(order => !this.blocked.has(order.hash.toLowerCase()) && !this.transferred.has(order.id));
+        const queuedRemovals = [...this.marketChanges.values()].filter(change => change.remove).length;
         log("info", "opensea listings fetched", { mode: reconcile ? "full" : "incremental", streamJoined: this.streamJoined,
           complete: r.complete, pages: r.pages, fetched: r.fetched, fit: r.fit, signed: orders.length,
           validationTruncated: r.validationTruncated, bookSize: r.bookSize, reusedParams: r.reusedParams, cachedScores: this.scores.size, queued: this.marketChanges.size,
+          queuedUpdates: this.marketChanges.size - queuedRemovals, queuedRemovals,
           gap: this.gapGeneration !== this.reconciledGeneration, dropped: r.dropped });
       }
       if (!Array.isArray(orders)) throw new Error("orders is not an array");
