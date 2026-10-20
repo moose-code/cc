@@ -20,7 +20,7 @@ Primary source: https://jack.art/credits/
 
 Jack Butcher created Credits from eligible $8 payments through X Money. A payment becomes a unique visual artwork: the payment transaction ID is hashed into 256 bits, mapped to cyan, magenta, yellow, and black grids, and selectively displayed using the payment timestamp. Eighties in the source transaction produce visible marks. Credits thus turn payment records into artworks.
 
-Credit ratings: https://jack.art/credits/rating/
+Credit ratings: https://jack.art/credits/rating
 
 The 122,154 original Credits receive scores from 80 to 800 based on rarity of five properties. The score describes rarity, not market value. Jack's Statements contract destroys 80 Credits to mint one Statement. A Statement's rating sums its source Credits' scores. The upstream system also allows later overprinting, with its own rules. CC only uses the basic 80 Credit composition path.
 
