@@ -220,6 +220,7 @@ function InventoryPaths() {
     <div className="faq-paths" tabIndex={0} aria-label="scrollable diagram of the CC flywheel">
       <svg
         className="faq-paths-diagram"
+        style={{ display: "block", width: "100%", minWidth: 940, height: "auto", fontFamily: "var(--mono)" }}
         viewBox="0 0 1360 510"
         role="img"
         aria-labelledby="faq-paths-title faq-paths-description"
@@ -234,65 +235,65 @@ function InventoryPaths() {
         </desc>
         <defs>
           <marker id="faq-paths-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
-            <path d="M0 0 L9 4.5 L0 9 Z" className="faq-paths-arrowhead" />
+            <path d="M0 0 L9 4.5 L0 9 Z" fill="#e5007e" stroke="none" />
           </marker>
         </defs>
 
         <g className="faq-paths-connections" aria-hidden="true">
-          <path d="M445 115 H493" />
-          <path d="M678 115 H728" />
-          <path d="M840 146 V189 H380 V233" />
-          <path d="M840 189 H775 V233" />
-          <path d="M380 307 V366 H455 V403" />
-          <path d="M775 307 V403" />
-          <path d="M946 271 H995" className="faq-paths-optional" />
-          <path d="M1140 307 V403" className="faq-paths-optional" />
+          <path d="M445 115 H493" fill="none" stroke="#e5007e" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
+          <path d="M678 115 H728" fill="none" stroke="#e5007e" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
+          <path d="M840 146 V189 H380 V233" fill="none" stroke="#e5007e" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
+          <path d="M840 189 H775 V233" fill="none" stroke="#e5007e" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
+          <path d="M380 307 V366 H455 V403" fill="none" stroke="#e5007e" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
+          <path d="M775 307 V403" fill="none" stroke="#e5007e" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
+          <path d="M946 271 H995" className="faq-paths-optional" fill="none" stroke="#976ba9" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="7 5" markerEnd="url(#faq-paths-arrow)" />
+          <path d="M1140 307 V403" className="faq-paths-optional" fill="none" stroke="#976ba9" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="7 5" markerEnd="url(#faq-paths-arrow)" />
 
-          <path d="M260 440 H151 V49 H584 V83" className="faq-paths-recycle" />
-          <path d="M1289 439 H1322 V19 H840 V83" className="faq-paths-optional faq-paths-recycle" />
+          <path d="M260 440 H151 V49 H584 V83" className="faq-paths-recycle" fill="none" stroke="#e5007e" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
+          <path d="M1289 439 H1322 V19 H840 V83" className="faq-paths-optional faq-paths-recycle" fill="none" stroke="#976ba9" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="7 5" markerEnd="url(#faq-paths-arrow)" />
         </g>
 
         <g className="faq-paths-box">
-          <rect x="245" y="84" width="200" height="62" />
-          <text x="345" y="115">$CC trading fees</text>
+          <rect x="245" y="84" width="200" height="62" fill="#f6f5f0" stroke="#d9d7cf" strokeWidth={1.7} />
+          <text x="345" y="115" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">$CC trading fees</text>
         </g>
         <g className="faq-paths-box">
-          <rect x="493" y="84" width="185" height="62" />
-          <text x="585" y="115">ETH buying pot</text>
+          <rect x="493" y="84" width="185" height="62" fill="#f6f5f0" stroke="#d9d7cf" strokeWidth={1.7} />
+          <text x="585" y="115" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">ETH buying pot</text>
         </g>
         <g className="faq-paths-box">
-          <rect x="728" y="84" width="218" height="62" />
-          <text x="837" y="115">Credits acquired</text>
+          <rect x="728" y="84" width="218" height="62" fill="#f6f5f0" stroke="#d9d7cf" strokeWidth={1.7} />
+          <text x="837" y="115" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">Credits acquired</text>
         </g>
         <g className="faq-paths-box faq-paths-credit-box">
-          <rect x="245" y="233" width="270" height="74" />
-          <text x="380" y="270">individual Credit sale</text>
+          <rect x="245" y="233" width="270" height="74" fill="#f6f5f0" stroke="#00a3e0" strokeWidth={2} />
+          <text x="380" y="270" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">individual Credit sale</text>
         </g>
         <g className="faq-paths-box faq-paths-statement-box">
-          <rect x="605" y="233" width="341" height="74" />
-          <text x="775" y="261">80 Credits become</text>
-          <text x="775" y="284">one Statement</text>
+          <rect x="605" y="233" width="341" height="74" fill="#f6f5f0" stroke="#e8c000" strokeWidth={2} />
+          <text x="775" y="261" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">80 Credits become</text>
+          <text x="775" y="284" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">one Statement</text>
         </g>
         <g className="faq-paths-box faq-paths-balance-box">
-          <rect x="995" y="233" width="294" height="74" />
-          <text x="1142" y="257">redeem for $BALANCE</text>
-          <text x="1142" y="281" className="faq-paths-small">when active and eligible</text>
+          <rect x="995" y="233" width="294" height="74" fill="#f6f5f0" stroke="#976ba9" strokeWidth={2} />
+          <text x="1142" y="257" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">redeem for $BALANCE</text>
+          <text x="1142" y="281" className="faq-paths-small" fill="#6e6c64" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">when active and eligible</text>
         </g>
         <g className="faq-paths-box faq-paths-balance-box">
-          <rect x="995" y="403" width="294" height="73" />
-          <text x="1142" y="428">buy more Credits</text>
-          <text x="1142" y="453">with $BALANCE</text>
+          <rect x="995" y="403" width="294" height="73" fill="#f6f5f0" stroke="#976ba9" strokeWidth={2} />
+          <text x="1142" y="428" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">buy more Credits</text>
+          <text x="1142" y="453" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">with $BALANCE</text>
         </g>
         <g className="faq-paths-box faq-paths-outcome-box">
-          <rect x="260" y="403" width="686" height="73" />
-          <text x="603" y="428">NFT sales return ETH to the buying pot</text>
-          <text x="603" y="453">and fund later CC buybacks</text>
+          <rect x="260" y="403" width="686" height="73" fill="#f6f5f0" stroke="#d9d7cf" strokeWidth={1.7} />
+          <text x="603" y="428" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">NFT sales return ETH to the buying pot</text>
+          <text x="603" y="453" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">and fund later CC buybacks</text>
         </g>
         <g className="faq-paths-annotations" aria-hidden="true">
-          <text x="104" y="302">ETH</text>
-          <text x="104" y="320">cycles back</text>
-          <text x="813" y="355">ETH sale</text>
-          <text x="1085" y="366" className="faq-paths-balance-caption">optional $BALANCE path</text>
+          <text x="104" y="302" fill="#e5007e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">ETH</text>
+          <text x="104" y="320" fill="#e5007e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">cycles back</text>
+          <text x="813" y="355" fill="#e5007e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">ETH sale</text>
+          <text x="1085" y="366" className="faq-paths-balance-caption" fill="#976ba9" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">optional $BALANCE path</text>
         </g>
       </svg>
     </div>
