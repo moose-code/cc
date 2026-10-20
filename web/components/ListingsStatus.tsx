@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import type { StrategyReadStatus } from "@/lib/acquire";
-import { viewLines, viewLive, type MarketOut } from "@/lib/market-view";
+import { viewLive, type MarketOut } from "@/lib/market-view";
 
-// Wall clock ticking each second, for "read 12s ago" lines (view times are wall times, not chain times).
-function useWall(ms = 1000) {
+// Stalled data must become stale even when no new query result arrives.
+function useWall(ms = 10000) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), ms);
@@ -14,36 +14,21 @@ function useWall(ms = 1000) {
   return now;
 }
 
-// The honest state of a listings surface: the market view's coverage, freshness, stream and failure lines, the last
-// chain read, and a retry when the read failed. Stale or disconnected data is named as such, never as live.
+// Keep failures visible without putting keeper diagnostics in the feed.
 export function ListingsStatus({ market, strategy, readAt, error, fetching, retry }: { market?: MarketOut; strategy?: StrategyReadStatus; readAt?: number; error?: unknown; fetching: boolean; retry: () => void }) {
   const now = useWall();
-  const lines = viewLines(market, now);
-  const live = viewLive(market, now);
+  const message = error
+    ? readAt ? "could not refresh listings; showing the last view." : "listings unavailable."
+    : !readAt ? "reading listings…"
+    : market && !market.available ? "OpenSea listings unavailable."
+    : strategy?.error || strategy?.pending ? "some listings are unavailable."
+    : market && !viewLive(market, now) ? "listings may be delayed."
+    : undefined;
+  if (!message) return null;
   return (
     <div className="lstatus" aria-live="polite">
-      {strategy?.pending && <div className="quiet">CreditStrategy listings are not yet available.</div>}
-      {strategy?.publishedAt ? <div className="quiet">CreditStrategy catalog published {Math.max(0, Math.round((now - strategy.publishedAt) / 1000))}s ago.</div> : null}
-      {strategy?.error && <div className="warn">{strategy.error}</div>}
-      {lines.map((l, i) => (
-        <div key={i} className={i === 0 ? undefined : live ? "quiet" : "warn"}>
-          {l}
-        </div>
-      ))}
-      <div className={error ? "warn" : "quiet"}>
-        {error
-          ? `last chain read failed${readAt ? `; showing the read of ${Math.max(0, Math.round((now - readAt) / 1000))}s ago` : ""}. `
-          : readAt
-            ? `chain read ${Math.max(0, Math.round((now - readAt) / 1000))}s ago${fetching ? ", reading…" : ""}. `
-            : fetching
-              ? "reading… "
-              : ""}
-        {(error || !fetching) && (
-          <button className="linkbtn" onClick={retry} disabled={fetching}>
-            {error ? "retry" : "refresh"}
-          </button>
-        )}
-      </div>
+      {message}{" "}
+      {Boolean(error) && <button className="linkbtn" onClick={retry} disabled={fetching}>retry</button>}
     </div>
   );
 }
