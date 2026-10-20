@@ -12,6 +12,7 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
+| launch operation | Historical CC NFT backfill may continue after coin launch when the production website chain fallback through the API, keeper decisions and alerts are verified against the actual Core. Deferred indexer acceptance is not a pass; indexed data requires full catch-up and parity | 228 |
 | launch operation | Track the chain-id-1 deployment record in Git after deferred Core deployment so services and the later coin launch use the same addresses and start block. A recorded coin address before launch is only a prediction and must have no code | 222 |
 | launch operation | `script/mainnet-launch.py` cleans Foundry artifacts by default and accepts `--skip-clean` for a warm repeat; the deploy path still builds and performs the same checks | 221 |
 | launch operation | The displayed mainnet per-gas acceptance ceiling is the greater of four times the live gas-price sample or 0.5 gwei, to cover Forge's later EIP-1559 cap when base fee moves. Before approvals, the operator sees the resulting maximum gas cost and the script checks signer balance. Each signed fee must remain within that ceiling and each transaction still needs its own `SEND N` approval | 219 |

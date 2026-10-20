@@ -83,4 +83,4 @@ if [[ "$TARGET" == "local" ]]; then cd indexer && exec "${CMD[@]}"; fi
 # this Core's rows, even while the historical backfill is still running.
 jq --arg s "$DATABASE_SCHEMA" --arg a "$CORE_LC" '.[$s] = $a' "$LEDGER" > "$LEDGER.tmp" && mv "$LEDGER.tmp" "$LEDGER"
 echo "indexer deployed to $APP; schema $DATABASE_SCHEMA is bound to $CORE"
-echo "after backfill, run RPC_URL=<read rpc> indexer/check-live.sh mainnet before coin launch"
+echo "after backfill, run RPC_URL=<read rpc> indexer/check-live.sh mainnet before accepting indexed data"

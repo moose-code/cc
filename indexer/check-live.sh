@@ -9,18 +9,22 @@ source indexer/env/mainnet.env
 RPC_URL="$(printenv RPC_URL || true)"
 [[ -n "$RPC_URL" ]] || { echo "RPC_URL is required for read-only Core checks" >&2; exit 1; }
 RECORD=deployments/1.json
-[[ -f "$RECORD" ]] || { echo "missing deferred mainnet record $RECORD" >&2; exit 1; }
+[[ -f "$RECORD" ]] || { echo "missing mainnet record $RECORD" >&2; exit 1; }
 CORE="$(jq -r .core "$RECORD")"
 COIN="$(jq -r .coin "$RECORD")"
 DEPLOY_BLOCK="$(jq -r .deployBlock "$RECORD")"
-[[ "$(jq -r '.coinLive' "$RECORD")" == false ]] ||
-  { echo "prelaunch acceptance requires coinLive=false" >&2; exit 1; }
+COIN_LIVE="$(jq -er 'if (.coinLive | type) == "boolean" then .coinLive | tostring else empty end' "$RECORD")" ||
+  { echo "record coinLive must be a boolean" >&2; exit 1; }
 [[ "$(cast chain-id --rpc-url "$RPC_URL")" == 1 ]] || { echo "RPC_URL is not Ethereum chain 1" >&2; exit 1; }
 CORE_COIN="$(cast call "$CORE" 'COIN()(address)' --rpc-url "$RPC_URL" | awk '{print $1}')"
 [[ "$(echo "$CORE_COIN" | tr 'A-F' 'a-f')" == "$(echo "$COIN" | tr 'A-F' 'a-f')" ]] ||
   { echo "record coin does not match Core.COIN" >&2; exit 1; }
-[[ "$(cast code "$COIN" --rpc-url "$RPC_URL")" == 0x ]] ||
-  { echo "deferred record says coinless but coin has code" >&2; exit 1; }
+COIN_CODE="$(cast code "$COIN" --rpc-url "$RPC_URL")"
+if [[ "$COIN_LIVE" == false ]]; then
+  [[ "$COIN_CODE" == 0x ]] || { echo "record says coinLive=false but coin has code" >&2; exit 1; }
+else
+  [[ "$COIN_CODE" =~ ^0x([[:xdigit:]]{2})+$ ]] || { echo "record says coinLive=true but coin has no valid code" >&2; exit 1; }
+fi
 HEAD="$(cast block-number --rpc-url "$RPC_URL")"
 PILE="$(cast call "$CORE" 'pileSize()(uint256)' --rpc-url "$RPC_URL" | awk '{print $1}')"
 POT="$(cast call "$CORE" 'ethPot()(uint256)' --rpc-url "$RPC_URL" | awk '{print $1}')"
