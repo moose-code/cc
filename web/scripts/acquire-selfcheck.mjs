@@ -33,7 +33,7 @@ export async function load(url,ctx,next){
 }`));
 const { parseView } = await import(pathToFileURL(join(web, "lib/listings-api.ts")).href);
 const { gatherListings, useAcquireTx } = await import(consumer);
-const { preparedForAcquire } = await import(rules);
+const { preparedForAcquire, compareListingPricePerPoint } = await import(rules);
 const body = {
   chainId: 1, core: "0x" + "1".repeat(40), seaportAdapter: "0x" + "2".repeat(40), builtAt: 3000,
   status: { source: "api", complete: true, lastFullAt: 1000, publishedAt: 2000, streamJoined: true, gap: false, queuedUpdates: 0, queuedRemovals: 0, retryAt: null, lastFailure: null },
@@ -82,3 +82,12 @@ try {
   assert.equal(preparedForAcquire({ id: 3n, price: 1n, source: "strategy", params: "0x" }), true);
 } finally { globalThis.fetch = originalFetch; }
 console.log("acquire selfcheck passed: shared keeper catalogs, zero visitor chain scans, safe failure status, bounded schema and prepared eligibility");
+
+// promise: zero-pot gap ties show the best price per point, so Strategy insertion order cannot hide OpenSea.
+const tied = [
+  { id: 1n, source: "strategy", price: 480n, score: 100n, gap: Infinity },
+  { id: 2n, source: "opensea", price: 100n, score: 200n, gap: Infinity },
+];
+tied.sort((a,b)=>(a.gap-b.gap)||compareListingPricePerPoint(a,b));
+assert.equal(tied[0].source,"opensea");
+assert.ok(compareListingPricePerPoint({id:1n,price:1n,score:0n},{id:2n,price:100n,score:1n})>0);
