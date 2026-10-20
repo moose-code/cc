@@ -12,7 +12,6 @@ kind: guarantee (holds under every setting and actor), behavior (approved, the o
 
 | kind | intent | decisions |
 |---|---|---|
-| website behavior | The Credits sale compares each active engine ask with the lowest current observed OpenSea or CreditStrategy ask within 20 rating points, normalized by score. It leads with the count of cheaper engine Credits, puts them first, and shows the relative price on each card. Missing or stale comparisons do not imply a bargain. A labelled local illustrative preview disables buying | 244–248 |
 | website operation | Netlify production, deploy previews and branch deploys use the same public chain-1 Core, deployment block, adapters, pool tuple and indexer. Each deploy keeps its own site URL. Server-only keeper access remains in Netlify's functions scope | 243 |
 | launch operation | Historical CC NFT backfill may continue after coin launch when the production website chain fallback through the API, keeper decisions and alerts are verified against the actual Core. Deferred indexer acceptance is not a pass; indexed data requires full catch-up and parity | 228 |
 | launch operation | Track the chain-id-1 deployment record in Git after deferred Core deployment so services and the later coin launch use the same addresses and start block. A recorded coin address before launch is only a prediction and must have no code | 222 |
