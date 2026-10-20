@@ -6,9 +6,9 @@ import { getAbiItem, zeroAddress } from "viem";
 import { controllerAbi } from "./abis/ControllerV1";
 import { coreAbi } from "./abis/Core";
 import { creditsAbi, erc20Abi, statementsAbi, strategyAbi } from "./abis/external";
-import { fallbackTransport, guardedHttp, type Endpoint } from "./src/lib/rpc";
+import { guardedHttp, type Endpoint } from "./src/lib/rpc";
 import { localRpc } from "./src/lib/rpc-selection";
-import { sanitizedRpc, withFastFallback } from "./rpc-config";
+import { sanitizedRpc, temporaryFallbackTransport, withFastFallback } from "./rpc-config";
 
 // Every address and start block comes from the deployment record (deployments/<chainId>.json) with an
 // environment variable of the same meaning taking precedence. A missing required value stops the start.
@@ -82,8 +82,9 @@ const localUrl = localRpc(CHAIN_ID, record.rpcUrl as string | undefined, process
 if (IS_LOCAL && !localUrl) throw new Error("RPC_URL is not set and the record has no rpcUrl. Refusing to start.");
 const selected = localUrl ? { endpoints, reserve } : withFastFallback(
   endpoints, reserve, process.env.RPC_FAST_FALLBACK_URL, process.env.RPC_RPS_FAST_FALLBACK,
+  process.env.RPC_FAST_FALLBACK_MAX_CALLS, process.env.RPC_FAST_FALLBACK_UNTIL,
 );
-const rpc = localUrl ? guardedHttp(localUrl) : sanitizedRpc(fallbackTransport(selected.endpoints, selected.reserve));
+const rpc = localUrl ? guardedHttp(localUrl) : sanitizedRpc(temporaryFallbackTransport(selected));
 
 // PGlite serves local development only. A real chain needs Postgres so the RPC cache and schemas outlive the machine.
 if (!IS_LOCAL && !process.env.DATABASE_URL) throw new Error("DATABASE_URL is required on a real chain. Refusing to start.");
