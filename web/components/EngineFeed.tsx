@@ -103,8 +103,8 @@ export function EngineFeed() {
   const historyDown = useHistoryDown();
   // one batched read for the credits on screen
   const ids = [...new Set(shown.flatMap((e) => (e.tile?.kind === "credit" ? [BigInt(e.tile.id)] : [])))];
-  const { data: scores } = useScores(ids);
-  const { data: traits } = useCreditTraits(ids);
+  const { data: scores, loading: scoresLoading } = useScores(ids);
+  const { data: traits, loading: traitsLoading } = useCreditTraits(ids);
 
   return (
     <section className="ledger">
@@ -137,7 +137,15 @@ export function EngineFeed() {
               <span className="num">ETH</span>
             </div>
             {shown.map((e) => (
-              <Row key={e.key} e={e} now={now} score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined} mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined} />
+              <Row
+                key={e.key}
+                e={e}
+                now={now}
+                score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined}
+                mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined}
+                scoreWait={e.tile?.kind === "credit" && scoresLoading}
+                maskWait={e.tile?.kind === "credit" && traitsLoading}
+              />
             ))}
             {shown.length === 0 && (loading ? <LoadingLedger /> : <EmptyLedger />)}
           </div>
@@ -230,7 +238,8 @@ function ListingsPanel() {
   );
 }
 
-function Row({ e, now, score, mask }: { e: FeedEvent; now: number; score?: bigint; mask?: number }) {
+// scoreWait, maskWait: the credit's rating or plates are still being read (a skeleton until they arrive).
+function Row({ e, now, score, mask, scoreWait, maskWait }: { e: FeedEvent; now: number; score?: bigint; mask?: number; scoreWait?: boolean; maskWait?: boolean }) {
   const { data: blockTs } = useBlockTs(e.ts == null ? e.block : undefined);
   const { data: scan } = useScan();
   const ts = e.ts ?? blockTs;
@@ -279,14 +288,17 @@ function Row({ e, now, score, mask }: { e: FeedEvent; now: number; score?: bigin
         </span>
       </span>
       <span className="plates">
-        {mask != null &&
-          PLATES.map((l, i) => (
-            <b key={l} className={mask & (1 << i) ? "on" : undefined}>
-              {l}
-            </b>
-          ))}
+        {mask != null
+          ? PLATES.map((l, i) => (
+              <b key={l} className={mask & (1 << i) ? "on" : undefined}>
+                {l}
+              </b>
+            ))
+          : maskWait && <Sk w="7ch" />}
       </span>
-      <span className="num rate">{score != null ? rating(score) : stmt && sid != null ? <StatementRating sid={sid} raw={e.rating} /> : ""}</span>
+      <span className="num rate">
+        {score != null ? rating(score) : stmt && sid != null ? <StatementRating sid={sid} raw={e.rating} /> : scoreWait ? <Sk w="5ch" /> : ""}
+      </span>
       <span className="num">{e.eth ?? ""}</span>
     </div>
   );
