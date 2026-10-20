@@ -8,7 +8,9 @@ This is an orientation document for agents working on the product, website, or c
 
 CC is an independent Ethereum coin and acquisition engine built around Jack Butcher's Credits and Statements. Trading the coin feeds a contract controlled ETH pot. The engine makes a standing, rating based offer for Credits, acquires eligible market listings, and assembles eligible groups of 80 Credits into Statements. It can also sell individual Credits. ETH returned through these sales is directed partly to continued acquisitions and partly to CC buybacks and burns.
 
-The mechanism creates a repeatable activity cycle between a speculative coin, existing artworks, and the secondary market. Its success is conditional on actual trading, acceptable Credit supply, Statement demand, solvency, and the settings maintained by the owner. There is no guarantee that trading activity or a buyback will increase CC's price.
+The mechanism is intended as a continuing market participant, not simply a treasury that buys NFTs and relists them above acquisition price. CC's circulating bid responds to fills, trading revenue replenishes its capacity, and acquired Credits have two paths: individual resale or eventual composition into Statements. Proceeds from either route can finance more acquisitions and coin buybacks. The goal is to keep the cycle responsive to a changing market rather than wait forever for one speculative markup.
+
+**Important limit:** the current resale floors are still anchored to acquisition cost. If market demand drops below those floors, Credit and Statement inventory can remain unsold. The engine can continue placing bids while new fee income creates available ETH, but it cannot promise that every item will clear or that spent capital will return. Public copy must distinguish the goal of sustained motion from a guarantee of perpetual inventory turnover. There is no guarantee that trading activity or a buyback will increase CC's price.
 
 The engine is separate from the artist's project. Do not imply endorsement, partnership, ownership of Jack's IP, or control of the upstream Credits and Statements contracts.
 
@@ -67,6 +69,8 @@ The bid state climbs while the pot can fund another reference sized acquisition 
 
 The engine offers held Credits for sale during a configurable window. Their ETH ask declines from a markup toward a cost and value derived floor. This provides a path for Credits to return to collectors instead of only waiting for 80 Credits to be composed. A Credit sold by the engine cannot immediately return through an intake route; the configured return lock follows that Credit through transfers.
 
+**Down market behavior:** new acquisitions lower the bid, and fresh fee income may continue to fund purchases even if older inventory fails to sell. The resale curves do not lower their floors indefinitely. At the current 100 percent cost floor on Statement sales and the cost and value based floor on Credit sales, unsold inventory can accumulate. If the owner wants an unconditional route for selling below historical cost, that requires a separately approved economic change, its loss funding rule, and appropriate safety limits. Do not claim the existing engine has such a route.
+
 ### Composition and Statement resale
 
 After eligible Credits have passed their sale window, anyone may trigger composition of a batch of 80 into a Statement. This uses the upstream Statements contract and burns the 80 inputs. The new Statement belongs to the Core and is available for an ETH sale. Its ask begins at a markup to a reference based on costs and values, declines over a configured interval, and rests at its floor. The configured initial markup is 150 percent of reference, but durations and sale parameters are editable and tracked onchain.
@@ -119,7 +123,7 @@ Other useful source files: `web/components/Flywheel.tsx` for the current cycle e
 
 1. First screen: one plain sentence that CC trades help an autonomous system acquire Credits, followed by an actual live diagram.
 2. Origin: a short introduction to Jack's original Credits and their 80 to one Statement process, linking to jack.art.
-3. Mechanism: show the changing ETH bid and the individual Credit resale window before the Statement step.
+3. Mechanism: explain the engine as a continuously responding market participant, with a changing ETH bid and two inventory paths. Describe its down market resilience as an aspiration that depends on fresh funding and actual bids, and acknowledge the present cost floor limitation.
 4. Money: one clear visual with the steady trading skim and the Statement sale split. Label artist, Artcoins protocol, operator and CC buyback independently.
 5. FAQ: answer practical questions about buying and selling, the bid, fee burden, distribution, royalties, control, and affiliation.
 6. Contract docs: leave function names, detailed settings, and full integration reference in `/docs`.
