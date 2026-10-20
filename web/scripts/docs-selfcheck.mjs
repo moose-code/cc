@@ -1,4 +1,4 @@
-// promise: every published contract page has unique anchors and names callable methods or events that exist in the generated interfaces.
+// promise: public docs have valid references and omit deferred balance flows.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -42,6 +42,10 @@ for (const page of docPages) {
 }
 
 assert(docPages.some((page) => page.slug === ""), "docs landing page missing");
+const deployment = JSON.parse(readFileSync(new URL("../../deployments/1.json", import.meta.url), "utf8"));
+assert.equal(docPages.find((page) => page.slug === "contracts/core")?.mainnetAddress, deployment.core, "Core address differs from deployment record");
+assert.equal(docPages.find((page) => page.slug === "contracts/controller")?.mainnetAddress, deployment.controller, "Controller address differs from deployment record");
+assert(!/\b(?:balance|redeem\w*|redemp\w*)\b/i.test(JSON.stringify(docPages)), "deferred balance flow appears in public docs");
 assert(!docPages.some((page) => page.slug === "contracts/balance-module"), "deferred balance module page must stay unpublished");
 assert(!Object.hasOwn(contractCatalog, "contracts/balance-module"), "deferred balance module catalog must stay unpublished");
 console.log(`docs: ${docPages.length} routes and contract reference names verified`);

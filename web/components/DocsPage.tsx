@@ -3,7 +3,7 @@ import { docHref, docPages, entryId, type DocPage } from "@/lib/docs-content";
 import { contractCatalog } from "@/lib/docs-catalog";
 
 const sourceBase = "https://github.com/ripe0x/cc/blob/";
-const sourceRevision = "08e2102a05f721196f264fe01ebe03f5bf45a188";
+const sourceRevision = "e713bb0ffb4eb9c75fdbf427cf6aa743526f1c04";
 
 export function DocsPage({ page }: { page: DocPage }) {
   const index = docPages.indexOf(page);
