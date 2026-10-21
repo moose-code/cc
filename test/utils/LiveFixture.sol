@@ -177,6 +177,44 @@ abstract contract LiveFixture is Fixture {
         revert("no eligible held Statement at the pin: re-pin LIVE_FORK_BLOCK");
     }
 
+    /// @notice idempotent approval of the test RawListingAdapter so `_buyRaw` works. `LiveFixture.setUp` already sets
+    /// and approves `rawAdapter`, so this is a no-op there; kept so a suite that calls it in its own setUp stays correct
+    function _approveRawAdapter() internal {
+        if (rawAdapter != address(0) && core.allowedAdapter(rawAdapter)) return;
+        rawAdapter = _user("rawAdapter");
+        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
+        vm.prank(owner);
+        core.addAdapter(rawAdapter);
+    }
+
+    // ------------------------------------------------------------------ fresh successor config (brief: a migration successor is not yet deployed)
+
+    /// @notice populates `lc` from the live system so the inherited fresh core helpers (`_successorCore`, `_launchCore`,
+    /// `buildConfig`) build a successor of the live coin on the live stack. the source Core stays the live one; only the
+    /// not yet deployed successor is fresh. call once in a suite's setUp before a fresh core helper. the salt is distinct
+    /// from the live launch so a fresh coin prediction does not collide
+    function _initLiveConfig() internal {
+        V2Stack.Stack memory st = V2Stack.attach();
+        require(st.hook == core.HOOK(), "v2 record hook does not match the live coin hook: wrong STACK record");
+        lc = defaultConfig();
+        lc.owner = owner;
+        lc.creator = creator;
+        lc.artist = creator;
+        lc.payee = _user("payee");
+        lc.name = "Successor Coin";
+        lc.symbol = "SUCC";
+        lc.salt = keccak256("credits-engine live successor");
+        lc.rateStart = core.RATE_START();
+        lc.settings = core.settings();
+        lc.stack.hook = core.HOOK();
+        lc.stack.factory = st.factory;
+        lc.stack.locker = st.locker;
+        lc.stack.escrow = st.escrow;
+        lc.stack.tickSpacing = core.TICK_SPACING();
+        lc.stack.poolFee = core.POOL_FEE();
+        lc.mevModule = st.mev;
+    }
+
     // ------------------------------------------------------------------ live phase 2 entry (treasury on the live token)
 
     using StateLibrary for IPoolManager;

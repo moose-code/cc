@@ -203,9 +203,13 @@ abstract contract SeaportBase is LiveFixture {
         uint256 gap = ceiling - cost;
         uint256 roomGap = before.pot - core.reserve() - cost - royalty;
         _assertListingPay(paid, gap < roomGap ? gap : roomGap);
-        assertEq(core.ethPot(), before.pot - cost - royalty - paid, "pot down by exactly cost, the royalty and the payment");
         assertEq(
-            address(core).balance, before.balance - cost - royalty - paid, "balance down by exactly cost, the royalty and the payment"
+            core.ethPot(), before.pot - cost - royalty - paid, "pot down by exactly cost, the royalty and the payment"
+        );
+        assertEq(
+            address(core).balance,
+            before.balance - cost - royalty - paid,
+            "balance down by exactly cost, the royalty and the payment"
         );
         assertEq(core.ethToBuyback(), before.toBuyback);
         assertEq(
@@ -241,23 +245,13 @@ contract SeaportTest is SeaportBase {
 
     /// the pot is large enough to clear every ceiling the tests use
     uint256 internal constant POT = 30 ether;
-    /// wei per credit the cases run at: a credit costs 0.433 ether
-    uint256 internal constant TARGET_RATE = 4.33e17;
 
     function setUp() public override {
         super.setUp();
-        // the launch rate cap (3 times the opening rate) is far below the rate the cases need: raise it to the bounds,
-        // with the clamp at one credit of pot and the ceiling at its loosest so the bid reaches it in days
-        Settings memory cs = core.settings();
-        cs.rateCap = uint64(TARGET_RATE);
-        cs.ceilBps = 30_000;
-        cs.idleLoosenBps = 2_000;
-        _setSettings(cs);
+        // run under the live settings: the cases price every order against the live `core.bidOf(id)`, so they hold at
+        // whatever rate and caps the live Core carries. no launch calibration is pranked over the live settings
+        // (brief addendum 2); the pot is only funded so it clears the bids the cases list
         _fundPot(POT);
-        for (uint256 i; i < 900 && core.ethRate() < TARGET_RATE; ++i) {
-            _warp(1 hours);
-        }
-        assertGe(core.ethRate(), TARGET_RATE, "rate cleared");
         // the live Core is funded and solvent: its tracked eth (the pots and the redeem burn reserve) never exceeds its
         // balance. the fresh fixture held exactly pot plus reserve; the live Core may also hold buyback eth and surplus
         _solvent();
@@ -450,13 +444,9 @@ contract SeaportCallerPayTest is SeaportBase {
         // the live stack addresses the gas measurement cools, read from the live system (the fresh fixture read them
         // from its deployed v2 stack, which `LiveFixture` leaves unset)
         _initLiveConfig();
-        // the owner lifts the rate cap so `_run` can restate the rate to the opening bid P0 (the fresh fixture launched
-        // with a cap above it; the live cap may be lower)
-        Settings memory cs = core.settings();
-        if (cs.rateCap < P0) {
-            cs.rateCap = uint64(P0);
-            _setSettings(cs);
-        }
+        // the caller economics are measured at the engine's opening bid P0 (docs/DECISIONS.md section 2): the credit's
+        // scaled bid is the subject of these cases, so `_run` restates the rate so `bidOf(id)` equals P0 (brief addendum
+        // 2 allows pranking a setting that is the test's subject), lifting the rate cap there as the live score needs
         _fundPot(30 ether);
     }
 
@@ -488,16 +478,28 @@ contract SeaportCallerPayTest is SeaportBase {
         }
     }
 
-    /// one buy of the listed credit `id` at a gap `gapBps` under its scaled bid, with the rate restated to `bid`, at
-    /// base fee `bf`. returns the payment, the caller's profit and the credit's scaled bid (the ceiling). the live
-    /// credit carries its own score, so the ceiling is `bidOf(id)` (`bid` scaled by the score), not `bid` itself
+    /// one buy of the listed credit `id` at a gap `gapBps` under its bid, with the credit's scaled bid restated to
+    /// `bid`, at base fee `bf`. returns the payment, the caller's profit and the credit's scaled bid (the ceiling). the
+    /// live credit carries its own score, so the rate is set to `bid` scaled back by the score, giving `bidOf(id)` == `bid`
+    /// restates the rate so the credit's scaled bid equals `bid`: the per credit bid is the rate scaled by the score
+    /// over 100 points, so the rate is `bid` scaled back by the score. lifts the rate cap to fit it when the live score
+    /// is below 100 points. kept out of `_run` so its locals do not deepen that stack
+    function _setRateForBid(uint256 id, uint256 bid) internal {
+        uint256 rate = bid * RATE_SCORE / _scoreOf(id);
+        Settings memory s = core.settings();
+        if (s.rateCap < rate) {
+            s.rateCap = uint64(rate);
+            _setSettings(s);
+        }
+        vm.prank(owner);
+        core.setRate(rate);
+    }
+
     function _run(uint256 id, uint256 bid, uint256 gapBps, uint256 bf)
         internal
         returns (uint256 paid, int256 profit, uint256 ceiling)
     {
-        vm.prank(owner);
-        core.setRate(bid);
-        assertEq(core.ethRate(), bid, "the bid is the restated rate");
+        _setRateForBid(id, bid);
         ceiling = core.bidOf(id);
         uint256 price = ceiling - ceiling * gapBps / 10_000;
         bytes memory data = _basicData(_open(id, price, 0));

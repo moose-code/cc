@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Vm} from "forge-std/Vm.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Mainnet, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
@@ -13,8 +13,9 @@ import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
 /// the owner of the core after the timelock was removed: every former queued action is one immediate call with its
 /// validity rules, three one way locks, a two step handover. real Core, real stack, the stand in balance module and
-/// token, the scripted controller
-abstract contract OwnerBase is Fixture {
+/// token, the scripted controller. the Core, its controller and its coin are the live ones bound by LiveFixture; the
+/// balance module and token stay stand ins because these are module validation and misconfiguration subjects
+abstract contract OwnerBase is LiveFixture {
     MockBalanceToken internal spareToken;
     MockBalanceModule internal spareMod;
     address internal stranger = address(0x5757);
@@ -139,6 +140,10 @@ contract OwnerFormerQueueTest is OwnerBase {
 
     // promise: INTEGRATION BadModule on setBalanceModule
     function test_module_validityRulesAreIntact() public {
+        // the live module and token read at setUp: every refused set below must leave them exactly as they are, whether
+        // the live Core has no module yet (today) or the phase 2 treasury selected (stage B)
+        address mod0 = core.balanceModule();
+        address tok0 = core.balanceToken();
         vm.startPrank(owner);
         // no code
         vm.expectRevert(ICore.BadModule.selector);
@@ -168,8 +173,8 @@ contract OwnerFormerQueueTest is OwnerBase {
         vm.expectRevert(ICore.BadModule.selector);
         core.setBalanceModule(address(m));
         vm.stopPrank();
-        assertEq(core.balanceModule(), address(0), "every refused set changed nothing");
-        assertEq(core.balanceToken(), address(0));
+        assertEq(core.balanceModule(), mod0, "every refused set changed nothing");
+        assertEq(core.balanceToken(), tok0);
         vm.prank(stranger);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setBalanceModule(address(spareMod));
@@ -264,6 +269,7 @@ contract OwnerLocksTest is OwnerBase {
 
     // promise: inv 13 the controller lock stays closed
     function test_lockController_blocksOnlyTheControllerSetterForever() public {
+        if (_liveStageB()) return; // asserts ctl.setSale / setAnchorBps still work, both ControllerV1 only surfaces
         assertFalse(core.controllerLocked());
         vm.expectEmit(address(core));
         emit ICore.ControllerLocked();
@@ -298,6 +304,7 @@ contract OwnerLocksTest is OwnerBase {
 
     // promise: INTEGRATION NoBalanceModule on lockBalanceModule
     function test_lockBalanceModule_revertsWhileUnset() public {
+        if (_liveStageB()) return; // stage B selects the live treasury at setUp, so the module cannot be unset
         vm.prank(owner);
         vm.expectRevert(ICore.NoBalanceModule.selector);
         core.lockBalanceModule();
@@ -404,6 +411,7 @@ contract OwnerHandoverTest is OwnerBase {
 
     // promise: inv 13 former owners hold no power
     function test_handover_theOldOwnerLosesEveryPowerAndTheNewOneHasEvery() public {
+        if (_liveStageB()) return; // asserts ctl.setSale / setAnchorBps follow the owner, both ControllerV1 only surfaces
         _enterPhase2();
         vm.prank(owner);
         core.transferOwnership(heir);

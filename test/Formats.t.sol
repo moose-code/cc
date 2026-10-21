@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 
 /// decision 113: statement formats. `compose()` derives the format from `prevrandao` and the first page id,
 /// `compose(format)` takes it from the caller, and `setHeldFormat` restyles a held statement for a holder of at least
 /// `minCcToChoose` coin. the format is read back from the live Statements contract
-contract FormatsTest is Fixture {
+contract FormatsTest is LiveFixture {
     address internal holder;
 
     function setUp() public override {
@@ -17,6 +17,8 @@ contract FormatsTest is Fixture {
 
     /// composes the oldest 80 pile credits through `compose()` and returns the new statement id
     function _composeDefault() internal returns (uint256 sid) {
+        // the live credit sale window is on, so age the page to eligibility before composing
+        _warpPageReady();
         sid = STATEMENTS.supply() + 1;
         vm.fee(composeBasefee);
         vm.prank(keeper);
@@ -27,9 +29,12 @@ contract FormatsTest is Fixture {
     function _heldAndFunded() internal returns (uint256 sid) {
         _fillEthPile(80);
         sid = _composeDefault();
-        assertEq(core.minCcToChoose(), 1e18, "the launch minimum is 1 coin");
-        _buyCoin(holder, 0.5 ether);
-        assertGe(coin.balanceOf(holder), 1e18, "the holder holds at least 1 coin");
+        // read the choose minimum from the live Core and buy enough coin to clear it, rather than the launch 1 coin
+        uint256 minCc = core.minCcToChoose();
+        for (uint256 i; i < 8 && coin.balanceOf(holder) < minCc; ++i) {
+            _buyCoin(holder, 0.5 ether);
+        }
+        assertGe(coin.balanceOf(holder), minCc, "the holder holds at least the choose minimum");
     }
 
     // ------------------------------------------------------------------ compose
@@ -57,6 +62,7 @@ contract FormatsTest is Fixture {
         uint256 snap = vm.snapshotState();
         uint256 sid = STATEMENTS.supply() + 1;
         for (uint8 f; f <= 7; f += 5) {
+            _warpPageReady();
             vm.fee(composeBasefee);
             vm.prank(keeper);
             core.compose(f);
@@ -123,5 +129,4 @@ contract FormatsTest is Fixture {
         vm.prank(holder);
         core.setHeldFormat(sid, 8);
     }
-
 }

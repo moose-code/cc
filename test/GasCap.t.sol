@@ -10,6 +10,7 @@ import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 import {SeaportBase} from "./Seaport.t.sol";
+import {Fixture} from "./utils/Fixture.sol";
 import {OrderComponents} from "./utils/SeaportTypes.sol";
 import {ComposeCall} from "./utils/ComposeCall.sol";
 
@@ -38,6 +39,9 @@ contract GasCapTest is SeaportBase {
         bidder2 = _user("gas bidder two");
         taker = _user("gas taker");
         stranger = _user("gas stranger");
+        // populate `lc` from the live stack so `_cool` cools the live AMM accounts (the fresh fixture read them from its
+        // deployed v2 stack, which `LiveFixture` leaves unset)
+        _initLiveConfig();
         vm.fee(composeBasefee);
     }
 
@@ -95,12 +99,12 @@ contract GasCapTest is SeaportBase {
             STRATEGY,
             Mainnet.SEAPORT,
             address(PM),
-            v2.hook,
+            lc.stack.hook,
             address(coin),
-            v2.locker,
-            v2.escrow,
-            v2.factory,
-            v2.mev,
+            lc.stack.locker,
+            lc.stack.escrow,
+            lc.stack.factory,
+            lc.mevModule,
             address(mod),
             address(xt)
         ];
@@ -129,13 +133,18 @@ contract GasCapTest is SeaportBase {
     /// @dev full page of 80, nothing warmed by earlier work
     function test_gas_compose_ethLane_firstCold() public {
         _fillEthPile(80);
+        // the live credit sale window is on, so age the page to eligibility before the cold measurement (the warp
+        // reads the controller, so it runs before `_cool` re-cools every touched account)
+        _warpPageReady();
         _cool(address(core));
         _measureCompose("compose eth lane, 80 credits, first compose, cold");
     }
 
     // promise: SPEC 1 redeemStatement counted gas bound and the transaction cap
     function test_gas_redeemStatement_ethLane() public {
-        _enterPhase2();
+        // the stand in balance module and token (this measures the Core's gas, not the real module's: see the contract
+        // header). selected on the live Core by owner prank through the base `Fixture._enterPhase2`
+        Fixture._enterPhase2();
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
         _cool(address(core));
@@ -238,10 +247,13 @@ contract GasCapTest is SeaportBase {
 
     // promise: SPEC 1 the balance bid batch fits the transaction cap; the module holds the token and pays the seller
     function test_gas_sellForBalance_batch() public {
-        _enterPhase2();
+        // the stand in balance module and token, selected on the live Core: this measures the Core's sellForBalance gas
+        // (contract header), and the batch search needs a module that pays an unbounded batch, which the live treasury
+        // (capped by the holder and the pool) cannot. the mock mints enough for the largest batch the search walks to
+        Fixture._enterPhase2();
         _fundPot(30 ether);
         _warp(1 hours + 1);
-        xt.mint(address(mod), 1e30); // the module commits enough to the bid for the largest batch the search walks to
+        xt.mint(address(mod), 1e30);
         _searchBatch("sellForBalance (launch)", true);
     }
 
@@ -270,7 +282,7 @@ contract GasCapTest is SeaportBase {
     function _seaportBuy(string memory name, uint256 mode) internal {
         _fundPot(10 ether);
         uint256 id = _list();
-        uint256 price = core.ethRate() * 9 / 10;
+        uint256 price = core.bidOf(id) * 9 / 10;
         OrderComponents memory c = mode == 1 ? _open(id, price - price / 100, price / 100) : _open(id, price, 0);
         bytes memory order = _basicData(c);
         bytes memory data = abi.encodeCall(core.buyListing, (seaportAdapter, id, order));
@@ -306,11 +318,11 @@ contract GasCapTest is SeaportBase {
     function test_gas_swapCredit() public {
         uint256[] memory two = _credits(taker, 2);
         (uint256 outId, uint256 inId) = _scoreOf(two[0]) <= _scoreOf(two[1]) ? (two[0], two[1]) : (two[1], two[0]);
-        // the outgoing credit goes into the pile through a full rate sell
+        // the outgoing credit goes into the pile through a sell at its live scaled bid (the live CreditScore is read,
+        // never mocked); swapCredit's gas does not depend on the exact sell price
         _liftRateCap();
         _fundPot(5 ether);
         _warp(1 hours + 1);
-        _unitScore(outId);
         vm.prank(taker);
         core.sellForEth(_one(outId));
         // a representative nonzero fee the caller burns, and the coin and approval for it
@@ -356,6 +368,10 @@ contract GasCapTest is SeaportBase {
     // promise: inv 18 the credit sale pushes the artist and operator cuts and books the rest
     /// @dev the door cost of `buyCredit`, which forwards the price to `sellCreditTo`
     function test_gas_buyCredit_creditSalePushesTheCuts() public {
+        // pre-fund the pot above the live reserve before filling: with one credit, `_fillEthPile` tops the pot only to
+        // about the opening rate, which a live score above 100 points and the nonzero live reserve leave too small to
+        // pay the bid, so the fill's own sell reverts PotTooSmall (decision 156; the fresh fixture ran reserveWei 0)
+        _fundPot(2 ether);
         uint256[] memory ids = _fillEthPile(1);
         _setCreditSaleOn(true);
         uint256 id = ids[0];
@@ -398,6 +414,9 @@ contract GasCapTest is SeaportBase {
     /// @dev the core reads `nextPage` with 500,000 gas. a full pile, cold access
     function test_gas_readCaps_nextPage() public {
         _fillEthPile(80);
+        // the live credit sale window is on, so age the page to eligibility before the cold read (the warp reads the
+        // controller, so it runs before `_cool` re-cools it)
+        _warpPageReady();
         _cool(address(ctl));
         uint256 g = gasleft();
         (bool ready,,) = ctl.nextPage();

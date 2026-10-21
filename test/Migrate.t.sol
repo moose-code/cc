@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
@@ -10,7 +11,7 @@ import {Vm} from "forge-std/Vm.sol";
 /// `setSuccessor`, `lockSuccessor` and `migrate` of the Core on the fork: the real Core, Credits, Statements and
 /// pool, the stand in balance module and token, and `MigrationSink` as the successor. the first `migrate` retires the Core:
 /// six doors refuse with `Retired`, and settling, redemptions, sales of statements, both buybacks and the owner functions work
-contract MigrateTest is Fixture {
+contract MigrateTest is LiveFixture {
     MigrationSink internal sink;
     address internal stranger = address(0x5757);
 
@@ -40,6 +41,8 @@ contract MigrateTest is Fixture {
 
     function _composedStatement() internal returns (uint256 sid) {
         _fillEthPile(80);
+        // the live credit sale window is on, so age the page to eligibility before composing
+        _warpPageReady();
         uint256 supply = STATEMENTS.supply();
         vm.fee(composeBasefee);
         vm.prank(keeper);
@@ -52,6 +55,7 @@ contract MigrateTest is Fixture {
         xt.mint(address(mod), 1_000_000_000e18);
         vm.prank(seller);
         core.sellForBalance(ids);
+        _warpPageReady();
         uint256 supply = STATEMENTS.supply();
         vm.prank(keeper);
         core.compose();
@@ -60,7 +64,7 @@ contract MigrateTest is Fixture {
 
     /// pots in both currencies, credits in the pile from both the eth and the balance bid, and one statement of each kind
     function _world() internal returns (World memory w) {
-        _enterPhase2();
+        Fixture._enterPhase2();
         _setBalancePool();
         _fundPot(3 ether);
         // the first statement redeems, which fills the balance pots
@@ -86,8 +90,8 @@ contract MigrateTest is Fixture {
 
     // promise: INTEGRATION NoCode on setSuccessor
     function test_OK_setSuccessorTakesACodeAddressOrZero() public {
-        assertEq(core.successor(), address(0), "no successor at launch");
-        assertFalse(core.successorLocked(), "unlocked at launch");
+        assertEq(core.successor(), address(0), "no successor at the pin");
+        assertFalse(core.successorLocked(), "unlocked at the pin");
         vm.expectEmit(false, false, false, true, address(core));
         emit ICore.SuccessorSet(address(sink));
         _setSuccessor();
@@ -181,8 +185,11 @@ contract MigrateTest is Fixture {
         uint256 buyback = core.ethToBuyback();
         uint256 reserve = core.ethRedeemBurn();
         assertTrue(pot > 0 && buyback > 0, "setup: the eth pots hold something");
-        uint256[] memory pileIds = core.pilePage(0, 100);
-        assertEq(pileIds.length, 12, "setup: one pile of 7 eth bid plus 5 balance bid credits");
+        // the world composes away most of the pre-existing live pile into statements, so the credits migrate moves are
+        // whatever the pile actually holds after the world, read here rather than assumed from the pile at the pin
+        uint256 pileNow = core.pileSize();
+        uint256[] memory pileIds = core.pilePage(0, pileNow);
+        assertEq(pileIds.length, pileNow, "setup: the pile after the world's composes and fills");
         uint256 balance = address(core).balance;
         assertEq(xt.balanceOf(address(core)), 0, "setup: the core holds no balance token");
         uint256 coinBalance = coin.balanceOf(address(core));
@@ -191,7 +198,7 @@ contract MigrateTest is Fixture {
         vm.expectEmit(true, false, false, true, address(core));
         emit ICore.EngineRetired(address(sink));
         vm.expectEmit(true, false, false, true, address(core));
-        emit ICore.Migrated(address(sink), pot, 12);
+        emit ICore.Migrated(address(sink), pot, pileNow);
         _migrate(1000);
 
         assertTrue(core.retired(), "the first migrate did not retire the core");
@@ -219,6 +226,7 @@ contract MigrateTest is Fixture {
 
     // promise: SPEC 1 held statements and their records stay in the Core
     function test_OK_everyHeldStatementStaysAsItWas() public {
+        uint256 heldPre = core.heldStatements().length;
         World memory w = _world();
         _setSuccessor();
         uint256[4] memory sids = [w.forRedeem, w.forSale, w.sold, w.balanceBid];
@@ -227,7 +235,7 @@ contract MigrateTest is Fixture {
             before[i] = _fingerprint(sids[i]);
         }
         uint256[] memory heldBefore = core.heldStatements();
-        assertEq(heldBefore.length, 3, "setup: three statements on the books");
+        assertEq(heldBefore.length, heldPre + 3, "setup: the live held list plus three world statements");
         _migrate(1000);
         for (uint256 i; i < 4; ++i) {
             assertEq(_fingerprint(sids[i]), before[i], "a statement changed");
@@ -246,11 +254,12 @@ contract MigrateTest is Fixture {
 
     // promise: SPEC 1 a retired Core sells out its statements, a second migrate moves the proceeds
     function test_OK_theOldEngineSellsOutItsStatementsAndASecondMigrateMovesTheProceeds() public {
+        uint256 heldPre = core.heldStatements().length;
         World memory w = _world();
         _setSuccessor();
         _migrate(1000);
         uint256 ethBefore = sink.ethReceived();
-        assertEq(_heldCount(), 3, "three statements on the books");
+        assertEq(_heldCount(), heldPre + 3, "three world statements on the books");
         // a statement redeems once its asking price falls to its cost
         _makeEligible(w.forRedeem);
         _makeEligible(w.balanceBid);
@@ -263,13 +272,13 @@ contract MigrateTest is Fixture {
         core.redeemStatement(w.balanceBid);
         assertEq(core.ethPot(), 0, "the redemption took eth from an empty pot");
         assertEq(address(this).balance, callerBalance, "the caller was paid from an empty pot");
-        assertEq(_heldCount(), 1, "the redemptions left one statement on the books");
+        assertEq(_heldCount(), heldPre + 1, "the redemptions left the world forSale statement on the books");
         assertGt(_moduleHolding(), 0, "the redemption did not fill the module");
         // the remaining statement sells through the controller. the pot share moves in the next call, the buyback
         // share stays
         uint256 buybackBefore = core.ethToBuyback();
         _buy(address(0xB3D), w.forSale);
-        assertEq(_heldCount(), 0, "nothing is left on the books");
+        assertEq(_heldCount(), heldPre, "the world statements are gone, the live held list stays");
         uint256 booked = core.ethPot();
         assertGt(booked, 0, "the proceeds were booked");
         assertGt(core.ethToBuyback(), buybackBefore, "the buyback share was booked");
@@ -413,21 +422,22 @@ contract MigrateTest is Fixture {
     /// a pile that a partial batch leaves behind can be migrated by later calls, and cannot be composed
     function test_OK_aPartialBatchLeavesThePileMigratableAndComposeIsRefused() public {
         _fillEthPile(80);
-        assertEq(core.pileSize(), 80, "setup: a full page");
+        uint256 start = core.pileSize();
+        assertGe(start, 80, "setup: the fill added a full page to the live pile");
         _setSuccessor();
         _migrate(1);
-        assertEq(core.pileSize(), 79, "one credit moved");
+        assertEq(core.pileSize(), start - 1, "one credit moved");
         vm.fee(composeBasefee);
         vm.expectRevert(ICore.Retired.selector);
         vm.prank(keeper);
         core.compose();
-        assertEq(core.pileSize(), 79, "a refused compose took credits");
+        assertEq(core.pileSize(), start - 1, "a refused compose took credits");
         _migrate(40);
-        assertEq(core.pileSize(), 39);
-        _migrate(1000);
+        assertEq(core.pileSize(), start - 41);
+        _migrate(core.pileSize());
         assertEq(core.pileSize(), 0);
         assertEq(CREDITS.balanceOf(address(core)), 0, "credits left in the core");
-        assertEq(CREDITS.balanceOf(address(sink)), 80, "the successor holds every credit");
+        assertEq(CREDITS.balanceOf(address(sink)), start, "the successor holds every credit");
     }
 
     // promise: SPEC 1 a retired Core books the fees that still arrive
@@ -457,15 +467,9 @@ contract MigrateTest is Fixture {
 
     // promise: INTEGRATION BadSuccessor
     function test_REVERT_theSuccessorIsNotPartOfTheEngine() public {
-        _enterPhase2();
-        address[6] memory bad = [
-            address(core),
-            address(coin),
-            address(CREDITS),
-            address(STATEMENTS),
-            address(mod),
-            address(xt)
-        ];
+        Fixture._enterPhase2();
+        address[6] memory bad =
+            [address(core), address(coin), address(CREDITS), address(STATEMENTS), address(mod), address(xt)];
         for (uint256 i; i < bad.length; ++i) {
             vm.expectRevert(abi.encodeWithSelector(ICore.BadSuccessor.selector, bad[i]));
             vm.prank(owner);
@@ -485,7 +489,7 @@ contract MigrateTest is Fixture {
 
     // promise: RUNBOOK a migrate batch of 160 credits fits the transaction cap
     function test_GAS_migrateOneSixtyCredits() public {
-        _enterPhase2();
+        Fixture._enterPhase2();
         _setBalancePool();
         _fundPot(2 ether);
         _fillEthPile(80);
@@ -493,7 +497,7 @@ contract MigrateTest is Fixture {
         xt.mint(address(mod), 1_000_000_000e18);
         vm.prank(seller);
         core.sellForBalance(ids);
-        assertEq(core.pileSize(), 160, "setup: one pile of 80 eth bid plus 80 balance bid credits");
+        assertGe(core.pileSize(), 160, "setup: at least 80 eth bid plus 80 balance bid credits on the live pile");
         _setSuccessor();
         uint256 snap = vm.snapshotState();
 
