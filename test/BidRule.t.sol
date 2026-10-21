@@ -3,8 +3,10 @@ pragma solidity ^0.8.28;
 
 import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {BidModel} from "./utils/BidModel.sol";
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, Mainnet, ICreditStrategy} from "../src/interfaces/Interfaces.sol";
 import {ListingTarget} from "./attackers/ListingTarget.sol";
@@ -12,17 +14,52 @@ import {ListingTarget} from "./attackers/ListingTarget.sol";
 /// @notice the credit bid rule on the real stack: the drop per credit with its minute floor, the compounded climb per
 /// minute, the ceiling at a share of the last rate paid with its idle loosening, the funded clamp (the price of one credit
 /// that the pot affords), the settings bounds, and the recovery after a gap in the market price. exact numbers at the launch
-/// settings, hand arithmetic throughout
+/// settings, hand arithmetic throughout.
+///
+/// these mechanics isolate the rate curve by forcing score == RATE_SCORE (ratio 1) with `_unitScore`, which is
+/// unreachable with real credits, and they assert exact numbers that only hold at the launch settings. so this contract
+/// stays on the fresh-deploy `Fixture`. its live counterpart, `BidRuleLiveTest` below, runs the same drop and climb code
+/// paths against the live Core with a real credit and the live settings: the scaled drop and the anchor in
+/// `test_liveFillDropsTheScaledDropAndSetsTheAnchor`, the climb and the rate cap in
+/// `test_liveClimbRaisesTheBidAndHoldsUnderTheRateCap`
 contract BidRuleTest is Fixture {
-    /// the price state rules read the clamp alone: the royalty's share of the room is test/ArtistRoyalty.t.sol's
+    /// the live Core at pin block 26242107, read whole so every bid-rule field is the production value
+    address internal constant LIVE_CORE = 0xcdb1889ae12074d750CD9B8531B692015465e0dD;
+
+    /// Addendum 4: the bid rule is proven against the FULL live Core settings struct read at the pin, not the launch
+    /// defaults. reading the live Core binds every field to its production value: besides the drop 29, climb 100 and
+    /// recovery climb 100 and rateCap 1.71e16, this also brings reserveWei 1e17, buyToArtistBps 250 and
+    /// feeToRedeemBurnBps 1000. every expected number is recomputed from `core.settings()` and `core.reserve()`: the pot
+    /// clamp and climb limit read the eth bid room `(pot - reserve) * 10_000 / (10_000 + buyToArtistBps)` (`_room`), and
+    /// the booked pot share is net of the redeem burn. the suite reads the live settings, so it must run on a fork at or
+    /// near the pin (after stage B buyToArtistBps is 300, which the lead's stage B run covers; this handles today's 250)
     function _settings() internal view override returns (Settings memory s) {
-        s = super._settings();
-        s.buyToArtistBps = 0;
+        s = ICore(payable(LIVE_CORE)).settings();
     }
 
     using stdStorage for StdStorage;
 
     uint256 internal constant START = OPEN_RATE;
+
+    /// @dev the eth bid room the live Core affords from `pot`: the pot less the live reserve, over 1 + buyToArtistBps /
+    /// 10_000 (so a shown bid is payable with its artist royalty on top). mirrors `CoreLib._roomAt`, the value the read
+    /// clamps to. for the test pot magnitudes the plain mul floors the same as the contract's mulDiv
+    function _room(uint256 pot) internal view returns (uint256) {
+        return (pot - core.reserve()) * 10_000 / (10_000 + core.settings().buyToArtistBps);
+    }
+
+    /// @dev the price state after one 100-point credit bought at state `r`, from the live settings (ratio 1, so the fall
+    /// is the full `dropPer100PointsBps`). recomputed through the shared `BidModel`, never a launch constant
+    function _unitDrop(uint256 r) internal view returns (uint256) {
+        return BidModel.dropOnce(core.settings(), r, r, RATE_SCORE);
+    }
+
+    /// @dev `base` grown by `mins` minutes of the live per-minute climb, through the same lnWad/expWad path as
+    /// CoreLib, so the expected read matches the contract within rounding. recomputed from the live climbPerMinBps
+    function _climbOver(uint256 base, uint256 mins) internal view returns (uint256) {
+        int256 lnRate = FixedPointMathLib.lnWad(int256(1e18 + uint256(core.settings().climbPerMinBps) * 1e14));
+        return FixedPointMathLib.mulWad(base, uint256(FixedPointMathLib.expWad(lnRate * int256(mins))));
+    }
 
     /// @dev books `eth` into the buying pot through the real `skim` door
     function _potTo(uint256 eth) internal {
@@ -61,8 +98,8 @@ contract BidRuleTest is Fixture {
         assertEq(r0, START);
         uint256 price = _sellOne();
         assertEq(price, r0, "the rate before the fill");
-        // a 100 point credit drops the rate by dropPer100PointsBps (115 bps at launch): 9_885 / 10_000 of the rate
-        assertEq(core.rateAtCheckpoint(), r0 * 9_885 / 10_000, "the launch drop below the rate paid");
+        // a 100 point credit drops the rate by dropPer100PointsBps (29 bps live, pin 26242107): (10_000 - 29) / 10_000
+        assertEq(core.rateAtCheckpoint(), _unitDrop(r0), "the live drop below the rate paid");
         (uint256 anchor, uint256 start, uint256 bucket) = _anchor();
         assertEq(anchor, r0, "the rate paid is the anchor");
         assertEq(start, r0, "and the start of the minute");
@@ -117,21 +154,25 @@ contract BidRuleTest is Fixture {
     // promise: inv 19 the read is at most the price state and follows the pot
     /// the read does not fall as the pot grows and never exceeds the price state
     function test_readIsMonotoneInThePot() public {
+        // the bid room is the pot less the live reserve over 1 + buyToArtistBps / 10_000, so the sweep rides above the
+        // reserve and the room the pot affords is `_room(pot)`
+        uint256 res = core.reserve();
         uint256 last;
-        for (uint256 i; i <= 40; ++i) {
-            _potTo(i * 0.05e15);
+        for (uint256 i; i <= 60; ++i) {
+            _potTo(res + i * 0.05e15);
             uint256 read = core.ethRate();
             assertGe(read, last, "the read does not fall as the pot grows");
             assertLe(read, core.rateAtCheckpoint(), "the read is at most the price state");
             last = read;
         }
-        assertEq(last, START, "a pot of 2e15 wei reads the price state");
-        // one wei of pot on either side of the pot that reads the price state
-        uint256 full = START;
-        assertEq(core.ethPot(), 2e15);
-        stdstore.target(address(core)).sig("ethPot()").checked_write(full - 1);
-        vm.deal(address(core), full - 1);
-        assertEq(core.ethRate(), START - 1, "one wei under the pot that reads the price state");
+        assertEq(last, START, "a pot whose room exceeds the price state reads the price state");
+        // the smallest pot whose room funds the full price state, and one wei of pot under it: the room falls below
+        uint256 fundPot = res + uint256(START) * (10_000 + core.settings().buyToArtistBps) / 10_000;
+        stdstore.target(address(core)).sig("ethPot()").checked_write(fundPot - 1);
+        vm.deal(address(core), fundPot - 1);
+        uint256 room = _room(core.ethPot());
+        assertLt(room, START, "one wei under the funding pot the room is below the price state");
+        assertEq(core.ethRate(), room, "the read is the room the pot affords");
     }
 
     // ------------------------------------------------------------------ ceiling
@@ -157,7 +198,7 @@ contract BidRuleTest is Fixture {
         assertEq(
             core.ethRate(), r0 * (10_000 + 17_352) * 11_000 / 1e8, "4,338 intervals times 4 after 30 days and 3 hours"
         );
-        assertEq(core.rateAtCheckpoint(), r0 * 9_885 / 10_000, "stored until the next checkpoint");
+        assertEq(core.rateAtCheckpoint(), _unitDrop(r0), "stored until the next checkpoint");
     }
 
     function _minLoosening(Settings memory s) internal pure {
@@ -174,8 +215,9 @@ contract BidRuleTest is Fixture {
     function test_anchorLoosensSixPercentPerTenIdleMinutesAtLaunch() public {
         assertEq(core.settings().idleLoosenBps, 600);
         _with(_fastClimbOnly);
-        // a pot under one page keeps the multiplier at 1x, so the loosening is the base 6 percent per 10 minutes
-        _potTo(0.1 ether);
+        // a pot under one page (above the live reserve so the fill passes) keeps the multiplier at 1x, so the loosening
+        // is the base 6 percent per 10 minutes
+        _potTo(core.reserve() + 0.1 ether);
         _sellOne();
         (uint256 anchor,,) = _anchor();
         _warp(9 minutes + 59);
@@ -220,15 +262,17 @@ contract BidRuleTest is Fixture {
     /// the rate never exceeds the price of one credit that the pot affords: the pot
     function test_clampHoldsAtThePotWhenItAffordsLessThanOneCredit() public {
         _with(_openCeiling);
-        _potTo(START / 2);
+        // the clamp is the one-credit price the pot affords: the room `_room(pot)` (pot less reserve over the royalty)
+        uint256 res = core.reserve();
+        _potTo(res + START / 2);
         _warp(3 days);
-        uint256 clamp = core.ethPot();
+        uint256 clamp = _room(core.ethPot());
         assertEq(core.ethRate(), clamp, "held at the clamp");
         _warp(30 days);
         assertEq(core.ethRate(), clamp);
         // more fees lift the clamp, the climb resumes from the stored rate
-        _potTo(START * 3 / 4);
-        uint256 clamp2 = core.ethPot();
+        _potTo(res + START * 3 / 4);
+        uint256 clamp2 = _room(core.ethPot());
         assertGt(clamp2, clamp);
         _warp(1 days);
         assertEq(core.ethRate(), clamp2);
@@ -278,22 +322,24 @@ contract BidRuleTest is Fixture {
         _potTo(20 ether);
         _sellOne();
         uint256 price = core.rateAtCheckpoint();
-        // drain the pot to under one credit, then book 1 wei so that a checkpoint runs at the small pot
-        stdstore.target(address(core)).sig("ethPot()").checked_write(uint256(1e15));
-        vm.deal(address(core), 1e15 + 1);
+        // drain the pot to under one credit of room (the live reserve plus 1e15), then book 1 wei so a checkpoint runs
+        // at the small pot. the room the read clamps to is the pot less the reserve
+        uint256 res = core.reserve();
+        stdstore.target(address(core)).sig("ethPot()").checked_write(res + 1e15);
+        vm.deal(address(core), res + 1e15 + 1);
         core.book();
-        assertEq(core.ethPot(), 1e15 + 1);
+        assertEq(core.ethPot(), res + 1e15 + 1);
         assertEq(core.rateAtCheckpoint(), price, "the price state is not lowered by the small pot");
         _warp(10 hours);
-        assertEq(core.ethRate(), core.ethPot(), "the read is the clamp of the small pot");
+        assertEq(core.ethRate(), _room(core.ethPot()), "the read is the clamp of the small pot");
         _addToPot(1);
         assertEq(core.rateAtCheckpoint(), price, "and a starved pot does not raise the price state");
         _potTo(20 ether);
         assertEq(core.rateAtCheckpoint(), price, "the checkpoint at the refill stores the price from before");
         assertEq(core.ethRate(), price, "the read after the refill is that price");
         _warp(10 minutes);
-        // the climb is unscaled (climbPerMinBps 200): 1.02 per minute, 1.02^10 = 1.2189944199947573
-        assertApproxEqRel(core.ethRate(), price * 1_218_994_419_994_757_376 / 1e18, 1e9, "and it climbs from there");
+        // the climb is unscaled (climbPerMinBps 100 live, pin 26242107): 1.01 per minute over ten minutes
+        assertApproxEqRel(core.ethRate(), _climbOver(price, 10), 1e9, "and it climbs from there");
     }
 
     // promise: pending fees do not age the ETH bid before they are booked into buying room
@@ -337,7 +383,11 @@ contract BidRuleTest is Fixture {
         uint256 before = core.ethRate();
         assertEq(before, START, "pending income does not fund the clock");
         core.book();
-        assertEq(core.ethPot(), 5 ether, "the whole booked income is pot (feeToRedeemBurnBps 0 at launch)");
+        // the live feeToRedeemBurnBps (1000, pin 26242107) moves that share of the booked income to the redeem burn
+        // pot, the rest to the buying pot
+        uint256 feeBurn = core.settings().feeToRedeemBurnBps;
+        uint256 toPot = 5 ether - 5 ether * feeBurn / 10_000;
+        assertEq(core.ethPot(), toPot, "the booked income fills the pot net of the redeem burn share");
         assertEq(core.ethRate(), before, "book does not award the prior ten minutes");
         _warp(10 minutes);
         assertGt(core.ethRate(), before, "the climb continues from the booked pot");
@@ -354,23 +404,41 @@ contract BidRuleTest is Fixture {
         core.setRate(opening);
         uint256 threshold = 0.1 ether + opening * 10_250 / 10_000;
         assertEq(threshold, 0.1050225 ether, "reserve plus the 100-point bid and 2.5 percent royalty");
+        // the live book splits income: the pot keeps income - income * feeToRedeemBurnBps / 10_000 (= income - floor of
+        // income/10 at the live 1000). booking `_bookTo(P)` lands the pot exactly at P despite that floor, so the
+        // funding boundary is still exercised one wei of pot at a time
+        uint256 burn = core.settings().feeToRedeemBurnBps;
+        assertEq(burn, 1_000, "the live redeem burn share, pin 26242107");
 
         _warp(6 hours);
         core.book();
         assertEq(core.ethRate(), 0, "an empty book does not start the clock");
-        vm.deal(address(core), threshold - 1);
-        core.book();
+        uint256 below = _bookTo(threshold - 1);
         assertEq(core.ethPot(), threshold - 1, "the first book remains below the funding threshold");
         _warp(1 hours);
         assertEq(core.ethPrice(), opening, "the price state did not age below the threshold");
 
-        vm.deal(address(core), threshold);
+        // one wei more of income raises the pot one wei (the burn floor takes nothing from a single wei) to the threshold
+        vm.deal(address(core), below + 1);
         core.book();
-        assertEq(core.ethRate(), opening, "one wei more exactly funds the 100-point bid");
-        vm.deal(address(core), threshold + 0.1 ether);
+        assertEq(core.ethPot(), threshold, "one wei more exactly funds the 100-point bid");
+        assertEq(core.ethRate(), opening, "the funded pot holds the opening rate");
+        vm.deal(address(core), address(core).balance + 0.1 ether);
         core.book();
         _warp(10 minutes);
         assertGt(core.ethRate(), opening, "only funded time raises the bid");
+    }
+
+    /// @dev sets the Core balance so a single `book` lands `ethPot` exactly at `pot` under the live redeem burn split
+    /// (`ethPot += income - income * feeToRedeemBurnBps / 10_000`, floored). returns the balance dealt. only valid from
+    /// an empty pot. the split is 10 percent at the live 1000, so for income = 10a + b (b < 10) the pot gains 9a + b;
+    /// choosing b = pot mod 9 and a = (pot - b) / 9 makes 9a + b == pot exactly
+    function _bookTo(uint256 pot) internal returns (uint256 income) {
+        uint256 b = pot % 9;
+        uint256 a = (pot - b) / 9;
+        income = 10 * a + b;
+        vm.deal(address(core), income);
+        core.book();
     }
 
     function _thresholdEdge(uint256 rate, uint16 artistBps) internal {
@@ -405,14 +473,16 @@ contract BidRuleTest is Fixture {
 
     // promise: each sale that leaves less than one 100-point bid pauses the clock until booked ETH refills it
     function test_repeatedEmptyAndRefillDoesNotAccrueIdleHours() public {
-        _potTo(2 * START - 1);
+        // the room is the pot less the live reserve, so one bid of room sits at reserve + 2 * START
+        uint256 res = core.reserve();
+        _potTo(res + 2 * START - 1);
         _sellOne();
         uint256 afterFill = core.rateAtCheckpoint();
-        assertLt(core.ethPot(), core.floorRate(), "the first sale leaves the pot under its reference bid");
+        assertLt(_room(core.ethPot()), core.floorRate(), "the first sale leaves the pot under its reference bid");
         _warp(6 hours);
         assertEq(core.ethPrice(), afterFill, "the empty hours do not raise the price state");
 
-        _potTo(2 * START);
+        _potTo(res + 2 * START);
         assertEq(core.ethPrice(), afterFill, "refilling does not grant the idle six hours");
         _warp(10 minutes);
         uint256 climbed = core.ethPrice();
@@ -450,7 +520,9 @@ contract BidRuleTest is Fixture {
         vm.expectRevert(ICore.AboveBid.selector);
         _buyRaw(firstAsk, abi.encodeCall(ListingTarget.fill, (ids[0], 0)), ids[0], address(listing));
 
-        for (uint256 i; i < 48 && core.bidOf(ids[0]) < firstAsk; ++i) _warp(10 minutes);
+        for (uint256 i; i < 48 && core.bidOf(ids[0]) < firstAsk; ++i) {
+            _warp(10 minutes);
+        }
         assertGe(core.bidOf(ids[0]), firstAsk, "funded climb can reach a rising ask");
         vm.fee(0);
         uint256 rateBefore = core.ethPrice();
@@ -463,7 +535,9 @@ contract BidRuleTest is Fixture {
         vm.prank(keeper);
         vm.expectRevert(ICore.AboveBid.selector);
         _buyRaw(higherAsk, abi.encodeCall(ListingTarget.fill, (ids[1], 0)), ids[1], address(listing));
-        for (uint256 i; i < 48 && core.bidOf(ids[1]) < higherAsk; ++i) _warp(10 minutes);
+        for (uint256 i; i < 48 && core.bidOf(ids[1]) < higherAsk; ++i) {
+            _warp(10 minutes);
+        }
         assertGe(core.bidOf(ids[1]), higherAsk, "the bid reaches a second rising ask only with funded time");
         vm.prank(keeper);
         _buyRaw(higherAsk, abi.encodeCall(ListingTarget.fill, (ids[1], 0)), ids[1], address(listing));
@@ -494,11 +568,12 @@ contract BidRuleTest is Fixture {
     function _forListing() internal returns (uint256 price) {
         _with(_openCeiling);
         _potTo(30 ether);
-        // the listed credit is mocked to 100 points, so its bid is the full rate and the fill drops by dropPer100PointsBps
-        _unitScore(LISTED_A);
-        price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
+        // LISTED_A (35377) is burned before the pin, so the still-listed LISTED_B is bought. the listed credit is mocked
+        // to 100 points, so its bid is the full rate and the fill drops by dropPer100PointsBps
+        _unitScore(LISTED_B);
+        price = ICreditStrategy(STRATEGY).nftForSale(LISTED_B);
         _liftRateCap();
-        _warpUntilCeiling(LISTED_A, price);
+        _warpUntilCeiling(LISTED_B, price);
     }
 
     // promise: SPEC 1 buyListing is one fill at the bid
@@ -507,20 +582,21 @@ contract BidRuleTest is Fixture {
         uint256 price = _forListing();
         uint256 rate = core.ethRate();
         vm.prank(keeper);
-        _buyRaw(price, _listingData(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price, _listingData(LISTED_B), LISTED_B, STRATEGY);
         (uint256 anchor, uint256 start,) = _anchor();
         assertEq(anchor, rate, "the anchor is the bid rate");
         assertEq(start, rate);
         assertTrue(anchor != price, "not derived from the cost");
-        assertEq(core.rateAtCheckpoint(), rate * 9_885 / 10_000, "one launch drop below the bid rate");
+        assertEq(core.rateAtCheckpoint(), _unitDrop(rate), "one live drop below the bid rate");
         assertEq(core.lastFillTime(), block.timestamp);
     }
 
     // promise: setRate restates the bid and starts a fresh funded ceiling clock
     function test_setRateRestatesTheRateAndTheAnchorAndKeepsTheFillClock() public {
         _with(_twoPercentLoosening);
-        // a pot under one page keeps the multiplier at 1x, so the ceiling loosens at the base 2 percent per 10 minutes
-        _potTo(0.1 ether);
+        // a pot under one page (above the live reserve so the fill passes) keeps the multiplier at 1x, so the ceiling
+        // loosens at the base 2 percent per 10 minutes
+        _potTo(core.reserve() + 0.1 ether);
         _sellOne();
         uint64 fillTime = core.lastFillTime();
         (, uint256 start0, uint256 bucket0) = _anchor();
@@ -557,11 +633,12 @@ contract BidRuleTest is Fixture {
     // promise: SPEC 1 risk: a market above the bid waits for the climb or setRate
     /// every seller asks the full new price, 200 percent of the old one. the 20 eth pot loosens the ceiling at the 4x
     /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128 variant
-    /// d, climbPerMinBps 200): the bid reaches 200 percent only when the 2 percent a minute climb gets there, minute 40
+    /// d, climbPerMinBps 100 live, pin 26242107): the bid reaches 200 percent only when the 1 percent a minute climb
+    /// gets there. from the post-drop rate (0.9971 of the anchor) that is minute 70 (0.9971 * 1.01^70 first passes 2x)
     function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() public {
         (uint256 m,) = _minutesToFirstFill(20_000);
         emit log_named_uint("minutes to the first fill, no cheap ask", m);
-        assertEq(m, 40);
+        assertEq(m, 70);
     }
 
     // ------------------------------------------------------------------ decision 128: pot scaled climb
@@ -587,12 +664,14 @@ contract BidRuleTest is Fixture {
     }
 
     // promise: SPEC 4 decision 128 variant d: the per minute climb does not scale with the pot, only the loosening does
-    /// the climb is the launch rate (climbPerMinBps 200, 2 percent a minute) at one, three and ten pages alike
+    /// the climb is the live rate (climbPerMinBps 100, 1 percent a minute) at one, three and ten pages alike. one minute
+    /// of continuous climb grows the rate by `climbPerMinBps` bps, so the factor is `10_000 + climbPerMinBps`
     function test_climbUnscaledByPotPages() public {
         _with(_highCeiling);
-        assertApproxEqAbs(_climbFactorBps(1), 10_200, 2, "one page climbs at 1x");
-        assertApproxEqAbs(_climbFactorBps(3), 10_200, 2, "three pages climb at the same 1x");
-        assertApproxEqAbs(_climbFactorBps(10), 10_200, 2, "ten pages climb at the same 1x");
+        uint256 oneMin = 10_000 + core.settings().climbPerMinBps;
+        assertApproxEqAbs(_climbFactorBps(1), oneMin, 2, "one page climbs at 1x");
+        assertApproxEqAbs(_climbFactorBps(3), oneMin, 2, "three pages climb at the same 1x");
+        assertApproxEqAbs(_climbFactorBps(10), oneMin, 2, "ten pages climb at the same 1x");
     }
 
     /// @dev the loosened ceiling after 10 idle minutes at a pot sized to `pages` pages, in bps of the anchor (10_000
@@ -738,8 +817,9 @@ contract BidRuleTest is Fixture {
         s.recoveryClimbPerMinBps = 1_000;
         _setSettings(s);
         _skipSniperWindow();
-        // a booked pot under one page keeps the multiplier at 1x without the drip; one fill sets the anchor
-        _potTo(0.1 ether);
+        // a booked pot under one page (above the live reserve so the fill passes) keeps the multiplier at 1x without
+        // the drip; one fill sets the anchor
+        _potTo(core.reserve() + 0.1 ether);
         _sellOne();
         uint256 snap = vm.snapshotState();
 
@@ -821,7 +901,7 @@ contract BidRuleTest is Fixture {
         (uint256 peakRate, uint256 peakTime) = _peak();
         assertEq(peakRate, climbed, "the remembered peak is the climbed rate");
         assertEq(peakTime, block.timestamp, "the peak time is the fill");
-        assertEq(core.rateAtCheckpoint(), climbed * 9_885 / 10_000, "one launch drop below the climbed rate");
+        assertEq(core.rateAtCheckpoint(), _unitDrop(climbed), "one live drop below the climbed rate");
     }
 
     // promise: an expired bucket's cleared anchor starts a fresh drop floor on its first fill
@@ -832,5 +912,69 @@ contract BidRuleTest is Fixture {
         uint256 start = BidModel.startAfter(s, 1_000, 0);
         assertEq(start, 1_000);
         assertEq(BidModel.dropOnce(s, 1_000, start, RATE_SCORE), 500);
+    }
+}
+
+/// @notice the live counterpart of the ratio-1 mechanics above. the drop and climb code paths are the same; here they
+/// run against the live Core with a real credit (its real score, never forced to 100 points) and the live settings read
+/// at setUp, so the scaled drop uses the live `dropPer100PointsBps` (29) scaled by the credit's score. the exact
+/// launch-settings numbers (110 percent ceiling, the 6 percent loosening, the ratio-1 fill counts) are not reproducible
+/// here and stay in `BidRuleTest`; this contract proves the mechanics hold live, computing every expectation from the
+/// live rate and settings
+contract BidRuleLiveTest is LiveFixture {
+    // the price state after one credit of score `s` bought at state `r`, minute start `start` (CoreLib.drop by hand)
+    function _dropHand(uint256 r, uint256 s, uint256 start) internal view returns (uint256) {
+        uint256 drop = core.settings().dropPer100PointsBps;
+        uint256 floorBps = core.settings().dropFloorBps;
+        uint256 fallNum = drop * s;
+        uint256 denom = 10_000 * RATE_SCORE;
+        uint256 dropped = fallNum >= denom ? 0 : (r * (denom - fallNum)) / denom;
+        uint256 floor = (start * floorBps) / 10_000;
+        return dropped > floor ? dropped : floor;
+    }
+
+    // promise: SPEC 1 the bid rule: a fill drops the price state by dropPer100PointsBps scaled by the credit's score
+    /// a real credit's eth bid is the live rate scaled by its score, and a fill drops the price state by the live
+    /// `dropPer100PointsBps` scaled by that score, leaving the rate paid as the anchor and minute start. the ratio-1
+    /// counterpart with the exact launch drop is BidRuleTest.test_oneFillDropsTheLaunchDrop
+    function test_liveFillDropsTheScaledDropAndSetsTheAnchor() public {
+        _skipSniperWindow();
+        _fundPot(20 ether);
+        uint256 id = _credits(seller, 1)[0];
+        uint256 score = _scoreOf(id);
+        uint256 r0 = core.ethRate();
+        assertEq(core.bidOf(id), r0 * score / RATE_SCORE, "the per-credit bid is the rate scaled by score");
+
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+        assertEq(seller.balance - before, r0 * score / RATE_SCORE, "the seller is paid the scaled bid");
+
+        (uint256 anchor, uint256 start,) = _anchor();
+        assertEq(anchor, r0, "the rate paid per 100 points is the anchor");
+        assertEq(start, r0, "and the start of the minute");
+        assertEq(core.lastFillTime(), block.timestamp, "the fill time is now");
+        assertEq(core.rateAtCheckpoint(), _dropHand(r0, score, r0), "the fall scales the live drop by score");
+    }
+
+    // promise: SPEC 1 the price state climbs over idle time and never passes the rate cap (inv 19)
+    /// a fill after funding the pot sets the anchor; the booked pot then climbs the bid over idle time, bounded by the
+    /// loosened ceiling, and a year of idle loosening rests at the live `rateCap`. the ratio-1 counterparts are
+    /// BidRuleTest.test_ceilingHoldsAt110PercentOfTheAnchor and test_loosenedCeilingNeverPassesTheRateCap
+    function test_liveClimbRaisesTheBidAndHoldsUnderTheRateCap() public {
+        _skipSniperWindow();
+        _fundPot(20 ether);
+        uint256 id = _credits(seller, 1)[0];
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+
+        uint256 afterFill = core.ethRate();
+        _warp(2 hours);
+        uint256 climbed = core.ethRate();
+        assertGt(climbed, afterFill, "the booked pot climbs the bid over idle time");
+        assertLe(climbed, core.settings().rateCap, "the climb never passes the rate cap");
+
+        _warp(365 days);
+        assertEq(core.ethRate(), core.settings().rateCap, "a year of idle loosening rests at the rate cap");
     }
 }

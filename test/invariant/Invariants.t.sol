@@ -8,6 +8,7 @@ import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Halving} from "../../src/lib/Halving.sol";
 import {IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {InvariantFixture} from "./InvariantFixture.sol";
+import {Fixture} from "../utils/Fixture.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 
 /// @notice SPEC section 10 as reworked by docs/DECISIONS.md, one `invariant_` function per item, against the real system on
@@ -174,7 +175,10 @@ abstract contract InvariantsBase is InvariantFixture {
         for (uint256 i; i < n; ++i) {
             address c = handler.watched(i);
             (uint256 eth, uint256 coin_, uint256 credits_, uint256 statements_, uint256 xt_) = handler.baseOf(c);
-            assertLe(c.balance, eth, "owner or controller gained eth");
+            // a watched address that is the configured payee (the owner on the live Core) legitimately receives the
+            // payee share the book pushes. allow its eth to grow by exactly the share pushed to it over the campaign,
+            // never more. on the fresh fixture the payee is a separate account, so this allowance is zero
+            assertLe(c.balance, eth + handler.gPayeeOut(c), "owner or controller gained eth beyond the payee share");
             assertLe(coin.balanceOf(c), coin_, "owner or controller gained coin");
             assertLe(CREDITS.balanceOf(c), credits_, "owner or controller gained credits");
             assertLe(_statementsBalance(c), statements_, "owner or controller gained statements");
@@ -848,6 +852,9 @@ abstract contract InvariantsBase is InvariantFixture {
         // buyCoinNoBook (a buy left unbooked, then a warp over the pending income, then a book) is exercised by the
         // random campaign, not the deterministic smoke
         if (a == 42) return false;
+        // moduleMode, replaceModule and changeUnit drive the mock module's fault and unit knobs, which the honest
+        // treasury of the stage B phase 1 build suites does not carry
+        if ((a == 16 || a == 22 || a == 35) && handler.treasuryModule()) return false;
         // changeUnit moves the module's unit, so it only lands in the balance side
         if (a == 35) return handler.phase2();
         // the sale and owner door actions run only in the suites that list them
@@ -933,6 +940,8 @@ abstract contract InvariantsBase is InvariantFixture {
     /// core takes the controller's sellCreditTo, then the sale is turned on and a page is refilled for the buyers.
     /// chosen composition is covered by its own test, which builds the page of 80 it needs
     function _creditSmoke() internal {
+        // the credit sale window exists on both ControllerV1 and ControllerV2 (`setCredit`, `creditSaleOn`,
+        // `buyCredit`), so this smoke runs in both live states; `_creditSale` reads only fields both carry
         if (core.controller() != address(ctl) && !core.controllerLocked()) {
             vm.prank(handler.owner());
             core.setController(address(ctl));
@@ -957,6 +966,8 @@ abstract contract InvariantsBase is InvariantFixture {
             vm.prank(handler.owner());
             core.setController(address(ctl));
         }
+        // turning the credit sale off keeps the compose window trivially satisfied. both controllers carry the sale, so
+        // this runs in both live states
         if (ctl.creditSaleOn()) {
             CreditSale memory cs = _creditSale();
             cs.saleOn = false;
@@ -1030,6 +1041,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     function _phase2Smoke() internal {
+        if (handler.treasuryModule()) return _phase2SmokeTreasury();
         // an eth lane statement is redeemable once its asking price falls to its cost; the long warp takes every held
         // statement there
         vm.warp(block.timestamp + 160 hours);
@@ -1044,6 +1056,29 @@ abstract contract InvariantsBase is InvariantFixture {
             handler.replaceModule(i * 7919 + 1, i);
         }
         assertTrue(_try(35, 20), "no unit change");
+    }
+
+    /// the stage B balance side runs on the honest Phase2BalanceTreasury (the live module), not the mock. activate it
+    /// the way the lifecycle does: turn conversion and working payments on, open the Core's redemptions and balance
+    /// bids, reach the token's transfers-open block, and fund a working balance. then drive the redemption and the
+    /// balance sale. the mock-only fault, replacement and unit actions have no subject here and are left out
+    function _phase2SmokeTreasury() internal {
+        vm.prank(handler.owner());
+        treasury.setSwitches(true, true, false);
+        Settings memory s = core.settings();
+        s.redeemOn = true;
+        s.balanceBidOn = true;
+        handler.setSettingsExact(s);
+        (bool ok, bytes memory out) = liveBalanceToken.staticcall(abi.encodeWithSignature("transfersOpenBlock()"));
+        if (ok && out.length == 32) {
+            uint256 open = abi.decode(out, (uint256));
+            if (block.number <= open) vm.roll(open + 1);
+        }
+        _fundTreasuryWorking(LIVE_WORKING_FUND);
+        vm.warp(block.timestamp + 160 hours);
+        assertTrue(_try(15, 80), "no redemption");
+        assertTrue(_try(14, 60), "no balance token sale");
+        _try(14, 60);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1113,6 +1148,13 @@ contract InvariantsPhase1Deep is InvariantsPhase1 {
 contract InvariantsPhase1Window is InvariantsBase {
     function setUp() public virtual override {
         _build(false, false, true, true, "w1");
+    }
+
+    /// this variant stays on the fresh fixture, not the live Core. the elevated anti sniper skim of the launch window
+    /// (the premise of `test_startsInsideTheSniperWindow` and the window `_smoke`) is a fresh launch state the live
+    /// system cannot return to on a post launch fork, so a fresh system is deployed to exercise the window
+    function _setUpBase() internal override {
+        Fixture.setUp();
     }
 
     // promise: inv 10 the window suite starts inside the anti sniper window

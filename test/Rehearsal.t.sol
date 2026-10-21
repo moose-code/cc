@@ -35,6 +35,8 @@ interface IPermit2R {
 /// factory (the config owner is its owner, impersonated on the fork). it measures the gas of every transaction of the deploy and asserts each
 /// one fits under the per transaction gas cap
 /// `set -a; . ./.env; set +a; CANDIDATE_RUN=1 REHEARSAL=1 forge test --match-path test/Rehearsal.t.sol -vv`
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it rehearses the real deploy path on a
+/// pre-launch fork, so it never reads or mutates the live Core.
 contract RehearsalTest is Test, ProdDeployer {
     string internal constant REHEARSAL_CONFIG_FILE = "script/config/rehearsal.json";
 

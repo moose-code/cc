@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {Mainnet, Settings, ICreditStrategy} from "../src/interfaces/Interfaces.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
@@ -24,8 +25,92 @@ import {V2Stack} from "./utils/V2Stack.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {StandinRenderer} from "./standins/StandinRenderer.sol";
 
-/// @notice the config file, the placeholder guard, the preflight and the postflight on the pinned fork
-contract ConfigTest is Fixture {
+/// @notice the live-state and settings-bounds checks of the config suite, bound to the live system on the fork. the
+/// named listings read the live CreditStrategy inventory at the pin, and the two bounds cases exercise the Core's own
+/// SettingsBounds guard. none assumes a fresh launch, so none needs the fresh deploy
+contract ConfigTest is LiveFixture {
+    // promise: TEST FIXTURE the three named listings are held and priced by the CreditStrategy at the fork block
+    /// the suites buy `LISTED_A`, `LISTED_B` and `LISTED_C` from the strategy by id; a listing that sold or left makes the
+    /// ids need a refresh
+    function test_namedListingsAreHeldAndPriced() public view {
+        uint256[3] memory listed = [LISTED_A, LISTED_B, LISTED_C];
+        for (uint256 i; i < 3; ++i) {
+            assertEq(CREDITS.ownerOf(listed[i]), STRATEGY, "a named listing left the strategy");
+            assertGt(ICreditStrategy(STRATEGY).nftForSale(listed[i]), 0, "a named listing is not for sale");
+        }
+    }
+
+    /// the preflight and deploy guard use the Core's field bounds; dependent BALANCE bounds have separate cases
+    // promise: each independently viable field edge is accepted and every representable out-of-range edge is refused
+    function test_settingsBoundsFieldsAndViableEdges() public view {
+        uint256[39] memory lo = SettingsFields.lo();
+        uint256[39] memory hi = SettingsFields.hi();
+        bytes32[39] memory names = SettingsFields.names();
+        for (uint256 i; i < SettingsFields.N; ++i) {
+            for (uint256 edge; edge < 2; ++edge) {
+                Settings memory s = Mainnet.defaultSettings();
+                uint256 v = edge == 0 ? lo[i] : hi[i];
+                if (i == 2) s.recoveryClimbPerMinBps = type(uint16).max;
+                if (i == 7 && edge == 0) s.climbPerMinBps = 1;
+                if (i == 16) (s.keeperFee, s.keeperMaxBaseFee) = (0, 0);
+                if (i == 17 || i == 18) s.buybackSlice = type(uint128).max;
+                if (i == 26) s.saleToOperatorBps = 0;
+                if (i == 27) s.saleToArtistBps = 0;
+                if (i == 13 && edge == 1) continue; // zero redemption proceeds cannot cover a nonzero BALANCE bid
+                if (i == 37 && edge == 1) s.balanceDiscountBps = 1_100;
+                if (i == 38 && edge == 0) (s.buyToArtistBps, s.redeemSlippageBps) = (0, 0);
+                SettingsFields.set(s, i, v);
+                assertEq(SettingsBounds.firstViolation(s), bytes32(0), "inclusive bound accepted");
+            }
+            if (i == 11 || i == 12) continue;
+            Settings memory s = Mainnet.defaultSettings();
+            SettingsFields.set(s, i, hi[i] + 1);
+            if (SettingsFields.get(s, i) == hi[i] + 1) {
+                if (i == 26) s.saleToOperatorBps = 0;
+                if (i == 27) s.saleToArtistBps = 0;
+                bytes32 field = i == 26 ? bytes32("saleToOperatorBps") : names[i];
+                assertEq(SettingsBounds.firstViolation(s), field, "above the bound");
+            }
+            if (lo[i] == 0) continue;
+            s = Mainnet.defaultSettings();
+            SettingsFields.set(s, i, lo[i] - 1);
+            assertEq(SettingsBounds.firstViolation(s), names[i], "below the bound");
+        }
+    }
+
+    // promise: a BALANCE purchase cannot cost more with its artist royalty than the smallest accepted redemption
+    function test_balanceDiscountCoversRoyaltyAndRedemptionShortfall() public pure {
+        Settings memory s = Mainnet.defaultSettings();
+        s.balanceDiscountBps = 439;
+        assertEq(
+            SettingsBounds.firstViolation(s),
+            bytes32("balanceDiscountBps"),
+            "439 bps misses 250 royalty and 200 shortfall"
+        );
+        s.balanceDiscountBps = 440;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "440 bps covers the launch royalty and shortfall");
+        s.buyToArtistBps = 1_000;
+        s.balanceDiscountBps = 1_090;
+        assertEq(
+            SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "higher royalty raises the discount floor"
+        );
+        s.balanceDiscountBps = 1_091;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the exact higher-royalty boundary passes");
+        s.buyToArtistBps = 0;
+        s.redeemSlippageBps = 0;
+        s.balanceDiscountBps = 0;
+        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "zero royalty and shortfall allow par");
+        s.redeemSlippageBps = 10_000;
+        s.balanceDiscountBps = 9_999;
+        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "zero proceeds cannot cover a bid");
+    }
+}
+
+/// @notice the launch config, the placeholder guard, the preflight and the postflight on the pinned fork. every test
+/// here verifies a FRESH deploy against its own config and the shipped json (predictCoin, deploySystem, configHash,
+/// buildConfig, the renderer and the stack wiring at deploy), which the already-live Core cannot reproduce, so they
+/// stay on the fresh Fixture
+contract ConfigDeployTest is Fixture {
     string internal constant LAUNCH_DESCRIPTION =
         "$CC trades fill the pot. the pot buys Credits, priced by rating. every 80 become a statement, which sells to refill the pot.";
 
@@ -49,17 +134,6 @@ contract ConfigTest is Fixture {
     /// the json file is the default config plus the launch inputs the owner supplied (owner, creator, name, the creator
     /// payee, the artist) and the salt, keccak256 of "CC", and the live v2 stack of script/config/v2-mainnet.json
     // promise: json equals default config
-    // promise: TEST FIXTURE the three named listings are held and priced by the CreditStrategy at the fork block
-    /// the suites buy `LISTED_A`, `LISTED_B` and `LISTED_C` from the strategy by id; a listing that sold or left makes the
-    /// ids need a refresh
-    function test_namedListingsAreHeldAndPriced() public view {
-        uint256[3] memory listed = [LISTED_A, LISTED_B, LISTED_C];
-        for (uint256 i; i < 3; ++i) {
-            assertEq(CREDITS.ownerOf(listed[i]), STRATEGY, "a named listing left the strategy");
-            assertGt(ICreditStrategy(STRATEGY).nftForSale(listed[i]), 0, "a named listing is not for sale");
-        }
-    }
-
     function test_jsonEqualsDefaultConfig() public view {
         LaunchConfig memory f = loadConfig(DEFAULT_CONFIG_FILE);
         LaunchConfig memory d = defaultConfig();
@@ -762,65 +836,6 @@ contract ConfigTest is Fixture {
 
     // ------------------------------------------------------------------ settings
 
-    /// the preflight and deploy guard use the Core's field bounds; dependent BALANCE bounds have separate cases
-    // promise: each independently viable field edge is accepted and every representable out-of-range edge is refused
-    function test_settingsBoundsFieldsAndViableEdges() public view {
-        uint256[39] memory lo = SettingsFields.lo();
-        uint256[39] memory hi = SettingsFields.hi();
-        bytes32[39] memory names = SettingsFields.names();
-        for (uint256 i; i < SettingsFields.N; ++i) {
-            for (uint256 edge; edge < 2; ++edge) {
-                Settings memory s = Mainnet.defaultSettings();
-                uint256 v = edge == 0 ? lo[i] : hi[i];
-                if (i == 2) s.recoveryClimbPerMinBps = type(uint16).max;
-                if (i == 7 && edge == 0) s.climbPerMinBps = 1;
-                if (i == 16) (s.keeperFee, s.keeperMaxBaseFee) = (0, 0);
-                if (i == 17 || i == 18) s.buybackSlice = type(uint128).max;
-                if (i == 26) s.saleToOperatorBps = 0;
-                if (i == 27) s.saleToArtistBps = 0;
-                if (i == 13 && edge == 1) continue; // zero redemption proceeds cannot cover a nonzero BALANCE bid
-                if (i == 37 && edge == 1) s.balanceDiscountBps = 1_100;
-                if (i == 38 && edge == 0) (s.buyToArtistBps, s.redeemSlippageBps) = (0, 0);
-                SettingsFields.set(s, i, v);
-                assertEq(SettingsBounds.firstViolation(s), bytes32(0), "inclusive bound accepted");
-            }
-            if (i == 11 || i == 12) continue;
-            Settings memory s = Mainnet.defaultSettings();
-            SettingsFields.set(s, i, hi[i] + 1);
-            if (SettingsFields.get(s, i) == hi[i] + 1) {
-                if (i == 26) s.saleToOperatorBps = 0;
-                if (i == 27) s.saleToArtistBps = 0;
-                bytes32 field = i == 26 ? bytes32("saleToOperatorBps") : names[i];
-                assertEq(SettingsBounds.firstViolation(s), field, "above the bound");
-            }
-            if (lo[i] == 0) continue;
-            s = Mainnet.defaultSettings();
-            SettingsFields.set(s, i, lo[i] - 1);
-            assertEq(SettingsBounds.firstViolation(s), names[i], "below the bound");
-        }
-    }
-
-    // promise: a BALANCE purchase cannot cost more with its artist royalty than the smallest accepted redemption
-    function test_balanceDiscountCoversRoyaltyAndRedemptionShortfall() public pure {
-        Settings memory s = Mainnet.defaultSettings();
-        s.balanceDiscountBps = 439;
-        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "439 bps misses 250 royalty and 200 shortfall");
-        s.balanceDiscountBps = 440;
-        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "440 bps covers the launch royalty and shortfall");
-        s.buyToArtistBps = 1_000;
-        s.balanceDiscountBps = 1_090;
-        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "higher royalty raises the discount floor");
-        s.balanceDiscountBps = 1_091;
-        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "the exact higher-royalty boundary passes");
-        s.buyToArtistBps = 0;
-        s.redeemSlippageBps = 0;
-        s.balanceDiscountBps = 0;
-        assertEq(SettingsBounds.firstViolation(s), bytes32(0), "zero royalty and shortfall allow par");
-        s.redeemSlippageBps = 10_000;
-        s.balanceDiscountBps = 9_999;
-        assertEq(SettingsBounds.firstViolation(s), bytes32("balanceDiscountBps"), "zero proceeds cannot cover a bid");
-    }
-
     /// preflight names the failing settings row, the deploy guard refuses, postflight reads each field back
     // promise: preflight names the failing settings row, the deploy guard refuses, postflight reads each field back
     function test_settingsRowsAndGuard() public {
@@ -864,7 +879,11 @@ contract ConfigTest is Fixture {
             uint256 v = SettingsFields.get(c.settings, i);
             SettingsFields.set(c.settings, i, v == 0 ? 1 : v - 1);
             postflightAs(c, address(core), address(0));
-            assertEq(_failedNames(), "core: settings equal the approved launch values", "a settings field slipped the readback");
+            assertEq(
+                _failedNames(),
+                "core: settings equal the approved launch values",
+                "a settings field slipped the readback"
+            );
         }
     }
 

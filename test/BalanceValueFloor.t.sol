@@ -1,53 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {RATE_SCORE, Mainnet, ICreditScore} from "../src/interfaces/Interfaces.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {Mainnet, ICreditScore, Settings} from "../src/interfaces/Interfaces.sol";
 import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
-import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 
 /// with value mode off `valueOf(points)` is the rate term `floorRate * points / refScore`, whether or not a balance pool
-/// key is set. the reference of a statement and the floor of a credit price are built on it
-contract BalanceValueFloorTest is Fixture {
-    /// initializes a native eth / balance token pool at sqrt price `sp` and points the controller at it. native eth is
-    /// currency0
-    function _initAndSet(uint160 sp, uint24 fee, int24 tickSpacing) private {
-        PoolKey memory vk = PoolKey({
-            currency0: Currency.wrap(address(0)),
-            currency1: Currency.wrap(address(xt)),
-            fee: fee,
-            tickSpacing: tickSpacing,
-            hooks: IHooks(address(0))
-        });
-        PM.initialize(vk, sp);
-        _setKey(address(0), address(xt), fee, tickSpacing, spotOf(sp));
-    }
-
-    function _setKey(address c0, address c1, uint24 fee, int24 tickSpacing, uint256 expectedSpot) private {
-        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
-            currency0: IControllerV1.Currency.wrap(c0),
-            currency1: IControllerV1.Currency.wrap(c1),
-            fee: fee,
-            tickSpacing: tickSpacing,
-            hooks: address(0)
-        });
-        vm.prank(owner);
-        ctl.setBalancePoolKey(k, expectedSpot);
-    }
-
-    /// the pool term in wei of `points` at sqrt price `sp` and unit `unit`, native eth currency0
-    function _pool(uint256 points, uint256 unit, uint160 sp) private pure returns (uint256) {
-        uint256 q = FixedPoint96.Q96;
-        return FullMath.mulDiv(FullMath.mulDiv(points * unit, q, sp), q, sp);
-    }
-
+/// key is set. the reference of a statement and the floor of a credit price are built on it. ported to the live fork:
+/// the live Core carries value mode off, so pointing the controller at the live eth/BALANCE pool must not move valueOf,
+/// the reference or the credit floor. the unit-manipulation sub-checks exercise a hostile module (not a live contract),
+/// so they select a `MockBalanceModule` on the live Core: the live treasury's unit is a constant that cannot revert
+contract BalanceValueFloorTest is LiveFixture {
     /// the rate term in wei of `points`
     function _rate(uint256 points) private view returns (uint256) {
         return FullMath.mulDiv(core.floorRate(), points, RATE_SCORE);
@@ -57,13 +23,19 @@ contract BalanceValueFloorTest is Fixture {
         return a > b ? a : b;
     }
 
-    function _lowSqrtPrice() private pure returns (uint160) {
-        // a small sqrt price makes the balance token expensive in eth, so the pool term is large
-        return uint160(FixedPoint96.Q96 / 1000);
-    }
-
     function _score(uint256 id) private view returns (uint256) {
         return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+    }
+
+    /// selects a fresh `MockBalanceModule` (on a fresh `MockBalanceToken`) as the live Core's balance module, so the
+    /// unit read can be made to change or revert. value mode is off, so valueOf never reads the module; the module is
+    /// only the subject that proves it
+    function _selectMockModule() private returns (MockBalanceModule m) {
+        MockBalanceToken mockXt = new MockBalanceToken("Balance Token", "XT");
+        m = new MockBalanceModule(address(mockXt), UNIT);
+        mockXt.mint(address(m), 1e24);
+        vm.prank(owner);
+        core.setBalanceModule(address(m));
     }
 
     // promise: with value mode off a pool key changes no value or reference
@@ -73,9 +45,7 @@ contract BalanceValueFloorTest is Fixture {
         uint256 rating = core.ratingOf(sid);
         uint256 refBefore = ctl.referenceOf(sid);
         uint256 askBefore = ctl.priceOf(sid);
-        uint160 sp = _lowSqrtPrice();
-        _initAndSet(sp, 3000, 60);
-        assertGt(_pool(rating, UNIT, sp), _rate(rating), "the pool value is above the rate term");
+        _setLiveBalancePool();
         assertEq(ctl.valueOf(rating), _rate(rating), "valueOf is the rate term");
         (, uint256 cost,) = core.statementInfo(sid);
         assertEq(ctl.referenceOf(sid), _max(cost, _rate(rating)), "the reference is the cost or the rate term");
@@ -88,13 +58,14 @@ contract BalanceValueFloorTest is Fixture {
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         uint256 rating = core.ratingOf(sid);
-        _initAndSet(TickMath.MIN_SQRT_PRICE, 3000, 60);
+        _setLiveBalancePool();
+        MockBalanceModule mockMod = _selectMockModule();
         uint256 ask = ctl.priceOf(sid);
-        mod.setUnitPerPoint(type(uint128).max);
+        mockMod.setUnitPerPoint(type(uint128).max);
         assertEq(ctl.valueOf(rating), _rate(rating), "an extreme unit leaves the rate term");
-        mod.setUnitPerPoint(UNIT * 2);
+        mockMod.setUnitPerPoint(UNIT * 2);
         assertEq(ctl.valueOf(rating), _rate(rating), "a changed unit leaves the rate term");
-        mod.setRevertUnit(true);
+        mockMod.setRevertUnit(true);
         assertEq(ctl.valueOf(rating), _rate(rating), "a failing unit read leaves the rate term");
         assertEq(ctl.priceOf(sid), ask, "priceOf is unchanged");
     }
@@ -118,9 +89,10 @@ contract BalanceValueFloorTest is Fixture {
         vm.warp(acquiredAt + ctl.creditWindow());
         uint256 base = ctl.creditPrice(id);
         assertEq(base, _max(cost, _rate(score)) * ctl.floorMultBps() / 10_000, "max of the cost and the rate term");
-        _initAndSet(_lowSqrtPrice(), 3000, 60);
+        _setLiveBalancePool();
         assertEq(ctl.creditPrice(id), base, "the pool key leaves the credit floor");
-        mod.setRevertUnit(true);
+        MockBalanceModule mockMod = _selectMockModule();
+        mockMod.setRevertUnit(true);
         assertEq(ctl.creditPrice(id), base, "a failing unit read leaves the credit floor");
     }
 
@@ -130,7 +102,7 @@ contract BalanceValueFloorTest is Fixture {
         // a pool that was never initialized reads a zero sqrt price: the setter refuses it so the floor is never off
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(address(xt)),
+            currency1: IControllerV1.Currency.wrap(liveBalanceToken),
             fee: 500,
             tickSpacing: 10,
             hooks: address(0)
@@ -147,7 +119,7 @@ contract BalanceValueFloorTest is Fixture {
         address other = address(0xBEEF);
         vm.startPrank(owner);
         IControllerV1.PoolKey memory noEth = IControllerV1.PoolKey({
-            currency0: IControllerV1.Currency.wrap(address(xt)),
+            currency0: IControllerV1.Currency.wrap(liveBalanceToken),
             currency1: IControllerV1.Currency.wrap(other),
             fee: 3000,
             tickSpacing: 60,
@@ -172,7 +144,7 @@ contract BalanceValueFloorTest is Fixture {
         _enterPhase2();
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(address(xt)),
+            currency1: IControllerV1.Currency.wrap(liveBalanceToken),
             fee: 3000,
             tickSpacing: 60,
             hooks: address(0)

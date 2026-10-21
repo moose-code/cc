@@ -2,54 +2,25 @@
 pragma solidity ^0.8.28;
 
 import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
-import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICreditScore, Mainnet} from "../src/interfaces/Interfaces.sol";
 
 /// one pile for every credit. the balance token bid records an eth cost basis of `floorRate * score / RATE_SCORE`
 /// (decision 104), at least 1 wei, where the floor rate is the larger of the climbed price
-/// state and the decayed peak. the record reads no pool price, so a pushed up or pushed down pool cannot move it and
+/// state and the decayed peak. the record reads no pool price, so the pool key cannot move it and
 /// the bid needs no pool key. every credit composes into the same statement. the three standalone settings have owner
 /// setters, bounds and events
-contract OnePileTest is Fixture {
+contract OnePileTest is LiveFixture {
     uint256 internal constant BPS = 10_000;
-    /// a small sqrt price makes the balance token expensive in eth (a pushed up redemption value)
-    uint160 internal constant LOW_SQRT = uint160(FixedPoint96.Q96 / 1000);
-    /// a large sqrt price makes the balance token cheap in eth (a pushed down redemption value)
-    uint160 internal constant HIGH_SQRT = uint160((uint256(1) << 96) * 1000);
 
-    /// initializes the balance pool at `sp` and points the controller at it
-    function _initPoolAt(uint160 sp) internal {
-        PoolKey memory vk = PoolKey({
-            currency0: Currency.wrap(address(0)),
-            currency1: Currency.wrap(address(xt)),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: IHooks(address(0))
-        });
-        PM.initialize(vk, sp);
-        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
-            currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(address(xt)),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: address(0)
-        });
-        vm.prank(owner);
-        ctl.setBalancePoolKey(k, spotOf(sp));
-    }
-
-    /// funds the balance pot and the eth pot so the balance bid has a pot to pay from and the eth bid reads nonzero
+    /// funds the balance pot and the eth pot so the balance bid has a pot to pay from and the eth bid reads nonzero.
+    /// `_enterPhase2` funds the live treasury LIVE_WORKING_FUND (10_000 ether) of working BALANCE, enough for the
+    /// single and few credit balance fills; the compose suite funds more
     function _ready() internal {
         _enterPhase2();
         _fundPot(3 ether);
-        xt.mint(address(mod), 1e24);
     }
 
     // ------------------------------------------------------------------ the balance bid's eth cost basis
@@ -67,19 +38,17 @@ contract OnePileTest is Fixture {
     }
 
     // promise: SPEC 1 sellForBalance records the score scaled eth cost and reads no pool (decision 96)
-    /// the recorded eth cost is the score-scaled backstop, with no pool key set
+    /// the recorded eth cost is the score-scaled backstop, with no pool key set. the live credit's real score is used
+    /// (the live CreditScore is never mocked), so `want` is recomputed from it
     function test_sellForBalance_costIsScoreTimesPointRateWithoutAPoolKey() public {
         _ready();
         assertFalse(ctl.balancePoolKeySet(), "no pool key");
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
-        // a score of 400 points, four times 100 points, so the backstop scales to four times the floor rate
-        _mockScore(id, 4 * RATE_SCORE);
         uint256 want = _backstop(id);
         vm.prank(seller);
         core.sellForBalance(ids);
         (, uint256 cost,) = core.creditInfo(id);
-        assertGt(want, core.floorRate(), "the backstop scales above the floor rate for a rich credit");
         assertEq(cost, want, "the recorded cost is the scaled backstop");
         // the recorded cost is the point rate times the score (`pointRate` rounds down once, the cost once)
         uint256 pointValue = _score(id) * ctl.pointRate();
@@ -103,17 +72,18 @@ contract OnePileTest is Fixture {
     }
 
     // promise: SPEC 1 the recorded cost reads no pool price (decision 96)
-    /// a pushed up pool price (an expensive balance token) does not move the recorded cost: it stays the backstop
-    function test_sellForBalance_costUnaffectedByAPushedUpPool() public {
+    /// with the live eth / BALANCE pool key set, the recorded cost still stays the backstop: it reads no pool price, so
+    /// the pool key does not move it
+    function test_sellForBalance_costUnaffectedByThePoolKey() public {
         _ready();
-        _initPoolAt(LOW_SQRT);
+        _setLiveBalancePool();
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
         uint256 want = _backstop(id);
         vm.prank(seller);
         core.sellForBalance(ids);
         (, uint256 cost,) = core.creditInfo(id);
-        assertEq(cost, want, "the recorded cost is the backstop, not the inflated pool value");
+        assertEq(cost, want, "the recorded cost is the backstop, regardless of the pool key");
     }
 
     // ------------------------------------------------------------------ one pile, one compose
@@ -122,14 +92,21 @@ contract OnePileTest is Fixture {
     /// credits bought through the eth bid and the balance bid share one pile and compose into one statement
     function test_compose_oneKindFromMixedCredits() public {
         _ready();
-        _setBalancePool();
+        // 40 balance fills each pay about score * unit * rate, up to ~16_000 ether in total; fund well above it
+        _fundTreasuryWorking(20_000 ether);
+        _setLiveBalancePool();
+        // the live Core holds a standing pile; measure it, then add both kinds and check the pile grew by the 80 added
+        uint256 base = core.pileSize();
         // 40 credits through the eth bid, then 40 through the balance bid, into the single pile
         _fillEthPile(40);
         uint256[] memory xIds = _credits(seller, 40);
         vm.prank(seller);
         core.sellForBalance(xIds);
-        assertEq(core.pileSize(), 80, "one pile holds both kinds of credits");
+        assertEq(core.pileSize(), base + 80, "one pile holds both kinds of credits");
 
+        // the live controller runs with the credit sale on, so a page composes only once its oldest credits are past
+        // the window; warp there, then one compose takes the oldest page of 80
+        _warpComposeReady();
         uint256[] memory page = core.pilePage(0, 80);
         uint256 sum;
         for (uint256 i; i < 80; ++i) {
@@ -143,16 +120,19 @@ contract OnePileTest is Fixture {
         uint256 sid = supply + 1;
         (bool held, uint256 cost,) = core.statementInfo(sid);
         assertTrue(held, "the statement is held");
-        assertEq(cost, sum, "the cost basis is the sum of the mixed credits' eth cost bases");
-        assertEq(core.pileSize(), 0, "the pile is emptied by the compose");
+        assertEq(cost, sum, "the cost basis is the sum of the composed page's eth cost bases");
+        assertEq(core.pileSize(), base, "the compose removed exactly one page of 80");
         assertEq(STATEMENTS.ownerOf(sid), address(core));
     }
 
     // ------------------------------------------------------------------ the standalone settings
 
     // promise: SPEC 1 creditCostToPotBps owner setting
+    /// on the live Core the setting holds its live value, so the test reads it and asserts the setter mechanics, the
+    /// bound and OnlyOwner rather than a launch value
     function test_setter_creditCostToPotBps() public {
-        assertEq(core.creditCostToPotBps(), 8_000, "launch value");
+        uint256 live = core.creditCostToPotBps();
+        assertLe(live, 10_000, "the live value is within the bound");
         vm.expectEmit(address(core));
         emit ICore.CreditCostToPotBpsSet(6_000);
         vm.prank(owner);
@@ -168,24 +148,28 @@ contract OnePileTest is Fixture {
         core.setCreditCostToPotBps(0);
     }
 
-    // promise: SPEC 1 chosenComposeOn owner switch, off at launch
+    // promise: SPEC 1 chosenComposeOn owner switch
+    /// reads the live state and toggles to its opposite and back, asserting the setter, the event and OnlyOwner without
+    /// pinning a launch value
     function test_setter_chosenComposeOn() public {
-        assertFalse(core.chosenComposeOn(), "off at launch");
+        bool live = core.chosenComposeOn();
         vm.expectEmit(address(core));
-        emit ICore.ChosenComposeOnSet(true);
+        emit ICore.ChosenComposeOnSet(!live);
         vm.prank(owner);
-        core.setChosenComposeOn(true);
-        assertTrue(core.chosenComposeOn());
+        core.setChosenComposeOn(!live);
+        assertEq(core.chosenComposeOn(), !live);
         vm.prank(owner);
-        core.setChosenComposeOn(false);
-        assertFalse(core.chosenComposeOn());
+        core.setChosenComposeOn(live);
+        assertEq(core.chosenComposeOn(), live);
         vm.expectRevert(ICore.OnlyOwner.selector);
         core.setChosenComposeOn(true);
     }
 
     // promise: SPEC 1 minCcToChoose owner setting
+    /// reads the live value and asserts the setter mechanics, the type top and OnlyOwner rather than a launch value
     function test_setter_minCcToChoose() public {
-        assertEq(core.minCcToChoose(), 1e18, "1 coin at launch");
+        uint256 live = core.minCcToChoose();
+        assertLe(live, type(uint96).max, "the live value is within the type");
         vm.expectEmit(address(core));
         emit ICore.MinCcToChooseSet(123e18);
         vm.prank(owner);

@@ -21,6 +21,7 @@ Record consequential owner decisions once in docs/DECISIONS.md; update affected 
 - Name the release step: deferred Core, coin launch or service activation. Preserve the evidence and owner approval scoped to that step; do not convert a waiver into a pass or a Core approval into permission to launch the coin. Use `script/tools/check-freeze.sh <core|coin|services>`; the default checks coin launch. Later-stage requirements block an earlier step only for a concrete risk to that step.
 - no mainnet broadcast, deploy, push to main, merge or private key without the owner's explicit instruction.
 - owner deploys and sends run from the `main` checkout, brought up to date with origin/main and this work first, unless the owner names another branch. never prepare a broadcast command from a side branch, even one with identical code.
+- tests, simulations and local chains use the deployed mainnet contracts on a fork (decision 265): `LiveFixture` at a pinned block, `LIVE_STAGE=B` for the post stage B state; never redeploy, stand in or mock a live contract. only not yet deployed contracts are created fresh. test forks read `ALCHEMY_MAINNET_URL` from the ignored `.env` (never printed), always at a pinned block; owner commands stay on the Tenderly public RPC.
 - the vocabulary is "balance", never "exit" (decision 102). comments state rules, invariants and caveats in plain technical voice; no em or en dashes.
 - a change that adds data to the web names its source in docs/INDEXER.md section 9.
 - toolchain, timings and the fork env: docs/STATUS.md section 5.

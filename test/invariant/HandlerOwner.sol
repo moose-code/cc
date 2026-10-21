@@ -547,7 +547,8 @@ abstract contract HandlerOwner is HandlerBase {
     /// nothing
     function replaceModule(uint256 seed, uint256 mode) external checked {
         uint8 a = A_REPLACE_MODULE;
-        if (!phase2()) return _skip(a);
+        // the mock replacement builds MockBalanceModules off `module`, which is unset in the stage B treasury suites
+        if (!phase2() || _treasuryModule()) return _skip(a);
         address token = core.balanceToken();
         address oldModule = core.balanceModule();
         (MockBalanceModule next, bytes4 want) = _nextModule(seed, mode % 9, token);
@@ -632,7 +633,8 @@ abstract contract HandlerOwner is HandlerBase {
     /// the module reports a new unit. the core reads it at the next redemption or bid, so no asset moves
     function changeUnit(uint256 seed) external checked {
         uint8 a = A_CHANGE_UNIT;
-        if (!phase2()) return _skip(a);
+        // the honest treasury has no mock unit setter (stage B)
+        if (!phase2() || _treasuryModule()) return _skip(a);
         OPre memory p = _opre();
         _att(a);
         module.setRevertUnit(false);
@@ -1070,6 +1072,9 @@ abstract contract HandlerOwner is HandlerBase {
             // so a spread below `(10_000 + tol) * 10_000 / (10_000 - tol) - 10_000` reverts BadSetting
             (,, uint16 tol,,,) = c.quote();
             uint256 req = ((10_000 + uint256(tol)) * 10_000 + (10_000 - uint256(tol)) - 1) / (10_000 - uint256(tol)) - 10_000;
+            // ControllerV2 floors the loop-closure spread at MIN_CREDIT_SPREAD_BPS (200), so a smaller spread reverts
+            // BadSetting("creditSpreadBps") even when the band alone would allow it (src/ControllerV2.sol _checkLoopClosure)
+            if (_liveStageB() && req < 200) req = 200;
             valid = v >= req;
             want = v;
         } else if (which == 6) {

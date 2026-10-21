@@ -84,10 +84,16 @@ contract Phase2LifecycleTest is Test {
     Phase2ClaimsProbe internal claims;
     TestSwapRouter internal router;
 
+    /// the live BALANCE token, defaulted to the mainnet address; `LIVE_BALANCE_TOKEN` overrides it. no skip: a missing
+    /// MAINNET_RPC_URL fails the run (vm.envString reverts), it is never silently skipped
+    address internal constant LIVE_BALANCE_TOKEN = 0x3620540c994433D7B4a628C46d2ED5F92572eA07;
+    /// the pinned fork block, overridable by `LIVE_FORK_BLOCK`. pinned reads are cached on disk and shared; a head fork
+    /// refetches every run and is never used. re-pinned to a recent block before each owner send
+    uint256 internal constant LIVE_FORK_BLOCK = 26242960;
+
     function setUp() public {
-        token = vm.envOr("LIVE_BALANCE_TOKEN", address(0));
-        vm.skip(token == address(0));
-        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        token = vm.envOr("LIVE_BALANCE_TOKEN", LIVE_BALANCE_TOKEN);
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envOr("LIVE_FORK_BLOCK", LIVE_FORK_BLOCK));
         owner = core.owner();
         deployer = new LifecycleDeployProbe();
         wire = new Phase2WireProbe();

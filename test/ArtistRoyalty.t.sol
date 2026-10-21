@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditStrategy, Settings, RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 
@@ -32,8 +32,14 @@ contract BurningArtist {
 /// `buyToArtistBps` of that amount to the artist on top, in the same currency. the seller receives the displayed bid
 /// whole, the pot pays both, the cost basis records both, and the eth bid's pot clamp leaves room for the royalty so a
 /// bid the site shows is always payable
-contract ArtistRoyaltyTest is Fixture {
+contract ArtistRoyaltyTest is LiveFixture {
     uint256 internal constant BPS = 10_000;
+
+    function setUp() public override {
+        super.setUp();
+        // LiveFixture does not approve the test RawListingAdapter the fresh Fixture did; `_buyRaw` needs it
+        _approveRawAdapter();
+    }
 
     function _bps() internal view returns (uint256) {
         return core.settings().buyToArtistBps;
@@ -52,7 +58,8 @@ contract ArtistRoyaltyTest is Fixture {
 
     // promise: SPEC 3 the launch royalty is 250 bps and the artist is set
     function test_launchValues() public view {
-        assertEq(_bps(), 250);
+        // stage B applies the decision 255 split route: every artist flow carries 300
+        assertEq(_bps(), _liveStageB() ? 300 : 250);
         assertTrue(core.artist() != address(0));
     }
 
@@ -141,10 +148,26 @@ contract ArtistRoyaltyTest is Fixture {
     // promise: SPEC 4 the eth bid's pot clamp divides by 1 + buyToArtistBps / 10_000: with the price state above the
     // room the read is the room over 1.025, and a fill at that read pays the bid and its royalty from the room
     function test_clampLeavesRoomForTheRoyalty() public {
-        // a pot far under the opening price state of a 100 point credit, so the clamp binds; the fixture reserve is 0
-        _addToPot(1e14);
-        assertEq(core.reserve(), 0);
-        uint256 room = core.ethPot();
+        // the live Core carries an uncontrolled pot and a nonzero reserve and cannot be drained, so the thin-pot clamp
+        // is reached through the owner's setters instead of a tiny fresh pot: book the pending income so the pages pot
+        // equals ethPot, lift the price state well above the room, then raise the reserve so the room is a small known
+        // amount far below the price state and the pot clamp binds
+        if (core.ethPot() < 1 ether) _fundPot(1 ether);
+        _book();
+        _liftRateCap();
+        // read RATE_START before the prank: as a call argument it would consume the prank, leaving setRate unpranked
+        uint256 openingRate = core.RATE_START();
+        vm.prank(owner);
+        core.setRate(openingRate);
+        uint256 targetRoom = 1e14;
+        // reserveWei is a uint64, so the carved reserve can be at most type(uint64).max wei; a live pot above that
+        // cannot be clamped this way (re-pin to a block with a smaller pot, or move this case to the fresh Fixture)
+        require(core.ethPot() - targetRoom <= type(uint64).max, "live pot too large for a uint64 reserve: re-pin");
+        Settings memory s = core.settings();
+        s.reserveWei = uint64(core.ethPot() - targetRoom);
+        _setSettings(s);
+        uint256 room = core.ethPot() - core.reserve();
+        assertEq(room, targetRoom, "the reserve sets the room to the target far under the price state");
         assertEq(core.ethRate(), room * BPS / (BPS + _bps()), "the read is the room over 1 + bps");
         // the clamp is per 100 points: a credit at or under 100 points is payable with its royalty from the room
         uint256[] memory ids;
@@ -156,11 +179,12 @@ contract ArtistRoyaltyTest is Fixture {
         uint256 pay = core.bidOf(ids[0]);
         assertEq(pay, core.ethRate() * _scoreOf(ids[0]) / RATE_SCORE);
         assertLe(pay + _royalty(pay), room, "the bid and its royalty fit the room");
+        uint256 potBefore = core.ethPot();
         uint256 before = seller.balance;
         vm.prank(seller);
         core.sellForEth(ids);
         assertEq(seller.balance - before, pay, "the displayed bid is the paid bid at the clamp");
-        assertEq(core.ethPot(), room - pay - _royalty(pay));
+        assertEq(core.ethPot(), potBefore - pay - _royalty(pay), "the pot paid the bid and its royalty");
     }
 
     // promise: SPEC 6 buyListing pays the listing price, the royalty on that price, and the keeper, all three under the
@@ -180,7 +204,9 @@ contract ArtistRoyaltyTest is Fixture {
         core.buyListing(strategyAdapter, LISTED_A, "");
         uint256 paid = keeper.balance - keeperBefore;
         assertEq(artist.balance - artistBefore, royalty, "the artist receives bps of the listing price");
-        assertEq(potBefore - core.ethPot(), price + royalty + paid, "the pot paid the price, the royalty and the keeper");
+        assertEq(
+            potBefore - core.ethPot(), price + royalty + paid, "the pot paid the price, the royalty and the keeper"
+        );
         uint256 gap = bid - price;
         if (room - price - royalty < gap) gap = room - price - royalty;
         _assertListingPay(paid, gap);
@@ -229,8 +255,13 @@ contract ArtistRoyaltyTest is Fixture {
     // promise: SPEC 6 a listing whose price plus royalty passes the room reverts PotTooSmall before the venue is called
     function test_buyListingRefusesWhenTheRoyaltyDoesNotFit() public {
         uint256 price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
-        _addToPot(price);
-        assertEq(core.ethPot(), price);
+        // the live pot cannot be drained to leave no headroom, so the owner lifts the reserve to its uint64 maximum: the
+        // room (ethPot less the reserve) is then zero, so the price and its royalty cannot fit
+        _book();
+        Settings memory s = core.settings();
+        s.reserveWei = type(uint64).max;
+        _setSettings(s);
+        assertGe(core.reserve(), core.ethPot(), "the reserve leaves no room (re-pin if the live pot exceeds a uint64)");
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);
         _buyRaw(price, abi.encodeCall(ICreditStrategy.sellTargetNFT, (LISTED_A)), LISTED_A, STRATEGY);

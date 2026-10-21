@@ -19,6 +19,8 @@ interface IERC20Min {
 /// `StatementBalanceModule`: the renderer is registered, the funder retires the launch supply, a statement redeems once
 /// transfers open, and a seller takes the balance bid. there is no dev-mock variant; routine runs skip without the
 /// pinned artifact, while frozen-candidate runs require it.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it launches a fresh system with the balance
+/// side on, so it never reads or mutates the live Core.
 contract LaunchDayPhase2Test is LaunchDayBase {
     /// @dev the balance pool sqrt the Seed post section and the e2e flows use (script/config/anvil.json .dev)
     uint160 internal constant DEV_SQRT = uint160(11618581461159793320010313039067);

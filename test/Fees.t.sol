@@ -14,16 +14,23 @@ import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Mainnet, Settings, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
-import {IArtCoinsMevSkimV2} from "../src/interfaces/ArtCoinsV2.sol";
+import {IArtCoinsMevSkimV2, IArtCoinsFactoryV2, IArtCoinsFeeEscrowV2} from "../src/interfaces/ArtCoinsV2.sol";
 import {SwapMidListing} from "./attackers/SwapMidCall.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
-/// shared helpers for the fee, buyback, auction and tax suites. every swap goes through the real pool
-abstract contract FeeBase is Fixture {
-    using stdStorage for StdStorage;
+/// the ControllerV2 statement sale switch, used only to open the sale door in the stage B state. stage B wires
+/// ControllerV2 with statement sales off (the owner enables them at go live); a buyback test fills its pot through a
+/// real statement sale, so it opens the door by the owner the way the owner will at go live
+interface ICtlStatementSales {
+    function setStatementSales(bool enabled) external;
+}
 
+/// shared helpers for the fee, buyback, auction and tax suites, with NO setUp so the two family bases (one live, one
+/// fresh deploy) each supply the only setUp in their linearization. every swap goes through the real pool
+abstract contract FeeHelpers is Fixture {
     enum Kind {
         BuyExactIn,
         BuyExactOut,
@@ -46,12 +53,6 @@ abstract contract FeeBase is Fixture {
     }
 
     address internal trader;
-
-    function setUp() public virtual override {
-        super.setUp();
-        trader = _user("trader");
-        vm.deal(trader, 1000 ether);
-    }
 
     /// @dev what the book does with income `amount` right now: the payee share (only once the payee share is on) and
     /// the rest. mirrors `Core._book` from the core's own getters
@@ -105,7 +106,7 @@ abstract contract FeeBase is Fixture {
     function _readSkim(Flow memory f, Vm.Log[] memory logs) internal view {
         bytes32 sig = keccak256("SkimSplit(bytes32,uint256,uint256,uint256,uint256)");
         for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].emitter == lc.stack.hook && logs[i].topics[0] == sig) {
+            if (logs[i].emitter == v2.hook && logs[i].topics[0] == sig) {
                 (f.skimVolume, f.skimBounty, f.skimProtocol, f.skimReferral) =
                     abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
             }
@@ -121,7 +122,7 @@ abstract contract FeeBase is Fixture {
     }
 
     /// @dev moves past the sniper window, then gives the trader coin and the pool about 18 eth of depth. the first book
-    /// after the window turns the payee share on
+    /// after the window turns the payee share on. its `_buyCoin` books, so any fee income unbooked at the pin is booked too
     function _stock() internal {
         _skipToPayeeStart();
         _buyCoin(trader, 20 ether);
@@ -140,6 +141,8 @@ abstract contract FeeBase is Fixture {
     /// @dev one more statement composed and bought, the way real fees and sales fill the buyback pot
     function _anotherSale() internal {
         _fillEthPile(80);
+        // the freshly sold credits must age past the live credit window before the controller will compose them
+        _warp(ctl.creditWindow() + 1);
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
@@ -148,28 +151,82 @@ abstract contract FeeBase is Fixture {
     }
 }
 
-/// fee flow of the real v2 skim hook into the core
-contract FeeFlowTest is FeeBase {
-    // promise: SPEC 1 payee 0 at launch, protocol 0.69 percent, engine the rest
-    /// the full split at launch values, per 1 eth of volume (multiply by 100 for 100 eth), steady state and inside the anti
-    /// sniper window. baseline skim 6.9 percent: protocol 0.69 and core 6.21.
-    /// steady state, payee 0 at launch, so the engine keeps the 6.21 percent Core inflow.
-    /// window, skim starts at 90 percent: protocol remains 0.69 percent, the core gets 89.31 percent.
-    function test_launchSplitPerHundredEthOfVolume() public {
-        Flow memory w = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(w.skimProtocol * 100, 0.69 ether, "window: protocol 0.69 per 100 eth");
-        assertEq(w.bountyRise * 100, 89.31 ether, "window: core 89.31 per 100 eth");
-        assertEq(w.toPayee, 0, "window: no payee share");
-
-        _stock();
-        Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(f.skimProtocol * 100, 0.69 ether, "protocol 0.69 per 100 eth");
-        assertEq(f.bountyRise * 100, 6.21 ether, "core 6.21 per 100 eth");
-        assertEq(f.toPayee, 0, "no payee share at launch");
-        assertEq(f.skimProtocol + f.bountyRise, 0.069 ether, "protocol and core are the 6.9 percent skim");
-        assertEq(f.bountyRise - f.toPayee, uint256(62_100_000_000_000_000) - f.toPayee, "the engine part is the rest");
+/// the live base for ported steady state tests: the live Core/controller/coin/pool from LiveFixture, bound to the
+/// v2-mainnet stack the live coin runs on. the diamond `FeeHelpers, LiveFixture` resolves because LiveFixture's
+/// `_enterPhase2` is virtual; both inherited functions are named in the override specifier the compiler demands
+abstract contract FeeBase is FeeHelpers, LiveFixture {
+    // the live helpers apply: LiveFixture's overrides of the three shared Fixture helpers win over FeeHelpers' inherited ones
+    function _fundPot(uint256 eth) internal virtual override(Fixture, LiveFixture) {
+        super._fundPot(eth);
     }
 
+    function _fillEthPile(uint256 n) internal virtual override(Fixture, LiveFixture) returns (uint256[] memory ids) {
+        return super._fillEthPile(n);
+    }
+
+    function _composeOnce() internal virtual override(Fixture, LiveFixture) returns (Composed memory c) {
+        return super._composeOnce();
+    }
+
+    function _buy(address who, uint256 sid) internal virtual override(Fixture, LiveFixture) returns (uint256 price) {
+        return super._buy(who, sid);
+    }
+
+    function setUp() public virtual override(Fixture, LiveFixture) {
+        super.setUp();
+        // book any fee income unbooked at the pin so the pot and skim deltas in the ported tests start from clean
+        // books, and age the live credit pile past the credit window (creditSaleOn is live) so the first compose of a
+        // ported test is ready. the fresh launch base does not do this: its window tests need the sniper window open
+        core.book();
+        _warp(ctl.creditWindow() + 1);
+        trader = _user("trader");
+        vm.deal(trader, 1000 ether);
+
+        // the live coin runs on the v2-mainnet stack. read its record directly (not V2Stack.live()/attach(), which are
+        // STACK-env dependent and would read the master record). the Fixture fields FACTORY/ESCROW follow from it
+        string memory j = vm.readFile("script/config/v2-mainnet.json");
+        v2.owner = vm.parseJsonAddress(j, ".owner");
+        v2.escrow = vm.parseJsonAddress(j, ".escrow");
+        v2.hook = vm.parseJsonAddress(j, ".hook");
+        v2.mev = vm.parseJsonAddress(j, ".mevModule");
+        v2.factory = vm.parseJsonAddress(j, ".factory");
+        v2.controller = vm.parseJsonAddress(j, ".feeController");
+        FACTORY = IArtCoinsFactoryV2(v2.factory);
+        ESCROW = IArtCoinsFeeEscrowV2(v2.escrow);
+        assertEq(v2.hook, core.HOOK(), "the live coin runs on the v2-mainnet stack");
+
+        // the test listing adapter the raw buy path needs (installed once by LiveFixture.setUp)
+        _approveRawAdapter();
+    }
+
+    /// the diamond inherits `_enterPhase2` from both Fixture (virtual) and LiveFixture (virtual override), so FeeBase
+    /// must resolve it. the fee suites never call it; super reaches LiveFixture's live phase 2 entry
+    function _enterPhase2() internal override(Fixture, LiveFixture) {
+        super._enterPhase2();
+    }
+
+    /// in the stage B state ControllerV2 ships with statement sales off (the owner enables them at go live). a buyback
+    /// test fills its pot through a real statement sale, so open the door by the owner here, the owner's real setter.
+    /// a no op in today's state, where the live ControllerV1 sells statements already
+    function _openStatementSalesForStageB() internal {
+        if (!_liveStageB()) return;
+        vm.prank(owner);
+        ICtlStatementSales(address(ctl)).setStatementSales(true);
+    }
+}
+
+/// the fresh launch base for tests that need an open sniper window, an unlatched payee, a cold empty engine or an etch
+/// over the pool manager, none of which the live Core can reach
+abstract contract FeeBaseFixture is FeeHelpers {
+    function setUp() public virtual override {
+        super.setUp();
+        trader = _user("trader");
+        vm.deal(trader, 1000 ether);
+    }
+}
+
+/// fee flow of the real v2 skim hook into the core, steady state on the live core
+contract FeeFlowTest is FeeBase {
     // promise: SPEC 1 payee 0 at launch, protocol 0.69 percent, engine the rest
     /// the protocol leg of the skim (0.69 percent) belongs to the v2 protocol controller, by push
     /// or by escrow credit
@@ -182,41 +239,6 @@ contract FeeFlowTest is FeeBase {
         assertEq(got, f.skimProtocol);
         // 5 eth * 690 bps = 0.345 eth of skim, the protocol keeps 1000 of 10_000: 0.0345 eth
         assertEq(got, 5 ether * 690 / 10_000 * 1000 / 10_000);
-    }
-
-    // promise: SPEC 4 the anti sniper window extra reaches the pot, the payee takes none of it
-    /// the extra of the anti sniper window all reaches the core, and through it the pot, the payee takes nothing of it
-    function test_sniperWindowExtraLandsInThePot() public {
-        (uint24 bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
-        assertEq(bps, 6_900);
-        assertFalse(core.payeeOn(), "no payee share in the window");
-        Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
-        uint256 base = 1 ether * 690 / 10_000;
-        uint256 bountyShare = base * 9_000 / 10_000;
-        uint256 extra = 1 ether * uint256(bps) / 10_000 - base;
-        assertEq(f.bountyRise, bountyShare + extra, "the whole extra goes to the bounty recipient");
-        assertEq(f.skimProtocol, base - bountyShare, "the protocol leg does not grow in the window");
-        assertEq(f.toPayee, 0);
-        assertEq(f.potRise, _toPot(f.bountyRise), "the pot gets the window inflow less the redeem burn share");
-        assertApproxEqAbs(f.potRise, _toPot(0.6831 ether), 0.005 ether);
-        assertFalse(core.payeeOn());
-
-        // halfway through the window the rate is halfway between 69 and the 6.9 percent baseline
-        vm.warp(launchTime + SNIPER_WINDOW / 2);
-        (bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
-        assertEq(bps, 6_900 - (6_900 - 690) / 2);
-        f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(f.bountyRise, bountyShare + 1 ether * uint256(bps) / 10_000 - base);
-        assertEq(f.toPayee, 0);
-
-        // sells pay the extra too
-        f = _flow(Kind.SellExactIn, coin.balanceOf(trader) / 4, "");
-        (bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
-        assertGt(f.bountyRise, f.gross * 690 / 10_000 * 9_000 / 10_000);
-
-        _skipSniperWindow();
-        f = _flow(Kind.BuyExactIn, 1 ether, "");
-        assertEq(f.bountyRise, 0.0621 ether, "steady state after the window");
     }
 
     // promise: SPEC 4 every door books pending fee eth before it prices
@@ -262,6 +284,66 @@ contract FeeFlowTest is FeeBase {
         _flow(Kind.BuyExactIn, 1 ether, "");
         assertEq(core.checkpointTime(), block.timestamp, "checkpoint time moved to the fee");
         assertEq(core.rateAtCheckpoint(), rateBefore, "the climbed rate was locked in before the pot grew");
+    }
+}
+
+/// the two fee flow promises that need a fresh launch: the window split with the payee 0 at launch, and the whole anti
+/// sniper window. the live pool's window is long closed and its payee is already latched, so these stay on a fresh deploy
+contract FeeFlowLaunchTest is FeeBaseFixture {
+    // promise: SPEC 1 payee 0 at launch, protocol 0.69 percent, engine the rest
+    /// the full split at launch values, per 1 eth of volume (multiply by 100 for 100 eth), steady state and inside the anti
+    /// sniper window. baseline skim 6.9 percent: protocol 0.69 and core 6.21.
+    /// steady state, payee 0 at launch, so the engine keeps the 6.21 percent Core inflow.
+    /// window, skim starts at 69 percent (the v2-mainnet mev module's sniper start, not 90): protocol remains 0.69
+    /// percent, the core gets 68.31 percent (0.0621 baseline bounty plus the 0.621 window extra)
+    function test_launchSplitPerHundredEthOfVolume() public {
+        Flow memory w = _flow(Kind.BuyExactIn, 1 ether, "");
+        assertEq(w.skimProtocol * 100, 0.69 ether, "window: protocol 0.69 per 100 eth");
+        assertEq(w.bountyRise * 100, 68.31 ether, "window: core 68.31 per 100 eth");
+        assertEq(w.toPayee, 0, "window: no payee share");
+
+        _stock();
+        Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
+        assertEq(f.skimProtocol * 100, 0.69 ether, "protocol 0.69 per 100 eth");
+        assertEq(f.bountyRise * 100, 6.21 ether, "core 6.21 per 100 eth");
+        assertEq(f.toPayee, 0, "no payee share at launch");
+        assertEq(f.skimProtocol + f.bountyRise, 0.069 ether, "protocol and core are the 6.9 percent skim");
+        assertEq(f.bountyRise - f.toPayee, uint256(62_100_000_000_000_000) - f.toPayee, "the engine part is the rest");
+    }
+
+    // promise: SPEC 4 the anti sniper window extra reaches the pot, the payee takes none of it
+    /// the extra of the anti sniper window all reaches the core, and through it the pot, the payee takes nothing of it
+    function test_sniperWindowExtraLandsInThePot() public {
+        (uint24 bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
+        assertEq(bps, 6_900);
+        assertFalse(core.payeeOn(), "no payee share in the window");
+        Flow memory f = _flow(Kind.BuyExactIn, 1 ether, "");
+        uint256 base = 1 ether * 690 / 10_000;
+        uint256 bountyShare = base * 9_000 / 10_000;
+        uint256 extra = 1 ether * uint256(bps) / 10_000 - base;
+        assertEq(f.bountyRise, bountyShare + extra, "the whole extra goes to the bounty recipient");
+        assertEq(f.skimProtocol, base - bountyShare, "the protocol leg does not grow in the window");
+        assertEq(f.toPayee, 0);
+        assertEq(f.potRise, _toPot(f.bountyRise), "the pot gets the window inflow less the redeem burn share");
+        assertApproxEqAbs(f.potRise, _toPot(0.6831 ether), 0.005 ether);
+        assertFalse(core.payeeOn());
+
+        // halfway through the window the rate is halfway between 69 and the 6.9 percent baseline
+        vm.warp(launchTime + SNIPER_WINDOW / 2);
+        (bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
+        assertEq(bps, 6_900 - (6_900 - 690) / 2);
+        f = _flow(Kind.BuyExactIn, 1 ether, "");
+        assertEq(f.bountyRise, bountyShare + 1 ether * uint256(bps) / 10_000 - base);
+        assertEq(f.toPayee, 0);
+
+        // sells pay the extra too
+        f = _flow(Kind.SellExactIn, coin.balanceOf(trader) / 4, "");
+        (bps,) = IArtCoinsMevSkimV2(v2.mev).currentSkimBps(poolId);
+        assertGt(f.bountyRise, f.gross * 690 / 10_000 * 9_000 / 10_000);
+
+        _skipSniperWindow();
+        f = _flow(Kind.BuyExactIn, 1 ether, "");
+        assertEq(f.bountyRise, 0.0621 ether, "steady state after the window");
     }
 }
 
@@ -311,19 +393,20 @@ contract ReceiveTest is FeeBase {
     uint256 internal constant TWENTY_YEARS = 20 * 365 days;
 
     function _hookSend(uint256 amount) internal returns (bool ok) {
-        vm.deal(lc.stack.hook, lc.stack.hook.balance + amount);
-        vm.prank(lc.stack.hook);
+        vm.deal(v2.hook, v2.hook.balance + amount);
+        vm.prank(v2.hook);
         (ok,) = address(core).call{value: amount}("");
     }
 
     // promise: SPEC 4 the hook pushes with the 2,300 gas stipend
     /// the hook pushes with 2,300 gas: the receive of the Core fits it
     function test_receiveFitsTheHookStipend() public {
-        vm.deal(lc.stack.hook, 1 ether);
-        vm.prank(lc.stack.hook);
+        vm.deal(v2.hook, 1 ether);
+        uint256 bal = address(core).balance;
+        vm.prank(v2.hook);
         (bool ok,) = address(core).call{value: 1 ether, gas: 2_300}("");
         assertTrue(ok, "2,300 gas is enough");
-        assertEq(address(core).balance, 1 ether);
+        assertEq(address(core).balance - bal, 1 ether);
     }
 
     // promise: SPEC 4 book gas bound at the worst rate
@@ -350,14 +433,18 @@ contract ReceiveTest is FeeBase {
     /// the hook and the escrow may send eth to `receive`, any other sender reverts `UseFund`. the eth waits above the
     /// pots until the next book, `fund` adds to the pot whole
     function test_onlyTheHookAndTheEscrowMaySend() public {
-        address[2] memory from = [lc.stack.hook, lc.stack.escrow];
+        // book any fee income unbooked at the pin so the sends below are measured against clean books
+        core.book();
+        address[2] memory from = [v2.hook, v2.escrow];
+        uint256 potBefore = core.ethPot();
+        uint256 balBefore = address(core).balance;
         for (uint256 i; i < 2; ++i) {
             vm.deal(from[i], 5 ether);
             vm.prank(from[i]);
             (bool ok,) = address(core).call{value: 1 ether}("");
             assertTrue(ok);
-            assertEq(core.ethPot(), 0);
-            assertEq(address(core).balance, (i + 1) * 1 ether);
+            assertEq(core.ethPot(), potBefore, "the pot does not move until the book");
+            assertEq(address(core).balance - balBefore, (i + 1) * 1 ether, "the send raised the balance");
         }
         address stranger = _user("anyone");
         vm.deal(stranger, 5 ether);
@@ -373,9 +460,10 @@ contract ReceiveTest is FeeBase {
         // the core has no fallback: unknown calls revert
         (sent,) = address(core).call(hex"deadbeef");
         assertFalse(sent);
-        assertEq(address(core).balance, 2 ether, "nothing else arrived");
+        assertEq(address(core).balance - balBefore, 2 ether, "nothing else arrived");
+        uint256 trackedBefore = _tracked();
         core.book();
-        assertEq(_tracked(), 2 ether, "the book counts both sends");
+        assertEq(_tracked() - trackedBefore, 2 ether, "the book counts both sends");
         // `fund` adds to the pot whole, from anyone
         uint256 pot = core.ethPot();
         vm.prank(stranger);
@@ -390,8 +478,8 @@ contract ReceiveSettingsTest is FeeBase {
     using FixedPointMathLib for uint256;
 
     function _hookSend(uint256 amount) internal returns (bool ok) {
-        vm.deal(lc.stack.hook, lc.stack.hook.balance + amount);
-        vm.prank(lc.stack.hook);
+        vm.deal(v2.hook, v2.hook.balance + amount);
+        vm.prank(v2.hook);
         (ok,) = address(core).call{value: amount}("");
     }
 
@@ -425,7 +513,10 @@ contract ReceiveSettingsTest is FeeBase {
         gap2 = bound(gap2, 0, 20 * 365 days);
         uint256[3] memory amounts = [uint256(a), uint256(b), uint256(a) + b];
         uint256[3] memory gaps = [uint256(gap1), gap2, uint256(gap1) + gap2];
+        // book any fee income unbooked at the pin so the push accounting below starts from clean books
+        core.book();
         uint256 booked;
+        uint256 trackedStart = _tracked();
         uint256 payeeStart = core.payee().balance;
         for (uint256 i; i < 3; ++i) {
             _setSettings(_randomSettings(uint256(keccak256(abi.encode(seed, i)))));
@@ -441,7 +532,9 @@ contract ReceiveSettingsTest is FeeBase {
             booked += amounts[i];
             // the payee share is pushed out of the core, the rest stays in the pots (decision 123)
             assertEq(
-                _tracked() + (core.payee().balance - payeeStart), booked, "every push booked or pushed to the payee"
+                _tracked() - trackedStart + (core.payee().balance - payeeStart),
+                booked,
+                "every push booked or pushed to the payee"
             );
             if (amounts[i] != 0) {
                 assertEq(core.checkpointTime(), block.timestamp, "checkpointed at the book");
@@ -456,6 +549,17 @@ contract ReceiveSettingsTest is FeeBase {
 contract BuybackTest is FeeBase {
     using stdStorage for StdStorage;
     using FixedPointMathLib for uint256;
+
+    function setUp() public override {
+        super.setUp();
+        // the buyback pot is filled through a real statement sale; open the sale door in the stage B state (no op today)
+        _openStatementSalesForStageB();
+        // a single live statement sale builds a buyback pot of a few ETH, above the live 0.5 ETH slice. raise the slice
+        // well above it by the owner setter so one buyback still consumes the whole pot, which these tests assert
+        Settings memory s = core.settings();
+        s.buybackSlice = 100 ether;
+        _setSettings(s);
+    }
 
     struct Before {
         uint256 supply;
@@ -539,10 +643,11 @@ contract BuybackTest is FeeBase {
     /// the launch values: a slice of 1 eth cuts the pot, and 25 blocks must pass between two buybacks. the pot a sale
     /// builds is under one slice, so a buyback takes all of it
     function test_buybackDelayAtLaunchValues() public {
+        // the slice is raised above the live sale size in setUp, so one buyback still takes the whole pot
         _stock();
         _fillEthBuyback();
         Before memory b = _before();
-        assertLt(b.pool, 1 ether, "a sale builds less than one slice");
+        assertLt(b.pool, core.settings().buybackSlice, "a sale builds less than one slice");
         vm.recordLogs();
         vm.prank(keeper);
         core.buyback();
@@ -714,6 +819,50 @@ contract BuybackPaymentTest is FeeBase {
         assertEq(r.potAfter, r.pool - r.spent - r.paid);
         assertEq(address(core).balance, _tracked(), "no surplus, no deficit");
     }
+}
+
+/// the gas bound of the counted buyback payment: it etches a gas burning stand in over the pool manager, which
+/// overwrites live code, so it stays on a fresh deploy where the pool manager is the fixture's own fork target
+contract GasBurnBuybackTest is FeeBaseFixture {
+    using stdStorage for StdStorage;
+
+    function setUp() public override {
+        super.setUp();
+        _stock();
+        _forcePot(1 ether);
+    }
+
+    function _forcePot(uint256 eth) internal {
+        vm.deal(address(core), address(core).balance + eth);
+        uint256 slot = stdstore.target(address(core)).sig("ethToBuyback()").find();
+        vm.store(address(core), bytes32(slot), bytes32(core.ethToBuyback() + eth));
+    }
+
+    struct Run {
+        uint256 pool;
+        uint256 spent;
+        uint256 paid;
+        uint256 gasUsed;
+        uint256 callerGain;
+        uint256 potAfter;
+    }
+
+    /// one buyback by the keeper at `baseFee` and `gasPrice`, with the books read around it
+    function _run(uint256 baseFee, uint256 gasPrice) internal returns (Run memory r) {
+        vm.fee(baseFee);
+        vm.txGasPrice(gasPrice);
+        r.pool = core.ethToBuyback();
+        uint256 before = keeper.balance;
+        vm.recordLogs();
+        vm.prank(keeper);
+        uint256 g0 = gasleft();
+        core.buyback();
+        r.gasUsed = g0 - gasleft();
+        (r.spent, r.paid) = _buybackEvent(vm.getRecordedLogs());
+        _book();
+        r.callerGain = keeper.balance - before;
+        r.potAfter = core.ethToBuyback();
+    }
 
     // promise: SPEC 1 buyback counted gas is bounded by BUYBACK_GAS
     /// the swap path burns 3 million gas: the call uses more than `BUYBACK_GAS`, the counted gas stops at it
@@ -858,6 +1007,8 @@ contract UniversalRouterTest is FeeBase {
     // promise: SPEC 12 buy and sell through the real universal router
     function test_buyAndSellThroughTheUniversalRouter() public {
         _skipSniperWindow();
+        // book any fee income unbooked at the pin so the skim deltas below are measured against clean books
+        core.book();
         uint256 dead = coin.balanceOf(DEAD);
         uint256 pot = core.ethPot();
         vm.deal(trader, 10 ether);

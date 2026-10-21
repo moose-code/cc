@@ -44,6 +44,8 @@ interface IUpstreamStatements {
 
 /// Real upstream creation bytecode (solc 0.8.28), real engine and mainnet NFTs.
 /// Build the private-source artifact with script/tools/upstream-balance.sh. It pins the upstream commit and the code hashes.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it builds a fresh engine, so it never reads
+/// or mutates the live Core.
 contract UpstreamBalanceTest is Fixture {
     IUpstreamToken private balanceToken;
     IBalanceModule private balanceModule;

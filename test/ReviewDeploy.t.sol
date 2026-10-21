@@ -22,7 +22,9 @@ import {Report} from "../script/Report.sol";
 
 /// @notice the deploy package on the pinned fork: both library rows, the Core before `setController`, the readbacks of the
 /// position and the sniper schedule, the Core constructor rules, the config parser and the sign off hash. the mutation
-/// matrix is in test/ReviewMatrix.t.sol. forks mainnet at FORK_BLOCK
+/// matrix is in test/ReviewMatrix.t.sol. forks mainnet at FORK_BLOCK.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it exercises the deploy package on a
+/// pre-launch fork, so it never reads or mutates the live Core.
 contract ReviewDeployTest is ReviewHarness {
     // promise: each library row accepts absence and its compiled copy, then rejects altered code
     function test_preflightLibraryRow() public {
@@ -356,7 +358,9 @@ contract ReviewDeployTest is ReviewHarness {
 }
 
 /// @notice the funded rule and the climb clamp, fuzzed on standalone cores with any rateStart in bounds, plus the
-/// sign off table rows that need a live pool to check
+/// sign off table rows that need a live pool to check.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it builds standalone cores, so it never reads
+/// or mutates the live Core.
 contract ReviewFundedTest is Fixture {
     function _newCore(uint256 rate) internal returns (ICore c) {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);

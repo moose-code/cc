@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
@@ -107,10 +107,11 @@ contract Phase2SettingsProbe is Phase2Settings {
     }
 }
 
-/// @notice the phase 2 operator scripts on the pinned fork against the fixture Core, the real Statements and the standin
-/// balance token: the stage A deploy and its readback, the readback refusals and the stage B settings patch
-contract Phase2ScriptsTest is Fixture {
-    Phase2BalanceTokenStandin internal token;
+/// @notice the phase 2 operator scripts on the pinned fork against the live Core, the live Statements and the live
+/// BALANCE token: the stage A deploy and its readback, the readback refusals and the stage B settings patch. only the
+/// treasury, policy, ControllerV2 and push split are created fresh. `test_deployRefusesAWrongBalanceToken` keeps the
+/// stand in: it needs a token the treasury constructor would refuse, a gate the live token has already passed
+contract Phase2ScriptsTest is LiveFixture {
     /// the Splits v2.2 pull factory, the one the splits.org form uses
     address internal constant PULL_FACTORY = 0x6B9118074aB15142d7524E8c4ea8f62A3Bdb98f1;
     Phase2DeployProbe internal deployProbe;
@@ -119,7 +120,6 @@ contract Phase2ScriptsTest is Fixture {
 
     function setUp() public override {
         super.setUp();
-        token = new Phase2BalanceTokenStandin();
         deployProbe = new Phase2DeployProbe();
         readback = new Phase2ReadbackProbe();
         settings = new Phase2SettingsProbe();
@@ -129,10 +129,10 @@ contract Phase2ScriptsTest is Fixture {
     function _inputs() internal view returns (Phase2Deploy.Inputs memory) {
         return Phase2Deploy.Inputs({
             core: address(core),
-            balanceToken: address(token),
+            balanceToken: liveBalanceToken,
             statementSaleMultiplierBps: 15_000,
             statementRedeemDelaySeconds: 3_600,
-            tokenCodehash: address(token).codehash,
+            tokenCodehash: liveBalanceToken.codehash,
             allowUnpinnedToken: false,
             split: address(0),
             splitPlan: PushSplitCreator.SplitPlan({artist: core.artist(), operator: core.payee(), controller: owner})
@@ -156,8 +156,8 @@ contract Phase2ScriptsTest is Fixture {
     // promise: an environment integer above uint32 is refused instead of silently narrowed to other terms
     function test_deployRefusesNarrowedInputs() public {
         vm.setEnv("CORE", vm.toString(address(core)));
-        vm.setEnv("BALANCE_TOKEN", vm.toString(address(token)));
-        vm.setEnv("BALANCE_TOKEN_CODEHASH", vm.toString(address(token).codehash));
+        vm.setEnv("BALANCE_TOKEN", vm.toString(liveBalanceToken));
+        vm.setEnv("BALANCE_TOKEN_CODEHASH", vm.toString(liveBalanceToken.codehash));
         vm.setEnv("PHASE2_STATEMENT_MULTIPLIER_BPS", "4294977296");
         vm.expectRevert(abi.encodeWithSelector(Phase2Deploy.ValueTooWide.selector, "PHASE2_STATEMENT_MULTIPLIER_BPS"));
         deployProbe.run();
@@ -175,18 +175,21 @@ contract Phase2ScriptsTest is Fixture {
 
     // promise: PLAN section 8 stage A the deploy script creates the three contracts disabled, bound to the Core, with the live credit sale, and its readback passes; decision 255 the fourth creation is the push split with the Core's artist at 5/6, its payee at 1/6 and its owner as controller, not yet the Core's artist
     function test_deployCreatesTheDisabledStackAndReadbackPasses() public {
+        // the subject is the pre stage B baseline (nothing selected on the Core, controller is V1); stage B has already
+        // selected the module and the V2 controller, so this promise does not apply there
+        if (_liveStageB()) return;
         Phase2Deploy.Inputs memory i = _inputs();
         Phase2Deploy.Result memory r = deployProbe.deploy(i);
         SplitConfig memory cfg = deployProbe.splitConfig(core.artist(), core.payee());
         assertEq(ISplitWalletV2(r.split).splitHash(), deployProbe.splitHashOf(cfg), "the split of decision 255");
         assertEq(ISplitWalletV2(r.split).owner(), owner, "the owner controls the split");
         assertTrue(core.artist() != r.split, "the split is not the artist before stage B");
-        assertEq(i.splitPlan.artist, creator);
-        assertTrue(creator != core.payee());
+        assertEq(i.splitPlan.artist, core.artist());
+        assertTrue(core.artist() != core.payee(), "the split has distinct artist and operator recipients");
         IPhase2BalanceTreasury t = IPhase2BalanceTreasury(r.treasury);
         assertEq(t.core(), address(core));
         assertEq(t.ccToken(), core.COIN());
-        assertEq(t.balanceToken(), address(token));
+        assertEq(t.balanceToken(), liveBalanceToken);
         assertEq(t.predecessor(), address(0));
         assertEq(t.redemptionPolicy(), r.policy);
         assertEq(t.owner(), owner);
@@ -238,7 +241,9 @@ contract Phase2ScriptsTest is Fixture {
         assertEq(r.split, push, "the given push split is the record's split");
         i = _inputs();
         i.splitPlan.operator = i.splitPlan.artist;
-        vm.expectRevert(abi.encodeWithSelector(PushSplitCreator.BadRecipient.selector, creator, creator, owner));
+        vm.expectRevert(
+            abi.encodeWithSelector(PushSplitCreator.BadRecipient.selector, core.artist(), core.artist(), owner)
+        );
         deployProbe.deploy(i);
     }
 
@@ -251,8 +256,8 @@ contract Phase2ScriptsTest is Fixture {
         IPhase2BalanceTreasury t = IPhase2BalanceTreasury(r.treasury);
         _fillEthPile(3);
         _setBalanceModule(r.treasury);
-        token.open();
-        token.mint(r.treasury, 5_000 ether);
+        // the live token transfers are open at the pin; fund the treasury by a real holder transfer (the ink rule)
+        _fundBalance(r.treasury, 5_000 ether);
         vm.prank(owner);
         t.setSwitches(true, true, false);
         _setSwitches(true, true);
@@ -270,10 +275,15 @@ contract Phase2ScriptsTest is Fixture {
     }
 
     // promise: PLAN section 8 stage A the deploy preview refuses a balance token the treasury constructor would refuse, before any creation
+    // kept on the stand in: it must inject a token with the wrong statements() source and the wrong decimals(), gates
+    // the live token has already passed, so a mutable stand in is the only way to drive the two refusals
     function test_deployRefusesAWrongBalanceToken() public {
+        Phase2BalanceTokenStandin token = new Phase2BalanceTokenStandin();
         token.configure(makeAddr("phase2.otherStatements"), 18);
         // the inputs read the Core's artist and payee, so they are built before the expectation
         Phase2Deploy.Inputs memory i = _inputs();
+        i.balanceToken = address(token);
+        i.tokenCodehash = address(token).codehash;
         vm.expectRevert(
             abi.encodeWithSelector(
                 Report.ChecksFailed.selector, "preview: balance token statements() is the Statements contract"
@@ -283,12 +293,17 @@ contract Phase2ScriptsTest is Fixture {
         token = new Phase2BalanceTokenStandin();
         token.configure(token.statements(), 6);
         i = _inputs();
+        i.balanceToken = address(token);
+        i.tokenCodehash = address(token).codehash;
         vm.expectRevert(abi.encodeWithSelector(Report.ChecksFailed.selector, "preview: balance token decimals() is 18"));
         deployProbe.deploy(i);
     }
 
     // promise: decision 259 the settings preview prints the working gain per 100 BALANCE funded points and refuses a non positive margin unless ALLOW_NONPOSITIVE_MARGIN=1, and the readback's margin row fails only while working payments are on at a non positive margin unless ACCEPT_NONPOSITIVE_MARGIN=1
     function test_marginPreviewAndReadbackRow() public {
+        // the subject is the pre stage B losing payout (90 percent): stage B has already applied the 80 percent payout
+        // patch, so the losing margin premise no longer holds
+        if (_liveStageB()) return;
         // the fixture's launch settings: 90 percent payout and the launch royalty, a loss with the 10 percent earmark
         Settings memory launch = core.settings();
         uint256 payout = 10_000 - 1_000;
@@ -324,6 +339,9 @@ contract Phase2ScriptsTest is Fixture {
 
     // promise: PLAN section 8 the readback refuses a treasury bound to another Core and altered code, and names the hazard state
     function test_readbackRefusesForeignCoreAlteredCodeAndHazard() public {
+        // the hazard and payout rows are read against the pre stage B baseline (balance bid off, no pool key on the live
+        // controller); stage B has the bid on with a pool key, so the readback's payout row legitimately fails here
+        if (_liveStageB()) return;
         Phase2Deploy.Result memory r = deployProbe.deploy(_inputs());
         vm.mockCall(
             r.treasury, abi.encodeCall(IPhase2BalanceTreasury.core, ()), abi.encode(makeAddr("phase2.otherCore"))
@@ -349,6 +367,9 @@ contract Phase2ScriptsTest is Fixture {
 
     // promise: decision 262 without a split the settings script changes exactly balanceDiscountBps, keeps the three buy and burn shares and creditCostToPotBps at their live values, and refuses the stage C switches
     function test_settingsPatchChangesOnlyThePayoutAndKeepsTheBurns() public {
+        // the subject is the stage B settings patch moving the payout by one field; stage B has already applied it, so
+        // the preview changes nothing there
+        if (_liveStageB()) return;
         // the fixture launches with feeToRedeemBurnBps 0; mainnet carries 1,000, so set it first to see it kept
         Settings memory live = core.settings();
         live.feeToRedeemBurnBps = 1_000;
@@ -378,7 +399,9 @@ contract Phase2ScriptsTest is Fixture {
 
     // promise: decision 255 with a split address the patch makes the split the artist and every artist flow 3 percent with the sale operator cut folded in, split first, then the settings; with decision 262 those four and the payout are the only fields that change
     function test_settingsPatchWiresTheSplitAsArtist() public {
-        address split = address(new Phase2BalanceTokenStandin()); // any contract with code stands in for the split
+        // any contract with code and a payable receive stands in for the split; this test contract has both
+        address split = address(this);
+        address artist0 = core.artist();
         settings.setSplit(split);
         Phase2Settings.Preview memory p = settings.previewOn();
         assertEq(p.split, split);
@@ -395,7 +418,7 @@ contract Phase2ScriptsTest is Fixture {
         assertEq(p.next.saleToArtistBps, 300);
         assertEq(p.next.saleToOperatorBps, 0);
         assertEq(p.next.balanceDiscountBps, 2_000);
-        assertEq(core.artist(), creator, "the preview sends nothing");
+        assertEq(core.artist(), artist0, "the preview sends nothing");
         settings.applyAsOwner();
         assertEq(core.artist(), split);
         assertEq(core.settings().buyToArtistBps, 300);

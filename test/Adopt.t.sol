@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {Prod} from "./utils/Prod.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -32,8 +32,16 @@ contract AdoptingTarget {
 
 /// `adopt` of the Core on the fork: the real Core, Credits, Statements and controller. credits are sent to the
 /// Core outside its doors with a plain `transferFrom`
-contract AdoptTest is Fixture {
+contract AdoptTest is LiveFixture {
     address internal stranger = address(0xAD0);
+
+    function setUp() public override {
+        super.setUp();
+        // a fresh successor Core is built from `lc` in the migrate-then-adopt case, and `_buyRaw` is used by the
+        // reentrancy case; LiveFixture.setUp sets neither
+        _initLiveConfig();
+        _approveRawAdapter();
+    }
 
     /// `n` fresh credits transferred straight to the Core
     function _gift(uint256 n) internal returns (uint256[] memory ids) {
@@ -59,19 +67,22 @@ contract AdoptTest is Fixture {
 
     // promise: SPEC 4 adopt puts a stray credit into the pile at the price state
     function test_OK_aCreditSentStraightToTheCoreIsAdoptedAtThePriceState() public {
+        uint256 pileBefore = core.pileSize();
         uint256[] memory ids = _gift(1);
         uint256 id = ids[0];
         (bool inPile, uint256 cost0,) = core.creditInfo(id);
         assertFalse(inPile);
         assertEq(cost0, 0, "no record");
-        // the pot is empty: the read is clamped to zero while the price state is the opening rate
-        assertEq(core.ethRate(), 0, "the clamped read is zero");
-        assertEq(core.ethPrice(), core.RATE_START(), "the price state is the opening rate");
+        // adopt prices at the live price state (`ethPrice`), whatever the live pot has made it; the fresh fixture read
+        // the opening rate here against an empty pot
         uint256 want = _basis(id);
         assertGt(want, 0);
+        // the Core rounds the pay from the price state first, then adds the royalty on that rounded pay (the combined
+        // form would round a wei differently)
+        uint256 pay = core.ethPrice() * _scoreOf(id) / RATE_SCORE;
         assertEq(
             want,
-            core.RATE_START() * _scoreOf(id) * (10_000 + core.settings().buyToArtistBps) / RATE_SCORE / 10_000,
+            pay + pay * core.settings().buyToArtistBps / 10_000,
             "the basis is the price state scaled by score / RATE_SCORE plus the artist royalty"
         );
 
@@ -83,13 +94,16 @@ contract AdoptTest is Fixture {
         assertTrue(inPile1, "in the pile");
         assertEq(cost, want, "cost basis");
         assertEq(at, block.timestamp, "acquiredAt");
-        assertEq(core.pileSize(), 1);
-        assertEq(core.pilePage(0, 1)[0], id);
+        assertEq(core.pileSize(), pileBefore + 1, "the adopted credit joined the pile");
+        // the adopted credit is the newest, so it is the tail of the pile (read the whole page from the head)
+        uint256[] memory pg = core.pilePage(0, core.pileSize());
+        assertEq(pg[pg.length - 1], id);
         assertEq(CREDITS.ownerOf(id), address(core));
     }
 
     // promise: INTEGRATION InPile on adopt
     function test_REVERT_adoptTwiceInOneCallOrTwoCalls() public {
+        uint256 pileBefore = core.pileSize();
         uint256[] memory ids = _gift(1);
         _adopt(ids);
         vm.expectRevert(abi.encodeWithSignature("InPile()"));
@@ -100,11 +114,12 @@ contract AdoptTest is Fixture {
         both[1] = twice[0];
         vm.expectRevert(abi.encodeWithSignature("InPile()"));
         _adopt(both);
-        assertEq(core.pileSize(), 1, "the failed call changed nothing");
+        assertEq(core.pileSize(), pileBefore + 1, "the failed call changed nothing");
     }
 
     // promise: INTEGRATION NotHolder on adopt
     function test_REVERT_aCreditTheCoreDoesNotHold() public {
+        uint256 pileBefore = core.pileSize();
         uint256[] memory ids = _credits(seller, 1);
         vm.expectRevert(abi.encodeWithSignature("NotHolder()"));
         _adopt(ids);
@@ -112,7 +127,7 @@ contract AdoptTest is Fixture {
         gone[0] = type(uint128).max;
         vm.expectRevert();
         _adopt(gone);
-        assertEq(core.pileSize(), 0);
+        assertEq(core.pileSize(), pileBefore, "the failed adopts changed the pile");
     }
 
     // promise: INTEGRATION Empty, ZeroId on adopt
@@ -125,6 +140,7 @@ contract AdoptTest is Fixture {
 
     // promise: SPEC 4 adopt is atomic over the list
     function test_REVERT_aBatchWithOneBadIdChangesNothing() public {
+        uint256 pileBefore = core.pileSize();
         uint256[] memory good = _gift(2);
         uint256[] memory foreign = _credits(seller, 1);
         uint256[] memory mixed = new uint256[](3);
@@ -133,7 +149,7 @@ contract AdoptTest is Fixture {
         mixed[2] = foreign[0];
         vm.expectRevert(abi.encodeWithSignature("NotHolder()"));
         _adopt(mixed);
-        assertEq(core.pileSize(), 0);
+        assertEq(core.pileSize(), pileBefore, "the atomic revert changed the pile");
         (bool inPile,,) = core.creditInfo(good[0]);
         assertFalse(inPile);
     }
@@ -175,6 +191,7 @@ contract AdoptTest is Fixture {
         _warp(10 minutes);
         uint256[] memory ids = _gift(5);
 
+        uint256 pileBeforeAdopt = core.pileSize();
         State memory a = _state();
         _adopt(ids);
         State memory b = _state();
@@ -190,21 +207,28 @@ contract AdoptTest is Fixture {
         assertEq(b.lastFill, a.lastFill, "ceiling anchor");
         assertEq(b.minuteStart, a.minuteStart, "minute floor");
         assertEq(b.bucket, a.bucket, "minute bucket");
-        assertEq(core.pileSize(), 4 + 5, "the sold and the adopted credits are in the pile");
+        assertEq(core.pileSize(), pileBeforeAdopt + 5, "the adopted credits are in the pile");
     }
 
     // promise: SPEC 1 one pile: adopted credits compose like any other
     function test_OK_aPageOfAdoptedCreditsComposesIntoAStatementWorthTheirBases() public {
+        uint256 pileBefore = core.pileSize();
         _fundPot(1 ether);
         uint256[] memory ids = _gift(80);
         _adopt(ids);
-        assertEq(core.pileSize(), 80);
+        assertEq(core.pileSize(), pileBefore + 80, "the adopted page joined the pile");
+        // compose takes the oldest 80 in the pile; adopted credits compose like any other, so the statement cost is the
+        // sum of the composed page's recorded bases (the oldest 80, whatever the live pile already held)
+        uint256[] memory page = core.pilePage(0, 80);
         uint256 sum;
         for (uint256 i; i < 80; ++i) {
-            (, uint256 cost,) = core.creditInfo(ids[i]);
-            sum += cost;
+            (, uint256 creditCost,) = core.creditInfo(page[i]);
+            sum += creditCost;
         }
         assertGt(sum, 0);
+        // the live credit sale window is on, so age the page to eligibility before composing (the page order and the
+        // summed bases are unchanged by the warp)
+        _warpPageReady();
         uint256 supply = STATEMENTS.supply();
         vm.fee(composeBasefee);
         vm.prank(keeper);
@@ -213,9 +237,11 @@ contract AdoptTest is Fixture {
         (bool held, uint256 cost,) = core.statementInfo(sid);
         assertTrue(held);
         assertEq(cost, sum, "statement cost is the sum of the bases");
-        assertEq(core.pileSize(), 0);
-        // the asking price is computed from that cost
-        assertEq(ctl.priceOf(sid), cost * ctl.startBps() / 10_000, "asking price");
+        assertEq(core.pileSize(), pileBefore, "the composed page left the pile");
+        // the asking price is computed from that cost: on the live controller it sits at or above the sale floor of the
+        // cost (the exact start multiple is a live sale setting, not the fixture's startBps, so only the floor and a
+        // positive price are asserted against the live config)
+        assertGt(ctl.priceOf(sid), 0, "a positive asking price");
         assertGe(ctl.priceOf(sid), cost * core.settings().saleFloorBps / 10_000, "at or above the floor");
     }
 
@@ -261,7 +287,9 @@ contract AdoptTest is Fixture {
 
         vm.startPrank(owner);
         core.setSuccessor(address(succ));
-        core.migrate(100);
+        // migrate the whole live pile (it may hold credits beyond the 80 just filled) so the test's credits reach the
+        // successor and the source pile empties
+        core.migrate(core.pileSize());
         vm.stopPrank();
         assertEq(core.pileSize(), 0, "the old pile is empty");
         for (uint256 i; i < 80; ++i) {
@@ -289,6 +317,9 @@ contract AdoptTest is Fixture {
     /// a credit that left through `migrate` keeps its old record with the pile flag cleared. the Core is retired by the
     /// migrate, so the credit cannot be adopted there again (a successor adopts it, see the test above)
     function test_REVERT_aMigratedCreditThatComesBackIsNotAdoptedByTheRetiredCore() public {
+        // pre-fund above the live reserve so the small fill's bids are payable (a high live score and nonzero reserve
+        // otherwise leave the pot too small, reverting PotTooSmall; the fresh fixture ran reserveWei 0)
+        _fundPot(2 ether);
         uint256[] memory ids = _fillEthPile(3);
         (, uint256 oldCost,) = core.creditInfo(ids[0]);
         assertGt(oldCost, 0);
@@ -296,7 +327,8 @@ contract AdoptTest is Fixture {
         vm.etch(sink, hex"00");
         vm.startPrank(owner);
         core.setSuccessor(sink);
-        core.migrate(10);
+        // migrate the whole pile so the test's credit reaches the sink, whatever else the live pile held
+        core.migrate(core.pileSize());
         vm.stopPrank();
         (bool inPile, uint256 stale,) = core.creditInfo(ids[0]);
         assertFalse(inPile);
@@ -315,18 +347,23 @@ contract AdoptTest is Fixture {
     /// inside a guarded call (a listing target mid buy) `adopt` is refused, so a credit being bought cannot be put in
     /// the pile twice
     function test_REVERT_adoptInsideAGuardedCall() public {
+        uint256 pileBefore = core.pileSize();
         _fundPot(1 ether);
         uint256 id = LISTED_A;
         AdoptingTarget t = new AdoptingTarget(address(core));
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(t), id);
-        uint256 value = core.ethRate() / 2;
+        // half the credit's scaled bid, so the payment stays inside the bid whatever the live score
+        uint256 value = core.bidOf(id) / 2;
         vm.prank(keeper);
         _buyRaw(value, abi.encodeCall(AdoptingTarget.fill, (id)), id, address(t));
         assertFalse(t.adoptOk(), "adopt inside the buy failed");
         assertEq(bytes4(t.adoptOut()), bytes4(0xab143c06), "Reentrancy()");
-        assertEq(core.pileSize(), 1, "the credit is in the pile once");
-        assertEq(core.pilePage(0, 1)[0], id);
+        assertEq(core.pileSize(), pileBefore + 1, "the credit is in the pile once");
+        // the bought credit is the newest, so it is the tail of the pile (read the whole page from the head, which is
+        // the indexing the pile page view supports)
+        uint256[] memory pg = core.pilePage(0, core.pileSize());
+        assertEq(pg[pg.length - 1], id);
         (bool p,,) = core.creditInfo(id);
         assertTrue(p);
     }

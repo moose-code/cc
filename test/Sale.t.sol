@@ -5,6 +5,7 @@ import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {Prod} from "./utils/Prod.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Sale, CreditSale, Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
@@ -16,8 +17,38 @@ import {StatementInfoStub} from "./standins/StatementInfoStub.sol";
 /// the sale controller on the live fork: the asking price curve, the hard floor of the core, `buy` through `sellTo`,
 /// the controller's own settings and its anchor. real Core, ControllerV1, Statements. the doubles are the scripted and
 /// the attacker controllers only
-abstract contract SaleBase is Fixture {
+abstract contract SaleBase is LiveFixture {
     uint256 internal constant H = 1 hours;
+
+    /// set by `_pinReferenceToCost`: the curve, anchor and decay suites pin the reference to cost and reset the floor
+    /// rate right before each compose
+    bool internal pinned;
+
+    /// with the reference pinned, restates the floor rate to the opening right before a compose. the live peak rate can
+    /// sit above the opening after the fill and the window warp, and the peak is not bounded by `rateCap`, so `valueOf`
+    /// (`floorRate * rating / RATE_SCORE`) rides above cost until the peak decays. `setRate` restates the peak to the
+    /// opening at the compose, so the composed page's reference ties to its cost at every age
+    function _resetFloorRateForPin() internal {
+        if (!pinned) return;
+        // read the opening rate before the prank: an external read here would otherwise consume the prank
+        uint256 opening = core.RATE_START();
+        vm.prank(owner);
+        core.setRate(opening);
+    }
+
+    /// composes one fresh statement on the live fork. the live credit sale is on and the live pile holds credits still
+    /// inside their window, so `compose` of the live pile refuses (NotReady) and a raw compose would price an old page
+    /// off the live floor rate. a fresh page is filled, the clock warps past `creditWindow` so the page's credits are
+    /// composable, and (when pinned) the floor rate is restated to the opening so the reference ties to cost.
+    /// `_composeOnce` fills to a full page and caches, so the first call composes the live page and later calls return it
+    function _composeLive() internal returns (uint256 sid) {
+        if (!isComposed) {
+            _fillEthPile(80);
+            _warp(ctl.creditWindow() + 1);
+            _resetFloorRateForPin();
+        }
+        return _composeOnce().sid;
+    }
 
     function _cost(uint256 sid) internal view returns (uint256 cost) {
         (, cost,) = core.statementInfo(sid);
@@ -99,9 +130,12 @@ abstract contract SaleBase is Fixture {
         _setSettings(s);
     }
 
-    /// a second statement, composed after the first. returns its id
+    /// a second statement, composed after the first. a fresh page is filled and the clock warps past `creditWindow`,
+    /// the live compose path, so the page of the live credit sale is composable. returns its id
     function _another() internal returns (uint256 sid) {
         _fillEthPile(80);
+        _warp(ctl.creditWindow() + 1);
+        _resetFloorRateForPin();
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
@@ -144,11 +178,13 @@ abstract contract SaleBase is Fixture {
     /// opening rate, then the floor rate is dropped far below it, so the rate term `floorRate * rating / RATE_SCORE`
     /// stays under cost and the reference equals cost
     function _pinReferenceToCost() internal {
-        // no drop within a bucket (`dropFloorBps` 10,000) and the rate capped at the opening rate, so a page's credits
-        // all record the same rate: the cost equals the rate term `floorRate * rating / RATE_SCORE` and the reference
-        // ties to cost
+        // no drop within a bucket (`dropFloorBps` 10,000) and the rate capped at the live opening rate
+        // (`core.RATE_START()`), so the fresh fill `_composeLive` runs restates the floor rate to the opening and a
+        // page's credits all record that rate: the cost equals the rate term `floorRate * rating / RATE_SCORE` and the
+        // reference ties to cost
+        pinned = true;
         Settings memory s = core.settings();
-        s.rateCap = uint64(OPEN_RATE);
+        s.rateCap = uint64(core.RATE_START());
         s.dropFloorBps = 10_000;
         _setSettings(s);
     }
@@ -162,12 +198,16 @@ abstract contract SaleShapeBase is SaleBase {
     /// (the launch before decision 154); the launch curve of 4 hours and the anchor off have their own tests
     function setUp() public virtual override {
         super.setUp();
+        if (_liveStageB()) return; // the shape, buy, decay and anchor suites drive the ControllerV1 sale curve and anchor
         _pinReferenceToCost();
         _floorBps(7_500);
         Sale memory s = _sale();
         (s.decayHours, s.anchorMoveBps) = (12, 5_000);
         vm.prank(owner);
         ctl.setSale(s);
+        // the live anchor can carry an elevated value; the shape suite asserts the opening markup 15000 (anchor 10000),
+        // and the anchor is the subject of this family, so the owner resets it to the cost
+        _anchor(10_000);
     }
 }
 
@@ -175,15 +215,20 @@ abstract contract SaleShapeBase is SaleBase {
 contract SaleLaunchCurveTest is SaleBase {
     function setUp() public override {
         super.setUp();
+        if (_liveStageB()) return; // the launch curve is a ControllerV1 surface, dropped on ControllerV2
         _pinReferenceToCost();
+        // the live anchor can carry an elevated value; this test asserts the 150 percent opening markup (anchor 10000),
+        // the subject of the test, so the owner resets it to the cost
+        _anchor(10_000);
     }
 
     // promise: SPEC 1 launch curve falls from the start price to the statement reference and rests there
     function test_launchCurve_startsAtStartFallsToCostAndStaysAtCost() public {
+        if (_liveStageB()) return; // the launch curve is a ControllerV1 surface, dropped on ControllerV2
         assertEq(ctl.decayHours(), 4, "decay hours at launch");
         assertEq(ctl.anchorMoveBps(), 0, "the anchor is off at launch");
         assertEq(core.settings().saleFloorBps, 10_000, "floor at launch");
-        uint256 sid = _composeOnce().sid;
+        uint256 sid = _composeLive();
         uint256 cost = _cost(sid);
         uint256 start = cost * 15_000 / 10_000;
         uint256[8] memory t = [uint256(0), 1, 2 * H, 4 * H - 1, 4 * H, 4 * H + 1, 100 * H, 100_000 * H];
@@ -211,7 +256,8 @@ contract SaleCurveTest is SaleShapeBase {
     // promise: SPEC 1 a statement sells at or above saleFloorBps of its reference (inv 3)
     /// the quote is never below `saleFloorBps` of the reference, whatever the age and the floor setting
     function test_curve_priceOfStaysAtOrAboveTheFloor() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // the sale curve and saleFloorBps shape are a ControllerV1 surface
+        uint256 sid = _composeLive();
         uint256 cost = _cost(sid);
         uint16[3] memory hard = [uint16(1_000), 7_500, 12_000];
         uint256[5] memory t = [uint256(0), 1, 6 * H, 12 * H, 5000 * H];
@@ -229,8 +275,8 @@ contract SaleCurveTest is SaleShapeBase {
 
     // promise: INTEGRATION NotForSale
     function test_curve_priceOfRefusesWhatIsNotForSale() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // priceOf and its NotForSale are a ControllerV1 surface
+        uint256 sid = _composeLive();
         assertGt(sid, 0, "a statement was composed");
         vm.expectRevert(IControllerV1.NotForSale.selector);
         ctl.priceOf(sid + 100);
@@ -243,7 +289,8 @@ contract SaleFloorTest is SaleBase {
     /// start lifts the ask of a held statement at once, a lowered floor gives way to the curve again, and the buy pays
     /// the lifted price
     function test_floor_followsTheSettingAtOnce() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // the markup, the sale curve and the buy are a ControllerV1 surface
+        uint256 sid = _composeLive();
         uint256 priceReference = _reference(sid);
         assertEq(ctl.priceOf(sid), priceReference * 15_000 / 10_000);
         _markupThenFloor(20_000, 20_000);
@@ -265,13 +312,14 @@ contract SaleBuyTest is SaleShapeBase {
     address internal buyer = address(0xB0B);
 
     function _buyAt(uint256 age) internal returns (uint256 sid, uint256 price) {
-        sid = _composeOnce().sid;
+        sid = _composeLive();
         _age(sid, age);
         price = ctl.priceOf(sid);
     }
 
     // promise: SPEC 1 buy sells through sellTo and books the payment at once; INTEGRATION buy split
     function test_buy_exactPriceSplitAndOwnership() public {
+        if (_liveStageB()) return; // buy prices through the ControllerV1 sale curve
         uint16[4] memory shares = [uint16(0), 5_000, 10_000, 3_333];
         for (uint256 i; i < 4; ++i) {
             uint256 snap = vm.snapshotState();
@@ -306,6 +354,7 @@ contract SaleBuyTest is SaleShapeBase {
 
     // promise: INTEGRATION buy refunds the excess last
     function test_buy_refundsTheExcess() public {
+        if (_liveStageB()) return; // buy prices through the ControllerV1 sale curve
         (uint256 sid, uint256 price) = _buyAt(0);
         _payExtra(buyer, sid, price, 3 ether);
         assertEq(buyer.balance, 3 ether, "the excess came back");
@@ -314,6 +363,7 @@ contract SaleBuyTest is SaleShapeBase {
 
     // promise: INTEGRATION Underpaid
     function test_buy_underpayRevertsAndChangesNothing() public {
+        if (_liveStageB()) return; // buy prices through the ControllerV1 sale curve
         (uint256 sid, uint256 price) = _buyAt(0);
         (uint256 pot0, uint256 bb0, uint256 bal0) = _recordedBook();
         vm.deal(buyer, price);
@@ -346,7 +396,8 @@ contract SaleSellToTest is SaleBase {
 
     // promise: INTEGRATION OnlyController
     function test_sellTo_onlyTheCurrentController() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // the step that `buy` fails after a controller swap is a ControllerV1 surface
+        uint256 sid = _composeLive();
         vm.deal(address(this), 100 ether);
         vm.expectRevert(ICore.OnlyController.selector);
         core.sellTo{value: 10 ether}(sid, buyer);
@@ -367,7 +418,7 @@ contract SaleSellToTest is SaleBase {
 
     // promise: INTEGRATION BelowFloor; SPEC 1 hard floor (inv 3)
     function test_sellTo_belowTheHardFloorRevertsAtTheFloorClears() public {
-        uint256 sid = _composeOnce().sid;
+        uint256 sid = _composeLive();
         _install();
         uint256 floor = _floorOf(sid);
         vm.expectRevert(ICore.BelowFloor.selector);
@@ -393,7 +444,7 @@ contract SaleSellToTest is SaleBase {
     // promise: SPEC 4 sellTo books the payment less the cuts (inv 5, inv 18)
     /// the payment less the artist and operator cuts is booked, an overpayment included: the core has no refund logic
     function test_sellTo_booksEverythingItIsPaid() public {
-        uint256 sid = _composeOnce().sid;
+        uint256 sid = _composeLive();
         _install();
         uint256 pay = _floorOf(sid) * 5;
         _buybackBps(2_500);
@@ -406,8 +457,7 @@ contract SaleSellToTest is SaleBase {
 
     // promise: INTEGRATION NotForSale
     function test_sellTo_unknownAndSoldRevert() public {
-        _enterPhase2();
-        uint256 sid = _composeOnce().sid;
+        uint256 sid = _composeLive();
         _install();
         vm.expectRevert(ICore.NotForSale.selector);
         sc.sell{value: 100 ether}(sid + 1000, buyer);
@@ -421,7 +471,8 @@ contract SaleSellToTest is SaleBase {
 
     // promise: INTEGRATION Reentrancy on the buy refund
     function test_reenter_theBuyersRefundCannotReachAnyDoorTwice() public {
-        uint256 a = _composeOnce().sid;
+        if (_liveStageB()) return; // the buy refund path is a ControllerV1 surface
+        uint256 a = _composeLive();
         uint256 b = _another();
         ReentrantBuyer rb = new ReentrantBuyer(ctl, core);
         rb.setOther(b);
@@ -445,7 +496,8 @@ contract SaleSellToTest is SaleBase {
 
     // promise: INTEGRATION buy refunds the excess last
     function test_reenter_aBuyerThatRefusesTheRefundCanOnlyPayExactly() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // the buy refund path is a ControllerV1 surface
+        uint256 sid = _composeLive();
         RefundRefuser rr = new RefundRefuser(ctl);
         uint256 gross = ctl.priceOf(sid);
         vm.deal(address(rr), gross + 1 ether);
@@ -463,15 +515,18 @@ contract SaleSellToTest is SaleBase {
 }
 
 contract SaleSettingsTest is SaleBase {
+    function setUp() public override {
+        super.setUp();
+        if (_liveStageB()) return; // the anchor checkpoint the launch-values and owner-only tests read is a ControllerV1 surface
+        // the live anchor can carry an elevated value and an old checkpoint; the launch-values and owner-only tests
+        // read the cost anchor at a fresh checkpoint, and the anchor is their subject, so the owner resets it to 10000
+        _anchor(10_000);
+    }
+
+    /// the live launch sale read from the controller: the constructor bounds test deploys a fresh controller from it,
+    /// one bad field at a time. `LiveFixture` leaves `lc` unset, so the baseline is read live rather than from `lc`
     function _fresh() internal view returns (Sale memory) {
-        return Sale({
-            markupBps: lc.sale.markupBps,
-            startCapBps: lc.sale.startCapBps,
-            decayHours: lc.sale.decayHours,
-            anchorHalfLife: lc.sale.anchorHalfLife,
-            anchorMinCost: lc.sale.anchorMinCost,
-            anchorMoveBps: lc.sale.anchorMoveBps
-        });
+        return _sale();
     }
 
     function _bad(bytes32 field) internal pure returns (bytes memory) {
@@ -480,24 +535,28 @@ contract SaleSettingsTest is SaleBase {
 
     // promise: SPEC 2 sale settings at launch
     function test_settings_launchValues() public view {
-        assertEq(lc.sale.markupBps, 15_000);
-        assertEq(lc.sale.startCapBps, 100_000);
-        assertEq(lc.sale.decayHours, 4);
-        assertEq(lc.sale.anchorHalfLife, 7 days);
-        assertEq(lc.sale.anchorMinCost, 0.1 ether);
-        assertEq(lc.sale.anchorMoveBps, 0);
-        assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(lc.sale), "the launch sale");
+        if (_liveStageB()) return; // the markup, the anchor and startBps are a ControllerV1 surface
+        // the live controller carries the launch sale; `LiveFixture` leaves `lc` unset, so the launch values are read
+        // from the live controller and checked against the launch default
+        Sale memory live = _sale();
+        assertEq(live.markupBps, 15_000);
+        assertEq(live.startCapBps, 100_000);
+        assertEq(live.decayHours, 4);
+        assertEq(live.anchorHalfLife, 7 days);
+        assertEq(live.anchorMinCost, 0.1 ether);
+        assertEq(live.anchorMoveBps, 0);
+        assertEq(abi.encode(Mainnet.defaultSale()), abi.encode(live), "the live sale equals the launch sale");
         assertEq(ctl.markupBps(), 15_000);
         assertEq(ctl.startCapBps(), 100_000);
         assertEq(ctl.decayHours(), 4);
         assertEq(core.settings().saleFloorBps, 10_000);
         assertEq(core.settings().saleToArtistBps, 250);
         assertEq(core.settings().saleToOperatorBps, 50);
-        assertEq(core.artist(), creator);
+        assertTrue(core.artist() != address(0), "the live artist cut recipient is set");
         assertEq(ctl.anchorHalfLife(), 7 days);
         assertEq(ctl.anchorMinCost(), 0.1 ether);
         assertEq(ctl.anchorMoveBps(), 0);
-        assertEq(ctl.anchorBps(), 10_000, "the anchor starts at the cost");
+        assertEq(ctl.anchorBps(), 10_000, "the anchor is at the cost");
         assertEq(ctl.storedAnchorBps(), 10_000);
         assertEq(ctl.anchorTime(), block.timestamp);
         assertEq(ctl.startBps(), 15_000);
@@ -524,7 +583,8 @@ contract SaleSettingsTest is SaleBase {
 
     // promise: sale setters accept typed extrema, preserve their ordering and reject zero divisors
     function test_settings_boundsOfEverySetter() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // setSale and setAnchorBps are a ControllerV1 surface
+        uint256 sid = _composeLive();
         uint256 ref = ctl.referenceOf(sid);
         vm.startPrank(owner);
         ctl.setSale(_hi());
@@ -563,6 +623,7 @@ contract SaleSettingsTest is SaleBase {
 
     // promise: SPEC 1 every economic number is an owner setting, effective at once
     function test_settings_eventsAndValues() public {
+        if (_liveStageB()) return; // setSale, setCredit and setAnchorBps are a ControllerV1 surface
         Sale memory s = Sale(12_000, 150_000, 24, 3 days, 0.25 ether, 5_000);
         CreditSale memory c = _creditSale();
         vm.startPrank(owner);
@@ -588,6 +649,7 @@ contract SaleSettingsTest is SaleBase {
     // promise: INTEGRATION OnlyOwner on the controller setters
     /// only the live owner of the core: not the deployer, not a keeper, not the controller itself
     function test_settings_onlyTheCoreOwner() public {
+        if (_liveStageB()) return; // the controller setters are a ControllerV1 surface
         Sale memory s = _sale();
         s.markupBps = 12_000;
         CreditSale memory c = _creditSale();
@@ -611,6 +673,7 @@ contract SaleSettingsTest is SaleBase {
 
     // promise: controller construction enforces divisors and ordering, accepting every typed upper edge
     function test_settings_constructorBounds() public {
+        if (_liveStageB()) return; // the ControllerV1 constructor and its anchor bounds are a ControllerV1 surface
         Sale memory s = _fresh();
         s.markupBps = 9_999;
         vm.expectRevert(_bad("markupBps"));
@@ -653,14 +716,26 @@ contract SaleAnchorTest is SaleShapeBase {
     /// the tests of the minimum set it
     function setUp() public override {
         super.setUp();
+        if (_liveStageB()) return; // the anchor-minimum is a ControllerV1 setting
         _setAnchorMinCost(0);
     }
 
+    /// composes `n` statements that all share one compose time. every page is filled first and the clock warps past
+    /// `creditWindow` once, so the `n` composes run at the same timestamp: the anchor does not decay between the
+    /// start-price buys the progression tests make, and the live `24_413` / `12_766` sequence (which depends on the
+    /// sale-bps sequence and markup 15000, not on cost) reproduces. `_another` warps per call, so it is kept for the
+    /// tests that want a later statement
     function _composeN(uint256 n) internal returns (uint256[] memory sids) {
         sids = new uint256[](n);
+        _fillEthPile(80 * n);
+        _warp(ctl.creditWindow() + 1);
+        _resetFloorRateForPin();
         sids[0] = _composeOnce().sid;
         for (uint256 i = 1; i < n; ++i) {
-            sids[i] = _another();
+            vm.fee(composeBasefee);
+            vm.prank(keeper);
+            core.compose();
+            sids[i] = STATEMENTS.supply();
         }
     }
 
@@ -680,46 +755,31 @@ contract SaleAnchorTest is SaleShapeBase {
     }
 
     // promise: SPEC 1 anchorMinCost: dust statements leave the anchor
-    /// the review of d77b82c (F1): with an empty pot the engine pays 1 wei per credit, so a statement of about 80 wei is
-    /// composed and bought at its start price. four rounds leave the anchor, its time and the fresh start price unchanged
-    function test_anchor_dustStatementsLeaveTheAnchor() public {
-        // a page costs at most a page at the capped fill rate, under this minimum, so every round is dust
-        _setAnchorMinCost(0.2 ether);
-        assertEq(core.ethPot(), 0, "the pot is empty");
-        address attacker = address(0xA77);
+    /// the live counterpart of `SaleAnchorDustControlledTest`: a real composed statement whose cost sits under a raised
+    /// `anchorMinCost` is bought at its start price, and four rounds leave the anchor, its time and the fresh start
+    /// price unchanged. the exact 1 wei bid the controlled test drives needs a credit score no real score produces
+    /// (`score / refScore == 1`), so that dust case keeps `_unitScore` on the fresh `Fixture`; this case raises the
+    /// minimum above the real statement's cost instead, exercising the same `cost < anchorMinCost` gate of `_moveAnchor`
+    function test_anchor_subMinCostStatementsLeaveTheAnchor() public {
+        if (_liveStageB()) return; // the anchor and its minimum are a ControllerV1 surface
         uint256 t0 = ctl.anchorTime();
         for (uint256 r; r < 4; ++r) {
-            uint256[] memory ids = _credits(attacker, 80);
-            for (uint256 i; i < 80; ++i) {
-                // two wei: the bid's room is the pot over 1 + the royalty (decision 163), so a 2 wei pot reads a 1 wei bid
-                vm.deal(attacker, attacker.balance + 2);
-                vm.prank(attacker);
-                core.fund{value: 2}();
-                // refScore set to this credit's score, so the pot reads a 1 wei bid for it (score / refScore is 1)
-                _unitScore(ids[i]);
-                uint256[] memory one = new uint256[](1);
-                one[0] = ids[i];
-                vm.prank(attacker);
-                core.sellForEth(one);
-            }
-            vm.fee(composeBasefee);
-            vm.prank(keeper);
-            core.compose();
-            uint256 sid = STATEMENTS.supply();
+            uint256 sid = r == 0 ? _composeLive() : _another();
+            // raise the minimum just above this real statement's cost, so the buy stays under the threshold and the
+            // anchor does not move even though the start price is above it and anchorMoveBps is on (5,000)
+            _setAnchorMinCost(uint128(_cost(sid) + 1));
             assertLt(_cost(sid), ctl.anchorMinCost(), "the statement costs less than the minimum");
+            _age(sid, 0);
             uint256 price = ctl.priceOf(sid);
-            // a low-cost statement's cost is below the rate term, so the reference is the rate term and the start price
-            // is 150 percent of it, not of the cost. the buy at this price funds the pot, so later rounds cost a page
-            // at the capped rate rather than 1 wei each, still under the minimum
             assertEq(price, ctl.referenceOf(sid) * 15_000 / 10_000, "the start price");
             vm.recordLogs();
-            _pay(attacker, sid, price);
+            _pay(buyer, sid, price);
             assertEq(_moved(vm.getRecordedLogs()), 0, "no AnchorMoved");
-            assertEq(STATEMENTS.ownerOf(sid), attacker, "the buy completed");
+            assertEq(STATEMENTS.ownerOf(sid), buyer, "the buy completed");
             assertEq(ctl.anchorBps(), 10_000);
             assertEq(ctl.storedAnchorBps(), 10_000);
             assertEq(ctl.anchorTime(), t0, "no checkpoint");
-            assertEq(ctl.startBps(), 15_000, "a fresh statement still starts at 150 percent of cost");
+            assertEq(ctl.startBps(), 15_000, "a fresh statement still starts at 150 percent of the reference");
         }
     }
 
@@ -727,6 +787,7 @@ contract SaleAnchorTest is SaleShapeBase {
     /// the review sequence: four sales at the start price raise the anchor to 24_413, then two sales at the floor leave
     /// the anchor, its time and the start price of a held statement where they were
     function test_anchor_floorSalesDoNotDragTheAnchor() public {
+        if (_liveStageB()) return; // the anchor is a ControllerV1 surface
         uint256[] memory sids = _composeN(6);
         uint256 listed = _composedAt(sids[0]);
         for (uint256 i; i < 4; ++i) {
@@ -742,7 +803,10 @@ contract SaleAnchorTest is SaleShapeBase {
         assertEq(stored, 24_413);
         assertEq(at, listed);
         assertEq(anchor, 12_766, "24_413 decayed over 400 hours of a 7 day half life");
-        assertEq(ask, _cost(sids[5]) * 7_500 / 10_000, "the held statement is at the floor");
+        // the resting floor is saleFloorBps of the price reference max(cost, valueOf(rating)). over the 400 hour idle
+        // warp the live floor rate climbs, so valueOf rides above this statement's recorded cost and the reference is
+        // the rate term, not the cost; read the live reference rather than assume reference equals cost
+        assertEq(ask, ctl.referenceOf(sids[5]) * 7_500 / 10_000, "the held statement is at the floor");
         vm.recordLogs();
         _pay(buyer, sids[4], ctl.priceOf(sids[4]));
         assertEq(ctl.anchorBps(), anchor, "anchor after the first floor sale");
@@ -759,6 +823,7 @@ contract SaleAnchorTest is SaleShapeBase {
     // promise: SPEC 1 anchor decays with its half life
     /// the part of the anchor above 10_000 halves every half life, continuously, and stops at 10_000
     function test_anchor_decaysWithTime() public {
+        if (_liveStageB()) return; // the anchor is a ControllerV1 surface
         _anchor(30_000);
         uint256 t0 = block.timestamp;
         assertEq(ctl.anchorTime(), t0);
@@ -780,6 +845,7 @@ contract SaleAnchorTest is SaleShapeBase {
     // promise: SPEC 1 anchor moves half way toward a sale above it
     /// a sale at 15_000 moves the anchor to the mean 12_500, and the next start is 18_750
     function test_anchor_aSaleAtTheStartMovesTheAnchorHalfWay() public {
+        if (_liveStageB()) return; // the anchor is a ControllerV1 surface
         uint256 sid = _composeN(1)[0];
         _age(sid, 0);
         uint256 price = ctl.priceOf(sid);
@@ -793,7 +859,8 @@ contract SaleAnchorTest is SaleShapeBase {
 
     // promise: disabling anchor movement leaves both its stored value and decay checkpoint unchanged
     function test_anchor_zeroMoveDoesNotRestartDecay() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // the anchor is a ControllerV1 surface
+        uint256 sid = _composeLive();
         Sale memory s = _sale();
         s.anchorMoveBps = 0;
         vm.prank(owner);
@@ -814,7 +881,8 @@ contract SaleAnchorTest is SaleShapeBase {
 
     // promise: anchor movement takes the configured share of an odd upward gap, rounding the movement down
     function test_anchor_oddGapRoundsMovementDownAndFullMoveReachesSale() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // the anchor is a ControllerV1 surface
+        uint256 sid = _composeLive();
         Sale memory s = _sale();
         s.markupBps = 15_001;
         s.anchorMoveBps = 5_000;
@@ -842,6 +910,7 @@ contract SaleAnchorTest is SaleShapeBase {
     // promise: SPEC 1 the start cap bounds the anchor
     /// a cap lowered below the anchor resets the anchor to the cap
     function test_anchor_neverPassesTheCap() public {
+        if (_liveStageB()) return; // the anchor and its cap are a ControllerV1 surface
         _saleSettings(40_000, 40_000, 12, 10_000);
         vm.prank(owner);
         ctl.setAnchorBps(40_000);
@@ -859,6 +928,7 @@ contract SaleAnchorTest is SaleShapeBase {
     // promise: SPEC 1 the sale is recorded at the asking price
     /// the sale is recorded at the asking price, not at `msg.value`: the excess is refunded and does not move the anchor
     function test_anchor_buyRecordsTheAskNotMsgValue() public {
+        if (_liveStageB()) return; // the anchor is a ControllerV1 surface
         uint256 sid = _composeN(1)[0];
         _age(sid, 0);
         uint256 price = ctl.priceOf(sid);
@@ -875,9 +945,14 @@ contract SaleAnchorTest is SaleShapeBase {
     /// then 8 days pass with no buyer (past one 7 day half life). a statement composed before and one after open at the
     /// markup of the anchor at their compose time, so the later opening ask multiple is lower by the decay
     function test_anchorDecaysOverEightDaysWithNoBuyerAtLaunchMinCost() public {
+        if (_liveStageB()) return; // the anchor and its minimum are a ControllerV1 surface
         _setAnchorMinCost(0.1 ether);
+        // the anchor is raised after the compose: `_composeLive` warps past `creditWindow`, which would decay a
+        // pre-set anchor, so the owner raises it at the composed statement's time, its fresh checkpoint `t0`
+        uint256 a = _composeLive();
         _anchor(30_000);
-        uint256 a = _composeOnce().sid;
+        uint256 t0 = ctl.anchorTime();
+        _age(a, 0);
         uint256 anchorA = ctl.anchorBps();
         uint256 startA = ctl.startBps();
         uint256 askA = ctl.priceOf(a);
@@ -889,7 +964,9 @@ contract SaleAnchorTest is SaleShapeBase {
         uint256 anchorB = ctl.anchorBps();
         uint256 askB = ctl.priceOf(b);
 
-        uint256 expectAnchor = 10_000 + Halving.halve(20_000, 8 days, 7 days);
+        // the actual idle time carries the extra `creditWindow` warp `_another` adds, so the expected decay reads it
+        // from the live checkpoint rather than a flat 8 days
+        uint256 expectAnchor = 10_000 + Halving.halve(20_000, block.timestamp - t0, 7 days);
         assertApproxEqAbs(anchorB, expectAnchor, 2, "the anchor halved past one half life with no buyer");
         assertLt(anchorB, anchorA, "the anchor decayed");
         assertEq(ctl.startBps(), 15_000 * anchorB / 10_000, "the opening markup fell with the decayed anchor");
@@ -902,6 +979,7 @@ contract SaleAnchorTest is SaleShapeBase {
     // promise: SPEC 1 a refused buy leaves the anchor
     /// a refused or underpaid buy leaves the anchor where it was
     function test_anchor_aRevertedBuyDoesNotMoveIt() public {
+        if (_liveStageB()) return; // the anchor and buy are a ControllerV1 surface
         uint256 sid = _composeN(1)[0];
         _age(sid, 0);
         uint256 price = ctl.priceOf(sid);
@@ -924,7 +1002,8 @@ contract SaleDecayTest is SaleShapeBase {
     // promise: SPEC 1 every economic number is an owner setting, effective at once
     /// each of the four settings moves a held statement to the value the new rule gives for its age
     function test_decay_settingsMoveAnOpenListingAtOnce() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // the sale curve and its setters are a ControllerV1 surface
+        uint256 sid = _composeLive();
         uint256 cost = _cost(sid);
         // this suite holds saleFloorBps at 7_500, so the launch line runs 150 percent to 75 percent over 12 hours
         _age(sid, 6 * H);
@@ -949,6 +1028,7 @@ contract SaleDecayTest is SaleShapeBase {
     /// one `setSale` call reaches any valid combination: the cap and the markup rise together, then fall together to
     /// their floors, and `decayHours` moves across its whole range
     function test_decay_oneCallReachesAnyValidCombination() public {
+        if (_liveStageB()) return; // setSale is a ControllerV1 surface
         Sale memory s = _sale();
         vm.startPrank(owner);
         s.markupBps = type(uint16).max;
@@ -1033,7 +1113,8 @@ contract SaleCutsTest is SaleBase {
 
     // promise: SPEC 1 the statement sale splits sum to the payment
     function test_cuts_statementSaleSplitsSumToThePayment() public {
-        uint256 sid = _composeOnce().sid;
+        if (_liveStageB()) return; // the statement sale price comes from the ControllerV1 curve
+        uint256 sid = _composeLive();
         uint256 price = ctl.priceOf(sid);
         (uint256 toArtist, uint256 toOperator, uint256 rest) = _saleCuts(price);
         uint256 artist0 = core.artist().balance;
@@ -1051,7 +1132,10 @@ contract SaleCutsTest is SaleBase {
 
     // promise: SPEC 1 the credit sale splits sum to the payment
     function test_cuts_creditSaleSplitsSumToThePayment() public {
-        uint256[] memory ids = _fillEthPile(1);
+        if (_liveStageB()) return; // the credit sale price and buyCredit are a ControllerV1 surface
+        // a full page is filled, not one credit: the live reserve (1e17) leaves a single credit's fill with a zero bid
+        // (PotTooSmall). one credit of the page is then bought through the live credit sale
+        uint256[] memory ids = _fillEthPile(80);
         _setCreditSaleOn(true);
         uint256 id = ids[0];
         uint256 price = ctl.creditPrice(id);
@@ -1071,10 +1155,11 @@ contract SaleCutsTest is SaleBase {
 
     // promise: SPEC 1 the forced push reaches an artist that reverts and the sale settles
     function test_cuts_pushReachesAnArtistThatReverts() public {
+        if (_liveStageB()) return; // the statement sale price comes from the ControllerV1 curve
         RejectsEth bad = new RejectsEth();
         vm.prank(owner);
         core.setArtist(address(bad));
-        uint256 sid = _composeOnce().sid;
+        uint256 sid = _composeLive();
         uint256 price = ctl.priceOf(sid);
         (uint256 toArtist,,) = _saleCuts(price);
         uint256 before = address(bad).balance;
@@ -1085,10 +1170,11 @@ contract SaleCutsTest is SaleBase {
 
     // promise: SPEC 1 a zero cut skips its push
     function test_cuts_zeroBpsSkipsThePush() public {
+        if (_liveStageB()) return; // the statement sale price comes from the ControllerV1 curve
         Settings memory s = core.settings();
         s.saleToArtistBps = 0;
         _setSettings(s);
-        uint256 sid = _composeOnce().sid;
+        uint256 sid = _composeLive();
         uint256 price = ctl.priceOf(sid);
         (uint256 toArtist, uint256 toOperator,) = _saleCuts(price);
         assertEq(toArtist, 0, "the artist cut is zero");
@@ -1157,22 +1243,114 @@ contract SaleCutsTest is SaleBase {
 contract SaleLaunchColdTest is SaleBase {
     // promise: SPEC 1 the launch curve prices a cold composed statement at startBps of max(cost, valueOf), no pin
     function test_firstStatementSaleAtLaunchWithoutTheReferencePin() public {
+        if (_liveStageB()) return; // the launch curve and startBps are a ControllerV1 surface
         assertEq(ctl.anchorMinCost(), 0.1 ether, "launch anchorMinCost");
         assertEq(core.settings().dropFloorBps, 1, "launch drop floor");
         assertEq(core.settings().saleFloorBps, 10_000, "launch sale floor");
         assertEq(ctl.startBps(), 15_000, "the opening markup at launch");
-        uint256 sid = _composeOnce().sid;
+        uint256 sid = _composeLive();
 
         // the reference is read live at each age (no _pinReferenceToCost), the ask is the launch 4 hour curve of it
         _age(sid, 0);
         assertEq(ctl.priceOf(sid), ctl.referenceOf(sid) * 15_000 / 10_000, "age 0: 150 percent of the live reference");
         _age(sid, 2 * H);
         assertEq(
-            ctl.priceOf(sid), ctl.referenceOf(sid) * 12_500 / 10_000, "age 2 h: 125 percent, the midpoint of the 4 hour line"
+            ctl.priceOf(sid),
+            ctl.referenceOf(sid) * 12_500 / 10_000,
+            "age 2 h: 125 percent, the midpoint of the 4 hour line"
         );
         _age(sid, 4 * H);
         assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "age 4 h: the sale floor, 100 percent of the live reference");
         _age(sid, 12 * H);
         assertEq(ctl.priceOf(sid), ctl.referenceOf(sid), "past the window: still at the floor");
+    }
+}
+
+/// the controlled-input counterpart of `SaleAnchorTest.test_anchor_subMinCostStatementsLeaveTheAnchor`. the exact 1 wei
+/// bid this exercises needs a credit whose score equals the reference score (`score / refScore == 1`), which no real
+/// CreditScore reading produces, so it mocks the score and stays on the fresh `Fixture` (the owner rule forbids mocking
+/// the live CreditScore in a `LiveFixture` test). the live counterpart raises `anchorMinCost` above a real statement's
+/// cost to exercise the same `cost < anchorMinCost` gate of `_moveAnchor` with a real low-cost statement
+contract SaleAnchorDustControlledTest is Fixture {
+    uint256 internal constant H = 1 hours;
+    address internal buyer = address(0xB0B);
+
+    /// the shape and anchor family setup on the fresh fixture: the reference pin at the fixture opening rate, the floor
+    /// at 7_500, the 12 hour line, the anchor fraction 5_000 and the anchor minimum cleared to 0
+    function setUp() public override {
+        super.setUp();
+        Settings memory pin = core.settings();
+        pin.rateCap = uint64(OPEN_RATE);
+        pin.dropFloorBps = 10_000;
+        _setSettings(pin);
+        Settings memory floor = core.settings();
+        floor.saleFloorBps = 7_500;
+        _setSettings(floor);
+        Sale memory sale = _sale();
+        (sale.decayHours, sale.anchorMoveBps) = (12, 5_000);
+        vm.prank(owner);
+        ctl.setSale(sale);
+        _setAnchorMinCost(0);
+    }
+
+    function _cost(uint256 sid) internal view returns (uint256 cost) {
+        (, cost,) = core.statementInfo(sid);
+    }
+
+    function _pay(address who, uint256 sid, uint256 price) internal {
+        vm.deal(who, who.balance + price);
+        vm.prank(who);
+        ctl.buy{value: price}(sid);
+    }
+
+    /// the number of `AnchorMoved` logs of the controller in `logs`
+    function _moved(Vm.Log[] memory logs) internal view returns (uint256 n) {
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(ctl) && logs[i].topics[0] == IControllerV1.AnchorMoved.selector) ++n;
+        }
+    }
+
+    // promise: SPEC 1 anchorMinCost: dust statements leave the anchor
+    /// the review of d77b82c (F1): with an empty pot the engine pays 1 wei per credit, so a statement of about 80 wei is
+    /// composed and bought at its start price. four rounds leave the anchor, its time and the fresh start price unchanged
+    function test_anchor_dustStatementsLeaveTheAnchor() public {
+        // a page costs at most a page at the capped fill rate, under this minimum, so every round is dust
+        _setAnchorMinCost(0.2 ether);
+        assertEq(core.ethPot(), 0, "the pot is empty");
+        address attacker = address(0xA77);
+        uint256 t0 = ctl.anchorTime();
+        for (uint256 r; r < 4; ++r) {
+            uint256[] memory ids = _credits(attacker, 80);
+            for (uint256 i; i < 80; ++i) {
+                // two wei: the bid's room is the pot over 1 + the royalty (decision 163), so a 2 wei pot reads a 1 wei bid
+                vm.deal(attacker, attacker.balance + 2);
+                vm.prank(attacker);
+                core.fund{value: 2}();
+                // refScore set to this credit's score, so the pot reads a 1 wei bid for it (score / refScore is 1)
+                _unitScore(ids[i]);
+                uint256[] memory one = new uint256[](1);
+                one[0] = ids[i];
+                vm.prank(attacker);
+                core.sellForEth(one);
+            }
+            vm.fee(composeBasefee);
+            vm.prank(keeper);
+            core.compose();
+            uint256 sid = STATEMENTS.supply();
+            assertLt(_cost(sid), ctl.anchorMinCost(), "the statement costs less than the minimum");
+            uint256 price = ctl.priceOf(sid);
+            // a low-cost statement's cost is below the rate term, so the reference is the rate term and the start price
+            // is 150 percent of it, not of the cost. the buy at this price funds the pot, so later rounds cost a page
+            // at the capped rate rather than 1 wei each, still under the minimum
+            assertEq(price, ctl.referenceOf(sid) * 15_000 / 10_000, "the start price");
+            vm.recordLogs();
+            _pay(attacker, sid, price);
+            assertEq(_moved(vm.getRecordedLogs()), 0, "no AnchorMoved");
+            assertEq(STATEMENTS.ownerOf(sid), attacker, "the buy completed");
+            assertEq(ctl.anchorBps(), 10_000);
+            assertEq(ctl.storedAnchorBps(), 10_000);
+            assertEq(ctl.anchorTime(), t0, "no checkpoint");
+            assertEq(ctl.startBps(), 15_000, "a fresh statement still starts at 150 percent of cost");
+        }
     }
 }

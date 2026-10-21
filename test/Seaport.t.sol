@@ -7,7 +7,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ISeaportBasicAdapter} from "../src/interfaces/ISeaportBasicAdapter.sol";
 import {Mainnet, Settings, ICreditScore} from "../src/interfaces/Interfaces.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {BidModel} from "./utils/BidModel.sol";
 import {
     ISeaport,
@@ -25,7 +25,7 @@ import {
 /// approves Seaport directly on Credits (no conduit), and signs the eip 712 digest of the order hash that Seaport
 /// itself computes, under the domain separator Seaport itself reports. the core is the real core of the fixture and the
 /// orders reach it through the launch `SeaportBasicAdapter`, whose allowlist holds the fee taker of the tests
-abstract contract SeaportBase is Fixture {
+abstract contract SeaportBase is LiveFixture {
     using FixedPointMathLib for uint256;
 
     ISeaport internal constant SEAPORT = ISeaport(Mainnet.SEAPORT);
@@ -39,6 +39,7 @@ abstract contract SeaportBase is Fixture {
         uint256 pot;
         uint256 balance;
         uint256 toBuyback;
+        uint256 redeemBurn;
         uint256 rate;
         uint256 fillTime;
         uint256 pile;
@@ -65,8 +66,8 @@ abstract contract SeaportBase is Fixture {
     /// hands the next usable credit to the maker and approves Seaport itself as operator, no conduit.
     function _list() internal returns (uint256 id) {
         id = _credits(maker, 1)[0];
-        // refScore set to the listed credit's score, so its bid is the full rate and the ethRate based order prices hold
-        _unitScore(id);
+        // the credit carries its live score: the cases price orders against `core.bidOf(id)` (the scaled bid), not the
+        // unscaled rate, so the live CreditScore is read, never mocked
         vm.prank(maker);
         CREDITS.setApprovalForAll(address(SEAPORT), true);
         assertEq(CREDITS.ownerOf(id), maker);
@@ -155,6 +156,7 @@ abstract contract SeaportBase is Fixture {
         s.pot = core.ethPot();
         s.balance = address(core).balance;
         s.toBuyback = core.ethToBuyback();
+        s.redeemBurn = core.ethRedeemBurn();
         s.rate = core.rateAtCheckpoint();
         s.fillTime = core.lastFillTime();
         s.pile = core.pileSize();
@@ -168,6 +170,7 @@ abstract contract SeaportBase is Fixture {
         assertEq(a.pot, b.pot, "pot");
         assertEq(a.balance, b.balance, "balance");
         assertEq(a.toBuyback, b.toBuyback, "toBuyback");
+        assertEq(a.redeemBurn, b.redeemBurn, "redeemBurn");
         assertEq(a.rate, b.rate, "rate");
         assertEq(a.fillTime, b.fillTime, "fillTime");
         assertEq(a.pile, b.pile, "pile");
@@ -200,9 +203,13 @@ abstract contract SeaportBase is Fixture {
         uint256 gap = ceiling - cost;
         uint256 roomGap = before.pot - core.reserve() - cost - royalty;
         _assertListingPay(paid, gap < roomGap ? gap : roomGap);
-        assertEq(core.ethPot(), before.pot - cost - royalty - paid, "pot down by exactly cost, the royalty and the payment");
         assertEq(
-            address(core).balance, before.balance - cost - royalty - paid, "balance down by exactly cost, the royalty and the payment"
+            core.ethPot(), before.pot - cost - royalty - paid, "pot down by exactly cost, the royalty and the payment"
+        );
+        assertEq(
+            address(core).balance,
+            before.balance - cost - royalty - paid,
+            "balance down by exactly cost, the royalty and the payment"
         );
         assertEq(core.ethToBuyback(), before.toBuyback);
         assertEq(
@@ -211,7 +218,14 @@ abstract contract SeaportBase is Fixture {
         assertEq(core.lastFillTime(), block.timestamp);
         assertLe(cost + paid, ceiling, "never above the ceiling");
         _solvent();
-        assertEq(address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(), 0, "no surplus");
+        // the live Core may hold eth outside its pots (prior surplus): the buy leaves that surplus untouched, it does
+        // not grow or shrink. on a fresh fixture the surplus was zero; here it is read before and asserted unchanged
+        uint256 surplusBefore = before.balance - before.pot - before.toBuyback - before.redeemBurn;
+        assertEq(
+            address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn(),
+            surplusBefore,
+            "surplus unchanged"
+        );
     }
 
     function _expectFail(uint256 id, bytes memory params, bytes4 err) internal {
@@ -231,29 +245,17 @@ contract SeaportTest is SeaportBase {
 
     /// the pot is large enough to clear every ceiling the tests use
     uint256 internal constant POT = 30 ether;
-    /// wei per credit the cases run at: a credit costs 0.433 ether
-    uint256 internal constant TARGET_RATE = 4.33e17;
 
     function setUp() public override {
         super.setUp();
-        // the launch rate cap (3 times the opening rate) is far below the rate the cases need: raise it to the bounds,
-        // with the clamp at one credit of pot and the ceiling at its loosest so the bid reaches it in days
-        Settings memory cs = core.settings();
-        cs.rateCap = uint64(TARGET_RATE);
-        cs.ceilBps = 30_000;
-        cs.idleLoosenBps = 2_000;
-        _setSettings(cs);
+        // run under the live settings: the cases price every order against the live `core.bidOf(id)`, so they hold at
+        // whatever rate and caps the live Core carries. no launch calibration is pranked over the live settings
+        // (brief addendum 2); the pot is only funded so it clears the bids the cases list
         _fundPot(POT);
-        for (uint256 i; i < 900 && core.ethRate() < TARGET_RATE; ++i) {
-            _warp(1 hours);
-        }
-        assertGe(core.ethRate(), TARGET_RATE, "rate cleared");
-        // real fees split between the pot and the redeem burn reserve (feeToRedeemBurnBps), nothing else held
-        assertEq(
-            address(core).balance,
-            core.ethPot() + core.ethRedeemBurn(),
-            "the pot and reserve are what real fees brought"
-        );
+        // the live Core is funded and solvent: its tracked eth (the pots and the redeem burn reserve) never exceeds its
+        // balance. the fresh fixture held exactly pot plus reserve; the live Core may also hold buyback eth and surplus
+        _solvent();
+        assertGe(core.ethPot(), POT, "the pot holds the funded target");
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -294,7 +296,7 @@ contract SeaportTest is SeaportBase {
     // promise: SPEC 1 buyListing buys an adapter priced Seaport basic order (decision 100)
     function test_basic_singleConsiderationToSeller() public {
         uint256 id = _list();
-        uint256 ceiling = core.ethRate();
+        uint256 ceiling = core.bidOf(id);
         uint256 price = ceiling * 9 / 10;
         OrderComponents memory c = _open(id, price, 0);
         assertEq(c.consideration.length, 1);
@@ -308,7 +310,7 @@ contract SeaportTest is SeaportBase {
     /// the fee taker is on the adapter allowlist: its payout is part of the cost
     function test_basic_additionalRecipient() public {
         uint256 id = _list();
-        uint256 total = core.ethRate() * 7 / 10;
+        uint256 total = core.bidOf(id) * 7 / 10;
         uint256 fee = total / 100;
         OrderComponents memory c = _open(id, total - fee, fee);
         assertEq(c.consideration.length, 2);
@@ -332,7 +334,7 @@ contract SeaportTest is SeaportBase {
     /// a payout to the caller on top of the signed order is a tip the adapter refuses
     function test_basic_tipToTheCallerIsRefused() public {
         uint256 id = _list();
-        uint256 price = core.ethRate() / 2;
+        uint256 price = core.bidOf(id) / 2;
         OrderComponents memory c = _open(id, price, 1);
         c.consideration[1].recipient = payable(keeper);
         _expectFail(id, _basicData(c), ICore.BadQuote.selector);
@@ -346,7 +348,7 @@ contract SeaportTest is SeaportBase {
     // promise: INTEGRATION CallFailed when Seaport rejects the order
     function test_fail_badSignature() public {
         uint256 id = _list();
-        uint256 price = core.ethRate() / 2;
+        uint256 price = core.bidOf(id) / 2;
         OrderComponents memory c = _open(id, price, 0);
         (, uint256 otherKey) = makeAddrAndKey("creditsengine.seaport.impostor");
         _expectFail(id, _basicData(c, _sign(c, otherKey)), ICore.CallFailed.selector);
@@ -399,7 +401,7 @@ contract SeaportTest is SeaportBase {
     function testFuzz_selfDealingNeverBeatsTheSellDoor(uint256 priceSeed, uint256 sideSeed, uint256 warpHours) public {
         _warp(bound(warpHours, 0, 12) * 1 hours);
         uint256 id = _list();
-        uint256 ceiling = core.ethRate();
+        uint256 ceiling = core.bidOf(id);
         assertLe(ceiling, core.ethPot(), "the pot clears every ceiling here");
         uint256 price = bound(priceSeed, 1, ceiling);
         uint256 side = bound(sideSeed, 0, price - 1) % (price / 2 + 1);
@@ -439,6 +441,12 @@ contract SeaportCallerPayTest is SeaportBase {
 
     function setUp() public override {
         super.setUp();
+        // the live stack addresses the gas measurement cools, read from the live system (the fresh fixture read them
+        // from its deployed v2 stack, which `LiveFixture` leaves unset)
+        _initLiveConfig();
+        // the caller economics are measured at the engine's opening bid P0 (docs/DECISIONS.md section 2): the credit's
+        // scaled bid is the subject of these cases, so `_run` restates the rate so `bidOf(id)` equals P0 (brief addendum
+        // 2 allows pranking a setting that is the test's subject), lifting the rate cap there as the live score needs
         _fundPot(30 ether);
     }
 
@@ -451,12 +459,12 @@ contract SeaportCallerPayTest is SeaportBase {
             address(SEAPORT),
             seaportAdapter,
             address(PM),
-            v2.hook,
+            lc.stack.hook,
             address(coin),
-            v2.locker,
-            v2.escrow,
-            v2.factory,
-            v2.mev,
+            lc.stack.locker,
+            lc.stack.escrow,
+            lc.stack.factory,
+            lc.mevModule,
             STRATEGY
         ];
         for (uint256 i; i < a.length; ++i) {
@@ -470,13 +478,30 @@ contract SeaportCallerPayTest is SeaportBase {
         }
     }
 
-    /// one buy of a listing `gapBps` under `bid` at base fee `bf`. returns the payment and the caller's profit
-    function _run(uint256 bid, uint256 gapBps, uint256 bf) internal returns (uint256 paid, int256 profit) {
+    /// one buy of the listed credit `id` at a gap `gapBps` under its bid, with the credit's scaled bid restated to
+    /// `bid`, at base fee `bf`. returns the payment, the caller's profit and the credit's scaled bid (the ceiling). the
+    /// live credit carries its own score, so the rate is set to `bid` scaled back by the score, giving `bidOf(id)` == `bid`
+    /// restates the rate so the credit's scaled bid equals `bid`: the per credit bid is the rate scaled by the score
+    /// over 100 points, so the rate is `bid` scaled back by the score. lifts the rate cap to fit it when the live score
+    /// is below 100 points. kept out of `_run` so its locals do not deepen that stack
+    function _setRateForBid(uint256 id, uint256 bid) internal {
+        uint256 rate = bid * RATE_SCORE / _scoreOf(id);
+        Settings memory s = core.settings();
+        if (s.rateCap < rate) {
+            s.rateCap = uint64(rate);
+            _setSettings(s);
+        }
         vm.prank(owner);
-        core.setRate(bid);
-        assertEq(core.ethRate(), bid, "the bid is the restated rate");
-        uint256 id = _list();
-        uint256 price = bid - bid * gapBps / 10_000;
+        core.setRate(rate);
+    }
+
+    function _run(uint256 id, uint256 bid, uint256 gapBps, uint256 bf)
+        internal
+        returns (uint256 paid, int256 profit, uint256 ceiling)
+    {
+        _setRateForBid(id, bid);
+        ceiling = core.bidOf(id);
+        uint256 price = ceiling - ceiling * gapBps / 10_000;
         bytes memory data = _basicData(_open(id, price, 0));
         vm.fee(bf);
         vm.txGasPrice(bf);
@@ -501,17 +526,20 @@ contract SeaportCallerPayTest is SeaportBase {
     /// pays back the cost within one bps of the bid (the gap steps in bps) plus the gas noise between two runs of the
     /// same call, which is a few thousand gas (GasCap.t.sol `_sellBatch`); `GAS_NOISE` bounds it at 10,000 gas
     function test_breakEvenGapAtTwoGweiIsTheMeasuredGasCost() public {
+        // one live credit, reused for both runs, so the two measurements share one score and one ceiling: the break
+        // even gap derived from the first run applies to the second
+        uint256 id = _list();
         uint256 snap = vm.snapshotState();
-        (uint256 paid, int256 profit) = _run(P0, 1_000, 2 gwei);
-        assertEq(paid, P0 * 1_000 / 10_000, "a 10 percent gap is paid whole");
+        (uint256 paid, int256 profit, uint256 ceiling) = _run(id, P0, 1_000, 2 gwei);
+        assertEq(paid, ceiling * 1_000 / 10_000, "a 10 percent gap is paid whole");
         assertLt(profit, 0, "a 10 percent gap is under the cost at 2 gwei");
         uint256 cost = uint256(int256(paid) - profit);
-        uint256 breakEvenBps = (cost * 10_000 + P0 - 1) / P0;
+        uint256 breakEvenBps = (cost * 10_000 + ceiling - 1) / ceiling;
         assertGt(breakEvenBps, 1_000, "the break even gap is wider than 10 percent");
 
         vm.revertToState(snap);
-        (paid, profit) = _run(P0, breakEvenBps, 2 gwei);
-        int256 tolerance = int256(P0 / 10_000) + int256(GAS_NOISE * 2 gwei);
+        (paid, profit, ceiling) = _run(id, P0, breakEvenBps, 2 gwei);
+        int256 tolerance = int256(ceiling / 10_000) + int256(GAS_NOISE * 2 gwei);
         assertGt(profit, -tolerance, "the derived gap covers the cost");
         assertLt(profit, tolerance, "the derived gap is the narrowest in bps");
     }

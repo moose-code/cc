@@ -1,6 +1,8 @@
 # Credits engine simulator
 
-`engine.js` models Core, CoreLib and ControllerV1. Current intent is recorded in `docs/SPEC.md`; contract execution and simulator output are evidence. Node reads launch settings from `script/config/mainnet.json`, and `build.mjs` embeds that same configuration in the browser page. The page derives its initial settings from the model defaults.
+`engine.js` models Core, CoreLib and ControllerV1. Current intent is recorded in `docs/SPEC.md`; contract execution and simulator output are evidence. The launch parameters are the deployed Core and controller's live state: `sim/snapshot.mjs` reads them at a pinned block into `sim/live-state.json`, which `engine.js` uses as its parameter source and `build.mjs` embeds in the browser page. `script/config/mainnet.json` stays the source only for the fields the chain holds no view for (the `launch.*` pool and distribution block and the controller sale `anchorHalfLife`, `anchorMinCost` and `anchorMoveBps`). The page derives its initial settings from the model defaults.
+
+Regenerate `sim/live-state.json` with `node sim/snapshot.mjs [blockNumber]` (default block 26242107, RPC `https://gateway.tenderly.co/public/mainnet`).
 
 ## Run and verify
 

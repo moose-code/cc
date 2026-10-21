@@ -19,6 +19,10 @@ contract ReturnLockTest is SeaportBase {
     /// fills the eth pile with `n` credits, turns the credit sale on, and has `who` buy the first at its price now.
     /// returns the full pile ids; ids[0] is the bought credit, now owned by `who`, and the lock's end
     function _buyFirstBy(address who, uint256 n) internal returns (uint256[] memory ids, uint256 until) {
+        // live strategy credits carry real scores (some well above 100 points), so a credit's eth bid can exceed the
+        // room `_fillEthPile` funds on its own (`rateAtCheckpoint + reserve`). fund the pot generously first so the
+        // pile fill has room for high score credits; this is pot setup, not an override of any live setting
+        _fundPot(10 ether);
         ids = _fillEthPile(n);
         _setCreditSaleOn(true);
         uint256 price = ctl.creditPrice(ids[0]);
