@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { zeroAddress } from "viem";
 import { waitForSuccessfulReceipt } from "../lib/tx-receipt.ts";
 import { submitWithGasBuffer } from "../lib/tx-submit.ts";
-import { exchangeEnabled } from "../lib/exchange-access.ts";
+import { claimEnabled, exchangeEnabled } from "../lib/exchange-access.ts";
 import { encodeAbiParameters, encodeEventTopics, type Log } from "viem";
 import { treasuryAbi } from "@cc/engine/abis";
 import {
@@ -172,6 +172,17 @@ await check("development route and explicit publication", () => {
   assert.equal(exchangeEnabled("development", undefined), true);
   assert.equal(exchangeEnabled("development", "false"), true);
   assert.equal(exchangeEnabled("production", "true"), true);
+});
+
+// promise: the claim page is closed by default in production and deploy previews, open in local development, and
+// opens publicly only on an explicit server-only CLAIM_ENABLED=true.
+await check("claim gate closed by default, open in development", () => {
+  for (const flag of [undefined, "", "false", "1", "TRUE"]) assert.equal(claimEnabled("production", flag), false);
+  assert.equal(claimEnabled(undefined, undefined), false);
+  assert.equal(claimEnabled("test", undefined), false);
+  assert.equal(claimEnabled("development", undefined), true);
+  assert.equal(claimEnabled("development", "false"), true);
+  assert.equal(claimEnabled("production", "true"), true);
 });
 
 // ---- phase 2 claim panel: burn CC for a share of the claim reserve ------------------------------------------------

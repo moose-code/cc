@@ -696,7 +696,7 @@ export function errMsg(e: any): string {
   return e?.shortMessage || String(e?.message || "transaction failed").split("\n")[0];
 }
 
-// ---- phase 2 treasury (the claim panel of /exchange) -------------------------------------------------------------
+// ---- phase 2 treasury (the claim panel of /claim) ----------------------------------------------------------------
 
 export interface TreasuryInfo {
   treasury: Address;

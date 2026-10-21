@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-// The "Burn $CC for BALANCE" panel of /exchange: presentation only. Every figure arrives formatted; the page owns the
+// The "Burn $CC for BALANCE" panel of /claim: presentation only. Every figure arrives formatted; the page owns the
 // reads, the view state (web/lib/exchange.ts claimView), the quote arithmetic (claimQuote) and the consent flow
 // (redeemClaim). While the treasury's CC redemption switch is off (`redemptionOpen` false) the form side is the
 // accumulating view: the reserve, the live contribution rate, the available working funds and the status, with no
