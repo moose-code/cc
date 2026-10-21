@@ -158,9 +158,12 @@ const RATE_SCORE = 1_000_000;
 // score of the calibration credit the market model prices (points): a market price Pe is eth per credit of this score
 const REF_PTS = 433;
 
-// the launch package. every launch number comes from script/config/mainnet.json, the single source. node reads the file
-// here; build.mjs strips the import and inlines the parsed object as LAUNCH_RAW for the browser, so neither path hand
-// copies a launch value and the two cannot drift
+// the launch package. the parameter source is the deployed Core and controller's live state, read at a pinned block by
+// sim/snapshot.mjs into sim/live-state.json (owner rule: a contract that exists on mainnet is read from its live state,
+// not a config copy). the launch config stays the source only for the fields the chain holds no view for: the pool and
+// distribution block (launch.*) and the controller sale half-life and anchor (sale.anchorHalfLife, sale.anchorMinCost,
+// sale.anchorMoveBps). node reads both files here; build.mjs strips the imports and inlines both parsed objects for the
+// browser, so neither path hand copies a value and the two cannot drift
 
 const LAUNCH_RAW = {
   "stack": {
@@ -178,9 +181,9 @@ const LAUNCH_RAW = {
   "name": "CC",
   "symbol": "CC",
   "image": "",
-  "description": "",
+  "description": "$CC trades fill the pot. the pot buys Credits, priced by rating. every 80 become a statement, which sells to refill the pot.",
   "salt": "0x56d96069d0c85d21b8d789da2cd39ba97ceec51143707e32ecb8343eb4258a9c",
-  "rateStart": 4650000000000000,
+  "rateStart": 5600000000000000,
   "settings": {
     "dropPer100PointsBps": 115,
     "dropFloorBps": 1,
@@ -203,7 +206,7 @@ const LAUNCH_RAW = {
     "buybackSlice": 500000000000000000,
     "keeperFee": 300000000000000,
     "keeperMaxBaseFee": 5000000000,
-    "rateCap": 13950000000000000,
+    "rateCap": 16800000000000000,
     "callerFee": 300000000000000,
     "callerMaxBaseFee": 3000000000,
     "feeToRedeemBurnBps": 0,
@@ -273,13 +276,98 @@ const LAUNCH_RAW = {
     "address": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
   }
 };
+const LIVE = {
+  "core": "0xcdb1889ae12074d750CD9B8531B692015465e0dD",
+  "controller": "0x222CFeFC762e4Db84226DC17d15872B2169EB10e",
+  "blockNumber": 26242107,
+  "timestamp": 1792599323,
+  "rateStart": 5700000000000000,
+  "settings": {
+    "dropPer100PointsBps": 29,
+    "dropFloorBps": 1,
+    "climbPerMinBps": 100,
+    "ceilBps": 11000,
+    "idleLoosenBps": 600,
+    "saleFloorBps": 10000,
+    "saleToBuybackBps": 2500,
+    "recoveryClimbPerMinBps": 100,
+    "recoveryGapBps": 1000,
+    "peakHalfLife": 21600,
+    "buybackDelay": 25,
+    "redeemOn": true,
+    "balanceBidOn": false,
+    "redeemSlippageBps": 200,
+    "balanceBidMarginBps": 1000,
+    "redeemBurnBps": 2000,
+    "buybackSlice": 500000000000000000,
+    "keeperFee": 200000000000000,
+    "keeperMaxBaseFee": 5000000000,
+    "rateCap": 17100000000000000,
+    "callerFee": 0,
+    "callerMaxBaseFee": 3000000000,
+    "feeToRedeemBurnBps": 1000,
+    "payeePpm": 0,
+    "pointsPerPage": 35200,
+    "swapFeeCc": 1e+22,
+    "saleToArtistBps": 250,
+    "saleToOperatorBps": 50,
+    "climbMultiplierCapBps": 40000,
+    "spendCapBps": 10000,
+    "bucketSeconds": 60,
+    "balanceBidCapBps": 10000,
+    "idleStepSeconds": 600,
+    "sniperSeconds": 4140,
+    "reserveWei": 100000000000000000,
+    "returnLockSeconds": 21600,
+    "valueModeOn": false,
+    "buyToArtistBps": 250,
+    "balanceDiscountBps": 1000
+  },
+  "sale": {
+    "markupBps": 15000,
+    "startCapBps": 100000,
+    "decayHours": 4
+  },
+  "credit": {
+    "costToPotBps": 8000,
+    "chosenComposeOn": false,
+    "minCcToChoose": "1000000000000000000",
+    "saleOn": true,
+    "window": 14400,
+    "spreadBps": 1000,
+    "startBps": 15000
+  },
+  "quote": {
+    "referenceRateBpsPerHour": 0,
+    "referenceStepBps": 0,
+    "tolBps": 100,
+    "referenceMaxStale": 0,
+    "referenceMinSeconds": 600,
+    "minLiquidity": 0
+  },
+  "pots": {
+    "ethPot": "100478697239997496",
+    "ethToBuyback": "0",
+    "ethRedeemBurn": "111137681885311699",
+    "coreEth": "214075539125309195",
+    "reserve": "100000000000000000"
+  }
+};
+// overlay the live state onto the launch config: the Core settings, the opening rate, the chain-held controller sale
+// fields (markupBps, startCapBps, decayHours), the credit block and the protected quote come from the chain; the config
+// keeps only the fields listed above
+LAUNCH_RAW.rateStart = LIVE.rateStart;
+Object.assign(LAUNCH_RAW.settings, LIVE.settings);
+Object.assign(LAUNCH_RAW.sale, LIVE.sale);
+Object.assign(LAUNCH_RAW.credit, LIVE.credit);
+Object.assign(LAUNCH_RAW.quote, LIVE.quote);
 // Jack's balance token constants live in one place, sim/upstream.js (build.mjs inlines it for the browser). the balance
 // model's unit, decimals and redemption math read them, so a change in his repo is a one-line sim change
 
 
 const _cs = LAUNCH_RAW.settings, _sale = LAUNCH_RAW.sale, _cr = LAUNCH_RAW.credit, _ln = LAUNCH_RAW.launch;
 
-// the Core's Settings struct (src/interfaces/Interfaces.sol), same field names, values read from the config.
+// the Core's Settings struct (src/interfaces/Interfaces.sol), same field names, values read from the live Core state.
 // the stepped bid fields are kept in percent and hours here: dropPerCreditPct = dropPerCreditBps / 100, dropToPct = dropFloorBps / 100,
 // climbPerMin = climbPerMinBps / 100, ceilPct = ceilBps / 100, idleLoosenPct = idleLoosenBps / 100, recoveryClimbPerMin = recoveryClimbPerMinBps / 100,
 // recoveryGapPct = recoveryGapBps / 100, peakHalfLifeHours = peakHalfLife / 3600. durations in seconds, buybackSlice and the fees in eth, swapFeeCc in whole coins.
@@ -343,7 +431,7 @@ const CONTROLLER = {
   anchorMoveBps: _sale.anchorMoveBps,
 };
 const CONTROLLER_KEYS = Object.keys(CONTROLLER);
-// the credit settings (script/config/mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
+// the credit settings, live values from sim/live-state.json (field names from the mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
 // (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditSpreadBps and creditStartBps are controller
 // settings (FLOW 88 to 90, 93, 94). refScore is a Core setting the eth doors and the controller share. while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
 // start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, valueOf(score)) * floorMultBps / 10000, floorMultBps = max(10000, (10000 + creditSpreadBps) * balanceBidCapBps / 10000) (decisions 104, 115, 150, 153). valueOf is the rate term
@@ -365,7 +453,7 @@ const CREDIT_KEYS = Object.keys(CREDIT);
 // the config names of the credit block (script/config/mainnet.json credit.*)
 const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditSpreadBps: 'spreadBps', creditStartBps: 'startBps' };
 // the config credit block also holds royaltyRecipient, an address the model has no use for
-// the controller's protected price settings (script/config/mainnet.json quote block, the Quote struct, ControllerV1.setQuote, decision 148).
+// the controller's protected price settings, live values from sim/live-state.json (field names from the mainnet.json quote block, the Quote struct, ControllerV1.setQuote, decision 148).
 // the reference moves toward the pool spot by at most min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps) bps
 // per update; buys price off min(spot, reference * (10000 + tolBps) / 10000), sales off max(spot, reference * (10000 - tolBps) / 10000);
 // the reference price is usable while it is at most referenceMaxStale old (referenceMaxStale 0 is never usable) and the pool holds
@@ -479,12 +567,12 @@ const CORE_PARAMS = {
   BUYLISTING_GAS_USED: 470000, // counted gas of one buyListing through the CreditStrategy (466,714 in test/CoreUnit.t.sol): gas used 418,000 plus the 250,000 overhead less the work after the count
 };
 
-// launch config (script/config/mainnet.json) and simulator inputs
+// live launch parameters (sim/live-state.json, with the config's pool and distribution block) and simulator inputs
 const SIM_DEFAULTS = {
   seed: 7,
   days: 90,
   stepSec: 60, // time step after the first hour, seconds. a divisor of 3600. 60 matches the minute bucket of the contract's drop floor and climb; hourly steps distort the stepped rule (bid up to 3x market). rates quoted per hour or per day, the hourly cap and arrival counts scale with the step
-  rateStart: LAUNCH_RAW.rateStart, // launch opening rate (script/config/mainnet.json rateStart): wei per 100 points
+  rateStart: LAUNCH_RAW.rateStart, // the live opening rate (Core.RATE_START(), in sim/live-state.json): wei per 100 points
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
   throttler: false,
   throttleFrac: 0.95,
@@ -2516,7 +2604,7 @@ function buildCalibration() {
     ['coin buys against sells', 'day one 819 to 738 eth, net 80 eth moves price 2.5e-8 to 4.4e-7', 'model reproduces 4.48e-7 on day one'],
     ['CreditStrategy inventory', '13,132 credits listed at median 0.036 eth, mean score 371', 'static, cleared through buyListing when the ceiling passes the ask'],
     ['statement sale', 'a buyer takes the statement with the lowest asking price at or under its willingness to pay and does not wait for a lower price. it pays the asking price and gets the statement at once through Core.sellTo, and the anchor moves by anchorMoveBps of the gap toward a qualifying sale', 'src/Core.sol, src/ControllerV1.sol'],
-    ['launch position', 'tick -175000 to 887200, whole supply, 6.9% baseline skim, 6.21% to the Core and 0.69% to the protocol, payeePpm 0, 90% falling to 6.9% over 30 minutes, no lp fee', 'script/config/mainnet.json'],
+    ['launch position', 'tick -175000 to 887200, whole supply, 6.9% baseline skim, 6.21% to the Core and 0.69% to the protocol, payeePpm 0, 69% falling to 6.9% over 69 minutes, no lp fee', 'script/config/mainnet.json'],
   ];
   $('calTbl').innerHTML = '<thead><tr><th>input</th><th>value in the model</th><th>source</th></tr></thead><tbody>' + rows.map((r) => '<tr><td>' + r[0] + '</td><td style="white-space:normal;text-align:left">' + r[1] + '</td><td style="white-space:normal;text-align:left">' + r[2] + '</td></tr>').join('') + '</tbody>';
 }
