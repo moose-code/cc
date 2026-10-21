@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
-import {Settings, Quote} from "../src/interfaces/Interfaces.sol";
+import {Settings, Quote, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {Phase2Deploy} from "../script/Phase2Deploy.s.sol";
 import {PushSplitCreator} from "../script/PushSplit.sol";
 import {Phase2Wire} from "../script/Phase2Wire.s.sol";
@@ -13,6 +13,11 @@ import {Phase2Claims} from "../script/Phase2Claims.s.sol";
 import {Phase2SettingsProbe, Phase2ReadbackProbe} from "./Phase2Scripts.t.sol";
 import {Phase2WireProbe} from "./Phase2Wire.t.sol";
 import {Phase2ClaimsProbe} from "./Phase2ClaimsScripts.t.sol";
+import {SetSettingsProbe} from "./SetSettings.t.sol";
+import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {TestSwapRouter} from "./utils/TestSwapRouter.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -38,6 +43,18 @@ interface ILifecycleToken {
     function transfersOpenBlock() external view returns (uint256);
 }
 
+interface ILifecycleCredits {
+    function setApprovalForAll(address operator, bool approved) external;
+    function ownerOf(uint256 id) external view returns (address);
+}
+
+interface ILifecycleV2 {
+    function buyCredit(uint256 id) external payable;
+    function creditPrice(uint256 id) external view returns (uint256);
+    function pastWindow(uint64 acquiredAt) external view returns (bool);
+    function refreshReference() external returns (bool);
+}
+
 contract LifecycleDeployProbe is Phase2Deploy {
     function deploy(Inputs memory i) external returns (Result memory) {
         return deployPhase2(i, false);
@@ -49,6 +66,13 @@ contract LifecycleDeployProbe is Phase2Deploy {
 /// launch state, the readback, a real Statement conversion with the 10 percent earmark, then stage D (claims
 /// allocated, redemption enabled, a real holder's burn, redemption disabled). runs only with LIVE_BALANCE_TOKEN set
 contract Phase2LifecycleTest is Test {
+    using StateLibrary for IPoolManager;
+
+    /// the live hookless eth / BALANCE pool with liquidity at the head (fee 35,000, spacing 350), one of several
+    /// opened in the token's first hour; the owner picks the stage C pool from the readback of the live pools
+    uint24 internal constant POOL_FEE = 35_000;
+    int24 internal constant POOL_TICK_SPACING = 350;
+    SetSettingsProbe internal setSettings;
     address internal constant CORE = 0xcdb1889ae12074d750CD9B8531B692015465e0dD;
     ICore internal core = ICore(payable(CORE));
     address internal token;
@@ -72,6 +96,8 @@ contract Phase2LifecycleTest is Test {
         readback = new Phase2ReadbackProbe();
         claims = new Phase2ClaimsProbe();
         router = new TestSwapRouter();
+        setSettings = new SetSettingsProbe();
+        setSettings.configure(CORE, "");
     }
 
     function _wireInputs(address treasury, address controllerV2, string memory step)
@@ -95,6 +121,7 @@ contract Phase2LifecycleTest is Test {
         _stageA();
         _stageB();
         _launchAndConvert();
+        _stageC();
         _stageD();
         assertEq(readback.read(CORE, address(t), address(c2)), "", "the readback passes at the end");
     }
@@ -169,6 +196,87 @@ contract Phase2LifecycleTest is Test {
         assertEq(readback.read(CORE, address(t), address(c2)), "", "the readback passes after the conversion");
         emit log_named_uint("Statement converted", sid);
         emit log_named_uint("BALANCE received", received);
+    }
+
+    /// stage C on the live eth / BALANCE pool: the pool key and quote through the wiring script, value mode and the
+    /// balance bid through SetSettings, then a buyer takes a pile Credit from the engine and sells it back for BALANCE
+    /// after the return lock: the treasury pays the seller and the split's royalty with the real token
+    function _stageC() internal {
+        PoolKey memory key = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(token),
+            fee: POOL_FEE,
+            tickSpacing: POOL_TICK_SPACING,
+            hooks: IHooks(address(0))
+        });
+        IPoolManager pm = IPoolManager(ILifecycleCore(CORE).MANAGER());
+        (uint160 sp,,,) = pm.getSlot0(key.toId());
+        assertGt(pm.getLiquidity(key.toId()), 1e21, "the live pool has liquidity");
+        Phase2Wire.Inputs memory p = _wireInputs(address(t), address(c2), "pool");
+        p.poolFee = POOL_FEE;
+        p.poolTickSpacing = POOL_TICK_SPACING;
+        p.expectedSpot = (1e18 * FixedPoint96.Q96 / sp) * FixedPoint96.Q96 / sp;
+        wire.go(p);
+        Phase2Wire.Inputs memory q = _wireInputs(address(t), address(c2), "quote");
+        q.quote = Quote({
+            referenceRateBpsPerHour: 1_200,
+            referenceStepBps: 200,
+            tolBps: 100,
+            referenceMaxStale: 1_800,
+            referenceMinSeconds: 600,
+            minLiquidity: 1e21
+        });
+        wire.go(q);
+        Settings memory next = core.settings();
+        next.valueModeOn = true;
+        next.spendCapBps = 9_999;
+        next.balanceBidOn = true;
+        setSettings.applyCombined(IControllerV1(address(c2)), next);
+        assertTrue(core.settings().balanceBidOn && core.settings().valueModeOn);
+        (uint256 value, bool usable) = c2.valuePerPoint(true);
+        assertTrue(usable && value != 0, "the protected balance price is usable on the live pool");
+        assertEq(readback.read(CORE, address(t), address(c2)), "", "the readback passes with the bid on");
+        // a buyer takes the oldest pile Credit past its window from the engine
+        uint256[] memory page = core.pilePage(0, 10);
+        uint256 id;
+        for (uint256 i; i < page.length; ++i) {
+            (,, uint64 acquiredAt) = core.creditInfo(page[i]);
+            if (ILifecycleV2(address(c2)).pastWindow(acquiredAt)) {
+                id = page[i];
+                break;
+            }
+        }
+        assertGt(id, 0, "a pile Credit past its window");
+        address buyer = address(0xB01E);
+        uint256 price = ILifecycleV2(address(c2)).creditPrice(id);
+        vm.deal(buyer, price + 1 ether);
+        vm.prank(buyer);
+        ILifecycleV2(address(c2)).buyCredit{value: price}(id);
+        assertEq(ILifecycleCredits(Mainnet.CREDITS).ownerOf(id), buyer, "the buyer holds the Credit");
+        vm.prank(buyer);
+        ILifecycleCredits(Mainnet.CREDITS).setApprovalForAll(CORE, true);
+        // past the return lock; the reference is refreshed in a new block so the clamp prices
+        vm.warp(block.timestamp + 7 hours);
+        vm.roll(block.number + 1);
+        ILifecycleV2(address(c2)).refreshReference();
+        uint256 posted = core.balanceBidOf(id);
+        assertGt(posted, 0, "the posted 80 percent bid");
+        uint256 custodyBefore = t.custody();
+        uint256 splitBefore = ILifecycleToken(token).balanceOf(split);
+        uint256 sellerBefore = ILifecycleToken(token).balanceOf(buyer);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        vm.prank(buyer);
+        core.sellForBalance(ids, 0);
+        uint256 paid = ILifecycleToken(token).balanceOf(buyer) - sellerBefore;
+        uint256 royalty = ILifecycleToken(token).balanceOf(split) - splitBefore;
+        assertGt(paid, 0, "the seller was paid in the real token");
+        assertLe(paid, posted, "at most the posted bid, lowered by the clamp");
+        assertEq(royalty, paid * 300 / 10_000, "the split got 3 percent of the payout");
+        assertEq(custodyBefore - t.custody(), paid + royalty, "both left working funds");
+        assertEq(t.totalOwed(), 0, "no accrual: both transfers completed under the bounds");
+        emit log_named_uint("Credit sold for BALANCE, paid", paid);
+        emit log_named_uint("royalty to the split", royalty);
     }
 
     function _stageD() internal {
