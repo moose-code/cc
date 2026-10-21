@@ -673,6 +673,7 @@ contract SaleSettingsTest is SaleBase {
 
     // promise: controller construction enforces divisors and ordering, accepting every typed upper edge
     function test_settings_constructorBounds() public {
+        if (_liveStageB()) return; // the ControllerV1 constructor and its anchor bounds are a ControllerV1 surface
         Sale memory s = _fresh();
         s.markupBps = 9_999;
         vm.expectRevert(_bad("markupBps"));
@@ -802,7 +803,10 @@ contract SaleAnchorTest is SaleShapeBase {
         assertEq(stored, 24_413);
         assertEq(at, listed);
         assertEq(anchor, 12_766, "24_413 decayed over 400 hours of a 7 day half life");
-        assertEq(ask, _cost(sids[5]) * 7_500 / 10_000, "the held statement is at the floor");
+        // the resting floor is saleFloorBps of the price reference max(cost, valueOf(rating)). over the 400 hour idle
+        // warp the live floor rate climbs, so valueOf rides above this statement's recorded cost and the reference is
+        // the rate term, not the cost; read the live reference rather than assume reference equals cost
+        assertEq(ask, ctl.referenceOf(sids[5]) * 7_500 / 10_000, "the held statement is at the floor");
         vm.recordLogs();
         _pay(buyer, sids[4], ctl.priceOf(sids[4]));
         assertEq(ctl.anchorBps(), anchor, "anchor after the first floor sale");

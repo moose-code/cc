@@ -122,19 +122,22 @@ contract ChosenComposeTest is LiveFixture {
 
     // promise: INTEGRATION InWindow
     function test_window_insideRevertsWhileSaleOn() public {
-        uint256[] memory page = _pile(80);
+        // the live pile holds pre-launch credits long past their window, so the oldest page is composable; to exercise
+        // the window gate the test names its own freshly acquired credits, which are inside their window. the sale is
+        // the subject here, set on (its live value). this does not route through the warping `_composeOnce`
+        uint256[] memory filled = _fillEthPile(80);
+        uint256[80] memory ids = _first80(filled);
         _on();
-        // the subject here is the window gate while the sale is on, so the sale is set on (its live value); the live
-        // pile still holds credits inside their window, so the gate refuses the page. the specific credit it names is
-        // live pile state, so the selector alone is asserted (not a pinned id)
         _setCreditSaleOn(true);
+        // every named credit was just acquired, inside its window, so the gate refuses the page; the credit it names is
+        // the one the gate checks, so the selector alone is asserted (not a pinned id)
         vm.expectPartialRevert(ICore.InWindow.selector);
-        _call(_first80(page), 0);
+        _call(ids, 0);
 
         // past the window the same set composes
         _warp(ctl.creditWindow() + 1);
         uint256 supply = STATEMENTS.supply();
-        _call(_first80(page), 0);
+        _call(ids, 0);
         assertTrue(_isHeld(supply + 1), "composes once every named credit is past its window");
     }
 
@@ -176,9 +179,12 @@ contract ChosenComposeTest is LiveFixture {
         core.compose();
         assertEq(core.composerOf(sid2), keeper, "compose records its caller");
         assertEq(core.composerOf(sid), chooser, "and leaves the earlier one");
-        // a sold statement keeps its composer
-        _buy(chooser, sid);
-        assertEq(core.composerOf(sid), chooser, "the composer stays after the sale");
+        // a sold statement keeps its composer. statement sales are off on ControllerV2 after stage B (StatementSalesOff),
+        // so the sale leg, which is not the composer promise's subject, runs only while statement sales are open
+        if (!_liveStageB()) {
+            _buy(chooser, sid);
+            assertEq(core.composerOf(sid), chooser, "the composer stays after the sale");
+        }
         assertEq(core.composerOf(sid2 + 100), address(0), "a statement that was never composed has none");
     }
 
