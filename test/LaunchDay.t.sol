@@ -410,10 +410,10 @@ contract LaunchDayTest is LaunchDayBase {
         _placeSeaport(LAUNCH_RATE * 82 / 100, true);
         _placeSeaport(uint256(core.settings().rateCap) * 95 / 100, false);
 
-        // to 30 min, 12 s blocks: the keeper sweeps the two under-bid orders near 8 min, then books to latch the payee
-        // share at the first block past the sniper window
-        _advance(launchTime + 1800, 12, true);
-        _checkpoint("30 min", false); // earlier listing fills break a strict between-checkpoint climb comparison
+        // past the sniper window, 12 s blocks: the keeper sweeps the two under-bid orders near 8 min, then books to
+        // latch the payee share at the first block past the window (the window length is the live launch setting)
+        _advance(launchTime + core.settings().sniperSeconds + 12, 12, true);
+        _checkpoint("window end", false); // earlier listing fills break a strict between-checkpoint climb comparison
         assertTrue(payeeLatchedByBook, "the payee share latched on the keeper's book, not an organic fill");
         Settings memory s = core.settings();
         assertGe(payeeLatchTime, launchedAt + s.sniperSeconds, "the latch waited for the sniper window");
@@ -507,12 +507,16 @@ contract LaunchDayTest is LaunchDayBase {
         uint256 r29 = core.ethRate();
         assertEq(r29, r15, "29 min: pending income still earns no climb");
 
-        assertEq(core.ethPot(), 0, "no door booked in the first 30 minutes");
+        assertEq(core.ethPot(), 0, "no door booked before the sniper window ends");
         assertLe(r29, core.ethPot() + _pendingPot(core.settings()), "the climb stayed inside the pending pot clamp");
-        _advance(launchTime + 1800, 12, false);
+        // the keeper books at the first block past the sniper window; its length is the live launch setting (69 minutes
+        // at this config), not a hardcoded half hour
+        _advance(launchTime + core.settings().sniperSeconds + 12, 12, false);
         assertGt(core.ethPot(), 0, "the keeper booked income at the sniper-window end");
-        assertEq(core.ethRate(), r29, "booking did not credit the preceding empty time");
-        _advance(launchTime + 2100, 12, false);
+        // the book does not credit the empty time as a funded climb (no jump): the rate only drifted by the unscaled
+        // idle climb clamped at the pending pot share over the window, well under a funded climb would move it
+        assertApproxEqRel(core.ethRate(), r29, 0.02e18, "booking did not credit the preceding empty time");
+        _advance(launchTime + core.settings().sniperSeconds + 312, 12, false);
         assertGt(core.ethRate(), r29, "the bid climbed over the funded interval");
     }
 

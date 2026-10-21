@@ -232,12 +232,20 @@ contract ColdValuePoolTest is Fixture {
     function test_refreshAfterLatchBooksNewHookIncome() public {
         _valuePool();
         autoBook = false;
-        vm.warp(block.timestamp + 1_800);
-        vm.deal(address(core), 1);
+        // this is the fresh fixture (ColdValuePoolTest): the launch value for payeePpm is 0, so the payee latches only
+        // once the owner turns a share on and a book lands past the sniper window. warp past the window (its length is
+        // the live launch setting, 69 minutes here), fund unbooked income, then book to latch
+        Settings memory ps = core.settings();
+        ps.payeePpm = 90_909;
+        _setSettings(ps);
+        vm.warp(block.timestamp + core.settings().sniperSeconds + 1);
+        _buyCoin(funder, 0.05 ether);
         core.book();
         assertTrue(core.payeeOn());
-        assertEq(core.ethPot(), 1);
-        _buyCoin(funder, 0.005 ether);
+        // about 5 to 6 percent of a buy reaches the pot as fee income at the live steady state, so a 0.05 ether buy
+        // lands the unbooked pending between the keeper's 0.0003 floor and 0.01 book threshold (the old 0.005 ether buy
+        // yielded about 0.00025, just under the floor)
+        _buyCoin(funder, 0.05 ether);
         uint256 pending = address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn();
         assertGt(pending, 0.0003 ether);
         assertLt(pending, 0.01 ether, "the keeper's post-latch book threshold is not met");
@@ -736,7 +744,16 @@ contract ColdLaunchMatrixTest is Fixture {
     function test_launchValuesColdViewsEqualFirstBook() public {
         autoBook = false;
         uint256 id = _credits(seller, 1)[0];
-        _buyCoin(funder, 2 ether);
+        // accumulate enough unbooked fee income that the first book carries the pot past one page at the last fill rate,
+        // so the climb multiplier enlarges (it is the pot divided by one page, clamped at 1x): a single small buy stays
+        // under one page and leaves the multiplier at its 10000 floor. one page is well under 1 ether here
+        for (
+            uint256 b;
+            b < 16 && address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn() < 1 ether;
+            ++b
+        ) {
+            _buyCoin(funder, 5 ether);
+        }
         assertEq(core.RATE_START(), 4_650_000_000_000_000);
         assertEq(core.settings().reserveWei, 0.1 ether);
         assertTrue(ctl.creditSaleOn());
