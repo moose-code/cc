@@ -4,6 +4,8 @@
 # the run. every signer is an impersonated account (anvil --auto-impersonate, forge --unlocked).
 #
 #   PHASE=pre    the engine before the balance token: the module unset, balanceBidOn false, redeemOn as the config sets it (a redemption reverts NoBalanceModule).
+#   PHASE=phase2 Seed deploys the standin balance token, the phase 2 treasury, the pro rata policy and ControllerV2,
+#                selects them and turns every switch on (docs/RUNBOOK.md section 7, phase 2 locally)
 #   PHASE=post   (default) Seed deploys the balance token, the best guess redeem module and an eth/balance pool and
 #                switches the balance side on; the stages add a redemption and a balance bid.
 #
@@ -21,7 +23,7 @@ PORT="${PORT:-8545}"
 E2E_RPC_URL="${E2E_RPC_URL:-http://127.0.0.1:$PORT}"
 PHASE="${PHASE:-post}"
 KEEP="${KEEP:-0}"
-case "$PHASE" in pre|post) ;; *) echo "PHASE must be pre or post, got $PHASE" >&2; exit 2 ;; esac
+case "$PHASE" in pre|post|phase2) ;; *) echo "PHASE must be pre, post or phase2, got $PHASE" >&2; exit 2 ;; esac
 
 # the node is chain id 31337 for both stacks; the dev wallet owns the factory and the engine. STACK=master is exported
 # so script/deploy.sh and the forge scripts overlay the master stack record (the dev wallet is its fork owner too).
@@ -73,6 +75,16 @@ SEED="$(PHASE="$PHASE" CORE="$CORE" DEPLOYER="$OWNER" A1="$A1" A2="$A2" A3="$A3"
 tmp="$(mktemp)"
 jq --arg phase "$PHASE" --arg a1 "$A1" --arg a2 "$A2" --arg a3 "$A3" --arg k "$KEEPER" --arg t "$TRADER" --arg o "$DEV_WALLET" \
   '.accounts = ({a1: $a1, a2: $a2, a3: $a3, keeper: $k, trader: $t} + (if $o == "" then {} else {owner: $o} end)) | .phase = $phase' $REC > "$tmp" && mv "$tmp" $REC
+if [ "$PHASE" = "phase2" ]; then
+  pick() { printf '%s\n' "$SEED" | grep -oE "$1 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
+  TOKEN="$(pick BALANCE_TOKEN)"; MODULE="$(pick BALANCE_MODULE)"; V2="$(pick CONTROLLER_V2)"; POLICY="$(pick POLICY)"
+  [ -n "$TOKEN" ] && [ -n "$MODULE" ] && [ -n "$V2" ] || { echo "$SEED" | tail -40; echo "no phase 2 addresses from seed" >&2; exit 1; }
+  # the Core now points at ControllerV2: the record and every later stage read it
+  CTL="$V2"
+  jq --arg t "$TOKEN" --arg m "$MODULE" --arg c "$V2" --arg p "$POLICY" \
+    '.controllerV1 = .controller | .controller = $c | .controllerV2 = $c | .balanceToken = $t | .balanceModule = $m | .redemptionPolicy = $p | .balancePool = null' $REC > "$tmp" && mv "$tmp" $REC
+  echo "phase 2: balanceToken $TOKEN treasury $MODULE controllerV2 $V2 policy $POLICY"
+fi
 if [ "$PHASE" = "post" ]; then
   pick() { printf '%s\n' "$SEED" | grep -oE "$1 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
   TOKEN="$(pick BALANCE_TOKEN)"; MODULE="$(pick BALANCE_MODULE)"
@@ -153,7 +165,7 @@ stage settings
 stage pause
 stage buyback
 
-if [ "$PHASE" = "post" ]; then
+if [ "$PHASE" = "post" ] || [ "$PHASE" = "phase2" ]; then
   stage fill-d
   past_window; stage compose-d
   SID="$(call "$CORE" 'heldStatements()(uint256[])' | tr ',' '\n' | tail -1 | grep -oE '[0-9]+' | head -1)"

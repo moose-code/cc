@@ -469,12 +469,14 @@ contract Scenario is Script {
 
         uint256 owed = core.ratingOf(sid) * IBalanceModule(core.balanceModule()).unitPerPoint();
         uint256 potBefore = IBalanceModule(core.balanceModule()).available();
+        // the phase 2 treasury earmarks `conversionToClaimBps` of the receipt as claim backing, outside `available()`
+        uint256 expected = owed * 98 / 100 * (10_000 - _conversionToClaimBps(core.balanceModule())) / 10_000;
         vm.broadcast(KEEPER);
         core.redeemStatement(sid);
         (bool stillHeld,,) = core.statementInfo(sid);
         require(!stillHeld, "redeem: the statement is still held");
         require(
-            IBalanceModule(core.balanceModule()).available() >= potBefore + owed * 98 / 100,
+            IBalanceModule(core.balanceModule()).available() >= potBefore + expected,
             "redeem: the balance pot did not grow by the rating"
         );
         require(core.heldStatements().length == held.length - 1, "redeem: held count did not fall by one");
@@ -489,6 +491,12 @@ contract Scenario is Script {
         }
         console.log("redeem: redeemed statement", sid);
         console.log("redeem: module holding", IBalanceModule(core.balanceModule()).available());
+    }
+
+    /// @dev the module's `conversionToClaimBps()` when it has one (the phase 2 treasury), else 0
+    function _conversionToClaimBps(address module) internal view returns (uint256 bps) {
+        (bool ok, bytes memory ret) = module.staticcall(abi.encodeWithSignature("conversionToClaimBps()"));
+        if (ok && ret.length >= 32) bps = abi.decode(ret, (uint256));
     }
 
     /// A3 sells credits into the balance bid, a single and a batch, and is paid in the balance token

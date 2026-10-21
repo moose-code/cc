@@ -12,7 +12,12 @@ import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {ICredits, IStatements, CreditSale, Settings, Mainnet} from "../../src/interfaces/Interfaces.sol";
 import {StatementBalanceModule} from "../../src/adapters/StatementBalanceModule.sol";
+import {Phase2BalanceTreasury} from "../../src/adapters/Phase2BalanceTreasury.sol";
+import {ProRataRedemptionPolicy} from "../../src/adapters/ProRataRedemptionPolicy.sol";
+import {ControllerV2} from "../../src/ControllerV2.sol";
+import {Quote} from "../../src/interfaces/Interfaces.sol";
 import {CreditIds} from "../../test/utils/CreditIds.sol";
+import {Phase2BalanceTokenStandin} from "../../test/standins/Phase2BalanceTokenStandin.sol";
 
 /// the ConversionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
 interface IUpstreamToken {
@@ -54,8 +59,17 @@ interface IUpstreamStatements {
 /// `dev-wallet`. a config without `dev.wallet` skips it. Jack's balance token is not freely mintable, so the dev wallet
 /// holds none; it receives balance token only by selling Credits into the balance bid.
 ///
-/// env: A1 A2 A3, DEPLOYER (the owner), PHASE (pre or post, default post), and for post CORE and TRADER. optional
-/// N1 N2 N3 (credits moved, default 330 10 10), LAUNCH_CONFIG (default script/config/anvil.json).
+/// PHASE=phase2 wires the phase 2 stack (decisions 245 to 252) for the local UI: the standin balance token
+/// (`test/standins/Phase2BalanceTokenStandin.sol`, every upstream gate open, mintable; the real auction token cannot
+/// open its transfer gate on a fork without its auction), `ProRataRedemptionPolicy`, `Phase2BalanceTreasury` and
+/// `ControllerV2` from the production sources. As owner it selects the treasury and ControllerV2, sets
+/// `creditCostToPotBps` 10,000 and the three buyback shares to 0, turns `redeemOn` on and, with no pool key set (so no
+/// hazard state), `balanceBidOn` on, funds the treasury with `PHASE2_WORKING` (default 50,000) BALANCE of working funds
+/// and allocates `PHASE2_CLAIMS` (default 10,000) to claims, turns every treasury switch and statement sales on. The
+/// dev wallet gets CC from the Scenario `dev-wallet` stage, so `/exchange` can sell Credits and burn CC locally.
+///
+/// env: A1 A2 A3, DEPLOYER (the owner), PHASE (pre, post or phase2, default post), and for post and phase2 CORE and
+/// TRADER. optional N1 N2 N3 (credits moved, default 330 10 10), LAUNCH_CONFIG (default script/config/anvil.json).
 contract Seed is Script {
     /// @dev credits the CreditStrategy lists for sale at the pin block, skipped when credits are moved
     uint256 internal constant LISTED_A = 35377;
@@ -81,7 +95,12 @@ contract Seed is Script {
         _move(vm.envAddress("A2"), vm.envOr("N2", uint256(10)));
         _move(vm.envAddress("A3"), vm.envOr("N3", uint256(10)));
         if (hasWallet) _move(wallet, vm.parseJsonUint(cfg, ".dev.walletCredits"));
-        if (keccak256(bytes(vm.envOr("PHASE", string("post")))) == keccak256("pre")) return;
+        bytes32 phase = keccak256(bytes(vm.envOr("PHASE", string("post"))));
+        if (phase == keccak256("pre")) return;
+        if (phase == keccak256("phase2")) {
+            _seedPhase2(owner, ICore(payable(vm.envAddress("CORE"))));
+            return;
+        }
 
         ICore core = ICore(payable(vm.envAddress("CORE")));
         uint160 poolSqrt = uint160(vm.parseJsonUint(cfg, ".dev.balancePoolSqrtPriceX96"));
@@ -113,7 +132,10 @@ contract Seed is Script {
         );
         ctl.setCredit(
             CreditSale({
-                saleOn: true, window: ctl.creditWindow(), spreadBps: ctl.creditSpreadBps(), startBps: ctl.creditStartBps()
+                saleOn: true,
+                window: ctl.creditWindow(),
+                spreadBps: ctl.creditSpreadBps(),
+                startBps: ctl.creditStartBps()
             })
         );
         core.setChosenComposeOn(true);
@@ -131,6 +153,53 @@ contract Seed is Script {
         console.log("OPENS_AT", uint256(IUpstreamToken(token).opensAt()));
     }
 
+    /// @dev the phase 2 stack on the standin token, every switch on, for the local web and keeper
+    function _seedPhase2(address owner, ICore core) internal {
+        console.log("== PHASE 2 (Seed phase2): standin balance token, treasury, pro rata policy, ControllerV2 ==");
+        uint256 workingFunds = vm.envOr("PHASE2_WORKING", uint256(50_000 ether));
+        uint256 claims = vm.envOr("PHASE2_CLAIMS", uint256(10_000 ether));
+        IControllerV1 ctl = IControllerV1(core.controller());
+        CreditSale memory credit = CreditSale({
+            saleOn: true, window: ctl.creditWindow(), spreadBps: ctl.creditSpreadBps(), startBps: ctl.creditStartBps()
+        });
+        Quote memory none;
+
+        vm.startBroadcast(owner);
+        Phase2BalanceTokenStandin token = new Phase2BalanceTokenStandin();
+        token.open();
+        ProRataRedemptionPolicy policy = new ProRataRedemptionPolicy();
+        Phase2BalanceTreasury treasury =
+            new Phase2BalanceTreasury(address(core), address(token), address(policy), address(0));
+        ControllerV2 v2 = new ControllerV2(address(core), credit, none, 30_000, 3_600);
+        token.mint(address(treasury), workingFunds + claims);
+
+        core.setBalanceModule(address(treasury));
+        core.setController(address(v2));
+        core.setCreditCostToPotBps(10_000);
+        Settings memory s = core.settings();
+        s.redeemOn = true;
+        s.saleToBuybackBps = 0;
+        s.feeToRedeemBurnBps = 0;
+        s.redeemBurnBps = 0;
+        // no pool key is set on ControllerV2, so the bid on with value mode off is not the hazard state; the local
+        // exchange sells Credits at the posted 90 percent
+        s.balanceBidOn = true;
+        core.setSettings(s);
+        core.setChosenComposeOn(true);
+        treasury.setSwitches(true, true, true);
+        treasury.allocateToClaims(claims);
+        v2.setStatementSales(true);
+        vm.stopBroadcast();
+
+        require(!v2.balancePoolKeySet(), "phase2: no pool key expected");
+        require(treasury.available() == workingFunds, "phase2: available is the working funds");
+        require(treasury.claimReserve() == claims, "phase2: claims allocated");
+        console.log("BALANCE_TOKEN", address(token));
+        console.log("BALANCE_MODULE", address(treasury));
+        console.log("CONTROLLER_V2", address(v2));
+        console.log("POLICY", address(policy));
+    }
+
     /// @dev Jack's `ConversionLineageWithdrawals` from the pinned artifact, wired the way the production-module test does:
     /// the funder receives 80 real Credits, the Statements owner registers the renderer, the funder composes a page,
     /// withdraws and retires the launch supply, then the module is deployed and the pool is initialized at the config
@@ -142,16 +211,10 @@ contract Seed is Script {
 
         bytes memory creation = vm.parseJsonBytes(vm.readFile("out/upstream-balance.json"), ".bytecode.object");
         uint8 format = uint8(IUpstreamStatements(Mainnet.STATEMENTS).formatCount());
-        bytes memory init = abi.encodePacked(
-            creation,
-            abi.encode(
-                Mainnet.STATEMENTS,
-                format,
-                FUNDER
-            )
-        );
+        bytes memory init = abi.encodePacked(creation, abi.encode(Mainnet.STATEMENTS, format, FUNDER));
         bytes32 salt = bytes32(0);
-        token = address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_PROXY, salt, keccak256(init))))));
+        token =
+            address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_PROXY, salt, keccak256(init))))));
         vm.broadcast(owner);
         (bool ok,) = CREATE2_PROXY.call(abi.encodePacked(salt, init));
         require(ok, "seed: token CREATE2 failed");
@@ -182,16 +245,17 @@ contract Seed is Script {
         module = address(new StatementBalanceModule(address(ICore(payable(vm.envAddress("CORE")))), token));
 
         vm.broadcast(owner);
-        IPoolManager(Mainnet.POOL_MANAGER).initialize(
-            PoolKey({
-                currency0: Currency.wrap(address(0)),
-                currency1: Currency.wrap(token),
-                fee: 3000,
-                tickSpacing: 60,
-                hooks: IHooks(address(0))
-            }),
-            poolSqrt
-        );
+        IPoolManager(Mainnet.POOL_MANAGER)
+            .initialize(
+                PoolKey({
+                    currency0: Currency.wrap(address(0)),
+                    currency1: Currency.wrap(token),
+                    fee: 3000,
+                    tickSpacing: 60,
+                    hooks: IHooks(address(0))
+                }),
+                poolSqrt
+            );
         console.log("module holding starts at 0 until the first redemption");
     }
 
