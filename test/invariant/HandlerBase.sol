@@ -181,6 +181,10 @@ abstract contract HandlerBase is Test {
     /// factory record. the share is pushed to the payee by `_book`, not held, so there is no owed ghost
     bool public gPayeeOn;
     address public gPayee;
+    /// cumulative payee share the book pushed to each payee address over the campaign. on the live Core the configured
+    /// payee is the owner, a watched address, so its balance grows by exactly this. invariant 8 lets a watched payee
+    /// receive its own share and nothing more
+    mapping(address => uint256) public gPayeeOut;
     uint256 public gLaunchedAt;
     uint256 public gSpendBucket;
     uint256 public gSpendSeconds;
@@ -482,6 +486,17 @@ abstract contract HandlerBase is Test {
 
     function watchedCount() external view returns (uint256) {
         return watched.length;
+    }
+
+    /// re-snaps the baseline balances of every watched address to the current state. the fixture calls this once the
+    /// setup is complete, so invariant 8 measures a gain from the campaign start. on the live Core the owner is the
+    /// payee and receives the payee share during the setup buys and composes; those are in the re-snapped base, and
+    /// `gPayeeOut` then counts only the share pushed during the campaign
+    function resnapWatched() external {
+        for (uint256 i; i < watched.length; ++i) {
+            _snapBase(watched[i]);
+            gPayeeOut[watched[i]] = 0;
+        }
     }
 
     function controllerCount() external view returns (uint256) {
@@ -1067,6 +1082,7 @@ abstract contract HandlerBase is Test {
         _pushedToPayee(payeeBefore, share, what);
         gEthIn += inc;
         gEthOut += share;
+        gPayeeOut[gPayee] += share;
     }
 
     /// books the income left unbooked by the previous action before an action reads the books
@@ -2641,6 +2657,7 @@ abstract contract HandlerBase is Test {
         _pushedToPayee(q.payee0, share, "door book");
         gEthIn += q.income;
         gEthOut += share;
+        gPayeeOut[gPayee] += share;
         if (core.payeeOn() != gPayeeOn) {
             _flag(V_PAYEE, "the payee latch after the door differs from the model");
         }

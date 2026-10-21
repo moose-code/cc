@@ -7,8 +7,10 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {ICreditStrategy, ICreditScore, Mainnet, Settings} from "../../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
+import {IArtCoinsHookV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {CreditIds} from "../utils/CreditIds.sol";
 import {Fixture} from "../utils/Fixture.sol";
+import {LiveFixture} from "../utils/LiveFixture.sol";
 import {MockBalanceModule} from "../standins/MockBalanceModule.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
 import {ProbeTarget} from "../attackers/ProbeTarget.sol";
@@ -33,7 +35,15 @@ import {HandlerSale} from "./HandlerSale.sol";
 ///
 /// two start states: after the sniper window (a week passes before the owner setup) and inside it (the run starts a
 /// few seconds after launch, the skim is 90 percent).
-abstract contract InvariantFixture is Fixture {
+///
+/// the suites bind the live system through `LiveFixture`: the live Core, its live ControllerV1, the live coin, the
+/// live Credits, Statements and CreditStrategy, the live pool manager and the live skim hook, all at the pinned block.
+/// the fuzz controller, the hostile listing target and the test listing adapter stay fresh test attackers the owner
+/// installs, the way the live Core's own setters install any controller or adapter. the balance side of the phase 2
+/// suites is the fresh Phase2BalanceTreasury on the live BALANCE token, entered through the shared `_enterPhase2`.
+/// the sniper window start state is the one exception: a fresh launch's elevated anti sniper skim cannot be reached on
+/// a post launch fork, so the window suite overrides `_setUpBase` to deploy a fresh system (see InvariantsPhase1Window).
+abstract contract InvariantFixture is LiveFixture {
     /// eth the whale spends on coin. in steady state 9.5 percent of it becomes pot
     uint256 internal constant FUND_ETH = 100 ether;
     /// credits that stay in the eth pile after the pre filled composes, so two more fill it to 80
@@ -57,7 +67,7 @@ abstract contract InvariantFixture is Fixture {
 
     /// @dev the suites differ in the redemption phase, the controller, the start state and the tag of their counters.
     function _build(bool phase2, bool hostile, bool canSwapController, bool inWindow, string memory tag) internal {
-        Fixture.setUp();
+        _setUpBase();
         filler = _user("inv.filler");
         whale = _user("inv.whale");
         fuzz = new FuzzController(address(core));
@@ -74,8 +84,10 @@ abstract contract InvariantFixture is Fixture {
             coin: coin,
             router: router,
             launchKey: launchKey,
-            hook: lc.stack.hook,
-            mev: lc.mevModule,
+            // the live skim hook and its mev module for the launch pool, read from the live system (on a fresh deploy
+            // these are the same stack contracts the config carries)
+            hook: core.HOOK(),
+            mev: IArtCoinsHookV2(core.HOOK()).poolInfo(poolId).mevModule,
             poolId: poolId,
             owner: owner,
             v1: address(ctl),
@@ -108,6 +120,30 @@ abstract contract InvariantFixture is Fixture {
             assertLt(block.timestamp, launchTime + SNIPER_WINDOW / 2, "the window start state drifted");
         }
         _targets(phase2);
+        // the setup is complete: measure invariant 8 gains from here. on the live Core the owner is the payee, so the
+        // setup buys and composes already pushed it the payee share; that is folded into the base now
+        handler.resnapWatched();
+    }
+
+    /// @dev the base setUp of the suites. the default binds the live system (`LiveFixture`) and adds the raw listing
+    /// adapter the hostile target is reached through, placed with `etch` at a namespaced address and approved by the
+    /// owner through the live Core's real `addAdapter`, a pure test helper. the sniper window suite overrides this to
+    /// deploy a fresh system, since the elevated anti sniper skim of a fresh launch is a state a post launch fork cannot
+    /// reach
+    function _setUpBase() internal virtual {
+        LiveFixture.setUp();
+        rawAdapter = _user("rawAdapter");
+        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
+        vm.prank(owner);
+        core.addAdapter(rawAdapter);
+    }
+
+    /// @dev true when the suite runs against the production stage B live state (ControllerV2 selected, the treasury
+    /// selected, the settings patch applied), driven by the lead through `LIVE_STAGE=B`. a smoke whose subject only
+    /// exists on ControllerV1 (the credit sale) returns early in stage B. the invariant functions themselves read the
+    /// controller, settings and module from the live Core, so they hold under either controller
+    function _liveStageB() internal view returns (bool) {
+        return keccak256(bytes(vm.envOr("LIVE_STAGE", string("")))) == keccak256("B");
     }
 
     /// the controller that sells for the owner and the heirs of the handover chain, handed to the handler. the selling
@@ -232,6 +268,9 @@ abstract contract InvariantFixture is Fixture {
     /// run starts. in the balance side the balance token bid is funded and 80 more credits are sold into it, so the balance side has a
     /// full page
     function _prefill(bool phase2, bool inWindow) internal {
+        // the pile the live Core already holds at the pin. the prefill adds to it, so its end states are measured
+        // relative to this start, which is zero on a fresh deploy
+        uint256 pileStart = core.pileSize();
         uint256 ethN = COMPOSES * 80 + LEFT_IN_PILE;
         uint256[] memory ids = _credits(filler, ethN + (phase2 ? 80 : 0));
         vm.fee(1 gwei);
@@ -254,12 +293,20 @@ abstract contract InvariantFixture is Fixture {
             spent += beforePot - core.ethPot();
         }
         handler.seedSpendBooks(openingPot, spent, block.timestamp);
+        // under the live settings the credit sale is on, and then a credit cannot be composed until its sale window
+        // has passed (CreditSale.window, the gate `nextPage` reads through `pastWindow`). the prefill composes the
+        // credits it just sold, so let the live window elapse first, otherwise `compose` reverts NotReady. this is the
+        // window the live system already runs, not a value pranked in. the window start state keeps the launch config
+        // with the sale off, so it needs no wait and stays inside the sniper window
+        if (!inWindow && ctl.creditSaleOn()) {
+            vm.warp(block.timestamp + ctl.creditWindow() + 1);
+        }
         uint256 firstStatement = STATEMENTS.supply() + 1;
         for (uint256 i; i < COMPOSES; ++i) {
             vm.prank(keeper);
             core.compose();
         }
-        assertEq(core.pileSize(), LEFT_IN_PILE);
+        assertEq(core.pileSize(), pileStart + LEFT_IN_PILE);
         if (!inWindow) {
             (sold1, price1) = _saleOf(firstStatement);
             assertGt(core.ethToBuyback(), 0);
@@ -276,7 +323,7 @@ abstract contract InvariantFixture is Fixture {
             // the credits enter the single pile with an eth cost basis
             vm.prank(filler);
             core.sellForBalance(balanceIds);
-            assertEq(core.pileSize(), LEFT_IN_PILE + 80);
+            assertEq(core.pileSize(), pileStart + LEFT_IN_PILE + 80);
         }
     }
 
@@ -342,10 +389,18 @@ abstract contract InvariantFixture is Fixture {
 
     /// tells the handler what the fixture already did, so the ghost model starts level with the core.
     function _seedGhosts(bool) internal {
-        uint256[] memory ids = core.pilePage(0, 200);
-        for (uint256 i; i < ids.length; ++i) {
-            (, uint256 cost,) = core.creditInfo(ids[i]);
-            handler.seedGhostPile(ids[i], cost);
+        // page the whole pile, not only the first 200: the live Core may already hold more than one page, and the ghost
+        // model must start level with every credit in the pile. `pilePage(startAfter, n)` is a cursor on the last id
+        uint256 cursor;
+        while (true) {
+            uint256[] memory ids = core.pilePage(cursor, 200);
+            if (ids.length == 0) break;
+            for (uint256 i; i < ids.length; ++i) {
+                (, uint256 cost,) = core.creditInfo(ids[i]);
+                handler.seedGhostPile(ids[i], cost);
+            }
+            cursor = ids[ids.length - 1];
+            if (ids.length < 200) break;
         }
         uint256[] memory held = core.heldStatements();
         for (uint256 i; i < held.length; ++i) {

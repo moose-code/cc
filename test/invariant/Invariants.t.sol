@@ -8,6 +8,7 @@ import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Halving} from "../../src/lib/Halving.sol";
 import {IArtCoinsMevSkimV2} from "../../src/interfaces/ArtCoinsV2.sol";
 import {InvariantFixture} from "./InvariantFixture.sol";
+import {Fixture} from "../utils/Fixture.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 
 /// @notice SPEC section 10 as reworked by docs/DECISIONS.md, one `invariant_` function per item, against the real system on
@@ -174,7 +175,10 @@ abstract contract InvariantsBase is InvariantFixture {
         for (uint256 i; i < n; ++i) {
             address c = handler.watched(i);
             (uint256 eth, uint256 coin_, uint256 credits_, uint256 statements_, uint256 xt_) = handler.baseOf(c);
-            assertLe(c.balance, eth, "owner or controller gained eth");
+            // a watched address that is the configured payee (the owner on the live Core) legitimately receives the
+            // payee share the book pushes. allow its eth to grow by exactly the share pushed to it over the campaign,
+            // never more. on the fresh fixture the payee is a separate account, so this allowance is zero
+            assertLe(c.balance, eth + handler.gPayeeOut(c), "owner or controller gained eth beyond the payee share");
             assertLe(coin.balanceOf(c), coin_, "owner or controller gained coin");
             assertLe(CREDITS.balanceOf(c), credits_, "owner or controller gained credits");
             assertLe(_statementsBalance(c), statements_, "owner or controller gained statements");
@@ -933,6 +937,9 @@ abstract contract InvariantsBase is InvariantFixture {
     /// core takes the controller's sellCreditTo, then the sale is turned on and a page is refilled for the buyers.
     /// chosen composition is covered by its own test, which builds the page of 80 it needs
     function _creditSmoke() internal {
+        // the credit sale lives on ControllerV1 (`setCredit`, `creditSaleOn`). in the stage B live state the controller
+        // is ControllerV2, which has no credit sale, so this smoke has no subject there
+        if (_liveStageB()) return;
         if (core.controller() != address(ctl) && !core.controllerLocked()) {
             vm.prank(handler.owner());
             core.setController(address(ctl));
@@ -957,7 +964,9 @@ abstract contract InvariantsBase is InvariantFixture {
             vm.prank(handler.owner());
             core.setController(address(ctl));
         }
-        if (ctl.creditSaleOn()) {
+        // turning the credit sale off keeps the compose window trivially satisfied. the sale is a ControllerV1 feature;
+        // the stage B controller (ControllerV2) has no sale to turn off, so the page is built straight away there
+        if (!_liveStageB() && ctl.creditSaleOn()) {
             CreditSale memory cs = _creditSale();
             cs.saleOn = false;
             vm.prank(handler.owner());
@@ -1113,6 +1122,13 @@ contract InvariantsPhase1Deep is InvariantsPhase1 {
 contract InvariantsPhase1Window is InvariantsBase {
     function setUp() public virtual override {
         _build(false, false, true, true, "w1");
+    }
+
+    /// this variant stays on the fresh fixture, not the live Core. the elevated anti sniper skim of the launch window
+    /// (the premise of `test_startsInsideTheSniperWindow` and the window `_smoke`) is a fresh launch state the live
+    /// system cannot return to on a post launch fork, so a fresh system is deployed to exercise the window
+    function _setUpBase() internal override {
+        Fixture.setUp();
     }
 
     // promise: inv 10 the window suite starts inside the anti sniper window

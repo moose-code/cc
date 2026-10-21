@@ -135,6 +135,9 @@ abstract contract HandlerSale is HandlerOwner {
         if (core.payee().balance != p.payee0 + toOperator) {
             _flag(V_SALE_PATH, "the operator cut was not pushed to the payee");
         }
+        // the operator cut is a legitimate payee flow. track it so invariant 8 allows the payee (the owner on the live
+        // Core) to receive it
+        gPayeeOut[core.payee()] += toOperator;
         _booked(paid);
         if (_ownerOf(sid) != p.buyer) _flag(V_SALE_PATH, "the buyer does not hold the statement");
         (bool held,,) = core.statementInfo(sid);
@@ -526,6 +529,9 @@ abstract contract HandlerSale is HandlerOwner {
         if (core.payee().balance != p.payee0 + acc.operatorSum) {
             _flag(V_SALE_PATH, "the operator cut was not pushed to the payee");
         }
+        // the operator cut of the credit sale is a legitimate payee flow, tracked for invariant 8 the same as the
+        // statement sale operator cut
+        gPayeeOut[core.payee()] += acc.operatorSum;
         _eth(p.bal, acc.artistSum + acc.operatorSum, acc.priceSum, "credit buy");
         _booked(acc.priceSum);
     }
