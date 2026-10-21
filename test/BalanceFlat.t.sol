@@ -276,6 +276,8 @@ contract BalanceFlatTest is LiveFixture {
 contract BalanceFlatNoModuleTest is LiveFixture {
     // promise: SPEC 9 with no module balanceRate reads the posted rate, balanceBidOf reads 0 and the door reverts
     function test_noModule() public {
+        // the no module baseline only exists before phase 2; stage B selects the treasury, so the promise does not apply
+        if (_liveStageB()) return;
         assertEq(core.balanceModule(), address(0));
         uint16 disc = core.settings().balanceDiscountBps;
         assertEq(core.balanceRate(), 10_000 - disc, "posted with no module is 10000 - live discount");

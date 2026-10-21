@@ -346,13 +346,19 @@ contract ValueReferenceTest is ValueBase {
         (uint256 v, bool ok) = ctl.valuePerPoint(false);
         assertTrue(ok, "the quote reads the reseeded ring");
         assertEq(v, FullMath.mulDiv(POINT_UNIT * _moduleUnit(), live, 1e18), "the buy price is the live spot");
-        // the ring and the refresh block hold the live values (slots 9 to 12 of the controller storage layout)
-        assertEq(uint256(vm.load(address(ctl), bytes32(uint256(9)))), live, "spotSampleA");
-        assertEq(uint256(vm.load(address(ctl), bytes32(uint256(10)))), live, "spotSampleB");
-        uint256 liqs = uint256(vm.load(address(ctl), bytes32(uint256(11))));
-        assertEq(uint128(liqs), _liquidityNow(), "liqSampleA");
-        assertEq(uint128(liqs >> 128), _liquidityNow(), "liqSampleB");
-        assertEq(uint48(uint256(vm.load(address(ctl), bytes32(uint256(12))))), uint48(block.number), "lastRefreshBlock");
+        // the ring and the refresh block hold the live values (slots 9 to 12 of the ControllerV1 storage layout). the
+        // reseed behavior is asserted above through the getters in both states; these raw slot reads assume the V1
+        // layout, which the stage B ControllerV2 does not share, so they run only against V1
+        if (!_liveStageB()) {
+            assertEq(uint256(vm.load(address(ctl), bytes32(uint256(9)))), live, "spotSampleA");
+            assertEq(uint256(vm.load(address(ctl), bytes32(uint256(10)))), live, "spotSampleB");
+            uint256 liqs = uint256(vm.load(address(ctl), bytes32(uint256(11))));
+            assertEq(uint128(liqs), _liquidityNow(), "liqSampleA");
+            assertEq(uint128(liqs >> 128), _liquidityNow(), "liqSampleB");
+            assertEq(
+                uint48(uint256(vm.load(address(ctl), bytes32(uint256(12))))), uint48(block.number), "lastRefreshBlock"
+            );
+        }
         // a refresh in the same block is refused, so the seed block is the last sample
         assertFalse(ctl.refreshReference(), "no refresh in the seed block");
         // one block later the quote still reads the reseeded ring
@@ -507,7 +513,8 @@ contract ValueReferenceTest is ValueBase {
                 minLiquidity: 0
             })
         );
-        // tol 500 needs a credit spread of at least 1,053, above the fixture's 1,000: the loop would not close
+        // tol 500 needs a credit spread of at least 1,053, above the live 1,000: the loop would not close. a nonzero
+        // minLiquidity so stage B ControllerV2 (which rejects a zero minLiquidity first) reaches the loop closure check
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
         ctl.setQuote(
             Quote({
@@ -516,7 +523,7 @@ contract ValueReferenceTest is ValueBase {
                 tolBps: 500,
                 referenceMaxStale: 1,
                 referenceMinSeconds: 0,
-                minLiquidity: 0
+                minLiquidity: 1e18
             })
         );
         // step 700 at tol 450 widens the reference band past the bid margin
@@ -528,7 +535,7 @@ contract ValueReferenceTest is ValueBase {
                 tolBps: 450,
                 referenceMaxStale: 1,
                 referenceMinSeconds: 0,
-                minLiquidity: 0
+                minLiquidity: 1e18
             })
         );
         // a valid quote: the reference triple set, tol 450 inside the loop closure and the band
@@ -639,7 +646,11 @@ contract ValueModeTest is ValueBase {
         _fundPot(20 ether);
         _warp(2 hours);
         _valueOn();
-        assertEq(core.balanceRate(), 9_000, "the switch opens the shared instance at the floor");
+        assertEq(
+            core.balanceRate(),
+            10_000 - core.settings().balanceDiscountBps,
+            "the posted balance rate is 10000 minus the live discount"
+        );
         assertEq(core.ethRate(), _valueRate(9_000), "the eth bid is the shared rate times the value per point");
         assertEq(core.ethPrice(), _valueRate(9_000));
         uint256[] memory ids = _credits(seller, 1);
@@ -687,7 +698,11 @@ contract ValueModeTest is ValueBase {
         s.balanceBidOn = true;
         _setSettings(s);
         assertEq(core.ethPrice(), climbed, "the bid turning on does not reset it");
-        assertEq(core.balanceRate(), 9_000, "the posted balance rate throughout");
+        assertEq(
+            core.balanceRate(),
+            10_000 - core.settings().balanceDiscountBps,
+            "the posted balance rate throughout is 10000 minus the live discount"
+        );
     }
 
     // promise: a stale value quote closes acquisitions while fee booking and age-only redemption stay live
@@ -933,6 +948,11 @@ contract ValueModeTest is ValueBase {
 
     // promise: a real pool move can leave the prior-block Credit ask below a later ETH bid after the production lock
     function test_persistentRealPoolRiseCanOutrunTheAskAfterReturnLock() public {
+        // this hazard is a ControllerV1 credit-pricing property: a persistent pool rise can leave the stale ask under a
+        // later bid. Stage B ControllerV2 prices the ask to keep pace, so after the six hour lock the later bid no
+        // longer outruns it (the round trip loses, trace: back 11037e12 < ask 11261e12), a strictly safer behavior, so
+        // the promise does not apply after stage B
+        if (_liveStageB()) return;
         uint256[] memory ids = _fillEthPile(1);
         _valueOn();
         _setCreditSaleOn(true);
@@ -1194,7 +1214,23 @@ contract ValueModeTest is ValueBase {
         vm.warp(block.timestamp + uint256(ctl.decayHours()) * 1 hours);
         ctl.refreshReference();
         ref = ctl.valueOf(core.ratingOf(c.sid)) * ctl.floorMultBps() / 10_000;
-        assertEq(ctl.priceOf(c.sid), ref, "the aged curve rests at the protected floor, not at saleFloorBps");
+        // the aged curve rests at the protected floor, scaled by the controller's statement sale multiplier: 1x on
+        // ControllerV1, the stage B ControllerV2's statementSaleMultiplierBps (decision 256) otherwise. the controller
+        // rounds the product once where this recomputes it in two steps, so allow the one wei of integer division
+        assertApproxEqAbs(
+            ctl.priceOf(c.sid),
+            ref * _statementSaleMultiplierBps() / 10_000,
+            1,
+            "the aged curve rests at the protected floor times the statement sale multiplier"
+        );
+    }
+
+    /// the controller's statement sale multiplier, bps: 10_000 on ControllerV1 (no such field), the stage B
+    /// ControllerV2's `statementSaleMultiplierBps` otherwise. read by a low level call so the suite stays V1 typed
+    function _statementSaleMultiplierBps() internal view returns (uint256 mult) {
+        mult = 10_000;
+        (bool ok, bytes memory out) = address(ctl).staticcall(abi.encodeWithSignature("statementSaleMultiplierBps()"));
+        if (ok && out.length == 32) mult = abi.decode(out, (uint256));
     }
 
     // test_statementQuoteCoversHistoricalCostFloor moved to ValueModeFixtureTest: it pushes the spot to one percent of
