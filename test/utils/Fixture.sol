@@ -748,7 +748,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice sets the stand in balance module and balance token and turns both balance side switches on, so redemptions and the
     /// balance token bid both run. the module holds the balance token (the Core holds none): it is funded a launch
     /// allocation, and redemptions mint their proceeds into it
-    function _enterPhase2() internal {
+    function _enterPhase2() internal virtual {
         xt = new MockBalanceToken("Balance Token", "XT");
         mod = new MockBalanceModule(address(xt), UNIT);
         xt.mint(address(mod), 1e24);

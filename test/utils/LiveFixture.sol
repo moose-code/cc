@@ -5,10 +5,14 @@ import {Fixture} from "./Fixture.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {IArtCoinsTokenV2} from "../../src/interfaces/ArtCoinsV2.sol";
+import {IPhase2BalanceTreasury} from "../../src/interfaces/IPhase2BalanceTreasury.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {TestSwapRouter} from "./TestSwapRouter.sol";
+import {V2Stack} from "./V2Stack.sol";
 
 /// @notice the owner rule of the phase 2 live fork work: a contract that exists on mainnet is bound at its live
 /// address with its live code and state, never redeployed. this fixture forks mainnet at a recent pinned block and
@@ -135,6 +139,147 @@ abstract contract LiveFixture is Fixture {
             if (ctl.atFloor(held[i])) return held[i];
         }
         revert("no eligible held Statement at the pin: re-pin LIVE_FORK_BLOCK");
+    }
+
+    // ------------------------------------------------------------------ live phase 2 entry (treasury on the live token)
+
+    using StateLibrary for IPoolManager;
+
+    /// the live eth / BALANCE pool the owner selects in stage C: fee 35,000, spacing 350, hookless (docs/RUNBOOK.md,
+    /// the phase 2 rehearsal; confirmed deepest hookless of the pools opened in the token's first hour). native eth is
+    /// currency0
+    uint24 internal constant LIVE_BALANCE_POOL_FEE = 35_000;
+    int24 internal constant LIVE_BALANCE_POOL_SPACING = 350;
+
+    /// the default working balance `_enterPhase2` funds into the treasury, from the live holder (full at every setUp
+    /// because each test re-forks at the pin). large enough for the ordinary few credit balance fills; a suite that
+    /// needs more calls `_fundTreasuryWorking`
+    uint256 internal constant LIVE_WORKING_FUND = 10_000 ether;
+
+    /// the fresh phase 2 treasury selected on the live Core, the balance module of every ported balance suite
+    IPhase2BalanceTreasury internal treasury;
+
+    /// @notice the live phase 2 balance side, replacing the stand in module and token of the base `_enterPhase2`. a
+    /// fresh ProRataRedemptionPolicy and Phase2BalanceTreasury are created on the live BALANCE token from their via_ir
+    /// artifacts (the production deploy path, so the test profile does not recompile them), selected by the owner, their
+    /// switches set to the launch state (conversions and working payments on, CC redemption off, decision 258), and the
+    /// treasury funded a working balance. no balance pool key is set here, so the suites that assert the key-unset state
+    /// still see it; a suite that needs the key calls `_setLiveBalancePool`
+    function _enterPhase2() internal override {
+        address policyAddr = vm.deployCode("ProRataRedemptionPolicy.sol:ProRataRedemptionPolicy");
+        treasury = IPhase2BalanceTreasury(
+            vm.deployCode(
+                "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
+                abi.encode(address(core), liveBalanceToken, policyAddr, address(0))
+            )
+        );
+        vm.prank(owner);
+        core.setBalanceModule(address(treasury));
+        _setSwitches(true, true);
+        vm.prank(owner);
+        treasury.setSwitches(true, true, false);
+        _fundTreasuryWorking(LIVE_WORKING_FUND);
+    }
+
+    /// @notice the treasury's balance token holding, the base of its working funds (the live analogue of the stand in
+    /// module's holding). the Core checks this rose on a redemption and falls on a payout
+    function _moduleCustody() internal view returns (uint256) {
+        return IERC20Lite(liveBalanceToken).balanceOf(address(treasury));
+    }
+
+    /// @notice funds `amount` of live BALANCE into the treasury, raising its working funds (`available`)
+    function _fundTreasuryWorking(uint256 amount) internal {
+        _acquireBalance(address(treasury), amount);
+    }
+
+    /// @notice places `amount` of live BALANCE on `to`, from the live holder when it covers the amount, else by buying
+    /// exact out from the live pool with dealt ETH (ETH has no ink rule, so this is unbounded). the only ways to place
+    /// the non mintable live token on a test account or the treasury
+    function _acquireBalance(address to, uint256 amount) internal {
+        if (amount == 0) return;
+        address holder = vm.envOr("LIVE_BALANCE_HOLDER", LIVE_BALANCE_HOLDER);
+        if (IERC20Lite(liveBalanceToken).balanceOf(holder) >= amount) {
+            vm.prank(holder);
+            IERC20Lite(liveBalanceToken).transfer(to, amount);
+            return;
+        }
+        _buyBalanceExactOut(to, amount);
+    }
+
+    /// @notice buys exactly `amount` of live BALANCE from the live pool with dealt ETH and sends it to `to`. unused ETH
+    /// is refunded by the router
+    function _buyBalanceExactOut(address to, uint256 amount) internal {
+        vm.deal(address(this), address(this).balance + 1_000_000 ether);
+        router.swap{value: 1_000_000 ether}(_liveBalanceKey(), true, int256(amount), to);
+    }
+
+    /// @notice the live eth / BALANCE pool key
+    function _liveBalanceKey() internal view returns (PoolKey memory) {
+        return PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(liveBalanceToken),
+            fee: LIVE_BALANCE_POOL_FEE,
+            tickSpacing: LIVE_BALANCE_POOL_SPACING,
+            hooks: IHooks(address(0))
+        });
+    }
+
+    /// @notice points the controller at the live eth / BALANCE pool at its live spot, the owner's stage C action
+    function _setLiveBalancePool() internal {
+        (uint160 sp,,,) = PM.getSlot0(_liveBalanceKey().toId());
+        IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
+            currency0: IControllerV1.Currency.wrap(address(0)),
+            currency1: IControllerV1.Currency.wrap(liveBalanceToken),
+            fee: LIVE_BALANCE_POOL_FEE,
+            tickSpacing: LIVE_BALANCE_POOL_SPACING,
+            hooks: address(0)
+        });
+        vm.prank(owner);
+        ctl.setBalancePoolKey(k, spotOf(sp));
+    }
+
+    /// @notice the live pool spot, wei per 1e18 BALANCE base units
+    function _liveSpot() internal view returns (uint256) {
+        (uint160 sp,,,) = PM.getSlot0(_liveBalanceKey().toId());
+        return spotOf(sp);
+    }
+
+    /// @notice deploys the test RawListingAdapter at a namespaced address and the owner approves it, so `_buyRaw` works
+    /// on the live Core. the brief allows a raw listing adapter a test approves as owner. `LiveFixture.setUp` does not
+    /// set `rawAdapter` (the fresh `Fixture` did), so a suite that uses `_buyRaw` calls this in its own setUp
+    function _approveRawAdapter() internal {
+        rawAdapter = _user("rawAdapter");
+        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
+        vm.prank(owner);
+        core.addAdapter(rawAdapter);
+    }
+
+    // ------------------------------------------------------------------ fresh successor config (brief: a migration successor is not yet deployed)
+
+    /// @notice populates `lc` from the live system so the inherited fresh core helpers (`_successorCore`, `_launchCore`,
+    /// `buildConfig`) build a successor of the live coin on the live stack. the source Core stays the live one; only the
+    /// not yet deployed successor is fresh. call once in a suite's setUp before a fresh core helper. the salt is distinct
+    /// from the live launch so a fresh coin prediction does not collide
+    function _initLiveConfig() internal {
+        V2Stack.Stack memory st = V2Stack.attach();
+        require(st.hook == core.HOOK(), "v2 record hook does not match the live coin hook: wrong STACK record");
+        lc = defaultConfig();
+        lc.owner = owner;
+        lc.creator = creator;
+        lc.artist = creator;
+        lc.payee = _user("payee");
+        lc.name = "Successor Coin";
+        lc.symbol = "SUCC";
+        lc.salt = keccak256("credits-engine live successor");
+        lc.rateStart = core.RATE_START();
+        lc.settings = core.settings();
+        lc.stack.hook = core.HOOK();
+        lc.stack.factory = st.factory;
+        lc.stack.locker = st.locker;
+        lc.stack.escrow = st.escrow;
+        lc.stack.tickSpacing = core.TICK_SPACING();
+        lc.stack.poolFee = core.POOL_FEE();
+        lc.mevModule = st.mev;
     }
 }
 
