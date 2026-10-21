@@ -89,7 +89,7 @@ contract Phase2LifecycleTest is Test {
     address internal constant LIVE_BALANCE_TOKEN = 0x3620540c994433D7B4a628C46d2ED5F92572eA07;
     /// the pinned fork block, overridable by `LIVE_FORK_BLOCK`. pinned reads are cached on disk and shared; a head fork
     /// refetches every run and is never used. re-pinned to a recent block before each owner send
-    uint256 internal constant LIVE_FORK_BLOCK = 26242107;
+    uint256 internal constant LIVE_FORK_BLOCK = 26242960;
 
     function setUp() public {
         token = vm.envOr("LIVE_BALANCE_TOKEN", LIVE_BALANCE_TOKEN);

@@ -48,7 +48,7 @@ abstract contract LiveFixture is Fixture {
     /// @dev the pinned fork block, overridable by `LIVE_FORK_BLOCK`. post launch with the BALANCE token live and its
     /// ordinary transfers already open. re-pinned to a recent block before each owner send, since the public gateway
     /// serves state only within a proof window behind its head
-    uint256 internal constant LIVE_FORK_BLOCK = 26242107;
+    uint256 internal constant LIVE_FORK_BLOCK = 26242960;
 
     /// a real BALANCE holder, used by `_fundBalance` to place live tokens respecting the token's ink rule. an auction
     /// withdrawer seen in the launch logs; overridable by `LIVE_BALANCE_HOLDER`

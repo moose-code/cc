@@ -5,7 +5,7 @@
 # or record change misses the cache and rebuilds. the fork source is FORK_URL from the environment (anvil.sh), always
 # at the pinned block, so its reads are cached on disk by foundry and shared across worktrees.
 #
-# MODE=attach (default): fork mainnet at a pinned post launch block (26242107) and ATTACH to the live deployed system
+# MODE=attach (default): fork mainnet at a pinned post launch block (26242960) and ATTACH to the live deployed system
 #   on chain id 31337: the Core, ControllerV1, coin and the rest of deployments/1.json are read live off the fork,
 #   nothing is redeployed, and anvil auto impersonates so the Core owner can send. the record deployments/31337.json
 #   is deployments/1.json as chain 31337 with the local rpc, so the web, keeper and indexer read the live launch
@@ -48,7 +48,7 @@ PHASE="${PHASE:-post}"
 PORT="${PORT:-8545}"
 RPC="http://127.0.0.1:$PORT"
 # attach pins a post launch block; deploy forks before the live Core (the master fixture keeps its own block)
-if [ "$MODE" = attach ]; then DEFAULT_FORK_BLOCK=26242107
+if [ "$MODE" = attach ]; then DEFAULT_FORK_BLOCK=26242960
 elif [ "${STACK:-live}" = master ]; then DEFAULT_FORK_BLOCK=26158000
 else DEFAULT_FORK_BLOCK=26208025; fi
 FORK_BLOCK="${FORK_BLOCK:-$DEFAULT_FORK_BLOCK}"
