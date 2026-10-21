@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {MigrationSink} from "./standins/MigrationSink.sol";
@@ -9,7 +9,7 @@ import {MigrationSink} from "./standins/MigrationSink.sol";
 /// decision 89: chosen composition. a caller names 80 pile credits and a format, gated by `chosenComposeOn`, a least
 /// coin balance `minCcToChoose`, and that every named credit is in the pile and past its window. `compose` shares the
 /// internal path with the controller's default page. both produce the same statement record for the same 80 ids
-contract ChosenComposeTest is Fixture {
+contract ChosenComposeTest is LiveFixture {
     uint256 internal constant PAGE = 80;
     address internal chooser;
 
@@ -24,6 +24,14 @@ contract ChosenComposeTest is Fixture {
     function _pile(uint256 n) internal returns (uint256[] memory page) {
         _fillEthPile(n);
         page = core.pilePage(0, n);
+    }
+
+    /// the same, then past the credit window. the live credit sale is on, so composeChosen and compose take only
+    /// credits past their window; the compose-mechanics tests name credits that are composable under the live sale,
+    /// which the window test (its own subject) does not
+    function _composablePile(uint256 n) internal returns (uint256[] memory page) {
+        page = _pile(n);
+        _warp(ctl.creditWindow() + 1);
     }
 
     /// the first 80 of a pile page as a fixed array
@@ -59,7 +67,7 @@ contract ChosenComposeTest is Fixture {
 
     // promise: INTEGRATION BelowMinCc
     function test_minCcToChoose_belowRevertsAtOrAbovePasses() public {
-        uint256[] memory page = _pile(80);
+        uint256[] memory page = _composablePile(80);
         _on();
         // the chooser holds coin bought through the pool
         _buyCoin(chooser, 0.5 ether);
@@ -82,7 +90,7 @@ contract ChosenComposeTest is Fixture {
 
     // promise: INTEGRATION BadFormat
     function test_format_eightRevertsZeroToSevenPass() public {
-        uint256[] memory page = _pile(80);
+        uint256[] memory page = _composablePile(80);
         _on();
         uint256[80] memory ids = _first80(page);
         uint256 sid = STATEMENTS.supply() + 1;
@@ -100,7 +108,7 @@ contract ChosenComposeTest is Fixture {
 
     // promise: INTEGRATION NotInPile on composeChosen
     function test_REVERT_idNotInPile() public {
-        uint256[] memory page = _pile(80);
+        uint256[] memory page = _composablePile(80);
         _on();
         uint256[80] memory ids = _first80(page);
         // a fresh credit the chooser owns but never sold into the pile
@@ -116,10 +124,11 @@ contract ChosenComposeTest is Fixture {
     function test_window_insideRevertsWhileSaleOn() public {
         uint256[] memory page = _pile(80);
         _on();
+        // the subject here is the window gate while the sale is on, so the sale is set on (its live value); the live
+        // pile still holds credits inside their window, so the gate refuses the page. the specific credit it names is
+        // live pile state, so the selector alone is asserted (not a pinned id)
         _setCreditSaleOn(true);
-        // every named credit was acquired now, inside its window: the gate reverts on the newest, the pile head here
-        // since the whole page shares one acquisition time
-        vm.expectRevert(abi.encodeWithSelector(ICore.InWindow.selector, page[0]));
+        vm.expectPartialRevert(ICore.InWindow.selector);
         _call(_first80(page), 0);
 
         // past the window the same set composes
@@ -135,7 +144,7 @@ contract ChosenComposeTest is Fixture {
 
     // promise: SPEC 1 chosen composition records the cost and rating of the 80 credits (decision 89)
     function test_record_costSumAndRatingRead() public {
-        uint256[] memory page = _pile(80);
+        uint256[] memory page = _composablePile(80);
         _on();
         uint256 sum;
         for (uint256 i; i < PAGE; ++i) {
@@ -154,7 +163,7 @@ contract ChosenComposeTest is Fixture {
     // promise: SPEC 1 the Core stores the composer of every statement (decision 111)
     /// the Core stores the composer of every statement, for `compose` and for `composeChosen`
     function test_record_composerIsTheCaller() public {
-        uint256[] memory page = _pile(80);
+        uint256[] memory page = _composablePile(80);
         _on();
         uint256 sid = STATEMENTS.supply() + 1;
         _call(_first80(page), 0);
@@ -178,7 +187,7 @@ contract ChosenComposeTest is Fixture {
     // promise: SPEC 1 compose and composeChosen run the same internal path (decision 113)
     /// the default page and a chosen call with the same 80 ids and format produce the same record
     function test_parity_composeEqualsComposeChosen() public {
-        uint256[] memory page = _pile(80);
+        uint256[] memory page = _composablePile(80);
         uint256[80] memory ids = _first80(page);
         uint256 sid = STATEMENTS.supply() + 1;
 
@@ -210,5 +219,4 @@ contract ChosenComposeTest is Fixture {
     // ------------------------------------------------------------------ mixed credit sources
 
     // ------------------------------------------------------------------ gas
-
 }
