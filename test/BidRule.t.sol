@@ -5,6 +5,7 @@ import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {BidModel} from "./utils/BidModel.sol";
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, Mainnet, ICreditStrategy} from "../src/interfaces/Interfaces.sol";
 import {ListingTarget} from "./attackers/ListingTarget.sol";
@@ -12,7 +13,14 @@ import {ListingTarget} from "./attackers/ListingTarget.sol";
 /// @notice the credit bid rule on the real stack: the drop per credit with its minute floor, the compounded climb per
 /// minute, the ceiling at a share of the last rate paid with its idle loosening, the funded clamp (the price of one credit
 /// that the pot affords), the settings bounds, and the recovery after a gap in the market price. exact numbers at the launch
-/// settings, hand arithmetic throughout
+/// settings, hand arithmetic throughout.
+///
+/// these mechanics isolate the rate curve by forcing score == RATE_SCORE (ratio 1) with `_unitScore`, which is
+/// unreachable with real credits, and they assert exact numbers that only hold at the launch settings. so this contract
+/// stays on the fresh-deploy `Fixture`. its live counterpart, `BidRuleLiveTest` below, runs the same drop and climb code
+/// paths against the live Core with a real credit and the live settings: the scaled drop and the anchor in
+/// `test_liveFillDropsTheScaledDropAndSetsTheAnchor`, the climb and the rate cap in
+/// `test_liveClimbRaisesTheBidAndHoldsUnderTheRateCap`
 contract BidRuleTest is Fixture {
     /// the price state rules read the clamp alone: the royalty's share of the room is test/ArtistRoyalty.t.sol's
     function _settings() internal view override returns (Settings memory s) {
@@ -450,7 +458,9 @@ contract BidRuleTest is Fixture {
         vm.expectRevert(ICore.AboveBid.selector);
         _buyRaw(firstAsk, abi.encodeCall(ListingTarget.fill, (ids[0], 0)), ids[0], address(listing));
 
-        for (uint256 i; i < 48 && core.bidOf(ids[0]) < firstAsk; ++i) _warp(10 minutes);
+        for (uint256 i; i < 48 && core.bidOf(ids[0]) < firstAsk; ++i) {
+            _warp(10 minutes);
+        }
         assertGe(core.bidOf(ids[0]), firstAsk, "funded climb can reach a rising ask");
         vm.fee(0);
         uint256 rateBefore = core.ethPrice();
@@ -463,7 +473,9 @@ contract BidRuleTest is Fixture {
         vm.prank(keeper);
         vm.expectRevert(ICore.AboveBid.selector);
         _buyRaw(higherAsk, abi.encodeCall(ListingTarget.fill, (ids[1], 0)), ids[1], address(listing));
-        for (uint256 i; i < 48 && core.bidOf(ids[1]) < higherAsk; ++i) _warp(10 minutes);
+        for (uint256 i; i < 48 && core.bidOf(ids[1]) < higherAsk; ++i) {
+            _warp(10 minutes);
+        }
         assertGe(core.bidOf(ids[1]), higherAsk, "the bid reaches a second rising ask only with funded time");
         vm.prank(keeper);
         _buyRaw(higherAsk, abi.encodeCall(ListingTarget.fill, (ids[1], 0)), ids[1], address(listing));
@@ -494,11 +506,12 @@ contract BidRuleTest is Fixture {
     function _forListing() internal returns (uint256 price) {
         _with(_openCeiling);
         _potTo(30 ether);
-        // the listed credit is mocked to 100 points, so its bid is the full rate and the fill drops by dropPer100PointsBps
-        _unitScore(LISTED_A);
-        price = ICreditStrategy(STRATEGY).nftForSale(LISTED_A);
+        // LISTED_A (35377) is burned before the pin, so the still-listed LISTED_B is bought. the listed credit is mocked
+        // to 100 points, so its bid is the full rate and the fill drops by dropPer100PointsBps
+        _unitScore(LISTED_B);
+        price = ICreditStrategy(STRATEGY).nftForSale(LISTED_B);
         _liftRateCap();
-        _warpUntilCeiling(LISTED_A, price);
+        _warpUntilCeiling(LISTED_B, price);
     }
 
     // promise: SPEC 1 buyListing is one fill at the bid
@@ -507,7 +520,7 @@ contract BidRuleTest is Fixture {
         uint256 price = _forListing();
         uint256 rate = core.ethRate();
         vm.prank(keeper);
-        _buyRaw(price, _listingData(LISTED_A), LISTED_A, STRATEGY);
+        _buyRaw(price, _listingData(LISTED_B), LISTED_B, STRATEGY);
         (uint256 anchor, uint256 start,) = _anchor();
         assertEq(anchor, rate, "the anchor is the bid rate");
         assertEq(start, rate);
@@ -832,5 +845,69 @@ contract BidRuleTest is Fixture {
         uint256 start = BidModel.startAfter(s, 1_000, 0);
         assertEq(start, 1_000);
         assertEq(BidModel.dropOnce(s, 1_000, start, RATE_SCORE), 500);
+    }
+}
+
+/// @notice the live counterpart of the ratio-1 mechanics above. the drop and climb code paths are the same; here they
+/// run against the live Core with a real credit (its real score, never forced to 100 points) and the live settings read
+/// at setUp, so the scaled drop uses the live `dropPer100PointsBps` (29) scaled by the credit's score. the exact
+/// launch-settings numbers (110 percent ceiling, the 6 percent loosening, the ratio-1 fill counts) are not reproducible
+/// here and stay in `BidRuleTest`; this contract proves the mechanics hold live, computing every expectation from the
+/// live rate and settings
+contract BidRuleLiveTest is LiveFixture {
+    // the price state after one credit of score `s` bought at state `r`, minute start `start` (CoreLib.drop by hand)
+    function _dropHand(uint256 r, uint256 s, uint256 start) internal view returns (uint256) {
+        uint256 drop = core.settings().dropPer100PointsBps;
+        uint256 floorBps = core.settings().dropFloorBps;
+        uint256 fallNum = drop * s;
+        uint256 denom = 10_000 * RATE_SCORE;
+        uint256 dropped = fallNum >= denom ? 0 : (r * (denom - fallNum)) / denom;
+        uint256 floor = (start * floorBps) / 10_000;
+        return dropped > floor ? dropped : floor;
+    }
+
+    // promise: SPEC 1 the bid rule: a fill drops the price state by dropPer100PointsBps scaled by the credit's score
+    /// a real credit's eth bid is the live rate scaled by its score, and a fill drops the price state by the live
+    /// `dropPer100PointsBps` scaled by that score, leaving the rate paid as the anchor and minute start. the ratio-1
+    /// counterpart with the exact launch drop is BidRuleTest.test_oneFillDropsTheLaunchDrop
+    function test_liveFillDropsTheScaledDropAndSetsTheAnchor() public {
+        _skipSniperWindow();
+        _fundPot(20 ether);
+        uint256 id = _credits(seller, 1)[0];
+        uint256 score = _scoreOf(id);
+        uint256 r0 = core.ethRate();
+        assertEq(core.bidOf(id), r0 * score / RATE_SCORE, "the per-credit bid is the rate scaled by score");
+
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+        assertEq(seller.balance - before, r0 * score / RATE_SCORE, "the seller is paid the scaled bid");
+
+        (uint256 anchor, uint256 start,) = _anchor();
+        assertEq(anchor, r0, "the rate paid per 100 points is the anchor");
+        assertEq(start, r0, "and the start of the minute");
+        assertEq(core.lastFillTime(), block.timestamp, "the fill time is now");
+        assertEq(core.rateAtCheckpoint(), _dropHand(r0, score, r0), "the fall scales the live drop by score");
+    }
+
+    // promise: SPEC 1 the price state climbs over idle time and never passes the rate cap (inv 19)
+    /// a fill after funding the pot sets the anchor; the booked pot then climbs the bid over idle time, bounded by the
+    /// loosened ceiling, and a year of idle loosening rests at the live `rateCap`. the ratio-1 counterparts are
+    /// BidRuleTest.test_ceilingHoldsAt110PercentOfTheAnchor and test_loosenedCeilingNeverPassesTheRateCap
+    function test_liveClimbRaisesTheBidAndHoldsUnderTheRateCap() public {
+        _skipSniperWindow();
+        _fundPot(20 ether);
+        uint256 id = _credits(seller, 1)[0];
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+
+        uint256 afterFill = core.ethRate();
+        _warp(2 hours);
+        uint256 climbed = core.ethRate();
+        assertGt(climbed, afterFill, "the booked pot climbs the bid over idle time");
+        assertLe(climbed, core.settings().rateCap, "the climb never passes the rate cap");
+
+        _warp(365 days);
+        assertEq(core.ethRate(), core.settings().rateCap, "a year of idle loosening rests at the rate cap");
     }
 }
