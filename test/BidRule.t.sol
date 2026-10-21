@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {BidModel} from "./utils/BidModel.sol";
 import {Fixture} from "./utils/Fixture.sol";
 import {LiveFixture} from "./utils/LiveFixture.sol";
@@ -22,15 +23,38 @@ import {ListingTarget} from "./attackers/ListingTarget.sol";
 /// `test_liveFillDropsTheScaledDropAndSetsTheAnchor`, the climb and the rate cap in
 /// `test_liveClimbRaisesTheBidAndHoldsUnderTheRateCap`
 contract BidRuleTest is Fixture {
-    /// the price state rules read the clamp alone: the royalty's share of the room is test/ArtistRoyalty.t.sol's
+    /// the bid rule is proven at the live Core tuning (read from the live Core at pin block 26242107, docs/DECISIONS.md
+    /// 154: the production config differs from the launch defaults). the drop, the climb and the recovery climb differ
+    /// from `Mainnet.defaultSettings()`, and the rate cap; every other bid-rule field (ceilBps 11_000, idleLoosenBps
+    /// 600, climbMultiplierCapBps 40_000, idleStepSeconds 600, peakHalfLife, pointsPerPage) already equals the live
+    /// value, so the ceiling and loosening arithmetic is the same. the fee, caller and reserve plumbing stays at the
+    /// fixture's neutral values, which the fee and reserve suites own, not the bid rule. buyToArtistBps is zeroed so the
+    /// clamp math reads the pot alone (the royalty's share of the room is test/ArtistRoyalty.t.sol's)
     function _settings() internal view override returns (Settings memory s) {
         s = super._settings();
+        s.dropPer100PointsBps = 29;
+        s.climbPerMinBps = 100;
+        s.recoveryClimbPerMinBps = 100;
+        s.rateCap = 17_100_000_000_000_000;
         s.buyToArtistBps = 0;
     }
 
     using stdStorage for StdStorage;
 
     uint256 internal constant START = OPEN_RATE;
+
+    /// @dev the price state after one 100-point credit bought at state `r`, from the live settings (ratio 1, so the fall
+    /// is the full `dropPer100PointsBps`). recomputed through the shared `BidModel`, never a launch constant
+    function _unitDrop(uint256 r) internal view returns (uint256) {
+        return BidModel.dropOnce(core.settings(), r, r, RATE_SCORE);
+    }
+
+    /// @dev `base` grown by `mins` minutes of the live per-minute climb, through the same lnWad/expWad path as
+    /// CoreLib, so the expected read matches the contract within rounding. recomputed from the live climbPerMinBps
+    function _climbOver(uint256 base, uint256 mins) internal view returns (uint256) {
+        int256 lnRate = FixedPointMathLib.lnWad(int256(1e18 + uint256(core.settings().climbPerMinBps) * 1e14));
+        return FixedPointMathLib.mulWad(base, uint256(FixedPointMathLib.expWad(lnRate * int256(mins))));
+    }
 
     /// @dev books `eth` into the buying pot through the real `skim` door
     function _potTo(uint256 eth) internal {
@@ -69,8 +93,8 @@ contract BidRuleTest is Fixture {
         assertEq(r0, START);
         uint256 price = _sellOne();
         assertEq(price, r0, "the rate before the fill");
-        // a 100 point credit drops the rate by dropPer100PointsBps (115 bps at launch): 9_885 / 10_000 of the rate
-        assertEq(core.rateAtCheckpoint(), r0 * 9_885 / 10_000, "the launch drop below the rate paid");
+        // a 100 point credit drops the rate by dropPer100PointsBps (29 bps live, pin 26242107): (10_000 - 29) / 10_000
+        assertEq(core.rateAtCheckpoint(), _unitDrop(r0), "the live drop below the rate paid");
         (uint256 anchor, uint256 start, uint256 bucket) = _anchor();
         assertEq(anchor, r0, "the rate paid is the anchor");
         assertEq(start, r0, "and the start of the minute");
@@ -165,7 +189,7 @@ contract BidRuleTest is Fixture {
         assertEq(
             core.ethRate(), r0 * (10_000 + 17_352) * 11_000 / 1e8, "4,338 intervals times 4 after 30 days and 3 hours"
         );
-        assertEq(core.rateAtCheckpoint(), r0 * 9_885 / 10_000, "stored until the next checkpoint");
+        assertEq(core.rateAtCheckpoint(), _unitDrop(r0), "stored until the next checkpoint");
     }
 
     function _minLoosening(Settings memory s) internal pure {
@@ -300,8 +324,8 @@ contract BidRuleTest is Fixture {
         assertEq(core.rateAtCheckpoint(), price, "the checkpoint at the refill stores the price from before");
         assertEq(core.ethRate(), price, "the read after the refill is that price");
         _warp(10 minutes);
-        // the climb is unscaled (climbPerMinBps 200): 1.02 per minute, 1.02^10 = 1.2189944199947573
-        assertApproxEqRel(core.ethRate(), price * 1_218_994_419_994_757_376 / 1e18, 1e9, "and it climbs from there");
+        // the climb is unscaled (climbPerMinBps 100 live, pin 26242107): 1.01 per minute over ten minutes
+        assertApproxEqRel(core.ethRate(), _climbOver(price, 10), 1e9, "and it climbs from there");
     }
 
     // promise: pending fees do not age the ETH bid before they are booked into buying room
@@ -525,7 +549,7 @@ contract BidRuleTest is Fixture {
         assertEq(anchor, rate, "the anchor is the bid rate");
         assertEq(start, rate);
         assertTrue(anchor != price, "not derived from the cost");
-        assertEq(core.rateAtCheckpoint(), rate * 9_885 / 10_000, "one launch drop below the bid rate");
+        assertEq(core.rateAtCheckpoint(), _unitDrop(rate), "one live drop below the bid rate");
         assertEq(core.lastFillTime(), block.timestamp);
     }
 
@@ -570,11 +594,12 @@ contract BidRuleTest is Fixture {
     // promise: SPEC 1 risk: a market above the bid waits for the climb or setRate
     /// every seller asks the full new price, 200 percent of the old one. the 20 eth pot loosens the ceiling at the 4x
     /// cap, so the ceiling clears 200 percent within minutes, but the per minute climb is unscaled (decision 128 variant
-    /// d, climbPerMinBps 200): the bid reaches 200 percent only when the 2 percent a minute climb gets there, minute 40
+    /// d, climbPerMinBps 100 live, pin 26242107): the bid reaches 200 percent only when the 1 percent a minute climb
+    /// gets there. from the post-drop rate (0.9971 of the anchor) that is minute 70 (0.9971 * 1.01^70 first passes 2x)
     function test_gapUp100Percent_everyAskAtTheNewPriceWaitsForTheClimb() public {
         (uint256 m,) = _minutesToFirstFill(20_000);
         emit log_named_uint("minutes to the first fill, no cheap ask", m);
-        assertEq(m, 40);
+        assertEq(m, 70);
     }
 
     // ------------------------------------------------------------------ decision 128: pot scaled climb
@@ -600,12 +625,14 @@ contract BidRuleTest is Fixture {
     }
 
     // promise: SPEC 4 decision 128 variant d: the per minute climb does not scale with the pot, only the loosening does
-    /// the climb is the launch rate (climbPerMinBps 200, 2 percent a minute) at one, three and ten pages alike
+    /// the climb is the live rate (climbPerMinBps 100, 1 percent a minute) at one, three and ten pages alike. one minute
+    /// of continuous climb grows the rate by `climbPerMinBps` bps, so the factor is `10_000 + climbPerMinBps`
     function test_climbUnscaledByPotPages() public {
         _with(_highCeiling);
-        assertApproxEqAbs(_climbFactorBps(1), 10_200, 2, "one page climbs at 1x");
-        assertApproxEqAbs(_climbFactorBps(3), 10_200, 2, "three pages climb at the same 1x");
-        assertApproxEqAbs(_climbFactorBps(10), 10_200, 2, "ten pages climb at the same 1x");
+        uint256 oneMin = 10_000 + core.settings().climbPerMinBps;
+        assertApproxEqAbs(_climbFactorBps(1), oneMin, 2, "one page climbs at 1x");
+        assertApproxEqAbs(_climbFactorBps(3), oneMin, 2, "three pages climb at the same 1x");
+        assertApproxEqAbs(_climbFactorBps(10), oneMin, 2, "ten pages climb at the same 1x");
     }
 
     /// @dev the loosened ceiling after 10 idle minutes at a pot sized to `pages` pages, in bps of the anchor (10_000
@@ -834,7 +861,7 @@ contract BidRuleTest is Fixture {
         (uint256 peakRate, uint256 peakTime) = _peak();
         assertEq(peakRate, climbed, "the remembered peak is the climbed rate");
         assertEq(peakTime, block.timestamp, "the peak time is the fill");
-        assertEq(core.rateAtCheckpoint(), climbed * 9_885 / 10_000, "one launch drop below the climbed rate");
+        assertEq(core.rateAtCheckpoint(), _unitDrop(climbed), "one live drop below the climbed rate");
     }
 
     // promise: an expired bucket's cleared anchor starts a fresh drop floor on its first fill
