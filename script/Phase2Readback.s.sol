@@ -200,6 +200,15 @@ abstract contract Phase2Checks is LaunchChecks {
             )
         );
         _info("core: creditCostToPotBps", vm.toString(uint256(core.creditCostToPotBps())));
+        address artist = core.artist();
+        _info(
+            "core: artist (the split of decision 255 once wired) / its runtime code hash",
+            string.concat(vm.toString(artist), " / ", vm.toString(artist.codehash))
+        );
+        _info(
+            "core: settings buyToArtistBps / saleToArtistBps / saleToOperatorBps",
+            _three(s.buyToArtistBps, s.saleToArtistBps, s.saleToOperatorBps)
+        );
         _payouts(core, ctl, s);
         _info(
             "core: legacy pots ethToBuyback / ethRedeemBurn (wei)",
