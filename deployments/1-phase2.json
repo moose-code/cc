@@ -88,13 +88,38 @@
     "readback": "Phase2Readback 48 of 48 at block 26243717; split accepted (recipients, allocations, controller)"
   },
   "activation": {
-    "balanceModuleSet": false,
-    "controllerSet": false,
+    "balanceModuleSet": true,
+    "controllerSet": true,
     "conversionEnabled": false,
     "workingPaymentsEnabled": false,
     "ccRedemptionEnabled": false,
     "statementSalesEnabled": false,
     "balancePoolKeySet": false,
-    "artistSet": false
+    "artistSet": true
+  },
+  "stageB": {
+    "transactions": [
+      {
+        "what": "setBalanceModule(treasury)",
+        "hash": "0x0480ab3ab75ddb2740581f4b0b85f6343e49dbd558163c8477c79f9143d32d33",
+        "block": 26243776
+      },
+      {
+        "what": "setController(controllerV2)",
+        "hash": "0x92a78e0cfea86694d2474248ee35c470bd1f5c5286c576fac481323db328664c",
+        "block": 26243791
+      },
+      {
+        "what": "setArtist(split)",
+        "hash": "0xc5b28f1c35d325e92d9886dd8e67acbe9a90863baa07a942696dc41b1116dcd8",
+        "block": 26243806
+      },
+      {
+        "what": "setSettings (balanceDiscountBps 2000, buyToArtistBps 300, saleToArtistBps 300, saleToOperatorBps 0; burns kept)",
+        "hash": "0xe53e509a190c88807460e188a8072ca32ce891bb11e7f47d1ed540e9aea99ba0",
+        "block": 26243807
+      }
+    ],
+    "readback": "Phase2Readback 53 of 53 after stage B; margin 760 bps; keeper v20 (Phase 2 build) skips redeemStatement while conversionReady is false"
   }
 }
