@@ -115,6 +115,9 @@ contract ModeOffPricingRulesTest is LiveFixture {
     // a statement is asked at startBps of its reference at age zero and rests at saleFloorBps of the reference after
     // decayHours
     function test_statementDecay() public {
+        // the decayHours curve is ControllerV1's statement pricing; ControllerV2 prices a held Statement at its
+        // multiplier of the reference after the redeem delay (test/ControllerV2.t.sol), so the curve does not exist in B
+        if (_liveStageB()) return;
         (uint256 sid,) = _composeLive();
         // the reference moves with the climbing floor rate, so read it fresh at each age
         assertEq(
