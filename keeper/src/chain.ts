@@ -3,7 +3,7 @@
 
 import { createPublicClient, fallback, http, zeroAddress, type Address, type PublicClient } from "viem";
 import { readSnapshot, mc, type Snapshot } from "@cc/engine/snapshot";
-import { controllerAbi, coreAbi, erc20Abi, escrowAbi, factoryAbi, treasuryAbi } from "@cc/engine/abis";
+import { controllerAbi, coreAbi, erc20Abi, escrowAbi, factoryAbi, standingBidAbi, treasuryAbi } from "@cc/engine/abis";
 import type { Config, SplitConfig } from "./config.ts";
 import type { State } from "./decide.ts";
 import { log } from "./log.ts";
@@ -77,6 +77,63 @@ export async function readConversionReady(
   return res.status === "success" ? (res.result as boolean) : undefined;
 }
 
+// the standing bid reads of the phase 2 treasury at the block, for the refreshBidReference door and the tick log
+export interface StandingBidRead {
+  // the treasury's redemptionPolicy(), undefined when zero or when the module has no such view
+  policy?: Address;
+  // the policy's VERSION(), undefined when it answers none (the first policy answers "pro-rata-v1", the standing bid
+  // policy "standing-bid-v1")
+  version?: string;
+  // the policy's refreshDue(), undefined when it does not answer (another policy)
+  refreshDue?: boolean;
+  ccRedemptionEnabled?: boolean;
+  // undefined on a treasury built before the bid budget (older ABI)
+  bidBudgetAvailable?: bigint;
+}
+
+// the treasury's policy, switch and budget, then the policy's version and refreshDue, each read tolerant: a treasury
+// without the budget, a module without a policy view or a policy without VERSION leave that field undefined, and the
+// decision skips the door with a reason. nothing is read while no module is bound, and the policy is not read while the
+// treasury names none. exported for the test of the fallbacks
+export async function readStandingBid(
+  client: Pick<PublicClient, "multicall">,
+  balanceModule: Address,
+  blockNumber?: bigint,
+): Promise<StandingBidRead> {
+  if (balanceModule === zeroAddress) return {};
+  const t = { address: balanceModule, abi: treasuryAbi } as const;
+  const [policyRes, enabledRes, budgetRes] = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: true,
+    contracts: [
+      { ...t, functionName: "redemptionPolicy" },
+      { ...t, functionName: "ccRedemptionEnabled" },
+      { ...t, functionName: "bidBudgetAvailable" },
+    ] as const,
+  });
+  const out: StandingBidRead = {
+    ccRedemptionEnabled: enabledRes.status === "success" ? (enabledRes.result as boolean) : undefined,
+    bidBudgetAvailable: budgetRes.status === "success" ? (budgetRes.result as bigint) : undefined,
+  };
+  const policy = policyRes.status === "success" ? (policyRes.result as Address) : undefined;
+  if (!policy || policy === zeroAddress) return out;
+  out.policy = policy;
+  const pc = { address: policy, abi: standingBidAbi } as const;
+  const [versionRes, dueRes] = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: true,
+    contracts: [
+      { ...pc, functionName: "VERSION" },
+      { ...pc, functionName: "refreshDue" },
+    ] as const,
+  });
+  out.version = versionRes.status === "success" ? (versionRes.result as string) : undefined;
+  out.refreshDue = dueRes.status === "success" ? (dueRes.result as boolean) : undefined;
+  return out;
+}
+
 // the artist and operator split's holdings at the block, for the distributeSplit door: its ETH balance, and its balance
 // of the Core's balance token when the BALANCE leg is on (minBalance set) and a token is bound. read tolerant: a failed
 // read leaves the value undefined, which the decision skips with a reason, so a node fault never stalls the other
@@ -139,9 +196,10 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     : [];
   // the phase 2 treasury's conversionReady(), read tolerant: a module without the view (StatementBalanceModule) leaves
   // it undefined, which the decision treats as ready
-  const [conversionReady, splitBalances] = await Promise.all([
+  const [conversionReady, splitBalances, bid] = await Promise.all([
     readConversionReady(client, snap.balanceModule, blockNumber),
     split ? readSplitBalances(client, split, snap.balanceToken, blockNumber) : Promise.resolve(undefined),
+    readStandingBid(client, snap.balanceModule, blockNumber),
   ]);
   const st = snap.settings;
   const state: State = {
@@ -194,6 +252,11 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     balanceToken: snap.balanceToken,
     splitEth: splitBalances?.eth,
     splitBalance: splitBalances?.balance,
+    bidPolicy: bid.policy,
+    bidPolicyVersion: bid.version,
+    bidRefreshDue: bid.refreshDue,
+    ccRedemptionEnabled: bid.ccRedemptionEnabled,
+    bidBudgetAvailable: bid.bidBudgetAvailable,
   };
   return { state, snap };
 }

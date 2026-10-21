@@ -27,7 +27,13 @@ export const GAS_GUESS: { [d in Door]: bigint } = {
   // a Splits v2 push distribute to two recipients: the hash check, the incentive and two transfers (ETH or ERC20),
   // each with a warehouse deposit fallback. a guess until the simulation measures it
   distributeSplit: 150_000n,
+  // StandingBidPolicy.refreshReference: two pool manager reads and the sample, block and reference writes. a guess until
+  // the simulation measures it
+  refreshBidReference: 120_000n,
 };
+
+// the VERSION() answer of the standing bid policy the refreshBidReference door refreshes (src/adapters/StandingBidPolicy.sol)
+export const STANDING_BID_VERSION = "standing-bid-v1";
 
 export interface Settings {
   buybackSlice: bigint;
@@ -104,6 +110,15 @@ export interface State {
   // undefined when not read or when the read failed, which skips the leg with a reason
   splitEth?: bigint;
   splitBalance?: bigint;
+  // the phase 2 treasury's standing bid (decision 258), read tolerant: the treasury's redemptionPolicy() (undefined
+  // while no module is bound, the treasury has no such view or names no policy), that policy's VERSION() (undefined
+  // when it has none), its refreshDue() (undefined when it does not answer), the treasury's ccRedemptionEnabled() and
+  // bidBudgetAvailable() (undefined on a treasury built before the budget)
+  bidPolicy?: Address;
+  bidPolicyVersion?: string;
+  bidRefreshDue?: boolean;
+  ccRedemptionEnabled?: boolean;
+  bidBudgetAvailable?: bigint;
 }
 
 export interface Listing {
@@ -128,8 +143,9 @@ export interface Intended {
   door: Door;
   functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "distribute";
   // the contract the call goes to: the Core by default (every Core door, including the refreshReference door that
-  // forwards to the controller); "split" is the artist and operator split of the distributeSplit door
-  target?: "controller" | "split";
+  // forwards to the controller); "split" is the artist and operator split of the distributeSplit door; "bidPolicy" is
+  // the treasury's standing bid policy of the refreshBidReference door
+  target?: "controller" | "split" | "bidPolicy";
   args: readonly unknown[];
   // the gas the decision assumed; the executor replaces it with the simulation's measure and calls `recheck`
   gas: bigint;
@@ -156,6 +172,8 @@ export interface Policy {
   bookMinSec: number;
   // the distributeSplit door's split and the distributor the call names (the keeper address); undefined leaves the door off
   split?: SplitPolicy;
+  // BID_REFRESH_ALWAYS: the refreshBidReference door runs while the treasury's CC redemption is off
+  bidRefreshAlways?: boolean;
 }
 
 export interface SplitPolicy extends SplitConfig {
@@ -268,6 +286,25 @@ export function refreshReferenceDue(s: State): { ok: boolean; reason: string } {
   return { ok: true, reason: "referenceMinSeconds since the last sample" };
 }
 
+// whether a refresh of the standing bid policy's CC reference is due: the treasury names a policy that answers VERSION()
+// with the standing bid version, CC redemption is on (nothing prices while it is off) unless BID_REFRESH_ALWAYS, and the
+// policy's refreshDue() is true (one refresh per block, referenceMinSeconds since the last sample, the mode on, a priced
+// spot, a nonzero move). the policy's own gates are read through refreshDue rather than restated: a refresh that would
+// not move the reference returns false without reverting, so the simulation cannot catch it
+export function refreshBidReferenceDue(s: State, p: Pick<Policy, "bidRefreshAlways">): { ok: boolean; reason: string } {
+  if (/^0x0{40}$/i.test(s.balanceModule)) return { ok: false, reason: "no balance module bound" };
+  if (!s.bidPolicy) return { ok: false, reason: "no redemption policy: the treasury names none or has no such view" };
+  if (s.bidPolicyVersion !== STANDING_BID_VERSION) {
+    return { ok: false, reason: `redemption policy ${s.bidPolicy} answers VERSION ${s.bidPolicyVersion === undefined ? "nothing" : JSON.stringify(s.bidPolicyVersion)}, not ${STANDING_BID_VERSION}` };
+  }
+  if (!p.bidRefreshAlways && s.ccRedemptionEnabled !== true) {
+    return { ok: false, reason: s.ccRedemptionEnabled === false ? "RedemptionOff: ccRedemptionEnabled is off, nothing prices (BID_REFRESH_ALWAYS=1 refreshes anyway)" : "ccRedemptionEnabled not read" };
+  }
+  if (s.bidRefreshDue === undefined) return { ok: false, reason: "refreshDue not read" };
+  if (!s.bidRefreshDue) return { ok: false, reason: "the policy reports no refresh due: the block gate, referenceMinSeconds, the mode, the spot or a zero move" };
+  return { ok: true, reason: "the policy reports a refresh due" };
+}
+
 // the legs of the artist and operator split that are due: ETH when the split holds at least minEth, the balance token
 // when the BALANCE leg is on (minBalance set), the Core has a balance token and the split holds at least minBalance.
 // a leg whose balance was not read is skipped with its reason rather than guessed
@@ -287,7 +324,8 @@ export function splitLegs(s: State, split: SplitConfig): { due: { token: Address
 }
 
 // every call the keeper would make at this state, in priority order: buyListing (best gap first), buyback, compose,
-// collectEscrow, book, redeemStatement, refreshReference, distributeSplit. returns the updated listing observation map
+// collectEscrow, book, redeemStatement, refreshReference, distributeSplit, refreshBidReference. returns the updated
+// listing observation map
 export function decide(
   s: State,
   listings: Listing[],
@@ -477,6 +515,28 @@ export function decide(
     }
   }
 
+  // 9. refreshBidReference: the standing bid policy's own refreshReference, permissionless and unpaid (no caller payment,
+  // unlike the Core doors), so the keeper pays the gas like the distributeSplit door: gated on the policy's refreshDue,
+  // the treasury's CC redemption switch and the door's base fee ceiling, not on profit; the cost is logged
+  if (on("refreshBidReference")) {
+    const r = refreshBidReferenceDue(s, p);
+    if (!r.ok) skips.push({ door: "refreshBidReference", reason: r.reason });
+    else if (ceiling("refreshBidReference")) {
+      const cost = ownCost(GAS_GUESS.refreshBidReference, gas, p.doors.refreshBidReference);
+      calls.push({
+        door: "refreshBidReference",
+        functionName: "refreshReference",
+        target: "bidPolicy",
+        args: [],
+        gas: GAS_GUESS.refreshBidReference,
+        payment: 0n,
+        cost,
+        key: "refreshBidReference",
+        note: { policy: s.bidPolicy, version: s.bidPolicyVersion, ccRedemptionEnabled: s.ccRedemptionEnabled, bidBudgetAvailable: s.bidBudgetAvailable },
+      });
+    }
+  }
+
   return { calls, skips, seen: nextSeen };
 }
 
@@ -511,6 +571,9 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
       return { ok: true, payment, cost };
     case "distributeSplit":
       // the owner's own money moving; the measured cost is logged, never a gate
+      return { ok: true, payment, cost };
+    case "refreshBidReference":
+      // unpaid upkeep of the owner's policy; the measured cost is logged, never a gate
       return { ok: true, payment, cost };
   }
   // compose and refreshReference are paid through the caller fee: they go only when the Core pays at least the cost

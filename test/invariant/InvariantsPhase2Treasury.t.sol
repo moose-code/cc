@@ -3,18 +3,20 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {IRedemptionPolicy, Mainnet} from "../../src/interfaces/Interfaces.sol";
-import {ITreasury, Phase2StatementsDouble, CoinDouble} from "../Phase2Treasury.t.sol";
+import {ITreasury, Phase2StatementsDouble, CoinDouble, FixedQuotePolicy} from "../Phase2Treasury.t.sol";
 import {Phase2BalanceTokenStandin} from "../standins/Phase2BalanceTokenStandin.sol";
 
 /// the handler is the Core double of its treasuries: it answers owner, coin, retirement and the selected module, and it
 /// is the only caller of `redeem` and `pay`. it interleaves funding, conversions, payments with every token fault mode,
-/// debt claims, CC burns, independent burns, owner settings, reallocations, withdrawals and one migration, and keeps the
-/// ledger ghosts the invariants compare against
+/// debt claims, CC burns through a policy it steers around the share and the bid budget, independent burns, owner
+/// settings including the bid budget, time passing, reallocations, withdrawals and one migration, and keeps the ledger
+/// ghosts the invariants compare against
 contract Phase2TreasuryHandler {
     Phase2StatementsDouble public statements;
     Phase2BalanceTokenStandin public token;
     CoinDouble public coin;
-    address public policy;
+    /// the policy of every treasury: the handler sets its answer before each burn
+    FixedQuotePolicy public policy;
     ITreasury public source;
     ITreasury public current;
     address public owner = address(0xA11CE);
@@ -30,12 +32,18 @@ contract Phase2TreasuryHandler {
     uint256 public claimsPaidByBurns;
     uint256 public ccBurnedByTreasury;
     uint256 public successfulBurns;
-    /// burns paid above floor(x * C / S) of the pre burn snapshot: must stay zero
+    /// burns paid above the larger of floor(x * C / S) and the bid budget of the pre burn snapshot, or above the reserve:
+    /// must stay zero
     uint256 public capViolations;
+    /// burns paid above floor(x * C / S) while the budget was zero: must stay zero
+    uint256 public shareViolations;
+    /// burns paid above the share from the bid budget
+    uint256 public bidsPaid;
     uint256 public successfulConversions;
     uint256 public successfulPays;
     uint256 public debtAccruals;
-    /// the backing per token after the last owner action that may lower it, times 1e36
+    /// the backing per token after the last owner action that may lower it or the last bid paid above the share from
+    /// the owner's budget, times 1e36
     uint256 public rateFloor;
     bool public migratedOnce;
 
@@ -48,7 +56,7 @@ contract Phase2TreasuryHandler {
         token = new Phase2BalanceTokenStandin();
         coin = new CoinDouble();
         coin.mint(holder, 1e27);
-        policy = _deployPolicy();
+        policy = new FixedQuotePolicy();
     }
 
     /// the treasuries bind this handler as their Core, which needs code: deployed after construction
@@ -62,17 +70,9 @@ contract Phase2TreasuryHandler {
         _refreshRateFloor();
     }
 
-    function _deployPolicy() private returns (address p) {
-        bytes memory code = _code("ProRataRedemptionPolicy");
-        assembly ("memory-safe") {
-            p := create(0, add(code, 32), mload(code))
-        }
-        require(p != address(0), "policy");
-    }
-
     function _deployTreasury(address predecessor) private returns (ITreasury t) {
         bytes memory init = abi.encodePacked(
-            _code("Phase2BalanceTreasury"), abi.encode(address(this), address(token), policy, predecessor)
+            _code("Phase2BalanceTreasury"), abi.encode(address(this), address(token), address(policy), predecessor)
         );
         address a;
         assembly ("memory-safe") {
@@ -137,33 +137,73 @@ contract Phase2TreasuryHandler {
         current.claim(to);
     }
 
-    /// a CC burn against the live quote: when the quote says executable the burn must succeed with exactly that output
-    function burn(uint256 ccIn) external {
+    /// the pre burn snapshot a paid burn is checked against
+    struct BurnSnapshot {
+        uint256 supply;
+        uint256 reserve;
+        uint256 share;
+        uint256 budget;
+        uint256 cap;
+        uint128 carried;
+        uint40 time;
+    }
+
+    /// a CC burn against the live quote, the policy answering the share, under it, a bid within the budget or above the
+    /// cap. when the quote says executable the burn must succeed with exactly that output
+    function burn(uint256 ccIn, uint256 bid) external {
         ccIn = bound(ccIn, 1, 1e25);
+        VmLike vm = VmLike(address(uint160(uint256(keccak256("hevm cheat code")))));
         uint256 held = coin.balanceOf(burner);
         if (held < ccIn) {
-            uint256 need = ccIn - held;
-            VmLike(address(uint160(uint256(keccak256("hevm cheat code"))))).prank(holder);
-            coin.transfer(burner, need);
+            vm.prank(holder);
+            coin.transfer(burner, ccIn - held);
         }
-        VmLike vm = VmLike(address(uint160(uint256(keccak256("hevm cheat code")))));
         vm.prank(burner);
         coin.approve(address(current), ccIn);
+        BurnSnapshot memory s = _answer(ccIn, bid);
         (uint256 q,,, uint64 epoch, bool exec) = current.quoteRedemption(ccIn);
-        uint256 supplyBefore = coin.totalSupply();
-        uint256 reserveBefore = current.claimReserve();
         vm.prank(burner);
         try current.redeemCC(ccIn, burner, q, block.timestamp, epoch) returns (uint256 out) {
             require(exec && out == q, "a burn executed against a non executable or different quote");
-            require(coin.totalSupply() == supplyBefore - ccIn, "supply");
-            if (out > ccIn * reserveBefore / supplyBefore) ++capViolations;
-            require(current.claimReserve() == reserveBefore - out, "the reserve fell by exactly the payout");
-            claimsPaidByBurns += out;
-            ccBurnedByTreasury += ccIn;
-            ++successfulBurns;
+            _checkPaid(ccIn, out, s);
         } catch {
             require(!exec || q == 0, "an executable quote failed to execute");
         }
+    }
+
+    /// sets the policy's answer from the live terms and keeps the snapshot
+    function _answer(uint256 ccIn, uint256 bid) private returns (BurnSnapshot memory s) {
+        (s.share, s.budget, s.cap) = current.redemptionTerms(ccIn);
+        s.supply = coin.totalSupply();
+        s.reserve = current.claimReserve();
+        s.carried = current.bidBudgetCarried();
+        s.time = current.bidBudgetTime();
+        uint256 kind = bid % 4;
+        uint256 answer = s.share;
+        if (kind == 1) answer = bound(bid / 4, 0, s.share);
+        else if (kind == 2) answer = bound(bid / 4, s.share, s.cap);
+        else if (kind == 3) answer = s.cap + 1;
+        policy.set(answer);
+    }
+
+    function _checkPaid(uint256 ccIn, uint256 out, BurnSnapshot memory s) private {
+        require(coin.totalSupply() == s.supply - ccIn, "supply");
+        if (out > s.cap || out > s.reserve) ++capViolations;
+        if (s.budget == 0 && out > s.share) ++shareViolations;
+        require(current.claimReserve() == s.reserve - out, "the reserve fell by exactly the payout");
+        if (out > s.share) {
+            require(current.bidBudgetAvailable() == s.budget - out, "the whole payment left the budget");
+            ++bidsPaid;
+            _refreshRateFloor();
+        } else {
+            require(
+                current.bidBudgetCarried() == s.carried && current.bidBudgetTime() == s.time,
+                "a payment within the share touched the budget"
+            );
+        }
+        claimsPaidByBurns += out;
+        ccBurnedByTreasury += ccIn;
+        ++successfulBurns;
     }
 
     /// a burn outside the treasury: the backing per remaining token rises
@@ -231,6 +271,24 @@ contract Phase2TreasuryHandler {
         _asOwner().setMinimumWorkingBalance(v);
     }
 
+    /// the standing bid budget: a positive bounded rate under a bounded maximum, or off
+    function setBidBudget(uint256 perDay, uint256 max_, bool off) external {
+        if (off) {
+            perDay = 0;
+            max_ = 0;
+        } else {
+            max_ = bound(max_, 1e18, 1e24);
+            perDay = bound(perDay, 1e18, max_);
+        }
+        _asOwner().setBidBudget(uint128(perDay), uint128(max_));
+    }
+
+    /// time passes, an hour to a week, so the budget accrues
+    function warp(uint256 secs) external {
+        secs = bound(secs, 1 hours, 7 days);
+        VmLike(address(uint160(uint256(keccak256("hevm cheat code"))))).warp(block.timestamp + secs);
+    }
+
     function toggle(bool a, bool b, bool c) external {
         _asOwner().setSwitches(a, b, c);
     }
@@ -264,6 +322,7 @@ contract Phase2TreasuryHandler {
 
 interface VmLike {
     function prank(address) external;
+    function warp(uint256) external;
     function getCode(string calldata) external view returns (bytes memory);
 }
 
@@ -275,7 +334,7 @@ contract InvariantsPhase2TreasuryTest is Test {
         h = new Phase2TreasuryHandler();
         h.init();
         targetContract(address(h));
-        bytes4[] memory selectors = new bytes4[](15);
+        bytes4[] memory selectors = new bytes4[](17);
         selectors[0] = h.fund.selector;
         selectors[1] = h.convert.selector;
         selectors[2] = h.pay.selector;
@@ -291,6 +350,8 @@ contract InvariantsPhase2TreasuryTest is Test {
         selectors[12] = h.setFloor.selector;
         selectors[13] = h.toggle.selector;
         selectors[14] = h.migrate.selector;
+        selectors[15] = h.setBidBudget.selector;
+        selectors[16] = h.warp.selector;
         targetSelector(FuzzSelector({addr: address(h), selectors: selectors}));
     }
 
@@ -323,15 +384,28 @@ contract InvariantsPhase2TreasuryTest is Test {
         assertEq(reserve, h.claimsIn() - h.claimsReturned() - h.claimsPaidByBurns(), "claim ledger identity");
     }
 
-    // promise: SPEC phase 2 balance leaves the claim reserve only alongside a CC burn, and no burn ever pays more than floor(x * C / S) of the pre burn snapshot
-    function invariant_burnsPayAtMostTheShare() public view {
+    // promise: SPEC phase 2 balance leaves the claim reserve only alongside a CC burn, no burn pays more than the larger of floor(x * C / S) and the bid budget of the pre burn snapshot nor more than the reserve, and without a budget no burn pays more than the share
+    function invariant_burnsPayAtMostTheCap() public view {
         if (h.ccBurnedByTreasury() == 0) {
             assertEq(h.claimsPaidByBurns(), 0, "paid without a burn");
         }
-        assertEq(h.capViolations(), 0, "a burn paid above the proportional share");
+        assertEq(h.capViolations(), 0, "a burn paid above the cap or the reserve");
+        assertEq(h.shareViolations(), 0, "a burn paid above the proportional share without a budget");
     }
 
-    // promise: SPEC phase 2 the backing per remaining token does not fall below the level after the last owner action that could lower it
+    // promise: SPEC phase 2 the bid budget never exceeds its maximum nor the claim reserve, and the carried amount and the rate never exceed the maximum, in every treasury at every step
+    function invariant_bidBudgetWithinMaxAndReserve() public view {
+        (ITreasury[2] memory ts, uint256 n) = _each();
+        for (uint256 i; i < n; ++i) {
+            uint256 budget = ts[i].bidBudgetAvailable();
+            assertLe(budget, ts[i].bidBudgetMax(), "budget above its maximum");
+            assertLe(budget, ts[i].claimReserve(), "budget above the claim reserve");
+            assertLe(ts[i].bidBudgetCarried(), ts[i].bidBudgetMax(), "carried amount above the maximum");
+            assertLe(ts[i].bidBudgetPerDay(), ts[i].bidBudgetMax(), "rate above the maximum");
+        }
+    }
+
+    // promise: SPEC phase 2 the backing per remaining token does not fall below the level after the last owner action that could lower it or the last bid the owner's budget paid above the share
     function invariant_backingPerTokenNeverFallsWithoutOwnerAction() public view {
         uint256 s = h.coin().totalSupply();
         if (s == 0) return;
@@ -357,23 +431,32 @@ contract InvariantsPhase2TreasuryTest is Test {
         h.pay(address(0xBEEF), 1e20, 0);
         h.pay(address(0xBEEF), 1e20, 2);
         h.claimDebt(address(0xBEEF));
-        h.burn(1e24);
+        h.burn(1e24, 0);
+        // a budget of 1e21 accrued over a day, then a bid of the share plus 5e20 within it
+        h.setBidBudget(1e21, 1e21, false);
+        h.warp(1 days);
+        h.burn(1e24, 2e21 + 2);
+        assertEq(h.bidsPaid(), 1);
+        h.burn(1e24, 3);
         h.setFee(500);
-        h.burn(1e24);
+        h.burn(1e24, 0);
         h.returnClaims(1e18);
         h.withdraw(1e18);
         h.independentBurn(1e23);
-        h.burn(1e24);
+        // one unit, under the share
+        h.burn(1e24, 5);
         h.migrate();
         h.convert(6_000_000);
-        h.burn(1e24);
+        h.burn(1e24, 0);
         assertEq(h.successfulConversions(), 2);
         assertEq(h.successfulPays(), 2);
         assertEq(h.debtAccruals(), 1);
-        assertEq(h.successfulBurns(), 4);
+        assertEq(h.successfulBurns(), 5, "the bid above the cap was the only refused burn");
         assertTrue(h.migratedOnce());
         invariant_custodyCoversClaimsAndDebt();
         invariant_claimLedgerIsExplicit();
+        invariant_burnsPayAtMostTheCap();
+        invariant_bidBudgetWithinMaxAndReserve();
         invariant_backingPerTokenNeverFallsWithoutOwnerAction();
         invariant_migratedSourceIsClosed();
     }

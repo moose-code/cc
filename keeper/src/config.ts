@@ -7,8 +7,8 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAddress, parseEther, parseGwei, type Address } from "viem";
 
-export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "distributeSplit";
-export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "refreshReference", "distributeSplit"];
+export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "distributeSplit" | "refreshBidReference";
+export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "refreshReference", "distributeSplit", "refreshBidReference"];
 
 // the owner key never signs a keeper transaction (decision 57)
 export const OWNER: Address = "0xCB43078C32423F5348Cab5885911C3B5faE217F9";
@@ -88,6 +88,9 @@ export interface Config {
   marketView: { port?: number; host: string; token?: string };
   // the distributeSplit door's split; undefined (SPLIT_ADDRESS unset or zero) leaves the door off
   split?: SplitConfig;
+  // BID_REFRESH_ALWAYS=1: the refreshBidReference door runs while the treasury's ccRedemptionEnabled() is off, so the
+  // standing bid policy's CC reference tracks the pool before the owner turns CC redemption on
+  bidRefreshAlways: boolean;
 }
 
 type Env = { [k: string]: string | undefined };
@@ -162,6 +165,7 @@ const DOOR_DEFAULT_TIP: { [d in Door]: string } = {
   redeemStatement: "0.05",
   refreshReference: "0.05",
   distributeSplit: "0.05",
+  refreshBidReference: "0.05",
 };
 
 const DOOR_DEFAULT_BASEFEE: { [d in Door]: string } = {
@@ -173,6 +177,7 @@ const DOOR_DEFAULT_BASEFEE: { [d in Door]: string } = {
   redeemStatement: "3",
   refreshReference: "3",
   distributeSplit: "3",
+  refreshBidReference: "3",
 };
 
 const isAddress = (v: string) => /^0x[0-9a-fA-F]{40}$/.test(v);
@@ -309,6 +314,7 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
       token: env.MARKET_VIEW_TOKEN || undefined,
     },
     split,
+    bidRefreshAlways: env.BID_REFRESH_ALWAYS === "1",
   };
 }
 
@@ -352,5 +358,6 @@ export function describe(c: Config) {
           minBalance: c.split.minBalance === undefined ? "off" : Number(c.split.minBalance) / 1e18,
         }
       : "off",
+    bidRefreshAlways: c.bidRefreshAlways,
   };
 }

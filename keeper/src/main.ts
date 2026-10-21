@@ -163,6 +163,10 @@ export class Keeper {
       // phase 2 reads, logged only: the treasury's conversion gate and the V2 statement redemption delay
       conversionReady: state.conversionReady,
       statementRedeemDelaySeconds: state.statementRedeemDelaySeconds,
+      // the standing bid (decision 258), logged only: the treasury's budget above the proportional share (undefined on a
+      // treasury without the budget) and the redemption policy's version (undefined without a policy or VERSION)
+      bidBudgetAvailable: state.bidBudgetAvailable,
+      bidPolicyVersion: state.bidPolicyVersion,
       // the artist and operator split's holdings, read only while the distributeSplit door is configured
       ...(this.cfg.split ? { splitEth: state.splitEth, splitBalance: state.splitBalance } : {}),
       candidates: listings.length,
@@ -186,6 +190,7 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
     doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec,
     // the keeper names itself as the split's distributor, so a distribution incentive pays its own wallet
     split: cfg.split ? { ...cfg.split, distributor: signer.address } : undefined,
+    bidRefreshAlways: cfg.bidRefreshAlways,
   };
   const sources = new Sources(client, cfg, Date.now, pending);
   const keeper = new Keeper(client, cfg, fixed, sources, new Executor(client, cfg, policy, signer, ledger, breaker, pending), policy);

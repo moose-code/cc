@@ -14,7 +14,7 @@ import {
   type PrivateKeyAccount,
   type PublicClient,
 } from "viem";
-import { controllerAbi, coreAbi, splitV2Abi } from "@cc/engine/abis";
+import { controllerAbi, coreAbi, splitV2Abi, standingBidAbi } from "@cc/engine/abis";
 import { revertName, txError } from "@cc/engine/errors";
 import type { Config } from "./config.ts";
 import { recheck, type Intended, type Listing, type Policy, type State } from "./decide.ts";
@@ -63,15 +63,17 @@ export class Executor {
   }
 
   private data(c: Intended): Hex {
-    const abi = c.target === "controller" ? controllerAbi : c.target === "split" ? splitV2Abi : coreAbi;
+    const abi = c.target === "controller" ? controllerAbi : c.target === "split" ? splitV2Abi : c.target === "bidPolicy" ? standingBidAbi : coreAbi;
     return encodeFunctionData({ abi, functionName: c.functionName as any, args: c.args as any });
   }
 
-  // the contract a decided call goes to: the controller, the configured split, or the Core. exported through `run`
-  // for the test of the selection; a split call without a configured split is refused before any simulation
-  target(c: Intended, s: Pick<State, "controller">): Address | undefined {
+  // the contract a decided call goes to: the controller, the configured split, the treasury's standing bid policy read
+  // at the state's block, or the Core. exported through `run` for the test of the selection; a split call without a
+  // configured split, or a policy call without a policy, is refused before any simulation
+  target(c: Intended, s: Pick<State, "controller" | "bidPolicy">): Address | undefined {
     if (c.target === "controller") return s.controller;
     if (c.target === "split") return this.policy.split?.address;
+    if (c.target === "bidPolicy") return s.bidPolicy;
     return this.cfg.record.core;
   }
 
@@ -83,7 +85,7 @@ export class Executor {
     const chainId = this.cfg.record.chainId;
     if (this.breaker.paused(c.door)) return { kind: "skipped", reason: `door paused by the breaker until ${new Date(this.breaker.pausedUntil(c.door)!).toISOString()}` };
     const to = this.target(c, s);
-    if (!to) return { kind: "failed", reason: "no split configured for the distributeSplit call" };
+    if (!to) return { kind: "failed", reason: c.target === "bidPolicy" ? "no standing bid policy for the refreshBidReference call" : "no split configured for the distributeSplit call" };
     const data = this.data(c);
     const pol = this.policy.doors[c.door];
     const fee = { maxFeePerGas: pol.maxBaseFee + pol.tip, maxPriorityFeePerGas: pol.tip };

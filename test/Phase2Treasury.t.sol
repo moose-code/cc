@@ -52,6 +52,8 @@ interface ITreasury is IBalanceModule {
         uint256 ccSupply,
         uint64 configEpoch
     );
+    event BidBudgetSet(uint128 perDay, uint128 max, uint128 carried, uint64 configEpoch);
+    event BidPaid(uint256 aboveShare, uint256 budgetLeft);
     event ClaimsReturned(uint256 amount, uint256 claimReserve, uint64 configEpoch);
     event TreasuryMigrated(address indexed successor, uint256 moved, uint256 claimsImported, uint64 configEpoch);
 
@@ -78,6 +80,12 @@ interface ITreasury is IBalanceModule {
     function ccRedemptionEnabled() external view returns (bool);
     function redemptionPolicy() external view returns (address);
     function configEpoch() external view returns (uint64);
+    function bidBudgetPerDay() external view returns (uint128);
+    function bidBudgetMax() external view returns (uint128);
+    function bidBudgetCarried() external view returns (uint128);
+    function bidBudgetTime() external view returns (uint40);
+    function bidBudgetAvailable() external view returns (uint256);
+    function redemptionTerms(uint256 ccIn) external view returns (uint256 share, uint256 budget, uint256 cap);
     function migrated() external view returns (bool);
     function quoteRedemption(uint256 ccIn)
         external
@@ -94,6 +102,7 @@ interface ITreasury is IBalanceModule {
     function setSwitches(bool conversion, bool workingPayments, bool ccRedemption) external;
     function setConversionToClaimBps(uint16 v) external;
     function setRedemptionFeeBps(uint16 v) external;
+    function setBidBudget(uint128 perDay, uint128 max_) external;
     function setMinimumWorkingBalance(uint256 v) external;
     function setRedemptionPolicy(address policy) external;
     function fundClaims(uint256 amount) external returns (uint256);
@@ -188,6 +197,30 @@ contract RoguePolicy is IRedemptionPolicy {
     }
 }
 
+/// a policy that answers a set amount on live inputs and `probeAnswer` on the treasury's probe inputs: the standing
+/// bid double, so a test places the answer against the share and the budget
+contract FixedQuotePolicy is IRedemptionPolicy {
+    uint256 public answer;
+    uint256 public probeAnswer = 0.25e18;
+
+    function set(uint256 a) external {
+        answer = a;
+    }
+
+    function setProbe(uint256 a) external {
+        probeAnswer = a;
+    }
+
+    function quote(uint256 ccIn, uint256 claimReserve, uint256 ccSupply, uint256) external view returns (uint256) {
+        if (ccIn == 1e18 && claimReserve == 1e18 && ccSupply == 4e18) return probeAnswer;
+        return answer;
+    }
+
+    function isRedemptionPolicy() external pure returns (bool) {
+        return true;
+    }
+}
+
 /// a successor Core double: owner, coin, retirement, successor and the selected module
 contract CoreDouble {
     address public owner;
@@ -242,6 +275,8 @@ contract Phase2TreasuryTest is Test {
     address internal artist = address(0xA27);
     address internal burner = address(0xB0B);
     uint256 internal constant SUPPLY = 1e27;
+    /// a timestamp the bid budget tests start from, so day accruals are whole
+    uint256 internal constant T0 = 1_700_000_000;
 
     function COIN() external view returns (address) {
         return address(coin);
@@ -288,6 +323,20 @@ contract Phase2TreasuryTest is Test {
         uint64 epoch = t.configEpoch();
         vm.prank(burner);
         return t.redeemCC(ccIn, burner, minOut, block.timestamp, epoch);
+    }
+
+    /// live with 100 working and 40 claims from `T0`, the bid double installed, a budget of `perDay` accrued for one day
+    function _liveWithBid(uint128 perDay) internal returns (FixedQuotePolicy bid) {
+        vm.warp(T0);
+        _live(100 ether, 40 ether);
+        _burnerWith(SUPPLY / 100);
+        bid = new FixedQuotePolicy();
+        vm.startPrank(owner);
+        t.setRedemptionPolicy(address(bid));
+        t.setBidBudget(perDay, perDay);
+        t.setSwitches(true, true, true);
+        vm.stopPrank();
+        vm.warp(T0 + 1 days);
     }
 
     // ------------------------------------------------------------------ deployment
@@ -721,6 +770,285 @@ contract Phase2TreasuryTest is Test {
         vm.prank(burner);
         vm.expectRevert(ITreasury.Insolvent.selector);
         t.redeemCC(SUPPLY / 1000, burner, 0, block.timestamp, epoch);
+    }
+
+    // ------------------------------------------------------------------ the standing bid budget
+
+    // promise: SPEC phase 2 the bid budget is zero at deployment, so the proportional share is the cap and a policy answering above it is refused
+    function test_bidBudgetIsZeroAtDeployment() public {
+        assertEq(t.bidBudgetPerDay(), 0);
+        assertEq(t.bidBudgetMax(), 0);
+        assertEq(t.bidBudgetCarried(), 0);
+        assertEq(t.bidBudgetTime(), 0);
+        assertEq(t.bidBudgetAvailable(), 0);
+        _live(100 ether, 40 ether);
+        _burnerWith(SUPPLY / 100);
+        FixedQuotePolicy bid = new FixedQuotePolicy();
+        vm.startPrank(owner);
+        t.setRedemptionPolicy(address(bid));
+        t.setSwitches(true, true, true);
+        vm.stopPrank();
+        uint256 x = SUPPLY / 1000;
+        (uint256 share, uint256 budget, uint256 cap) = t.redemptionTerms(x);
+        assertEq(share, x * 40 ether / coin.totalSupply());
+        assertEq(budget, 0);
+        assertEq(cap, share, "the share is the cap without a budget");
+        bid.set(share + 1);
+        (uint256 q,,,, bool exec) = t.quoteRedemption(x);
+        assertEq(q, 0, "the view refuses one unit above the share");
+        assertFalse(exec);
+        uint64 epoch = t.configEpoch();
+        vm.prank(burner);
+        vm.expectRevert(ITreasury.BadPolicy.selector);
+        t.redeemCC(x, burner, 0, block.timestamp, epoch);
+        bid.set(share);
+        assertEq(_redeem(x, share), share, "the share itself is paid");
+        assertEq(t.bidBudgetAvailable(), 0);
+        assertEq(t.bidBudgetCarried(), 0);
+    }
+
+    // promise: SPEC phase 2 the bid budget accrues per day on top of the carried amount, stops at the maximum and at the claim reserve, and a change settles the accrual, keeps it and lowers it to a smaller maximum
+    function test_setBidBudgetAccruesAndSettles() public {
+        vm.warp(T0);
+        _live(100 ether, 40 ether);
+        vm.prank(owner);
+        t.setBidBudget(1 ether, 10 ether);
+        assertEq(t.bidBudgetPerDay(), 1 ether);
+        assertEq(t.bidBudgetMax(), 10 ether);
+        assertEq(t.bidBudgetCarried(), 0);
+        assertEq(t.bidBudgetTime(), T0);
+        assertEq(t.bidBudgetAvailable(), 0, "nothing accrued yet");
+        vm.warp(T0 + 12 hours);
+        assertEq(t.bidBudgetAvailable(), 0.5 ether);
+        vm.warp(T0 + 3 days);
+        assertEq(t.bidBudgetAvailable(), 3 ether);
+        vm.warp(T0 + 30 days);
+        assertEq(t.bidBudgetAvailable(), 10 ether, "stops at the maximum");
+        // a raise settles and keeps the accrual
+        vm.prank(owner);
+        t.setBidBudget(2 ether, 20 ether);
+        assertEq(t.bidBudgetCarried(), 10 ether);
+        assertEq(t.bidBudgetTime(), T0 + 30 days);
+        assertEq(t.bidBudgetAvailable(), 10 ether);
+        vm.warp(T0 + 31 days);
+        assertEq(t.bidBudgetAvailable(), 12 ether, "the new rate accrues on the carried amount");
+        // a smaller maximum lowers the carried amount
+        vm.prank(owner);
+        t.setBidBudget(1 ether, 5 ether);
+        assertEq(t.bidBudgetCarried(), 5 ether);
+        assertEq(t.bidBudgetAvailable(), 5 ether);
+        // the claim reserve caps the budget whatever the setting
+        vm.prank(owner);
+        t.setBidBudget(100 ether, 100 ether);
+        assertEq(t.bidBudgetCarried(), 5 ether);
+        vm.warp(T0 + 32 days);
+        assertEq(t.bidBudgetAvailable(), 40 ether, "capped at the claim reserve");
+        (uint256 share, uint256 budget, uint256 cap) = t.redemptionTerms(0);
+        assertEq(share, 0);
+        assertEq(budget, 40 ether);
+        assertEq(cap, 40 ether);
+        // zero and zero turns the bid off
+        vm.prank(owner);
+        t.setBidBudget(0, 0);
+        assertEq(t.bidBudgetCarried(), 0);
+        assertEq(t.bidBudgetAvailable(), 0);
+        vm.warp(T0 + 40 days);
+        assertEq(t.bidBudgetAvailable(), 0);
+    }
+
+    // promise: SPEC phase 2 `setBidBudget` is owner only, refuses a rate above the maximum, emits `BidBudgetSet` with the carried amount and advances the epoch so a burn pinned to the old terms reverts
+    function test_setBidBudgetIsOwnerOnlyBoundedEventedAndAdvancesTheEpoch() public {
+        vm.warp(T0);
+        _live(100 ether, 40 ether);
+        _burnerWith(SUPPLY / 100);
+        vm.expectRevert(ITreasury.OnlyOwner.selector);
+        t.setBidBudget(1 ether, 1 ether);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ITreasury.BadSetting.selector, bytes32("bidBudget")));
+        t.setBidBudget(1 ether + 1, 1 ether);
+        uint64 epoch = t.configEpoch();
+        assertEq(epoch, 1);
+        vm.prank(owner);
+        vm.expectEmit(address(t));
+        emit ITreasury.BidBudgetSet(1 ether, 1 ether, 0, 2);
+        t.setBidBudget(1 ether, 1 ether);
+        assertEq(t.configEpoch(), 2);
+        uint256 x = SUPPLY / 1000;
+        vm.prank(burner);
+        vm.expectRevert(ITreasury.StaleEpoch.selector);
+        t.redeemCC(x, burner, 0, block.timestamp, epoch);
+        assertGt(_redeem(x, 0), 0, "the fresh epoch executes");
+        // a later change reports the settled accrual
+        vm.warp(T0 + 1 days);
+        vm.prank(owner);
+        vm.expectEmit(address(t));
+        emit ITreasury.BidBudgetSet(0, 3 ether, 1 ether, 3);
+        t.setBidBudget(0, 3 ether);
+        assertEq(t.bidBudgetAvailable(), 1 ether, "a zero rate keeps the carried amount");
+    }
+
+    // promise: SPEC phase 2 with a bid budget a policy may pay above the proportional share: the payment leaves the claim reserve, the whole payment consumes the budget, `BidPaid` reports the excess and the rest, a payment at or under the share leaves the budget alone, and nothing above the remaining budget or the reserve is paid
+    function test_bidBudgetPaysAboveTheShare() public {
+        FixedQuotePolicy bid = _liveWithBid(5 ether);
+        uint256 x = SUPPLY / 1000;
+        (uint256 share, uint256 budget, uint256 cap) = t.redemptionTerms(x);
+        assertEq(budget, 5 ether);
+        assertEq(cap, 5 ether, "the budget is the cap above the share");
+        assertLt(share, 1 ether);
+        bid.set(3 ether);
+        (uint256 q,,,, bool exec) = t.quoteRedemption(x);
+        assertEq(q, 3 ether);
+        assertTrue(exec);
+        vm.expectEmit(address(t));
+        emit ITreasury.BidPaid(3 ether - share, 2 ether);
+        assertEq(_redeem(x, 3 ether), 3 ether);
+        assertEq(token.balanceOf(burner), 3 ether);
+        assertEq(t.claimReserve(), 37 ether, "the payment left the reserve");
+        assertEq(t.working(), 100 ether, "working funds untouched");
+        assertEq(t.bidBudgetCarried(), 2 ether, "the whole payment consumed the budget");
+        assertEq(t.bidBudgetTime(), T0 + 1 days);
+        assertEq(t.bidBudgetAvailable(), 2 ether);
+        // above the remaining budget
+        bid.set(2 ether + 1);
+        (q,,,, exec) = t.quoteRedemption(x);
+        assertEq(q, 0);
+        assertFalse(exec);
+        uint64 epoch = t.configEpoch();
+        vm.prank(burner);
+        vm.expectRevert(ITreasury.BadPolicy.selector);
+        t.redeemCC(x, burner, 0, block.timestamp, epoch);
+        // at the share and under it: paid, the budget untouched
+        (share,,) = t.redemptionTerms(x);
+        bid.set(share);
+        assertEq(_redeem(x, share), share);
+        uint256 paidAtShare = share;
+        assertEq(t.bidBudgetCarried(), 2 ether);
+        assertEq(t.bidBudgetAvailable(), 2 ether);
+        (share,,) = t.redemptionTerms(x);
+        bid.set(share - 1);
+        assertEq(_redeem(x, share - 1), share - 1);
+        assertEq(t.bidBudgetCarried(), 2 ether);
+        assertEq(t.bidBudgetTime(), T0 + 1 days);
+        uint256 reserve = t.claimReserve();
+        assertEq(reserve, 37 ether - paidAtShare - (share - 1));
+        // above the reserve is refused even under a larger budget setting; the whole reserve can be bid
+        vm.prank(owner);
+        t.setBidBudget(100 ether, 100 ether);
+        vm.warp(T0 + 2 days);
+        assertEq(t.bidBudgetAvailable(), reserve, "the budget is capped at the reserve");
+        bid.set(reserve + 1);
+        (q,,,, exec) = t.quoteRedemption(x);
+        assertEq(q, 0);
+        assertFalse(exec);
+        epoch = t.configEpoch();
+        vm.prank(burner);
+        vm.expectRevert(ITreasury.BadPolicy.selector);
+        t.redeemCC(x, burner, 0, block.timestamp, epoch);
+        bid.set(reserve);
+        (share,,) = t.redemptionTerms(x);
+        vm.expectEmit(address(t));
+        emit ITreasury.BidPaid(reserve - share, 0);
+        assertEq(_redeem(x, reserve), reserve, "the whole reserve can be bid");
+        assertEq(t.claimReserve(), 0);
+        assertEq(t.bidBudgetAvailable(), 0);
+        assertEq(t.working(), 100 ether);
+        assertTrue(t.solvent());
+    }
+
+    // promise: SPEC phase 2 `redemptionTerms` reports the share, the budget and the larger as the cap, a zero or oversized input has no share, and `quoteRedemption` executes a quote at the budget cap and refuses one above it
+    function test_redemptionTermsAndTheQuoteAtTheBudgetCap() public {
+        FixedQuotePolicy bid = _liveWithBid(5 ether);
+        uint256 supply = coin.totalSupply();
+        (uint256 share, uint256 budget, uint256 cap) = t.redemptionTerms(0);
+        assertEq(share, 0);
+        assertEq(budget, 5 ether);
+        assertEq(cap, 5 ether, "a zero input has no share, the budget is the cap");
+        (share, budget, cap) = t.redemptionTerms(supply + 1);
+        assertEq(share, 0);
+        assertEq(budget, 5 ether);
+        assertEq(cap, 5 ether, "an oversized input has no share");
+        uint256 small = SUPPLY / 1000;
+        (share, budget, cap) = t.redemptionTerms(small);
+        assertEq(share, small * 40 ether / supply);
+        assertEq(budget, 5 ether);
+        assertEq(cap, 5 ether, "the budget caps a small burn");
+        (share, budget, cap) = t.redemptionTerms(supply / 2);
+        assertEq(share, 20 ether);
+        assertEq(budget, 5 ether);
+        assertEq(cap, 20 ether, "the share caps a large burn");
+        bid.set(5 ether);
+        (uint256 q, uint256 c, uint256 s, uint64 e, bool exec) = t.quoteRedemption(small);
+        assertEq(q, 5 ether);
+        assertEq(c, 40 ether);
+        assertEq(s, supply);
+        assertEq(e, 3, "the policy set and the budget set each advanced the epoch");
+        assertTrue(exec, "executable at the budget cap");
+        bid.set(5 ether + 1);
+        (q,,,, exec) = t.quoteRedemption(small);
+        assertEq(q, 0);
+        assertFalse(exec);
+        bid.set(5 ether);
+        assertEq(_redeem(small, 5 ether), 5 ether, "the quote at the cap executes");
+        assertEq(t.bidBudgetAvailable(), 0);
+    }
+
+    // promise: SPEC phase 2 the policy probe accepts a sample quote up to the larger of 0.25e18 and the bid budget now and refuses one above it
+    function test_policyProbeLimitFollowsTheBudget() public {
+        vm.warp(T0);
+        _live(100 ether, 40 ether);
+        FixedQuotePolicy bid = new FixedQuotePolicy();
+        bid.setProbe(0.25e18 + 1);
+        vm.prank(owner);
+        vm.expectRevert(ITreasury.BadPolicy.selector);
+        t.setRedemptionPolicy(address(bid));
+        bid.setProbe(0.25e18);
+        vm.prank(owner);
+        t.setRedemptionPolicy(address(bid));
+        assertEq(t.redemptionPolicy(), address(bid));
+        // a budget under the old limit leaves it
+        vm.prank(owner);
+        t.setBidBudget(0.1 ether, 0.1 ether);
+        vm.warp(T0 + 1 days);
+        assertEq(t.bidBudgetAvailable(), 0.1 ether);
+        bid.setProbe(0.25e18 + 1);
+        vm.prank(owner);
+        vm.expectRevert(ITreasury.BadPolicy.selector);
+        t.setRedemptionPolicy(address(bid));
+        // a larger budget raises the limit to the budget
+        vm.prank(owner);
+        t.setBidBudget(5 ether, 5 ether);
+        vm.warp(T0 + 2 days);
+        assertEq(t.bidBudgetAvailable(), 5 ether);
+        bid.setProbe(5 ether);
+        vm.prank(owner);
+        t.setRedemptionPolicy(address(bid));
+        bid.setProbe(5 ether + 1);
+        vm.prank(owner);
+        vm.expectRevert(ITreasury.BadPolicy.selector);
+        t.setRedemptionPolicy(address(bid));
+    }
+
+    // promise: SPEC phase 2 a return of claim backing to working funds lowers the available bid budget with the reserve
+    function test_returnClaimsLowersTheBudget() public {
+        vm.warp(T0);
+        _live(100 ether, 40 ether);
+        vm.prank(owner);
+        t.setBidBudget(30 ether, 30 ether);
+        vm.warp(T0 + 1 days);
+        assertEq(t.bidBudgetAvailable(), 30 ether);
+        vm.startPrank(owner);
+        t.setSwitches(true, true, false);
+        t.returnClaimsToWorking(20 ether);
+        vm.stopPrank();
+        assertEq(t.claimReserve(), 20 ether);
+        assertEq(t.bidBudgetAvailable(), 20 ether, "the reserve caps the budget");
+        (, uint256 budget, uint256 cap) = t.redemptionTerms(0);
+        assertEq(budget, 20 ether);
+        assertEq(cap, 20 ether);
+        vm.prank(owner);
+        t.returnClaimsToWorking(20 ether);
+        assertEq(t.bidBudgetAvailable(), 0, "no reserve, no budget");
+        assertEq(t.bidBudgetPerDay(), 30 ether, "the setting is untouched");
     }
 
     // ------------------------------------------------------------------ owner controls
