@@ -24,6 +24,16 @@ contract Phase2DeployProbe is Phase2Deploy {
 
 /// @dev the readback rows on given addresses, returning the failed names instead of reverting
 contract Phase2ReadbackProbe is Phase2Readback {
+    bool internal acceptMargin_;
+
+    function setAcceptMargin(bool v) external {
+        acceptMargin_ = v;
+    }
+
+    function _acceptNonPositiveMargin() internal view override returns (bool) {
+        return acceptMargin_;
+    }
+
     function read(address core, address treasury, address controllerV2) external returns (string memory failed) {
         _reset();
         phase2Readback(core, treasury, controllerV2);
@@ -43,6 +53,25 @@ contract Phase2SettingsProbe is Phase2Settings {
 
     function setSplit(address split) external {
         split_ = split;
+    }
+
+    uint256 internal discount_ = 2_000;
+    bool internal allowMargin_;
+
+    function setDiscount(uint256 bps) external {
+        discount_ = bps;
+    }
+
+    function setAllowMargin(bool v) external {
+        allowMargin_ = v;
+    }
+
+    function _discountBps() internal view override returns (uint256) {
+        return discount_;
+    }
+
+    function _allowNonPositiveMargin() internal view override returns (bool) {
+        return allowMargin_;
     }
 
     function _split() internal view override returns (address) {
@@ -215,6 +244,9 @@ contract Phase2ScriptsTest is Fixture {
 
     // promise: the readback samples executable payouts against the posted rate, names the binding constraint, and fails on a material shortfall unless the owner records approval
     function test_readbackSamplesExecutablePayoutsAndGatesAShortfall() public {
+        // this test keeps the fixture's launch payout of 90 percent, which loses with the 10 percent earmark; the
+        // margin row is accepted here so the payout rows are what the test reads (decision 259 covers the margin row)
+        readback.setAcceptMargin(true);
         Phase2Deploy.Result memory r = deployProbe.deploy(_inputs());
         IPhase2BalanceTreasury t = IPhase2BalanceTreasury(r.treasury);
         _fillEthPile(3);
@@ -253,6 +285,41 @@ contract Phase2ScriptsTest is Fixture {
         i = _inputs();
         vm.expectRevert(abi.encodeWithSelector(Report.ChecksFailed.selector, "preview: balance token decimals() is 18"));
         deployProbe.deploy(i);
+    }
+
+    // promise: decision 259 the settings preview prints the working gain per 100 BALANCE funded points and refuses a non positive margin unless ALLOW_NONPOSITIVE_MARGIN=1, and the readback's margin row fails only while working payments are on at a non positive margin unless ACCEPT_NONPOSITIVE_MARGIN=1
+    function test_marginPreviewAndReadbackRow() public {
+        // the fixture's launch settings: 90 percent payout and the launch royalty, a loss with the 10 percent earmark
+        Settings memory launch = core.settings();
+        uint256 payout = 10_000 - 1_000;
+        int256 expected =
+            int256(10_000) - int256(payout) - int256(payout * launch.buyToArtistBps / 10_000) - int256(1_000);
+        assertLt(expected, 0, "the launch payout loses with the earmark");
+        settings.setDiscount(1_000);
+        vm.expectRevert(abi.encodeWithSelector(Phase2Settings.NonPositiveMargin.selector, expected));
+        settings.previewOn();
+        settings.setAllowMargin(true);
+        settings.previewOn();
+        settings.setAllowMargin(false);
+        settings.setDiscount(2_000);
+        Phase2Settings.Preview memory p = settings.previewOn();
+        assertEq(p.next.balanceDiscountBps, 2_000);
+        // the readback: the row is informational with working payments off, a failure with them on at the launch
+        // payout, a pass once the 80 percent payout is set, and accepted with the owner's approval
+        Phase2Deploy.Result memory r = deployProbe.deploy(_inputs());
+        assertEq(readback.read(address(core), r.treasury, r.controllerV2), "", "switches off: informational");
+        IPhase2BalanceTreasury t = IPhase2BalanceTreasury(r.treasury);
+        vm.prank(owner);
+        t.setSwitches(false, true, false);
+        string memory failed = readback.read(address(core), r.treasury, r.controllerV2);
+        assertTrue(bytes(failed).length != 0, "working payments on at a losing payout fails");
+        readback.setAcceptMargin(true);
+        assertEq(readback.read(address(core), r.treasury, r.controllerV2), "", "accepted");
+        readback.setAcceptMargin(false);
+        Settings memory s = core.settings();
+        s.balanceDiscountBps = 2_000;
+        _setSettings(s);
+        assertEq(readback.read(address(core), r.treasury, r.controllerV2), "", "80 percent payout: positive margin");
     }
 
     // promise: PLAN section 8 the readback refuses a treasury bound to another Core and altered code, and names the hazard state

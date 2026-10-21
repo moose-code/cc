@@ -393,6 +393,40 @@ contract Phase2TreasuryTest is Test {
 
     // ------------------------------------------------------------------ conversion
 
+    // promise: decision 259 the owner moves the earmark within 0 to 10,000 (zero and back included) and each conversion uses the rate at its own time, with the allocation the floor of the receipt times the rate, never above the receipt
+    function test_conversionToClaimBpsIsEditableAndAppliesToLaterConversions() public {
+        token.setGates(true, 0, 0);
+        vm.prank(owner);
+        t.setSwitches(true, false, false);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ITreasury.BadSetting.selector, bytes32("conversionToClaimBps")));
+        t.setConversionToClaimBps(10_001);
+        vm.expectRevert(ITreasury.OnlyOwner.selector);
+        t.setConversionToClaimBps(0);
+        statements.set(1, address(t), 2_000_000);
+        t.redeem(1);
+        assertEq(t.claimReserve(), 2e19, "10 percent of 2e20");
+        vm.prank(owner);
+        t.setConversionToClaimBps(0);
+        statements.set(2, address(t), 2_000_000);
+        t.redeem(2);
+        assertEq(t.claimReserve(), 2e19, "a zero rate adds nothing");
+        vm.prank(owner);
+        t.setConversionToClaimBps(10_000);
+        statements.set(3, address(t), 2_000_000);
+        t.redeem(3);
+        assertEq(t.claimReserve(), 2e19 + 2e20, "the whole receipt at 10,000");
+        vm.prank(owner);
+        t.setConversionToClaimBps(1);
+        statements.set(4, address(t), 999_999);
+        uint256 before = t.claimReserve();
+        uint256 out = t.redeem(4);
+        uint256 added = t.claimReserve() - before;
+        assertEq(added, out * 1 / 10_000, "floor of the receipt times the rate");
+        assertLe(added, out);
+        assertEq(t.custody(), 2e20 * 3 + out, "every token stays in custody");
+    }
+
     // promise: SPEC phase 2 a conversion measures its receipt, keeps every token here and earmarks 1,000 bps as claim backing
     function test_redeemEarmarksMeasuredReceipt() public {
         statements.set(7, address(t), 2_000_000);

@@ -31,8 +31,12 @@ contract Phase2Settings is Script {
     error BadDiscount(uint256 given);
     /// @dev a `SET_<field>` or `SETTINGS_PATCH` override was given: this script applies exactly the phase 2 patch
     error UnexpectedOverride(string name);
+    /// @dev the patched payout, royalty and earmark leave no working gain on a BALANCE funded Credit;
+    /// `ALLOW_NONPOSITIVE_MARGIN=1` records the owner's approval
+    error NonPositiveMargin(int256 marginBps);
 
     uint16 internal constant CREDIT_COST_TO_POT_BPS = 10_000;
+    uint256 internal constant BPS = 10_000;
 
     string internal constant TUPLE =
         "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool,uint16,uint16)";
@@ -76,7 +80,7 @@ contract Phase2Settings is Script {
         s.saleToBuybackBps = 0;
         s.feeToRedeemBurnBps = 0;
         s.redeemBurnBps = 0;
-        uint256 discount = vm.envOr("PHASE2_BALANCE_DISCOUNT_BPS", uint256(2_000));
+        uint256 discount = _discountBps();
         if (discount > 9_999) revert BadDiscount(discount);
         s.balanceDiscountBps = uint16(discount);
         // the split route (decision 255): the artist address becomes a splits.org split paying 5/6 to the artist and 1/6
@@ -98,6 +102,16 @@ contract Phase2Settings is Script {
     /// overrides it
     function _split() internal view virtual returns (address) {
         return vm.envOr("PHASE2_ARTIST", address(0));
+    }
+
+    /// @dev the posted payout discount (`PHASE2_BALANCE_DISCOUNT_BPS`, default 2,000). a test overrides it
+    function _discountBps() internal view virtual returns (uint256) {
+        return vm.envOr("PHASE2_BALANCE_DISCOUNT_BPS", uint256(2_000));
+    }
+
+    /// @dev the owner's recorded approval of a non positive margin (`ALLOW_NONPOSITIVE_MARGIN=1`). a test overrides it
+    function _allowNonPositiveMargin() internal view virtual returns (bool) {
+        return vm.envOr("ALLOW_NONPOSITIVE_MARGIN", uint256(0)) == 1;
     }
 
     /// @notice reads the live struct, patches it, checks the bounds, prints the changed rows, the pots and the calldata,
@@ -126,6 +140,7 @@ contract Phase2Settings is Script {
         p.costChanged = p.liveCostToPot != CREDIT_COST_TO_POT_BPS;
         _table(p.live, p.next);
         _pots(core);
+        _margin(core, p.next);
         console.log(
             string.concat(
                 "creditCostToPotBps | ",
@@ -145,6 +160,42 @@ contract Phase2Settings is Script {
         if (p.artistChanged) core.setArtist(p.split);
         if (p.costChanged) core.setCreditCostToPotBps(CREDIT_COST_TO_POT_BPS);
         if (p.settingsChanged) core.setSettings(p.next);
+    }
+
+    /// @dev the working gain per 100 BALANCE funded points under the patch: the rating less the posted payout, the
+    /// purchase royalty (a share of the payout) and the treasury's claim earmark (the selected module's live value, else
+    /// the deploy default of 1,000). ETH funded Credits and inventory already held carry a different cost. a non
+    /// positive margin stops the preview unless `ALLOW_NONPOSITIVE_MARGIN=1`
+    function _margin(ICore core, Settings memory next) private view {
+        uint256 earmark = 1_000;
+        string memory source = "deploy default, no module selected";
+        address module = core.balanceModule();
+        if (module.code.length != 0) {
+            (bool ok, bytes memory ret) = module.staticcall(abi.encodeWithSignature("conversionToClaimBps()"));
+            if (ok && ret.length >= 32) {
+                earmark = abi.decode(ret, (uint256));
+                source = "the selected module";
+            }
+        }
+        uint256 payout = BPS - next.balanceDiscountBps;
+        uint256 royalty = payout * next.buyToArtistBps / BPS;
+        int256 margin = int256(BPS) - int256(payout) - int256(royalty) - int256(earmark);
+        console.log(
+            string.concat(
+                "margin per 100 BALANCE funded points | payout ",
+                vm.toString(payout),
+                " | royalty ",
+                vm.toString(royalty),
+                " | earmark ",
+                vm.toString(earmark),
+                " (",
+                source,
+                ") | working gain bps ",
+                margin < 0 ? string.concat("-", vm.toString(uint256(-margin))) : vm.toString(uint256(margin)),
+                " (ETH funded and inherited inventory differ)"
+            )
+        );
+        if (margin <= 0 && !_allowNonPositiveMargin()) revert NonPositiveMargin(margin);
     }
 
     /// @dev the owner calls on a snapshot, so a Core that refuses them stops the preview before anything is sent

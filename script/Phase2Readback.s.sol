@@ -20,6 +20,39 @@ abstract contract Phase2Checks is LaunchChecks {
     string internal constant POLICY_VERSION = "pro-rata-v1";
 
     /// @notice every phase 2 row. `controllerV2` zero skips the controller rows
+    /// @dev the working gain per 100 BALANCE funded points at the posted payout, the purchase royalty (a share of the
+    /// payout) and the claim earmark, bps of the rating. a Credit the engine acquires with ETH and inventory it already
+    /// holds carry a different cost, so this is the BALANCE funded margin only. a non positive margin fails the run
+    /// while working payments are on, unless ACCEPT_NONPOSITIVE_MARGIN=1 records the owner's approval
+    function _marginRow(ICore core, IPhase2BalanceTreasury t) private {
+        Settings memory s = core.settings();
+        uint256 payout = 10_000 - s.balanceDiscountBps;
+        uint256 royalty = payout * s.buyToArtistBps / 10_000;
+        uint256 earmark = t.conversionToClaimBps();
+        int256 margin = int256(10_000) - int256(payout) - int256(royalty) - int256(earmark);
+        string memory text = string.concat(
+            "payout ",
+            vm.toString(payout),
+            " royalty ",
+            vm.toString(royalty),
+            " earmark ",
+            vm.toString(earmark),
+            " margin bps ",
+            margin < 0 ? string.concat("-", vm.toString(uint256(-margin))) : vm.toString(uint256(margin))
+        );
+        bool accepted = _acceptNonPositiveMargin();
+        _check(
+            "margin: working gain per 100 BALANCE funded points is positive while working payments are on (ACCEPT_NONPOSITIVE_MARGIN=1 records approval)",
+            margin > 0 || !t.workingPaymentsEnabled() || accepted,
+            text
+        );
+    }
+
+    /// @dev the owner's recorded approval of a non positive margin (`ACCEPT_NONPOSITIVE_MARGIN=1`). a test overrides it
+    function _acceptNonPositiveMargin() internal view virtual returns (bool) {
+        return vm.envOr("ACCEPT_NONPOSITIVE_MARGIN", uint256(0)) == 1;
+    }
+
     function phase2Readback(address core, address treasury, address controllerV2) internal {
         _phase2Pins();
         bool ok = _phase2Treasury(ICore(payable(core)), treasury);
@@ -66,10 +99,10 @@ abstract contract Phase2Checks is LaunchChecks {
             vm.toString(t.predecessor())
         );
         _check("treasury: unitPerPoint is 1e14", t.unitPerPoint() == 1e14, vm.toString(t.unitPerPoint()));
-        _treasuryState(t);
+        _treasuryState(core, t);
     }
 
-    function _treasuryState(IPhase2BalanceTreasury t) private {
+    function _treasuryState(ICore core, IPhase2BalanceTreasury t) private {
         _info(
             "treasury: switches conversion / workingPayments / ccRedemption",
             string.concat(
@@ -90,6 +123,7 @@ abstract contract Phase2Checks is LaunchChecks {
                 vm.toString(uint256(t.conversionToClaimBps())), " / ", vm.toString(uint256(t.redemptionFeeBps()))
             )
         );
+        _marginRow(core, t);
         _info("treasury: configEpoch", vm.toString(uint256(t.configEpoch())));
         _info("treasury: migrated", vm.toString(t.migrated()));
         _info("treasury: selected", vm.toString(t.selected()));

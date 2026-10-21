@@ -288,6 +288,7 @@ contract Phase2Deploy is PushSplitCreator, Phase2Checks {
         _eq("stage A: treasury balanceToken is the input", t.balanceToken(), i.balanceToken);
         _eq("stage A: treasury predecessor is none", t.predecessor(), address(0));
         _eq("stage A: treasury policy is deploy 1", t.redemptionPolicy(), r.policy);
+        _eq("stage A: conversionToClaimBps is 1,000 (decision 259)", uint256(t.conversionToClaimBps()), 1_000);
         IControllerV2 c = IControllerV2(r.controllerV2);
         _check("stage A: statementSalesEnabled is false", !c.statementSalesEnabled(), "setStatementSales not called");
         _eq(
