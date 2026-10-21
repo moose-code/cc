@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
@@ -84,7 +84,7 @@ contract SetSettingsProbe is SetSettings {
 
 /// @notice `script/SetSettings.s.sol` on the fixture core: the overrides touch only the fields they name, bad input is
 /// refused, a dry run sends nothing
-contract SetSettingsTest is Fixture {
+contract SetSettingsTest is LiveFixture {
     SetSettingsProbe internal probe;
 
     function setUp() public override {
@@ -226,7 +226,7 @@ contract SetSettingsTest is Fixture {
 /// @notice `script/SetSettings.s.sol` after the owner selects a ControllerV2: ordinary Core settings and Credit settings
 /// still change, the statement policy fields replace the V1 `Sale` fields, a V1 only field is refused, and the Core's
 /// `markupBps()` bound on `saleFloorBps` is enforced against the clamped multiplier
-contract SetSettingsV2Test is Fixture {
+contract SetSettingsV2Test is LiveFixture {
     SetSettingsProbe internal probe;
     IControllerV2 internal c2;
 

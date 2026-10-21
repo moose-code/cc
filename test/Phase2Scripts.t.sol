@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
@@ -107,10 +107,11 @@ contract Phase2SettingsProbe is Phase2Settings {
     }
 }
 
-/// @notice the phase 2 operator scripts on the pinned fork against the fixture Core, the real Statements and the standin
-/// balance token: the stage A deploy and its readback, the readback refusals and the stage B settings patch
-contract Phase2ScriptsTest is Fixture {
-    Phase2BalanceTokenStandin internal token;
+/// @notice the phase 2 operator scripts on the pinned fork against the live Core, the live Statements and the live
+/// BALANCE token: the stage A deploy and its readback, the readback refusals and the stage B settings patch. only the
+/// treasury, policy, ControllerV2 and push split are created fresh. `test_deployRefusesAWrongBalanceToken` keeps the
+/// stand in: it needs a token the treasury constructor would refuse, a gate the live token has already passed
+contract Phase2ScriptsTest is LiveFixture {
     /// the Splits v2.2 pull factory, the one the splits.org form uses
     address internal constant PULL_FACTORY = 0x6B9118074aB15142d7524E8c4ea8f62A3Bdb98f1;
     Phase2DeployProbe internal deployProbe;
@@ -119,7 +120,6 @@ contract Phase2ScriptsTest is Fixture {
 
     function setUp() public override {
         super.setUp();
-        token = new Phase2BalanceTokenStandin();
         deployProbe = new Phase2DeployProbe();
         readback = new Phase2ReadbackProbe();
         settings = new Phase2SettingsProbe();
@@ -129,10 +129,10 @@ contract Phase2ScriptsTest is Fixture {
     function _inputs() internal view returns (Phase2Deploy.Inputs memory) {
         return Phase2Deploy.Inputs({
             core: address(core),
-            balanceToken: address(token),
+            balanceToken: liveBalanceToken,
             statementSaleMultiplierBps: 15_000,
             statementRedeemDelaySeconds: 3_600,
-            tokenCodehash: address(token).codehash,
+            tokenCodehash: liveBalanceToken.codehash,
             allowUnpinnedToken: false,
             split: address(0),
             splitPlan: PushSplitCreator.SplitPlan({artist: core.artist(), operator: core.payee(), controller: owner})
@@ -156,8 +156,8 @@ contract Phase2ScriptsTest is Fixture {
     // promise: an environment integer above uint32 is refused instead of silently narrowed to other terms
     function test_deployRefusesNarrowedInputs() public {
         vm.setEnv("CORE", vm.toString(address(core)));
-        vm.setEnv("BALANCE_TOKEN", vm.toString(address(token)));
-        vm.setEnv("BALANCE_TOKEN_CODEHASH", vm.toString(address(token).codehash));
+        vm.setEnv("BALANCE_TOKEN", vm.toString(liveBalanceToken));
+        vm.setEnv("BALANCE_TOKEN_CODEHASH", vm.toString(liveBalanceToken.codehash));
         vm.setEnv("PHASE2_STATEMENT_MULTIPLIER_BPS", "4294977296");
         vm.expectRevert(abi.encodeWithSelector(Phase2Deploy.ValueTooWide.selector, "PHASE2_STATEMENT_MULTIPLIER_BPS"));
         deployProbe.run();
@@ -181,12 +181,12 @@ contract Phase2ScriptsTest is Fixture {
         assertEq(ISplitWalletV2(r.split).splitHash(), deployProbe.splitHashOf(cfg), "the split of decision 255");
         assertEq(ISplitWalletV2(r.split).owner(), owner, "the owner controls the split");
         assertTrue(core.artist() != r.split, "the split is not the artist before stage B");
-        assertEq(i.splitPlan.artist, creator);
-        assertTrue(creator != core.payee());
+        assertEq(i.splitPlan.artist, core.artist());
+        assertTrue(core.artist() != core.payee(), "the split has distinct artist and operator recipients");
         IPhase2BalanceTreasury t = IPhase2BalanceTreasury(r.treasury);
         assertEq(t.core(), address(core));
         assertEq(t.ccToken(), core.COIN());
-        assertEq(t.balanceToken(), address(token));
+        assertEq(t.balanceToken(), liveBalanceToken);
         assertEq(t.predecessor(), address(0));
         assertEq(t.redemptionPolicy(), r.policy);
         assertEq(t.owner(), owner);
@@ -238,7 +238,9 @@ contract Phase2ScriptsTest is Fixture {
         assertEq(r.split, push, "the given push split is the record's split");
         i = _inputs();
         i.splitPlan.operator = i.splitPlan.artist;
-        vm.expectRevert(abi.encodeWithSelector(PushSplitCreator.BadRecipient.selector, creator, creator, owner));
+        vm.expectRevert(
+            abi.encodeWithSelector(PushSplitCreator.BadRecipient.selector, core.artist(), core.artist(), owner)
+        );
         deployProbe.deploy(i);
     }
 
@@ -251,8 +253,8 @@ contract Phase2ScriptsTest is Fixture {
         IPhase2BalanceTreasury t = IPhase2BalanceTreasury(r.treasury);
         _fillEthPile(3);
         _setBalanceModule(r.treasury);
-        token.open();
-        token.mint(r.treasury, 5_000 ether);
+        // the live token transfers are open at the pin; fund the treasury by a real holder transfer (the ink rule)
+        _fundBalance(r.treasury, 5_000 ether);
         vm.prank(owner);
         t.setSwitches(true, true, false);
         _setSwitches(true, true);
@@ -270,10 +272,15 @@ contract Phase2ScriptsTest is Fixture {
     }
 
     // promise: PLAN section 8 stage A the deploy preview refuses a balance token the treasury constructor would refuse, before any creation
+    // kept on the stand in: it must inject a token with the wrong statements() source and the wrong decimals(), gates
+    // the live token has already passed, so a mutable stand in is the only way to drive the two refusals
     function test_deployRefusesAWrongBalanceToken() public {
+        Phase2BalanceTokenStandin token = new Phase2BalanceTokenStandin();
         token.configure(makeAddr("phase2.otherStatements"), 18);
         // the inputs read the Core's artist and payee, so they are built before the expectation
         Phase2Deploy.Inputs memory i = _inputs();
+        i.balanceToken = address(token);
+        i.tokenCodehash = address(token).codehash;
         vm.expectRevert(
             abi.encodeWithSelector(
                 Report.ChecksFailed.selector, "preview: balance token statements() is the Statements contract"
@@ -283,6 +290,8 @@ contract Phase2ScriptsTest is Fixture {
         token = new Phase2BalanceTokenStandin();
         token.configure(token.statements(), 6);
         i = _inputs();
+        i.balanceToken = address(token);
+        i.tokenCodehash = address(token).codehash;
         vm.expectRevert(abi.encodeWithSelector(Report.ChecksFailed.selector, "preview: balance token decimals() is 18"));
         deployProbe.deploy(i);
     }
@@ -378,7 +387,9 @@ contract Phase2ScriptsTest is Fixture {
 
     // promise: decision 255 with a split address the patch makes the split the artist and every artist flow 3 percent with the sale operator cut folded in, split first, then the settings; with decision 262 those four and the payout are the only fields that change
     function test_settingsPatchWiresTheSplitAsArtist() public {
-        address split = address(new Phase2BalanceTokenStandin()); // any contract with code stands in for the split
+        // any contract with code and a payable receive stands in for the split; this test contract has both
+        address split = address(this);
+        address artist0 = core.artist();
         settings.setSplit(split);
         Phase2Settings.Preview memory p = settings.previewOn();
         assertEq(p.split, split);
@@ -395,7 +406,7 @@ contract Phase2ScriptsTest is Fixture {
         assertEq(p.next.saleToArtistBps, 300);
         assertEq(p.next.saleToOperatorBps, 0);
         assertEq(p.next.balanceDiscountBps, 2_000);
-        assertEq(core.artist(), creator, "the preview sends nothing");
+        assertEq(core.artist(), artist0, "the preview sends nothing");
         settings.applyAsOwner();
         assertEq(core.artist(), split);
         assertEq(core.settings().buyToArtistBps, 300);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {ValueBase} from "./ValueMode.t.sol";
+import {LiveValueBase} from "./utils/LiveValueBase.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {CreditSale, Quote, Settings, POINT_UNIT} from "../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -32,11 +32,12 @@ interface IControllerV2Test {
     function atFloor(uint256 sid) external view returns (bool);
     function buy(uint256 sid) external payable;
     function setStatementSales(bool enabled) external;
+    function setStatementRedeemDelaySeconds(uint32 v) external;
 }
 
 /// ControllerV2 on the real v4 pool of the value mode fixture: the issue 113 counterexamples, same block moves in both
 /// directions, the live liquidity gate, view and door parity, and the statement policy in value mode
-contract ControllerV2Test is ValueBase {
+contract ControllerV2Test is LiveValueBase {
     using StateLibrary for IPoolManager;
 
     IControllerV2Test internal c2;
@@ -248,10 +249,17 @@ contract ControllerV2Test is ValueBase {
     function test_statementPolicyInValueMode() public {
         _valueOn();
         _settle();
-        uint256 sid = _composeOnce().sid;
-        uint256 ref = c2.referenceOf(sid);
+        // a Statement the live Core already holds; composing a fresh page in value mode is impossible (a full page of
+        // Credits sold in one block exceeds the value mode spend cap). eligibility is the independent delay (the subject
+        // of this promise), so set it one hour past this held Statement's current age to drive the transition
+        uint256 sid = core.heldStatements()[0];
         uint256 cost;
         (, cost,) = core.statementInfo(sid);
+        // compute the delay before the prank: an external call in the argument would consume the prank itself
+        uint32 delay = uint32(core.statementAge(sid) + 1 hours);
+        vm.prank(owner);
+        c2.setStatementRedeemDelaySeconds(delay);
+        uint256 ref = c2.referenceOf(sid);
         uint256 ask = FullMath.mulDivRoundingUp(ref, 30_000, 10_000);
         uint256 coreFloor = cost * core.settings().saleFloorBps / 10_000;
         if (ask < coreFloor) ask = coreFloor;

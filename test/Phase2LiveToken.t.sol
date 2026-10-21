@@ -25,10 +25,16 @@ contract Phase2LiveTokenTest is Test {
     address internal holder;
     address internal split = 0xE2324c8CdE4185de580d5369972b243bb6365C11;
 
+    /// the live BALANCE token, defaulted to the mainnet address; `LIVE_BALANCE_TOKEN` overrides it. no skip: a missing
+    /// MAINNET_RPC_URL fails the run (vm.envString reverts), it is never silently skipped
+    address internal constant LIVE_BALANCE_TOKEN = 0x3620540c994433D7B4a628C46d2ED5F92572eA07;
+    /// the pinned fork block, overridable by `LIVE_FORK_BLOCK`. pinned reads are cached on disk and shared; a head fork
+    /// refetches every run and is never used
+    uint256 internal constant LIVE_FORK_BLOCK = 26242107;
+
     function setUp() public {
-        address at = vm.envOr("LIVE_BALANCE_TOKEN", address(0));
-        vm.skip(at == address(0));
-        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        address at = vm.envOr("LIVE_BALANCE_TOKEN", LIVE_BALANCE_TOKEN);
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envOr("LIVE_FORK_BLOCK", LIVE_FORK_BLOCK));
         token = ILiveBalance(at);
         holder = vm.envOr("LIVE_BALANCE_HOLDER", address(0x5F7a8fb8cc29e795ba19191Dd74D69A90cDADB88));
     }

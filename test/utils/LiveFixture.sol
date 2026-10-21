@@ -135,6 +135,23 @@ abstract contract LiveFixture is Fixture {
         return IERC20Lite(liveBalanceToken).balanceOf(who);
     }
 
+    // ------------------------------------------------------------------ pot funding on the live Core
+
+    /// @notice funds the eth pot directly through `fund`, to `eth` spendable above the live reserve. the Fixture funds
+    /// by generating swap fees, which undershoots on the live Core: the live reserveWei (0.1 ETH) is locked below every
+    /// sale, and the live fee settings route most skim to the buyback and burn pots, so the swap estimate never reaches
+    /// the spendable target. a direct `fund` of `eth + reserve` is deterministic and leaves `eth` spendable. the reserve
+    /// is a live setting, never zeroed to force a pass
+    function _fundPot(uint256 eth) internal override {
+        uint256 target = eth + core.reserve();
+        if (core.ethPot() < target) {
+            uint256 need = target - core.ethPot();
+            vm.deal(address(this), address(this).balance + need);
+            core.fund{value: need}();
+        }
+        assertGe(core.ethPot(), target, "pot not funded above the reserve");
+    }
+
     // ------------------------------------------------------------------ live statements and credits
 
     /// @notice a Statement the live Core holds that the live controller finds eligible (`atFloor`), so a conversion

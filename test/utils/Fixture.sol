@@ -389,7 +389,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice generates fees through real buys until the eth pot holds at least `eth`. in steady state about 5.90 percent
     /// of every buy reaches the pot (6.9 points of skim, 96.38 percent to the Core, minus the payee), inside
     /// the sniper window more
-    function _fundPot(uint256 eth) internal {
+    function _fundPot(uint256 eth) internal virtual {
         // about 5.31 percent of a buy reaches the pot now (5.90 points to the engine, less the 10 percent redeem burn
         // share); the estimate undershoots so each iteration overshoots the gap
         for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {

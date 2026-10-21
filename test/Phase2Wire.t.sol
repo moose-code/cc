@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {ValueBase} from "./ValueMode.t.sol";
+import {LiveValueBase} from "./utils/LiveValueBase.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
 import {CreditSale, Quote} from "../src/interfaces/Interfaces.sol";
-import {Phase2BalanceTokenStandin} from "./standins/Phase2BalanceTokenStandin.sol";
 import {Phase2Wire} from "../script/Phase2Wire.s.sol";
 import {Report} from "../script/Report.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -22,23 +21,22 @@ contract Phase2WireProbe is Phase2Wire {
 
 /// the stage B and C owner sends through the wiring script on the pinned fork: module and controller selection, the
 /// launch switches, the minimum working balance, and ControllerV2's pool key and quote on the value mode pool
-contract Phase2WireTest is ValueBase {
+contract Phase2WireTest is LiveValueBase {
     using StateLibrary for IPoolManager;
 
-    Phase2BalanceTokenStandin internal tok;
     IPhase2BalanceTreasury internal t;
     IControllerV2 internal c2;
     Phase2WireProbe internal wire;
 
     function setUp() public override {
         super.setUp();
-        tok = new Phase2BalanceTokenStandin();
-        tok.open();
+        // the treasury binds the live BALANCE token (its transfers are open at the pin); the value mode pool that the
+        // pool and quote steps read stays the mock xt pool from LiveValueBase, which the tests push and drain
         address policy = vm.deployCode("ProRataRedemptionPolicy.sol:ProRataRedemptionPolicy");
         t = IPhase2BalanceTreasury(
             vm.deployCode(
                 "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
-                abi.encode(address(core), address(tok), policy, address(0))
+                abi.encode(address(core), liveBalanceToken, policy, address(0))
             )
         );
         CreditSale memory credit = CreditSale({

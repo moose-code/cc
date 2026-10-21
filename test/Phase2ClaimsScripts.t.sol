@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
-import {Phase2BalanceTokenStandin} from "./standins/Phase2BalanceTokenStandin.sol";
 import {Phase2Claims} from "../script/Phase2Claims.s.sol";
 import {Report} from "../script/Report.sol";
 
@@ -16,25 +15,24 @@ contract Phase2ClaimsProbe is Phase2Claims {
 
 /// the post launch claim activation of decision 260 against the real Core on the pinned fork: phase 2 runs with
 /// CC redemption off, then the claim reserve is funded and redemption turned on in separate reviewed steps
-contract Phase2ClaimsScriptsTest is Fixture {
-    Phase2BalanceTokenStandin internal token;
+contract Phase2ClaimsScriptsTest is LiveFixture {
     IPhase2BalanceTreasury internal t;
     Phase2ClaimsProbe internal probe;
 
     function setUp() public override {
         super.setUp();
-        token = new Phase2BalanceTokenStandin();
         address policy = vm.deployCode("ProRataRedemptionPolicy.sol:ProRataRedemptionPolicy");
         t = IPhase2BalanceTreasury(
             vm.deployCode(
                 "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
-                abi.encode(address(core), address(token), policy, address(0))
+                abi.encode(address(core), liveBalanceToken, policy, address(0))
             )
         );
         _setBalanceModule(address(t));
-        token.open();
-        token.mint(address(t), 100 ether);
-        token.mint(owner, 50 ether);
+        // the live token transfers are open at the pin; fund the treasury and the owner by real holder transfers
+        // (the ink rule). the treasury reads custody as its own token balance, so a transfer funds working directly
+        _fundBalance(address(t), 100 ether);
+        _fundBalance(owner, 50 ether);
         // the launch state: conversions and working payments on, CC redemption off, no claims
         vm.prank(owner);
         t.setSwitches(true, true, false);
@@ -67,7 +65,7 @@ contract Phase2ClaimsScriptsTest is Fixture {
         // fund 5 more from the owner's own balance
         probe.go(_inputs("fund", 5 ether));
         assertEq(t.claimReserve(), 15 ether);
-        assertEq(token.balanceOf(owner), 45 ether);
+        assertEq(_balanceOf(owner), 45 ether);
         // enable
         probe.go(_inputs("enable", 0));
         assertTrue(t.ccRedemptionEnabled());
