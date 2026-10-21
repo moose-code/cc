@@ -114,6 +114,16 @@ abstract contract LiveFixture is Fixture {
         return IERC20Lite(liveBalanceToken).balanceOf(who);
     }
 
+    // ------------------------------------------------------------------ two live states (lead addendum)
+
+    /// @notice true when the fork is driven to the production stage B state, where ControllerV2 is the selected
+    /// controller. a suite whose subject is a ControllerV1-only surface (setSale, the anchor, decay) skips itself in
+    /// stage B with a one line reason, since that surface does not exist on ControllerV2. today's live state returns
+    /// false, so the guard is inert when a batch runs its own suites. driven by `LIVE_STAGE` (the lead sets it to "B")
+    function _liveStageB() internal view returns (bool) {
+        return keccak256(bytes(vm.envOr("LIVE_STAGE", string("")))) == keccak256(bytes("B"));
+    }
+
     // ------------------------------------------------------------------ live statements and credits
 
     /// @notice a Statement the live Core holds that the live controller finds eligible (`atFloor`), so a conversion
