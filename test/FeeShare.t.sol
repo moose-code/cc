@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Vm} from "forge-std/Vm.sol";
-import {FeeBase} from "./Fees.t.sol";
+import {FeeBase, FeeBaseFixture} from "./Fees.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
@@ -26,7 +26,7 @@ contract GasBurningPayee {
 /// the payee share of the fee income: `payeePpm` of the income booked by `_book`, pushed to the payee by that book
 /// (decision 123). it starts with the first book that has income at or after `launchedAt + SNIPER_SECONDS`, and that
 /// book shares nothing. every number comes from real swaps through the live pool and the live skim hook
-contract PayeeShareTest is FeeBase {
+contract PayeeShareTest is FeeBaseFixture {
     // promise: SPEC 1 the payee share starts after the anti sniper window (decision 109)
     /// the share starts after the window, read from the factory record of the coin
     function test_theShareStartsAfterTheWindowFromTheFactoryRecord() public {
@@ -318,10 +318,7 @@ contract FeeShareTest is FeeBase {
             assertEq(b.dRb, want, "exact redeem burn share");
             assertEq(b.dPot, b.inflow - want, "exact pot share");
             assertApproxEqAbs(
-                b.inflow,
-                0.0621 ether,
-                0.00001 ether,
-                "the Core receives 6.21 percent before the payee share"
+                b.inflow, 0.0621 ether, 0.00001 ether, "the Core receives 6.21 percent before the payee share"
             );
             _check(b, bps[i]);
             _solvent();
@@ -334,6 +331,8 @@ contract FeeShareTest is FeeBase {
     /// eth forced into the core is fee income at the next book: split by the settings like the hook's push
     function test_book_countsForcedEthAsIncome() public {
         _share(10_000);
+        // book any fee income unbooked at the pin so the forced eth below is the only income the next book counts
+        core.book();
         vm.deal(address(core), address(core).balance + 1.5 ether);
         uint256 pot = core.ethPot();
         uint256 rb = core.ethRedeemBurn();
@@ -344,34 +343,6 @@ contract FeeShareTest is FeeBase {
         // a second book counts nothing
         core.book();
         assertEq(core.ethRedeemBurn() - rb, 1.5 ether);
-    }
-
-    // promise: SPEC 1 decision 176: unbooked forced eth earns no bid climb, and the first door pays the quote
-    /// a cold fresh deploy whose only eth is forced in (a selfdestruct or raw transfer the Core never booked), pot 0.
-    /// over an idle hour the bid stays at the opening rate because the forced eth has not been booked.
-    /// the first sell books the forced eth and pays the quote read in the same block. launch feeToRedeemBurnBps
-    function test_forcedEthAsTheOnlyIncomeDoesNotClimbBeforeBookAndASellPaysTheQuote() public {
-        _share(1_000);
-        assertEq(core.ethPot(), 0, "nothing booked at launch");
-        assertEq(address(core).balance, 0, "the fresh engine holds no eth");
-
-        uint256 id = _credits(seller, 1)[0];
-        _unitScore(id);
-        // forced eth: the only income, unbooked
-        vm.deal(address(core), 1 ether);
-        // an idle hour past the sniper window earns no climb before a book
-        vm.warp(launchTime + 1 hours);
-        uint256 quotedRate = core.ethRate();
-        uint256 quotedBid = core.bidOf(id);
-        assertEq(quotedRate, core.RATE_START(), "unbooked forced eth earned no climb");
-        assertEq(core.ethPot(), 0, "still nothing booked");
-
-        uint256 before = seller.balance;
-        vm.prank(seller);
-        core.sellForEth(_one(id));
-        assertEq(seller.balance - before, quotedBid, "the sell paid the quoted bid, booking the forced eth first");
-        assertEq(address(core).balance, _tracked(), "the sell booked the forced eth");
-        _solvent();
     }
 
     // ------------------------------------------------------------------ a change of the setting
@@ -403,8 +374,47 @@ contract FeeShareTest is FeeBase {
     }
 }
 
+/// a cold fresh deploy whose only eth is forced in: pot 0, the engine holds no eth, and the forced eth earns no bid
+/// climb until a door books it. the live Core is never empty and carries a climbed price state, so this stays on a
+/// fresh deploy, where mocking the credit score is allowed against the fixture's own CreditScore
+contract FeeShareColdTest is FeeBaseFixture {
+    function _share(uint16 bps) internal {
+        Settings memory s = core.settings();
+        s.feeToRedeemBurnBps = bps;
+        _setSettings(s);
+    }
+
+    // promise: SPEC 1 decision 176: unbooked forced eth earns no bid climb, and the first door pays the quote
+    /// a cold fresh deploy whose only eth is forced in (a selfdestruct or raw transfer the Core never booked), pot 0.
+    /// over an idle hour the bid stays at the opening rate because the forced eth has not been booked.
+    /// the first sell books the forced eth and pays the quote read in the same block. launch feeToRedeemBurnBps
+    function test_forcedEthAsTheOnlyIncomeDoesNotClimbBeforeBookAndASellPaysTheQuote() public {
+        _share(1_000);
+        assertEq(core.ethPot(), 0, "nothing booked at launch");
+        assertEq(address(core).balance, 0, "the fresh engine holds no eth");
+
+        uint256 id = _credits(seller, 1)[0];
+        _unitScore(id);
+        // forced eth: the only income, unbooked
+        vm.deal(address(core), 1 ether);
+        // an idle hour past the sniper window earns no climb before a book
+        vm.warp(launchTime + 1 hours);
+        uint256 quotedRate = core.ethRate();
+        uint256 quotedBid = core.bidOf(id);
+        assertEq(quotedRate, core.RATE_START(), "unbooked forced eth earned no climb");
+        assertEq(core.ethPot(), 0, "still nothing booked");
+
+        uint256 before = seller.balance;
+        vm.prank(seller);
+        core.sellForEth(_one(id));
+        assertEq(seller.balance - before, quotedBid, "the sell paid the quoted bid, booking the forced eth first");
+        assertEq(address(core).balance, _tracked(), "the sell booked the forced eth");
+        _solvent();
+    }
+}
+
 /// the fee that comes back to the core during its own `buyback()` swap is split like any other, and the buyback works
-contract FeeShareBuybackTest is FeeBase {
+contract FeeShareBuybackTest is FeeBaseFixture {
     function _share(uint16 bps) internal {
         Settings memory s = core.settings();
         s.feeToRedeemBurnBps = bps;

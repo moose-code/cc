@@ -3,21 +3,34 @@ pragma solidity ^0.8.28;
 
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Sale} from "../src/interfaces/Interfaces.sol";
 import {ScriptedController} from "./attackers/ScriptedController.sol";
 import {SellingController, HostileModule, RepaidCaller} from "./attackers/SaleAttackers.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 import {ComposeCall} from "./utils/ComposeCall.sol";
 
-/// the balance side redemption: when a statement may be redeemed, what stops it, and the payment to the caller from
-/// the eth pot. real Core, Statements. the stand in module and token, and the attacker modules
-abstract contract RedeemBase is Fixture {
+/// the balance side redemption on the live fork: when a statement may be redeemed, what stops it, and the payment to the
+/// caller from the eth pot. the live Core, controller and Statements. ordinary redemptions run against the fresh live
+/// phase 2 treasury (`_enterPhase2`), selected on the live Core by the owner. tests whose subject is a misbehaving module
+/// keep the stand in hostile module and token, selected on the live Core by the owner (`_phase2Hostile`)
+abstract contract RedeemBase is LiveFixture {
     using stdStorage for StdStorage;
 
     /// the most gas of a redemption the caller payment counts (a private constant of the core, restated here)
     uint256 internal constant REDEEM_GAS = 1_500_000;
     HostileModule internal hm;
+
+    function setUp() public virtual override {
+        super.setUp();
+        // book any fee income pending at the pin so the pot and balance start clean (the caller payment and pot drops are
+        // exact only against clean books), and age the live pile past the credit sale window (creditSaleOn is on at the
+        // pin) so compose can take the oldest page
+        core.book();
+        _warp(ctl.creditWindow() + 1);
+    }
 
     function _cost(uint256 sid) internal view returns (uint256 cost) {
         (, cost,) = core.statementInfo(sid);
@@ -27,15 +40,21 @@ abstract contract RedeemBase is Fixture {
         (,, at) = core.statementInfo(sid);
     }
 
-    /// the balance side with a module that can burn gas and call out, same balance token as the stand in
+    /// the balance side with a module that can burn gas and call out. its subject is the module's misbehavior, so it
+    /// keeps the stand in token and hostile module (the live treasury cannot be made hostile) and the owner selects it on
+    /// the live Core, a real setter path. the stand in token carries no ink rule, so `mint` funds it directly
     function _phase2Hostile() internal {
-        _enterPhase2();
+        xt = new MockBalanceToken("Balance Token", "XT");
         hm = new HostileModule(address(xt), UNIT);
+        xt.mint(address(hm), 1e24);
         _setBalanceModule(address(hm));
+        _setSwitches(true, true);
     }
 
     function _another() internal returns (uint256 sid) {
         _fillEthPile(80);
+        // the freshly sold page must pass the live credit sale window before compose can take it (creditSaleOn is on)
+        _warp(ctl.creditWindow() + 1);
         vm.fee(composeBasefee);
         vm.prank(keeper);
         core.compose();
@@ -97,13 +116,13 @@ contract RedeemTimingTest is RedeemBase {
         assertEq(STATEMENTS.ownerOf(sid), address(core), "still held after the refused try");
         _makeEligible(sid);
         assertTrue(ctl.atFloor(sid), "the price has fallen to cost");
-        uint256 owed = core.ratingOf(sid) * UNIT;
-        uint256 held0 = _moduleHolding();
+        uint256 owed = core.ratingOf(sid) * _moduleUnit();
+        uint256 held0 = _moduleCustody();
         core.redeemStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+        assertEq(STATEMENTS.ownerOf(sid), liveBalanceToken);
         (bool held,,) = core.statementInfo(sid);
         assertFalse(held);
-        assertEq(_moduleHolding() - held0, owed, "the owed amount is minted into the module");
+        assertEq(_moduleCustody() - held0, owed, "the owed amount arrives in the treasury");
         _solvent();
     }
 
@@ -124,11 +143,13 @@ contract RedeemTimingTest is RedeemBase {
         core.setPaused(false);
         _makeEligible(sid);
         core.redeemStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+        assertEq(STATEMENTS.ownerOf(sid), liveBalanceToken);
     }
 
     // promise: INTEGRATION NoBalanceModule, NotHeld on redeemStatement
     function test_timing_noModuleNotHeldAndUnknown() public {
+        // stage B selects a module at setUp, so the no-module door cannot be reached there
+        if (_liveStageB()) return;
         uint256 sid = _composeOnce().sid;
         vm.expectRevert(ICore.NoBalanceModule.selector);
         core.redeemStatement(sid);
@@ -142,6 +163,8 @@ contract RedeemTimingTest is RedeemBase {
     // promise: SPEC 9 the launch curve rule reaches its floor at decayHours of age: false one second before it, true at
     // it (at launch saleFloorBps is 10,000, so the curve boundary equals the age rule's)
     function test_eligibility_byAgeAtTheBoundary() public {
+        // the decayHours curve floor is the ControllerV1 eligibility rule; stage B runs ControllerV2 with its own rule
+        if (_liveStageB()) return;
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         uint256 span = uint256(ctl.decayHours()) * 1 hours;
@@ -152,14 +175,17 @@ contract RedeemTimingTest is RedeemBase {
         vm.warp(_composedAt(sid) + span);
         assertTrue(ctl.atFloor(sid), "eligible at decayHours of age");
         core.redeemStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+        assertEq(STATEMENTS.ownerOf(sid), liveBalanceToken);
     }
 
     // promise: SPEC 9 eligibility reads no price: a failing unit read, a pool key and a rate move leave it unchanged
     /// the old rule compared the curve price with its floor and read the reference (the floor rate and the pool); the
     /// age rule reads only the start and the age, so a broken quote neither blocks nor restarts eligibility
     function test_eligibility_readsNoPrice() public {
-        _enterPhase2();
+        // the age eligibility switch is a ControllerV1 setting; stage B runs ControllerV2 with its own rule. the subject
+        // is a module whose unit read reverts, so this keeps the stand in module (selected on the live Core by the owner)
+        if (_liveStageB()) return;
+        Fixture._enterPhase2();
         _setAgeEligibility(true);
         _setBalancePool();
         uint256 sid = _composeOnce().sid;
@@ -178,6 +204,8 @@ contract RedeemTimingTest is RedeemBase {
 
     // promise: SPEC 9 a start at or below 10,000 is eligible from the first second
     function test_eligibility_startAtParIsEligibleAtOnce() public {
+        // setSale and startBps are ControllerV1; stage B runs ControllerV2 with its own rule
+        if (_liveStageB()) return;
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         assertFalse(ctl.atFloor(sid), "the launch start of 15,000 waits for the age");
@@ -193,6 +221,8 @@ contract RedeemTimingTest is RedeemBase {
     /// they differ once `saleFloorBps` is below 10,000 (the value at the switch): a start at par waits under the curve
     /// (the ask sits above a 5,000 floor) but is eligible at once under the age rule (the start is at or below 10,000)
     function test_eligibility_switchOffIsCurveOnIsAge() public {
+        // the curve-versus-age switch and setSale are ControllerV1; stage B runs ControllerV2 with its own rule
+        if (_liveStageB()) return;
         _enterPhase2();
         uint256 sid = _composeOnce().sid;
         Settings memory s = core.settings();
@@ -214,9 +244,11 @@ contract RedeemTimingTest is RedeemBase {
     /// with a pool key set and the module stand in, the cold read stays under half the cap and the redemption through
     /// the Core completes
     function test_timing_atFloorColdFitsTheCoreReadBudget() public {
+        // the age eligibility switch is ControllerV1; stage B runs ControllerV2 with its own rule
+        if (_liveStageB()) return;
         _enterPhase2();
         _setAgeEligibility(true);
-        _setBalancePool();
+        _setLiveBalancePool();
         uint256 sid = _composeOnce().sid;
         _makeEligible(sid);
         _cool();
@@ -235,7 +267,7 @@ contract RedeemTimingTest is RedeemBase {
     function _cool() internal {
         vm.cool(address(core));
         vm.cool(address(ctl));
-        vm.cool(address(mod));
+        vm.cool(address(treasury));
         vm.cool(address(PM));
     }
 
@@ -250,7 +282,7 @@ contract RedeemTimingTest is RedeemBase {
         // redeemOn alone redeems
         _setSwitches(true, false);
         core.redeemStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+        assertEq(STATEMENTS.ownerOf(sid), liveBalanceToken);
     }
 
     // promise: INTEGRATION NotEligible when the controller reports not at floor
@@ -301,14 +333,19 @@ contract RedeemRepayTest is RedeemBase {
         _makeEligible(sid);
     }
 
-    // promise: SPEC 1 redeem pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 138)
-    /// at the launch settings and a base fee above 3 gwei, a module that burns past the count is paid exactly
-    /// REDEEM_GAS * 3 gwei + 0.0003 eth, from the pot
-    function test_pay_launchSettingsPayCappedGasPlusFee() public {
+    // promise: SPEC 1 redeem pays its caller at the live caller settings: counted gas capped at the base fee ceiling plus callerFee
+    /// at a base fee above the live ceiling, a module that burns past the count is paid exactly
+    /// REDEEM_GAS * callerMaxBaseFee + callerFee, from the pot. the live caller settings are read, not the launch constants
+    function test_pay_liveSettingsPayCappedGasPlusFee() public {
         uint256 sid = _ethStatementReady();
+        Settings memory s = core.settings();
         hm.setBurn(4_000_000);
         (uint256 repaid, uint256 potLost) = _redeem(sid, HIGH);
-        assertEq(repaid, REDEEM_GAS * 3 gwei + 0.0003 ether, "the count at its cap, the base fee at the 3 gwei ceiling");
+        assertEq(
+            repaid,
+            REDEEM_GAS * uint256(s.callerMaxBaseFee) + s.callerFee,
+            "the count at its cap, the base fee at the live ceiling"
+        );
         assertEq(potLost, repaid, "from the pot");
         assertEq(STATEMENTS.ownerOf(sid), address(hm), "the redemption went through");
     }
@@ -401,7 +438,7 @@ contract RedeemRepayTest is RedeemBase {
         assertEq(rc.ok(), 0);
         assertGt(address(rc).balance - bal, 0);
         assertEq(core.ethPot(), pot - rc.repaid(), "the pot paid it once");
-        assertEq(STATEMENTS.ownerOf(a), address(mod));
+        assertEq(STATEMENTS.ownerOf(a), liveBalanceToken);
         assertEq(STATEMENTS.ownerOf(b), address(core), "the other statement is untouched");
         _solvent();
     }
@@ -420,11 +457,15 @@ contract RedeemRepayTest is RedeemBase {
             _setController(address(sc));
             bytes memory data;
             address target = address(core);
-            if (k == 0) data = ComposeCall.noArgs();
-            else if (k == 1) data = abi.encodeCall(ICore.book, ());
-            else if (k == 2) data = abi.encodeCall(ICore.redeemStatement, (b));
-            else if (k == 3) data = abi.encodeCall(ICore.buyback, ());
-            else {
+            if (k == 0) {
+                data = ComposeCall.noArgs();
+            } else if (k == 1) {
+                data = abi.encodeCall(ICore.book, ());
+            } else if (k == 2) {
+                data = abi.encodeCall(ICore.redeemStatement, (b));
+            } else if (k == 3) {
+                data = abi.encodeCall(ICore.buyback, ());
+            } else {
                 target = address(sc);
                 data = abi.encodeCall(SellingController.sell, (b, address(hm)));
             }

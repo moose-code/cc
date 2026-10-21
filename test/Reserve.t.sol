@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 import {ListingTarget} from "./attackers/ListingTarget.sol";
@@ -10,14 +10,18 @@ import {ListingTarget} from "./attackers/ListingTarget.sol";
 /// the reserve: the eth the pot keeps for processing, the larger of `reserveWei` and 1.5 times the queued compose and
 /// redeem caller payments (one compose per full page of the pile at 9,000,000 gas, one redemption per held statement at
 /// 600,000 gas, each gas at `callerMaxBaseFee` plus `callerFee`). the bids and `ethRate` read `ethPot` less it; the caller
-/// payments, the buyback and the pushes pay from the whole pot
-contract ReserveTest is Fixture {
+/// payments, the buyback and the pushes pay from the whole pot. this runs against the live core, whose `reserveWei` floor
+/// is already 0.1 eth and whose pile is non empty at the pin, so the queue assertions read the live pile and held set
+contract ReserveTest is LiveFixture {
     using stdStorage for StdStorage;
 
-    /// the launch reserve floor, which the general fixture sets to 0
-    function _settings() internal view override returns (Settings memory s) {
-        s = super._settings();
-        s.reserveWei = 0.1 ether;
+    function setUp() public override {
+        super.setUp();
+        // book any fee income pending at the pin so `ethPot` and the bid room (which reads unbooked income through the
+        // pages pot) start from clean books, and age the live pile past the credit sale window (creditSaleOn is on at the
+        // pin) so compose can take the oldest page
+        core.book();
+        _warp(ctl.creditWindow() + 1);
     }
 
     /// sets the pot by slot and moves the eth with it, so the next book counts nothing
@@ -32,88 +36,117 @@ contract ReserveTest is Fixture {
     /// the reserve formula by hand at the live settings
     function _formula(uint256 pile, uint256 held) internal view returns (uint256) {
         Settings memory s = core.settings();
-        uint256 queued = pile / 80 * (9_000_000 * uint256(s.callerMaxBaseFee) + s.callerFee)
-            + held * (600_000 * uint256(s.callerMaxBaseFee) + s.callerFee);
+        uint256 queued = pile / 80 * (9_000_000 * uint256(s.callerMaxBaseFee) + s.callerFee) + held
+            * (600_000 * uint256(s.callerMaxBaseFee) + s.callerFee);
         uint256 q = queued * 15 / 10;
         return q > s.reserveWei ? q : s.reserveWei;
     }
 
     // promise: SPEC 4 the reserve is max(reserveWei, 1.5 times the queued compose and redeem payments)
+    /// read against the live pile and held set. the live `reserveWei` floor is 0.1 eth; the reserve follows the hand
+    /// formula at every step, a full page adds one page of queued compose payment, and a compose moves a page out of the
+    /// pile into one held statement
     function test_formulaFollowsTheQueue() public {
-        assertEq(core.reserve(), 0.1 ether, "an empty queue keeps the floor");
+        assertEq(
+            core.reserve(),
+            _formula(core.pileSize(), core.heldStatements().length),
+            "the reserve follows the queue at the live state"
+        );
+        // drop the floor: the reserve is the queued payments alone
         Settings memory s = core.settings();
         s.reserveWei = 0;
         _setSettings(s);
-        assertEq(core.reserve(), 0, "no queue and no floor");
+        assertEq(
+            core.reserve(),
+            _formula(core.pileSize(), core.heldStatements().length),
+            "no floor, the queued payments alone"
+        );
+        // one full page adds one page of queued compose payment
+        uint256 pagePay = 9_000_000 * uint256(s.callerMaxBaseFee) + s.callerFee;
+        uint256 before = core.reserve();
         _fillEthPile(80);
-        // one page at the launch caller settings: 1.5 * (9,000,000 * 3 gwei + 0.0003 eth) = 0.04095 eth
-        assertEq(core.reserve(), 0.04095 ether, "one full page");
-        assertEq(core.reserve(), _formula(core.pileSize(), 0));
+        assertEq(core.reserve() - before, pagePay * 15 / 10, "one full page added one page of queued compose payment");
+        assertEq(core.reserve(), _formula(core.pileSize(), core.heldStatements().length));
+        // a compose moves a page out of the pile into one held statement
+        uint256 pileBefore = core.pileSize();
+        uint256 heldBefore = core.heldStatements().length;
         _composeOnce();
-        // the page left the pile and one statement is held: 1.5 * (600,000 * 3 gwei + 0.0003 eth) = 0.00315 eth
-        assertEq(core.pileSize(), 0);
-        assertEq(core.reserve(), 0.00315 ether, "one held statement");
-        assertEq(core.reserve(), _formula(0, 1));
+        assertEq(core.pileSize(), pileBefore - 80, "the page left the pile");
+        assertEq(core.heldStatements().length, heldBefore + 1, "one statement is held");
+        assertEq(core.reserve(), _formula(core.pileSize(), core.heldStatements().length));
+        // the floor binds again once it is above the short queue
         s = core.settings();
         s.reserveWei = 0.1 ether;
         _setSettings(s);
-        assertEq(core.reserve(), 0.1 ether, "the floor binds above a short queue");
+        assertEq(core.reserve(), _formula(core.pileSize(), core.heldStatements().length), "the floor binds the formula");
     }
 
     // promise: decision 176 lowering the queued reserve starts a fresh funded clock without granting empty hours
+    /// several pages queue a reserve above the floor. a pot set just under the reserve leaves the funded clock unstarted,
+    /// so idle time does not raise the price. a compose removes a page (floor(pile/80) falls by one), lowering the reserve
+    /// below the pot. the compose must not backdate the idle interval, and funded time after it raises the price
     function test_composeReserveDropDoesNotGrantEmptyHours() public {
         _fillEthPile(240);
-        assertEq(core.reserve(), 0.12285 ether, "three queued pages bind above the reserve floor");
+        uint256 res0 = core.reserve();
+        assertGt(res0, 0.1 ether, "the queued pages bind above the reserve floor");
         vm.prank(owner);
         core.setRate(0.0049 ether);
-        _setPot(0.11 ether);
+        _setPot(res0 - 1);
         _warp(6 hours);
-        assertEq(core.ethPrice(), 0.0049 ether, "the old reserve left the clock unfunded");
+        assertEq(core.ethPrice(), 0.0049 ether, "the pot under the reserve left the clock unfunded");
 
         vm.fee(0);
         vm.prank(keeper);
         core.compose();
-        assertEq(core.reserve(), 0.1 ether, "one compose lowered the reserve to its floor");
-        assertGt(core.ethPot(), 0.1050225 ether, "the remaining pot funds the 100-point bid and royalty");
+        assertLt(core.reserve(), res0, "one compose lowered the queued reserve");
+        assertGt(core.ethPot(), core.reserve(), "the pot now sits above the lowered reserve");
         assertEq(core.ethPrice(), 0.0049 ether, "the compose did not grant the prior six hours");
         _warp(5 minutes);
         assertGt(core.ethPrice(), 0.0049 ether, "funded time after the compose raises the price");
     }
 
     // promise: decision 176 raising the queued reserve preserves the funded climb earned before the new page
+    /// the pile is filled to one credit short of a page boundary, so one more Credit crosses it and raises the reserve. a
+    /// funded pot climbs for four minutes, then the adopt that queues the new page must keep the earned checkpoint rate
     function test_adoptReserveRiseKeepsEarnedClimb() public {
-        _fillEthPile(239);
-        assertEq(core.reserve(), 0.1 ether, "two pages leave the reserve floor binding");
+        // land the pile one credit short of the next page boundary (pile mod 80 == 79)
+        _fillEthPile(79 - (core.pileSize() % 80));
         vm.prank(owner);
         core.setRate(0.0049 ether);
-        _setPot(0.11 ether);
+        _setPot(core.reserve() + 10 ether);
         _warp(4 minutes);
         uint256 earned = core.ethPrice();
-        assertGt(earned, 0.0049 ether, "the pot funded four minutes of climb");
+        assertGt(earned, 0.0049 ether, "the funded pot climbed for four minutes");
 
+        uint256 resBefore = core.reserve();
         uint256 id = _heldCredit(0);
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(core), id);
         core.adopt(_one(id));
-        assertEq(core.reserve(), 0.12285 ether, "the 240th Credit queues a third page");
-        assertEq(core.rateAtCheckpoint(), earned, "the checkpoint kept the funded interval before reserve grew");
+        assertGt(core.reserve(), resBefore, "the boundary-crossing Credit queued another page");
+        assertEq(core.rateAtCheckpoint(), earned, "the checkpoint kept the funded interval before the reserve grew");
     }
 
     // promise: decision 176 a controller credit sale cannot backdate a funded climb when the pile crosses a page boundary
+    /// the pile is filled to a page boundary (pile mod 80 == 0), so selling one pile Credit out crosses it down and lowers
+    /// the reserve. a pot under the reserve leaves the clock unfunded; the sale must not backdate the idle interval
     function test_creditSaleReserveDropDoesNotGrantEmptyHours() public {
-        uint256[] memory ids = _fillEthPile(240);
-        assertEq(core.reserve(), 0.12285 ether, "three pages bind above the reserve floor");
+        uint256 rem = core.pileSize() % 80;
+        uint256[] memory ids = _fillEthPile(rem == 0 ? 80 : 80 - rem);
+        uint256 sold = ids[ids.length - 1];
+        uint256 res0 = core.reserve();
+        assertGt(res0, 0.1 ether, "the queued pages bind above the reserve floor");
         vm.prank(owner);
         core.setRate(0.0049 ether);
-        _setPot(0.11 ether);
+        _setPot(res0 - 1);
         _warp(6 hours);
-        assertEq(core.ethPrice(), 0.0049 ether, "the old reserve left the clock unfunded");
+        assertEq(core.ethPrice(), 0.0049 ether, "the pot under the reserve left the clock unfunded");
 
-        (, uint256 cost,) = core.creditInfo(ids[239]);
+        (, uint256 cost,) = core.creditInfo(sold);
         vm.deal(address(ctl), cost);
         vm.prank(address(ctl));
-        core.sellCreditTo{value: cost}(ids[239], makeAddr("credit buyer"));
-        assertEq(core.reserve(), 0.1 ether, "the sale lowered the queue to two pages");
+        core.sellCreditTo{value: cost}(sold, makeAddr("credit buyer"));
+        assertLt(core.reserve(), res0, "the boundary-crossing sale lowered the queue");
         assertEq(core.ethPrice(), 0.0049 ether, "the sale did not grant the prior six hours");
         _warp(5 minutes);
         assertGt(core.ethPrice(), 0.0049 ether, "funded time after the sale raises the price");
@@ -172,13 +205,18 @@ contract ReserveTest is Fixture {
 
     // promise: SPEC 6 buyListing refuses a quote above the pot less the reserve and caps the payment at the room
     function test_buyListingRespectsTheRoom() public {
+        // LiveFixture does not stand up the raw test adapter; etch it here and let the owner approve it (a test adapter
+        // the owner approves is allowed by the owner rule)
+        rawAdapter = _user("rawAdapter");
+        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
         _approveAdapter(rawAdapter);
         uint256 id = _heldCredit(0);
         ListingTarget t = new ListingTarget();
         vm.prank(STRATEGY);
         CREDITS.transferFrom(STRATEGY, address(t), id);
         _liftRateCap();
-        _setPot(core.reserve() + 0.01 ether);
+        // the live credit bids several times the per 100 point rate, so give the room more than one bid of headroom
+        _setPot(core.reserve() + 1 ether);
         uint256 room = core.ethPot() - core.reserve();
         vm.prank(keeper);
         vm.expectRevert(ICore.PotTooSmall.selector);

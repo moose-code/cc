@@ -2,15 +2,15 @@
 pragma solidity ^0.8.28;
 
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {RepaidCaller} from "./attackers/SaleAttackers.sol";
 
-/// the caller payment of `compose`: counted gas at the capped base fee plus `callerFee`, from `ethPot`,
-/// at most the pot. real Core, real Statements, the stand in balance module and token. `redeemStatement` shares the helper
-/// and the settings, its cases are in test/Redeem.t.sol
-contract CallerPayTest is Fixture {
+/// the caller payment of `compose`: counted gas at the capped base fee plus `callerFee`, from `ethPot`, at most the pot.
+/// the live Core, its live Statements and pile on the pinned fork. `redeemStatement` shares the helper and the settings,
+/// its cases are in test/Redeem.t.sol
+contract CallerPayTest is LiveFixture {
     using stdStorage for StdStorage;
 
     /// the private constants of the Core, restated
@@ -28,6 +28,15 @@ contract CallerPayTest is Fixture {
         uint256 gross;
         /// the refund the transaction earned
         uint256 refund;
+    }
+
+    function setUp() public override {
+        super.setUp();
+        // book any fee income pending at the pin so the pot and balance start clean (the drops the caller payment tests
+        // measure are exact only against clean books), and age the live pile past the credit sale window (creditSaleOn is
+        // on at the pin), so compose can take the oldest page
+        core.book();
+        _warp(ctl.creditWindow() + 1);
     }
 
     function _payOn() internal {
@@ -76,16 +85,18 @@ contract CallerPayTest is Fixture {
 
     // ------------------------------------------------------------------ launch values and off
 
-    // promise: SPEC 1 compose pays its caller at launch, gas up to 3 gwei plus 0.0003 eth (decision 138)
-    function test_launchSettingsPayCappedGasPlusFee() public {
+    // promise: SPEC 1 compose pays its caller at the live caller settings: gas up to callerMaxBaseFee plus callerFee
+    /// the live core carries its own caller settings, read here rather than the launch constants of decision 138. the
+    /// rule is unchanged: above the base fee ceiling the gas is refunded at the ceiling, whole units, plus the fee
+    function test_liveSettingsPayCappedGasPlusFee() public {
         Settings memory s = core.settings();
-        assertEq(s.callerFee, 0.0003 ether);
-        assertEq(s.callerMaxBaseFee, 3 gwei);
+        uint256 cap = s.callerMaxBaseFee;
+        assertGt(cap, 0, "the live core refunds compose gas");
         _readyEth();
         Run memory r = _run(300 gwei, 300 gwei);
-        assertGt(r.paid, 0.0003 ether, "the fee and the gas");
-        assertEq((r.paid - 0.0003 ether) % 3 gwei, 0, "the gas is paid at the 3 gwei ceiling");
-        uint256 counted = (r.paid - 0.0003 ether) / 3 gwei;
+        assertGt(r.paid, s.callerFee, "the fee and the gas above the base fee ceiling");
+        assertEq((r.paid - s.callerFee) % cap, 0, "the gas is paid at the base fee ceiling");
+        uint256 counted = (r.paid - s.callerFee) / cap;
         assertGe(counted, r.gross, "covers the gross gas of the transaction");
         assertLt(counted, COMPOSE_GAS, "under the bound");
         assertEq(r.potDrop, r.paid, "debited from the pot");
@@ -152,11 +163,12 @@ contract CallerPayTest is Fixture {
     function test_paymentIsCappedAtThePot() public {
         _readyEth();
         _payOn();
+        uint256 heldBefore = core.heldStatements().length;
         _setPot(1e12);
         Run memory r = _run(5 gwei, 5 gwei);
         assertEq(r.paid, 1e12, "the whole pot");
         assertEq(core.ethPot(), 0);
-        assertEq(core.heldStatements().length, 1, "the compose went through");
+        assertEq(core.heldStatements().length, heldBefore + 1, "the compose went through");
     }
 
     // promise: SPEC 1 the compose gas bound is at least 1.2 times the largest counted compose
@@ -193,12 +205,13 @@ contract CallerPayTest is Fixture {
         RepaidCaller rc = new RepaidCaller(core);
         vm.fee(5 gwei);
         uint256 pot = core.ethPot();
+        uint256 heldBefore = core.heldStatements().length;
         rc.compose(0);
         assertEq(rc.hits(), 1, "paid once");
         assertEq(rc.blocked(), 4, "all four doors refused it");
         assertEq(rc.ok(), 0);
         assertEq(core.ethPot(), pot - rc.repaid(), "the pot paid it once");
-        assertEq(core.heldStatements().length, 1);
+        assertEq(core.heldStatements().length, heldBefore + 1);
         _solvent();
     }
 }
