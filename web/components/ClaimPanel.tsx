@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 // The "Burn CC for BALANCE" panel of /exchange: presentation only. Every figure arrives formatted; the page owns the
 // reads, the quote arithmetic (web/lib/exchange.ts claimQuote) and the consent flow (redeemClaim).
 
-export type ClaimReceipt = { burned: string; received: string; hash: string; reserveAfter: string };
+export type ClaimReceipt = { burned: string; received: string; hash: string };
 
 export type ClaimPanelProps = {
   // when set, the panel shows this notice alone: the Core's module is not a phase 2 treasury
@@ -38,6 +38,7 @@ export type ClaimPanelProps = {
   status?: string;
   error?: string;
   receipt?: ClaimReceipt;
+  onReset: () => void;
   action: ReactNode;
 };
 
@@ -74,53 +75,64 @@ export function ClaimPanel(p: ClaimPanelProps) {
         </dl>
       </div>
       <div className="claim-form">
-        <label className="claim-amount" htmlFor="claim-amount">
-          <span>{p.ccSymbol} to burn</span>
-          <span className="claim-amount-row">
-            <input
-              id="claim-amount"
-              type="text"
-              inputMode="decimal"
-              autoComplete="off"
-              placeholder="0"
-              value={p.amount}
-              disabled={p.busy}
-              onChange={(e) => p.onAmountChange(e.target.value)}
-            />
-            <button type="button" disabled={p.busy || !p.connected} onClick={p.onMax}>max</button>
-          </span>
-        </label>
-        <dl className="claim-quote">
-          <div><dt>you receive</dt><dd>{p.quoted} {p.balanceSymbol}</dd></div>
-          <div><dt>minimum you receive</dt><dd>{p.minimum} {p.balanceSymbol}</dd></div>
-          <div><dt>terms epoch</dt><dd>{p.epoch}</dd></div>
-        </dl>
-        {p.liveMismatch && <p className="claim-note" role="status">The treasury&apos;s quote differs from the pro-rata arithmetic; the treasury&apos;s quote is shown and used.</p>}
-        <div className="claim-slippage">
-          <span id="claim-slippage-label">slippage tolerance</span>
-          <div role="group" aria-labelledby="claim-slippage-label">
-            {[0, 50, 100].map((bps) => (
-              <button key={bps} type="button" aria-pressed={p.slippageBps === bps} disabled={p.busy} onClick={() => p.onSlippageChange(bps)}>{bps / 100}%</button>
-            ))}
+        {p.receipt ? (
+          <div className="claim-success" role="status">
+            <p className="claim-success-title">burn complete</p>
+            <p className="claim-success-value">{p.receipt.received}</p>
+            <p className="claim-success-currency">{p.balanceSymbol} received</p>
+            <dl className="claim-receipt">
+              <div><dt>{p.ccSymbol} burned</dt><dd>{p.receipt.burned}</dd></div>
+              <div><dt>transaction</dt><dd><code title={p.receipt.hash}>{shortHash(p.receipt.hash)}</code></dd></div>
+            </dl>
+            <button type="button" onClick={p.onReset}>burn more {p.ccSymbol}</button>
           </div>
-        </div>
-        <p className="claim-explanation">
-          The quote, the minimum and the terms epoch are pinned when you confirm. The transaction expires 20 minutes after
-          confirmation, and reverts if the owner changes the terms, if the treasury pays under your minimum, or if redemption closes.
-        </p>
-        {p.status && <p className="claim-status" role="status">{p.status}</p>}
-        {p.error && <p className="claim-error" role="alert">{p.error}</p>}
-        {p.receipt && (
-          <dl className="claim-receipt" role="status">
-            <div><dt>burned</dt><dd>{p.receipt.burned} {p.ccSymbol}</dd></div>
-            <div><dt>received</dt><dd>{p.receipt.received} {p.balanceSymbol}</dd></div>
-            <div><dt>claim reserve after</dt><dd>{p.receipt.reserveAfter} {p.balanceSymbol}</dd></div>
-            <div><dt>transaction</dt><dd><code>{p.receipt.hash}</code></dd></div>
-          </dl>
+        ) : (
+          <>
+            <label className="claim-amount" htmlFor="claim-amount">
+              <span>{p.ccSymbol} to burn</span>
+              <span className="claim-amount-row">
+                <input
+                  id="claim-amount"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder="0"
+                  value={p.amount}
+                  disabled={p.busy}
+                  onChange={(e) => p.onAmountChange(e.target.value)}
+                />
+                <button type="button" disabled={p.busy || !p.connected} onClick={p.onMax}>max</button>
+              </span>
+            </label>
+            <dl className="claim-quote">
+              <div><dt>you receive</dt><dd>{p.quoted} {p.balanceSymbol}</dd></div>
+              <div><dt>minimum you receive</dt><dd>{p.minimum} {p.balanceSymbol}</dd></div>
+              <div><dt>terms epoch</dt><dd>{p.epoch}</dd></div>
+            </dl>
+            {p.liveMismatch && <p className="claim-note" role="status">The treasury&apos;s quote differs from the pro-rata arithmetic; the treasury&apos;s quote is shown and used.</p>}
+            <div className="claim-slippage">
+              <span id="claim-slippage-label">slippage tolerance</span>
+              <div role="group" aria-labelledby="claim-slippage-label">
+                {[0, 50, 100].map((bps) => (
+                  <button key={bps} type="button" aria-pressed={p.slippageBps === bps} disabled={p.busy} onClick={() => p.onSlippageChange(bps)}>{bps / 100}%</button>
+                ))}
+              </div>
+            </div>
+            <p className="claim-explanation">
+              The quote, the minimum and the terms epoch are pinned when you confirm. The transaction expires 20 minutes after
+              confirmation, and reverts if the owner changes the terms, if the treasury pays under your minimum, or if redemption closes.
+            </p>
+            {p.status && <p className="claim-status" role="status">{p.status}</p>}
+            {p.error && <p className="claim-error" role="alert">{p.error}</p>}
+            {p.action}
+            <p className="claim-footnote">The first burn asks once to approve the treasury for exactly the amount entered.</p>
+          </>
         )}
-        {p.action}
-        <p className="claim-footnote">The first burn asks once to approve the treasury for exactly the amount entered.</p>
       </div>
     </section>
   );
+}
+
+function shortHash(hash: string): string {
+  return hash.length > 20 ? `${hash.slice(0, 10)}…${hash.slice(-8)}` : hash;
 }

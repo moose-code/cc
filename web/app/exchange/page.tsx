@@ -92,7 +92,7 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
       // the receipt's own CCRedeemed log is the record of what was burned and received
       const rc = await client.getTransactionReceipt({ hash });
       const done = decodeRedemption(rc.logs, info.treasury);
-      if (done) setReceipt({ burned: cc(done.burned, true), received: bal(done.received, true), reserveAfter: bal(done.claimReserve), hash });
+      if (done) setReceipt({ burned: cc(done.burned, true), received: bal(done.received, true), hash });
       setAmount("");
     }, [], consentIsCurrent);
     setReview(undefined);
@@ -132,6 +132,7 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
     status={status}
     error={err ?? undefined}
     receipt={receipt}
+    onReset={() => setReceipt(undefined)}
     action={!account
       ? <button type="button" onClick={openConnectModal}>connect wallet</button>
       : <button type="button" disabled={blocked || pending} onClick={burn}>{label}</button>}
