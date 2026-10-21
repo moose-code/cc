@@ -12,13 +12,13 @@ import { atBlock, mc as engineMc, MULTICALL3, pendingIncome, readSnapshot, type 
 import { CREDIT_SCORE } from "@cc/engine/addresses";
 import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, statements } from "./config";
-import { controllerAbi, coreAbi, creditsAbi, erc20Abi, redemptionPolicyAbi, statementsAbi, treasuryAbi } from "./abis";
+import { controllerAbi, coreAbi, creditsAbi, erc20Abi, redemptionPolicyAbi, standingBidAbi, statementsAbi, treasuryAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { ETH_ANCHOR_SLOT, ethAnchorWords, replayBalanceFills, replayEthFills, replayValueFills } from "./sell";
 import { useCreditRow, useCreditTraitsIx, useHeldCredits, useIxMode, useStatementDetailIx, useWalletCreditsIx } from "./indexer";
 import type { AcquiredHow } from "./indexer-schema";
 import type { BalanceTokenInfo } from "./format";
-import type { ClaimQuoteRead } from "./exchange";
+import type { BidTermsRead, ClaimQuoteRead, ClaimTermsRead } from "./exchange";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
@@ -721,6 +721,11 @@ export interface TreasuryInfo {
   transfersReady: boolean;
   solvent: boolean;
   migrated: boolean;
+  // the standing bid budget (decision 258): the budget a policy may pay above the share now, the daily accrual and
+  // the maximum; undefined on a treasury built before the budget
+  bidBudget?: { available: bigint; perDay: bigint; max: bigint };
+  // the standing bid policy's amount-free views; undefined when the policy does not answer bidPerCC and bidCapacity
+  bid?: { perCc: bigint; usable: boolean; capacity: bigint; premiumBps: number };
 }
 
 const TREASURY_POLL_MS = 15000;
@@ -759,6 +764,9 @@ export function useTreasury(account?: Address) {
           { ...t, functionName: "balanceToken" },
           { ...t, functionName: "ccToken" },
           { ...t, functionName: "selectedForClaims" },
+          { ...t, functionName: "bidBudgetAvailable" },
+          { ...t, functionName: "bidBudgetPerDay" },
+          { ...t, functionName: "bidBudgetMax" },
         ] as const,
       });
       const probe = r[0];
@@ -779,9 +787,14 @@ export function useTreasury(account?: Address) {
           { ...e, address: balanceToken, functionName: "symbol" },
           { ...e, address: balanceToken, functionName: "decimals" },
           { address: policy, abi: redemptionPolicyAbi, functionName: "VERSION" },
+          { address: policy, abi: standingBidAbi, functionName: "bidPerCC" },
+          { address: policy, abi: standingBidAbi, functionName: "bidCapacity" },
+          { address: policy, abi: standingBidAbi, functionName: "premiumBps" },
         ] as const,
       });
       const opt = <T,>(i: number): T | undefined => (x[i].status === "success" ? (x[i].result as T) : undefined);
+      const perCc = opt<readonly [bigint, boolean]>(7);
+      const capacity = opt<bigint>(8);
       return {
         treasury: module!,
         balanceToken,
@@ -807,6 +820,13 @@ export function useTreasury(account?: Address) {
         transfersReady: v<boolean>(9, false),
         solvent: v<boolean>(10, false),
         migrated: v<boolean>(11, false),
+        // a treasury built before the budget answers none of the three; a policy without the bid views leaves bid unset
+        bidBudget: r[15].status === "success" && r[16].status === "success" && r[17].status === "success"
+          ? { available: r[15].result as bigint, perDay: BigInt(r[16].result as bigint), max: BigInt(r[17].result as bigint) }
+          : undefined,
+        bid: perCc && capacity !== undefined
+          ? { perCc: perCc[0], usable: perCc[1], capacity, premiumBps: Number(opt<number>(9) ?? 0) }
+          : undefined,
       };
     },
   });
@@ -814,19 +834,37 @@ export function useTreasury(account?: Address) {
   return { data: module ? q.data : engineDeployed && snap ? null : undefined, error: q.error, ready: module ? q.data !== undefined : Boolean(snap) };
 }
 
-// quoteRedemption(ccIn) of the treasury for the entered amount, every 15 s; the previous answer stays while the
-// next loads for the same amount only. undefined while ccIn is 0
-export function useClaimQuote(treasury: Address | undefined, ccIn: bigint) {
+// quoteRedemption(ccIn) of the treasury for the entered amount, every 15 s, with the treasury's redemptionTerms and
+// the policy's terms beside it (both tolerant: a treasury before the budget or a policy without the view leaves them
+// undefined); the previous answer stays while the next loads for the same amount only. undefined while ccIn is 0
+export function useClaimQuote(treasury: Address | undefined, policy: Address | undefined, ccIn: bigint) {
   const client = usePublicClient();
   const key = ccIn.toString();
   return useQuery<ClaimQuoteRead | undefined>({
-    queryKey: ["claim-quote", treasury, key],
+    queryKey: ["claim-quote", treasury, policy, key],
     enabled: engineDeployed && Boolean(client && treasury) && ccIn > 0n,
     refetchInterval: TREASURY_POLL_MS,
-    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === key ? prev : undefined),
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[3] === key ? prev : undefined),
     queryFn: async () => {
-      const [balanceOut, reserve, supply, epoch, executable] = await client!.readContract({ address: treasury!, abi: treasuryAbi, functionName: "quoteRedemption", args: [ccIn] });
-      return { ccIn, balanceOut, reserve, supply, epoch: BigInt(epoch), executable };
+      const t = { address: treasury!, abi: treasuryAbi } as const;
+      const [q, r] = await client!.multicall({
+        ...mc,
+        allowFailure: true,
+        contracts: [
+          { ...t, functionName: "quoteRedemption", args: [ccIn] },
+          { ...t, functionName: "redemptionTerms", args: [ccIn] },
+        ] as const,
+      });
+      if (q.status !== "success") throw q.error;
+      const [balanceOut, reserve, supply, epoch, executable] = q.result;
+      const terms: ClaimTermsRead | undefined = r.status === "success" ? { share: r.result[0], budget: r.result[1], cap: r.result[2] } : undefined;
+      // the policy's terms at the quote's own reserve and supply
+      let bidTerms: BidTermsRead | undefined;
+      if (policy && policy !== zeroAddress) {
+        const answer = await client!.readContract({ address: policy, abi: standingBidAbi, functionName: "terms", args: [ccIn, reserve, supply] }).catch(() => undefined);
+        if (answer) bidTerms = { floor: answer[0], bid: answer[1], budget: answer[2], bidUsable: answer[3], atBid: answer[4] };
+      }
+      return { ccIn, balanceOut, reserve, supply, epoch: BigInt(epoch), executable, terms, bidTerms };
     },
   });
 }

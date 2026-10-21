@@ -4,16 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import { useAccount, useConfig, usePublicClient } from "wagmi";
 import { getAccount } from "wagmi/actions";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import type { Address } from "viem";
+import { formatUnits, type Address } from "viem";
 import { ClaimPanel, type ClaimReceipt } from "@/components/ClaimPanel";
 import { ExchangeView, type ExchangeReceipt } from "@/components/ExchangeView";
 import { chain, core, credits, engineDeployed } from "@/lib/config";
 import {
-  CLAIM_DEADLINE_SECONDS, PRO_RATA_VERSION, claimQuote, claimSliderAmount, decodeRedemption, exchangeAmount, exchangeQuote, redeemClaim, sellExchange,
-  type ClaimMarket,
+  CLAIM_DEADLINE_SECONDS, PRO_RATA_VERSION, betterDoor, claimQuote, claimSliderAmount, decodeRedemption, exchangeAmount, exchangeQuote, poolSellQuote,
+  redeemClaim, sellExchange, type ClaimMarket,
 } from "@/lib/exchange";
 import { rating, type BalanceTokenInfo } from "@/lib/format";
 import { useBalanceToken, useClaimQuote, useNow, useSnapshot, useTreasury, useWalletCredits, type Snapshot, type TreasuryInfo } from "@/lib/live";
+import { useBalanceMarket, useCcMarket, useHookFeeBps, useQuote, useSqrtPrice } from "@/lib/market";
 import { useTx } from "@/lib/tx";
 import "./exchange.css";
 
@@ -47,22 +48,42 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
   const info = review?.info ?? live;
   const ccDecimals = info?.coinDecimals ?? 18;
   const ccIn = review?.ccIn ?? claimSliderAmount(info?.walletCc ?? 0n, amountBps);
-  const liveQuote = useClaimQuote(review ? undefined : info?.treasury, ccIn);
+  const liveQuote = useClaimQuote(review ? undefined : info?.treasury, info?.policy, ccIn);
   const tolerance = review?.slippage ?? slippage;
   const market: ClaimMarket | undefined = review?.market ?? (info && {
     treasury: info.treasury, balanceToken: info.balanceToken, coin: info.coin, policy: info.policy, policyVersion: info.policyVersion,
     claimReserve: info.claimReserve, ccSupply: info.ccSupply, freeWorking: info.freeWorking,
     conversionToClaimBps: info.conversionToClaimBps, redemptionFeeBps: info.redemptionFeeBps, configEpoch: info.configEpoch,
     ccRedemptionEnabled: info.ccRedemptionEnabled, selected: info.selected, transfersReady: info.transfersReady,
-    solvent: info.solvent, migrated: info.migrated, quote: liveQuote.data,
+    solvent: info.solvent, migrated: info.migrated, quote: liveQuote.data, bidBudget: info.bidBudget, bid: info.bid,
   });
   const quote = market ? claimQuote(market, ccIn, tolerance, info?.walletCc) : undefined;
+  // the pool door beside the pot: the trade panel's sell quote for the same CC (the v4 Quoter, net of the skim), the
+  // pool spots for the fallback and the balance valuation, and the hook's current skim. informational, never frozen
+  // at consent and never a minimum
+  const ccMarketRead = useCcMarket().market;
+  const ccMarket = ccMarketRead && info && ccMarketRead.token.toLowerCase() === info.coin.toLowerCase() ? ccMarketRead : undefined;
+  const balanceMarketRead = useBalanceMarket().market;
+  const balanceMarket = balanceMarketRead && info && balanceMarketRead.token.toLowerCase() === info.balanceToken.toLowerCase() ? balanceMarketRead : undefined;
+  const poolEth = useQuote(ccMarket, "sell", ccIn);
+  const skim = useHookFeeBps(ccMarket);
+  const ccSqrt = useSqrtPrice(ccMarket);
+  const balanceSqrt = useSqrtPrice(balanceMarket);
+  const pool = poolSellQuote(ccIn, { ethOut: poolEth.data, ccSqrtPriceX96: ccSqrt.data, skimBps: skim.data?.bps, balanceSqrtPriceX96: balanceSqrt.data });
   const { run, pending, err } = useTx();
   const bal = (value: bigint | undefined) => value === undefined || info?.balanceDecimals === undefined
     ? "—" : exchangeAmount(value, info.balanceDecimals);
   const cc = (value: bigint | undefined) => value === undefined ? "—" : exchangeAmount(value, ccDecimals);
+  // the panel's placeholder for a value not read
+  const none = bal(undefined);
+  const eth = (value: bigint | undefined) => {
+    if (value === undefined) return none;
+    const n = Number(formatUnits(value, 18));
+    return n.toLocaleString("en-US", n >= 1 ? { maximumFractionDigits: 4 } : { maximumSignificantDigits: 3 });
+  };
   const wrongChain = Boolean(account && chainId !== chain.id);
   const quoted = Boolean(quote && !quote.reason && quote.executable && quote.out > 0n && (review || liveQuote.data?.ccIn === ccIn));
+  const better = betterDoor(quoted ? quote?.out : undefined, pool?.balanceOut);
   const status = pending ? "Your amount, minimum, deadline and redemption terms are held while you confirm in your wallet."
     : !engineDeployed ? "The exchange is not configured."
     : treasury.error ? "Unable to read the treasury. Please try again."
@@ -117,12 +138,21 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
     contributionRate={info ? pct(info.conversionToClaimBps) : "—"}
     feeRate={info ? pct(info.redemptionFeeBps) : "—"}
     backingPerCc={bal(quote?.backingPerCc ?? (info ? (info.ccSupply > 0n ? (info.claimReserve * 10n ** 18n) / info.ccSupply : 0n) : undefined))}
+    standingBid={Boolean(quote?.standingBid)}
+    premium={info?.bid ? pct(info.bid.premiumBps) : none}
+    bidPerCc={bal(info?.bid?.usable ? info.bid.perCc : undefined)}
+    budgetLeft={bal(quote?.budget ?? info?.bidBudget?.available)}
+    bidCapacity={cc(info?.bid?.usable ? info.bid.capacity : undefined)}
     walletCc={cc(info?.walletCc)}
     connected={Boolean(account)}
     amount={cc(ccIn)}
     amountBps={amountBps}
     onAmountChange={(value) => { setReceipt(undefined); setAmountBps(value); }}
     quoted={bal(quoted ? quote?.out : undefined)}
+    door={quoted ? quote?.door : undefined}
+    bidNote={ccIn > 0n ? quote?.bidNote : undefined}
+    pool={{ quote: bal(pool?.balanceOut), eth: eth(pool?.ethOut), fee: skim.data ? pct(skim.data.bps) : none, source: pool?.source }}
+    better={better}
     minimum={bal(quoted ? quote?.minOut : undefined)}
     liveMismatch={quote?.liveMatchesLocal === false}
     slippageBps={tolerance}

@@ -147,6 +147,8 @@
 .claim-quote dd, .claim-receipt dd { margin: 0; text-align: right; color: #f6f5f0; overflow-wrap: anywhere; }
 .claim-quote > div:first-child dd { font-size: 20px; font-weight: 600; }
 .claim-note, .claim-explanation, .claim-footnote { color: #aaa79d; font-size: 12px; line-height: 1.8; }
+.claim-door { color: #77766e; font-size: 11px; font-weight: 400; }
+.claim-better { color: #ffd400; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 .claim-explanation { margin: 24px 0; }
 .claim-footnote { margin: 14px 0 0; font-size: 11px; }
 .claim-slippage { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; color: #aaa79d; font-size: 11px; }

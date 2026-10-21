@@ -101,6 +101,25 @@ export function useTokensPerEth(market?: Market) {
   });
 }
 
+// The raw slot0 sqrtPriceX96 of a market's pool, for exact arithmetic (the pool door of the claim panel,
+// web/lib/exchange.ts poolSellQuote). undefined while the pool has no price or the view does not answer.
+export function useSqrtPrice(market?: Market) {
+  const client = usePublicClient();
+  return useQuery<bigint | undefined>({
+    queryKey: ["sqrt", market && poolIdOf(market.key)],
+    enabled: Boolean(client && market),
+    refetchInterval: 15000,
+    queryFn: async () => {
+      try {
+        const [sqrt] = await client!.readContract({ address: V4.stateView, abi: stateViewAbi, functionName: "getSlot0", args: [poolIdOf(market!.key)] });
+        return sqrt > 0n ? sqrt : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+  });
+}
+
 // Eth value, in wei, of a balance token amount at the balance pool's spot price (useTokensPerEth, the swap panel's
 // query). The returned function gives undefined while the market, its price or the Core's balance token is unknown,
 // or when the pool token differs from the Core's balance token.

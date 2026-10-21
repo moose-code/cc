@@ -23,12 +23,27 @@ export type ClaimPanelProps = {
   contributionRate: string;
   feeRate: string;
   backingPerCc: string;
+  // the standing bid (policy VERSION standing-bid-v1): the bid per CC, the premium, the budget left in BALANCE and
+  // in CC; every figure formatted, the page's placeholder when the policy does not answer the view
+  standingBid: boolean;
+  premium: string;
+  bidPerCc: string;
+  budgetLeft: string;
+  bidCapacity: string;
   walletCc: string;
   connected: boolean;
   amount: string;
   amountBps: number;
   onAmountChange: (value: number) => void;
   quoted: string;
+  // which door the quote pays: the standing bid or the proportional share; undefined until the quote is read
+  door?: "bid" | "share";
+  // the policy's note on the bid for the entered amount (capacity, an unusable bid, a used up budget)
+  bidNote?: string;
+  // the pool door for the same CC: the sell quote in BALANCE and in ETH, net of the pool's fee, and its source
+  pool: { quote: string; eth: string; fee: string; source?: "quoter" | "spot" };
+  // which door pays more BALANCE for the same CC; undefined until both quotes are known
+  better?: "pot" | "pool" | "even";
   minimum: string;
   liveMismatch: boolean;
   slippageBps: number;
@@ -60,6 +75,13 @@ export function ClaimPanel(p: ClaimPanelProps) {
           is paused, and replace the redemption policy, and each such change invalidates pending quotes. The 90 percent
           Credit payout above can be lowered by price protection; this burn pays the share quoted below or reverts.
         </p>
+        {p.standingBid && (
+          <p className="claim-lede">
+            The current policy is a standing bid: while its daily budget covers the burn, the treasury pays the coin pool&apos;s
+            protected price plus a {p.premium} premium instead of the share. A sale on the pool pays the pool&apos;s fee; a burn
+            here pays the market plus the premium, so a burn beats the pool while the budget lasts.
+          </p>
+        )}
         <dl className="claim-grid">
           <div><dt>treasury</dt><dd><code>{p.treasury}</code></dd></div>
           <div><dt>BALANCE token</dt><dd><code>{p.balanceToken}</code> {p.balanceSymbol}</dd></div>
@@ -70,6 +92,13 @@ export function ClaimPanel(p: ClaimPanelProps) {
           <div><dt>contribution rate</dt><dd>{p.contributionRate} of each conversion</dd></div>
           <div><dt>redemption fee</dt><dd>{p.feeRate}</dd></div>
           <div><dt>redeemable share per {p.ccSymbol} (claim reserve over the total supply)</dt><dd>{p.backingPerCc} {p.balanceSymbol}</dd></div>
+          {p.standingBid && (
+            <>
+              <div><dt>standing bid per {p.ccSymbol} (pool price plus {p.premium})</dt><dd>{p.bidPerCc} {p.balanceSymbol}</dd></div>
+              <div><dt>bid budget left today</dt><dd>{p.budgetLeft} {p.balanceSymbol}</dd></div>
+              <div><dt>the bid covers up to</dt><dd>{p.bidCapacity} {p.ccSymbol}</dd></div>
+            </>
+          )}
           <div><dt>your {p.ccSymbol}</dt><dd>{p.connected ? p.walletCc : "connect your wallet"}</dd></div>
         </dl>
       </div>
@@ -104,10 +133,20 @@ export function ClaimPanel(p: ClaimPanelProps) {
               <span className="claim-range-labels" aria-hidden="true"><span>0</span><span>100%</span></span>
             </div>
             <dl className="claim-quote">
-              <div><dt>you receive</dt><dd>{p.quoted} {p.balanceSymbol}</dd></div>
+              <div>
+                <dt>you receive{p.door && <span className="claim-door"> ({p.door === "bid" ? "the standing bid" : "the share"})</span>}</dt>
+                <dd>{p.quoted} {p.balanceSymbol}{p.better === "pot" && <span className="claim-better"> pays more</span>}</dd>
+              </div>
               <div><dt>minimum you receive</dt><dd>{p.minimum} {p.balanceSymbol}</dd></div>
+              <div>
+                <dt>the pool pays for the same {p.ccSymbol}<span className="claim-door"> (net of its {p.pool.fee} fee)</span></dt>
+                <dd>{p.pool.quote} {p.balanceSymbol}{p.better === "pool" && <span className="claim-better"> pays more</span>}<span className="claim-door"> {p.pool.eth} ETH</span></dd>
+              </div>
             </dl>
-            {p.liveMismatch && <p className="claim-note" role="status">The treasury&apos;s quote differs from the pro-rata arithmetic; the treasury&apos;s quote is shown and used.</p>}
+            {p.better === "even" && <p className="claim-note" role="status">Both doors pay the same for this amount.</p>}
+            {p.pool.source === "spot" && <p className="claim-note">The pool figure is the spot price less the fee, without the price impact of this size.</p>}
+            {p.bidNote && <p className="claim-note" role="status">{p.bidNote}</p>}
+            {p.liveMismatch && <p className="claim-note" role="status">The treasury&apos;s quote differs from the panel&apos;s arithmetic; the treasury&apos;s quote is shown and used.</p>}
             <div className="claim-slippage">
               <span id="claim-slippage-label">slippage tolerance</span>
               <div role="group" aria-labelledby="claim-slippage-label">

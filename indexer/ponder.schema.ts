@@ -196,6 +196,8 @@ export const treasuryEventKind = onchainEnum("treasury_event_kind", [
   "owed_claimed", // OwedClaimed: amount, actor the payee
   "migrated_out", // TreasuryMigrated: amount moved, detail claimsImported, actor the successor, configEpoch
   "migration_received", // MigrationReceived: amount claimsImported, actor the predecessor, configEpoch
+  "bid_budget_set", // BidBudgetSet (decision 258): amount perDay, detail max and carried, configEpoch
+  "bid_paid", // BidPaid, a burn paid above the share from the bid budget: amount aboveShare, detail budgetLeft
 ]);
 
 /**
@@ -256,6 +258,11 @@ export const treasuryState = onchainTable("treasury_state", (t) => ({
   minimumWorkingBalance: t.bigint(),
   migrated: t.boolean().notNull().default(false),
   successor: t.hex(),
+  // the standing bid budget (decision 258), from BidBudgetSet and BidPaid; null on a treasury that has emitted neither
+  bidBudgetPerDay: t.bigint(), // BidBudgetSet.perDay
+  bidBudgetMax: t.bigint(), // BidBudgetSet.max
+  bidBudgetAvailable: t.bigint(), // the budget after the last event that carried it: BidBudgetSet.carried, BidPaid.budgetLeft
+  policyVersion: t.text(), // the policy's VERSION() read at its registration or RedemptionPolicySet; null when it does not answer
   // running totals since registration
   convertedTotal: t.bigint().notNull().default(0n), // StatementConverted.received
   contributedTotal: t.bigint().notNull().default(0n), // StatementConverted.allocated
@@ -269,6 +276,7 @@ export const treasuryState = onchainTable("treasury_state", (t) => ({
   ownerWithdrawnTotal: t.bigint().notNull().default(0n), // WorkingWithdrawn.amount
   accruedTotal: t.bigint().notNull().default(0n), // PaymentAccrued.amount
   claimedTotal: t.bigint().notNull().default(0n), // OwedClaimed.amount
+  bidPaidTotal: t.bigint().notNull().default(0n), // BidPaid.aboveShare: claim reserve paid above the share
   lastEventBlock: t.bigint(),
 }));
 

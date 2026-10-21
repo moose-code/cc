@@ -94,14 +94,26 @@ export async function sellExchange(
 
 export const CLAIM_DEADLINE_SECONDS = 20 * 60;
 export const PRO_RATA_VERSION = "pro-rata-v1";
+// the standing bid policy (src/adapters/StandingBidPolicy.sol, decision 258): the treasury pays the coin pool's
+// protected price plus a premium out of a daily budget while the budget covers the burn, else the proportional share
+export const STANDING_BID_VERSION = "standing-bid-v1";
 
 export function claimSliderAmount(walletCc: bigint, bps: number): bigint {
   if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) throw new Error("Invalid burn slider position");
   return walletCc * BigInt(bps) / 10_000n;
 }
 
-// the live quoteRedemption answer for one amount
-export type ClaimQuoteRead = { ccIn: bigint; balanceOut: bigint; reserve: bigint; supply: bigint; epoch: bigint; executable: boolean };
+// the treasury's redemptionTerms(ccIn): the proportional share, the bid budget now and the cap of any policy answer,
+// the larger of the two. undefined on a treasury built before the budget
+export type ClaimTermsRead = { share: bigint; budget: bigint; cap: bigint };
+// the standing bid policy's terms(ccIn, reserve, supply): the floor (the share before the fee), the bid before the fee,
+// the budget, whether the bid is usable and whether quote() answers the bid. undefined when the policy lacks the view
+export type BidTermsRead = { floor: bigint; bid: bigint; budget: bigint; bidUsable: boolean; atBid: boolean };
+// the live quoteRedemption answer for one amount, with the terms read beside it
+export type ClaimQuoteRead = {
+  ccIn: bigint; balanceOut: bigint; reserve: bigint; supply: bigint; epoch: bigint; executable: boolean;
+  terms?: ClaimTermsRead; bidTerms?: BidTermsRead;
+};
 
 export type ClaimMarket = {
   treasury: Address;
@@ -122,6 +134,11 @@ export type ClaimMarket = {
   migrated: boolean;
   // the treasury's own quoteRedemption for the entered amount; undefined until read
   quote?: ClaimQuoteRead;
+  // the treasury's bid budget views; undefined on a treasury built before the budget
+  bidBudget?: { available: bigint; perDay: bigint; max: bigint };
+  // the standing bid policy's amount-free views: the bid per 1e18 CC before the fee, whether it is usable, the most CC
+  // the budget covers now and the premium; undefined when the policy does not answer them
+  bid?: { perCc: bigint; usable: boolean; capacity: bigint; premiumBps: number };
 };
 
 // ProRataRedemptionPolicy.quote: floor(ccIn * reserve / supply) less the fee, full precision in bigint. 0 for an
@@ -145,6 +162,20 @@ export function claimQuote(market: ClaimMarket | undefined, ccIn: bigint, slippa
   // policy other than pro-rata-v1 shows its own answer
   const live = market.quote && market.quote.ccIn === ccIn ? market.quote : undefined;
   const out = live ? live.balanceOut : local;
+  // the door the treasury's quote pays: a quote above the proportional share draws on the bid budget (the bid), any
+  // other is the share. the standing bid policy's own arithmetic, the bid less the fee, is the expectation at the bid
+  const door: "bid" | "share" = live && live.balanceOut > local ? "bid" : "share";
+  const bidOut = live?.bidTerms?.bidUsable ? (live.bidTerms.bid * BigInt(10_000 - market.redemptionFeeBps)) / 10_000n : undefined;
+  const expected = door === "bid" ? bidOut : local;
+  const standingBid = market.policyVersion === STANDING_BID_VERSION;
+  const bidUsable = standingBid && market.bid?.usable === true;
+  // the policy's capacity is the budget over the bid before the fee, so a burn a little above it can still pay the bid
+  // after the fee; the note says "covers up to", never that the share is certain above it
+  const aboveCapacity = bidUsable && ccIn > 0n && ccIn > market.bid!.capacity;
+  const bidNote = !bidUsable ? (standingBid && market.bid ? "The standing bid is not usable right now (no fresh pool reference or balance price); the quote is the share." : undefined)
+    : market.bid!.capacity === 0n ? "The bid budget is used up for now; the quote is the share until it accrues."
+    : aboveCapacity ? `The bid covers up to ${exchangeAmount(market.bid!.capacity, 18)} $CC right now; above that the quote is the share.`
+    : undefined;
   const reserve = live ? live.reserve : market.claimReserve;
   const supply = live ? live.supply : market.ccSupply;
   const epoch = live ? live.epoch : market.configEpoch;
@@ -165,8 +196,16 @@ export function claimQuote(market: ClaimMarket | undefined, ccIn: bigint, slippa
     ccIn,
     out,
     local,
-    // the live quote is authoritative; a mismatch flags a policy that is not pro-rata-v1 or a reserve change
-    liveMatchesLocal: live ? live.balanceOut === local : undefined,
+    // the live quote is authoritative; a mismatch with the arithmetic of its door flags a policy the panel does not
+    // know or a reserve change. undefined until the quote is read, or when the door's arithmetic is unknown
+    liveMatchesLocal: live && expected !== undefined ? live.balanceOut === expected : undefined,
+    door,
+    standingBid,
+    bidPerCc: bidUsable ? market.bid!.perCc : undefined,
+    bidCapacity: bidUsable ? market.bid!.capacity : undefined,
+    budget: live?.terms?.budget ?? market.bidBudget?.available,
+    aboveCapacity,
+    bidNote,
     reserve,
     supply,
     epoch,
@@ -176,6 +215,52 @@ export function claimQuote(market: ClaimMarket | undefined, ccIn: bigint, slippa
     minOut: (out * BigInt(10_000 - slippageBps)) / 10_000n,
     reason,
   };
+}
+
+// ---- the pool door: what the same CC sells for on the coin pool, beside the pot's quote ----------------------------
+//
+// An estimate for the comparison only, never a minimum. The CC leg is the v4 Quoter's exact-in sell answer in wei when
+// the quoter answers (the trade panel's path: net of the hook's skim, the pool's only fee, and of the price impact of
+// this size); else the live spot of the pool less the current skim bps (stateView slot0 and the hook's skim), which
+// ignores the price impact. Either is valued in balance at the balance pool's spot, which ignores that pool's fee and
+// impact. Both pools have native ETH as currency0, so a token1 per token0 price is (sqrtPriceX96 / 2^96)^2 in raw units.
+
+const Q96 = 2n ** 96n;
+
+export type PoolSellInputs = {
+  // the quoter's exact-in sell answer for ccIn, wei; undefined when the quoter does not answer
+  ethOut?: bigint;
+  // slot0 of the coin pool and of the balance pool
+  ccSqrtPriceX96?: bigint;
+  balanceSqrtPriceX96?: bigint;
+  // the coin pool's current skim in bps, the whole trading fee
+  skimBps?: number;
+};
+
+export function poolSellQuote(ccIn: bigint, p: PoolSellInputs) {
+  if (ccIn <= 0n) return undefined;
+  let ethOut: bigint;
+  let source: "quoter" | "spot";
+  if (p.ethOut !== undefined && p.ethOut > 0n) {
+    ethOut = p.ethOut;
+    source = "quoter";
+  } else if (p.ccSqrtPriceX96 && p.ccSqrtPriceX96 > 0n && p.skimBps !== undefined && p.skimBps >= 0 && p.skimBps <= 10_000) {
+    const gross = (ccIn * Q96 * Q96) / (p.ccSqrtPriceX96 * p.ccSqrtPriceX96);
+    ethOut = (gross * BigInt(10_000 - Math.round(p.skimBps))) / 10_000n;
+    source = "spot";
+  } else {
+    return undefined;
+  }
+  const balanceOut = p.balanceSqrtPriceX96 && p.balanceSqrtPriceX96 > 0n
+    ? (ethOut * p.balanceSqrtPriceX96 * p.balanceSqrtPriceX96) / (Q96 * Q96)
+    : undefined;
+  return { ethOut, balanceOut, source };
+}
+
+// which door pays more balance for the same CC; undefined until both are known
+export function betterDoor(pot: bigint | undefined, pool: bigint | undefined): "pot" | "pool" | "even" | undefined {
+  if (pot === undefined || pool === undefined) return undefined;
+  return pot > pool ? "pot" : pool > pot ? "pool" : "even";
 }
 
 export type ClaimAccepted = {

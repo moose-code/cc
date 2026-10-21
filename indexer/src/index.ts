@@ -17,7 +17,7 @@ import {
   treasuryEvent,
   treasuryState,
 } from "../ponder.schema";
-import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, readTreasury, refreshStatementArt, settingsColumns, snapshot } from "./chain";
+import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, readPolicyVersion, readTreasury, refreshStatementArt, settingsColumns, snapshot } from "./chain";
 import { composeModeOf } from "./lib/mode";
 import { CREDIT_TRANSFER_TOPIC, hydrateCreditPeers } from "./lib/credit-peers";
 import { creditSaleSplit, statementPot } from "./lib/split";
@@ -576,7 +576,7 @@ async function treasuryEventRow(
   name: string,
   row: Pick<TreasuryRow, "kind"> & Partial<Omit<TreasuryRow, "id" | "treasury" | "kind" | "blockNumber" | "blockTimestamp" | "txHash" | "logIndex">>,
   patch: Partial<Omit<TreasuryStateRow, "id" | "balanceToken" | "setBlock" | "active">> = {},
-  totals: Partial<Record<"convertedTotal" | "contributedTotal" | "conversions" | "redeemedCcTotal" | "paidBalanceTotal" | "redemptions" | "ownerFundedTotal" | "ownerAllocatedTotal" | "ownerReturnedTotal" | "ownerWithdrawnTotal" | "accruedTotal" | "claimedTotal" | "totalOwed", bigint>> = {},
+  totals: Partial<Record<"convertedTotal" | "contributedTotal" | "conversions" | "redeemedCcTotal" | "paidBalanceTotal" | "redemptions" | "ownerFundedTotal" | "ownerAllocatedTotal" | "ownerReturnedTotal" | "ownerWithdrawnTotal" | "accruedTotal" | "claimedTotal" | "bidPaidTotal" | "totalOwed", bigint>> = {},
 ) {
   await record(ctx, e, "treasury", name);
   const id = lc(e.log.address);
@@ -643,11 +643,34 @@ ponder.on("Treasury:MinimumWorkingBalanceSet", async ({ event, context }) => {
   await treasuryEventRow(context, event, "MinimumWorkingBalanceSet", { kind: "minimum_working_set", amount }, { minimumWorkingBalance: amount });
 });
 
-// a policy replacement turns CC redemption off; the treasury emits SwitchesSet in the same transaction
+// a policy replacement turns CC redemption off; the treasury emits SwitchesSet in the same transaction. the policy's
+// VERSION is a constant of the policy contract, read tolerant at the event block (null when it does not answer)
 ponder.on("Treasury:RedemptionPolicySet", async ({ event, context }) => {
   const policy = lc(event.args.policy);
   const configEpoch = BigInt(event.args.configEpoch);
-  await treasuryEventRow(context, event, "RedemptionPolicySet", { kind: "policy_set", policy, configEpoch }, { policy, configEpoch });
+  const policyVersion = await readPolicyVersion(context, policy as Hex);
+  await treasuryEventRow(context, event, "RedemptionPolicySet", { kind: "policy_set", policy, configEpoch }, { policy, configEpoch, policyVersion });
+});
+
+// the standing bid budget (decision 258): the settings and the settled budget, and each payment above the share
+ponder.on("Treasury:BidBudgetSet", async ({ event, context }) => {
+  const { perDay, max, carried } = event.args;
+  const configEpoch = BigInt(event.args.configEpoch);
+  await treasuryEventRow(
+    context, event, "BidBudgetSet",
+    { kind: "bid_budget_set", amount: perDay, configEpoch, detail: toJson({ max, carried }) },
+    { bidBudgetPerDay: perDay, bidBudgetMax: max, bidBudgetAvailable: carried, configEpoch },
+  );
+});
+
+ponder.on("Treasury:BidPaid", async ({ event, context }) => {
+  const { aboveShare, budgetLeft } = event.args;
+  await treasuryEventRow(
+    context, event, "BidPaid",
+    { kind: "bid_paid", amount: aboveShare, detail: toJson({ budgetLeft }) },
+    { bidBudgetAvailable: budgetLeft },
+    { bidPaidTotal: aboveShare },
+  );
 });
 
 // the owner's reserve changes, kept apart from public redemptions

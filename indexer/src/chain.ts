@@ -1,5 +1,5 @@
 import type { Hex } from "viem";
-import { zeroAddress } from "viem";
+import { parseAbi, zeroAddress } from "viem";
 
 import { treasuryAbi } from "../abis/Phase2BalanceTreasury";
 import { controllerAbi } from "../abis/ControllerV1";
@@ -271,17 +271,22 @@ export async function readTreasury(ctx: Ctx, address: Hex) {
       { ...t, functionName: "ccRedemptionEnabled" },
       { ...t, functionName: "minimumWorkingBalance" },
       { ...t, functionName: "migrated" },
+      { ...t, functionName: "bidBudgetPerDay" },
+      { ...t, functionName: "bidBudgetMax" },
+      { ...t, functionName: "bidBudgetAvailable" },
     ],
   });
   const ok = <T,>(i: number): T | null => (r[i].status === "success" ? (r[i].result as T) : null);
   const big = (i: number) => { const v = ok<bigint | number>(i); return v === null ? null : BigInt(v); };
   const num = (i: number) => { const v = ok<bigint | number>(i); return v === null ? null : Number(v); };
   if (r[0].status !== "success") return null;
+  const policy = ok<Hex>(3) ? (ok<Hex>(3)!.toLowerCase() as Hex) : null;
   return {
     claimReserve: big(0),
     totalOwed: big(1) ?? 0n,
     configEpoch: big(2),
-    policy: ok<Hex>(3) ? (ok<Hex>(3)!.toLowerCase() as Hex) : null,
+    policy,
+    policyVersion: policy ? await readPolicyVersion(ctx, policy) : null,
     conversionToClaimBps: num(4),
     redemptionFeeBps: num(5),
     conversionEnabled: ok<boolean>(6),
@@ -289,7 +294,24 @@ export async function readTreasury(ctx: Ctx, address: Hex) {
     ccRedemptionEnabled: ok<boolean>(8),
     minimumWorkingBalance: big(9),
     migrated: ok<boolean>(10) ?? false,
+    // the standing bid budget (decision 258); a treasury built before it answers none and keeps null
+    bidBudgetPerDay: big(11),
+    bidBudgetMax: big(12),
+    bidBudgetAvailable: big(13),
   };
+}
+
+// the one view this indexer reads of a redemption policy (src/interfaces/Interfaces.sol IRedemptionPolicy)
+const redemptionPolicyAbi = parseAbi(["function VERSION() view returns (string)"]);
+
+/** A redemption policy's VERSION() at the event block, tolerant: null when the policy does not answer it. */
+export async function readPolicyVersion(ctx: Ctx, policy: Hex): Promise<string | null> {
+  if (policy === zeroAddress) return null;
+  try {
+    return await ctx.client.readContract({ address: policy, abi: redemptionPolicyAbi, functionName: "VERSION" });
+  } catch {
+    return null;
+  }
 }
 
 export async function readController(ctx: Ctx, address: Hex) {

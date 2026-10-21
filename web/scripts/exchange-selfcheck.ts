@@ -7,8 +7,8 @@ import { exchangeEnabled } from "../lib/exchange-access.ts";
 import { encodeAbiParameters, encodeEventTopics, type Log } from "viem";
 import { treasuryAbi } from "@cc/engine/abis";
 import {
-  CLAIM_DEADLINE_SECONDS, claimQuote, claimSliderAmount, decodeRedemption, exchangeAmount, exchangeQuote, proRataQuote, redeemClaim, sellExchange,
-  type ClaimMarket, type ExchangeMarket,
+  CLAIM_DEADLINE_SECONDS, STANDING_BID_VERSION, betterDoor, claimQuote, claimSliderAmount, decodeRedemption, exchangeAmount, exchangeQuote, poolSellQuote,
+  proRataQuote, redeemClaim, sellExchange, type ClaimMarket, type ExchangeMarket,
 } from "../lib/exchange.ts";
 
 const token = "0x3620540c994433D7B4a628C46d2ED5F92572eA07" as const;
@@ -247,6 +247,116 @@ await check("claim not executable disables", () => {
   assert.match(reason({ quote: undefined }, S + 1n), /More \$CC than the supply/);
   assert.equal(claimQuote(claimMarket({ quote: undefined }), x, 50)!.executable, true);
   assert.equal(claimQuote(claimMarket({ quote: undefined, ccRedemptionEnabled: false }), x, 50)!.executable, false);
+});
+
+// ---- the standing bid (decision 258) ------------------------------------------------------------------------------
+
+const perCc = 2n * 10n ** 15n; // the bid per 1e18 CC before the fee, above the share C / S of about 1.23e14
+const bidBefore = (x * perCc) / 10n ** 18n;
+const bidAfter = (bidBefore * 9_975n) / 10_000n;
+const share = (x * C) / S;
+const bidMarket = (budget: bigint, capacity: bigint, balanceOut: bigint, atBid: boolean, over: Partial<ClaimMarket> = {}): ClaimMarket => claimMarket({
+  policyVersion: STANDING_BID_VERSION,
+  bidBudget: { available: budget, perDay: 10n ** 18n, max: 5n * 10n ** 18n },
+  bid: { perCc, usable: true, capacity, premiumBps: 100 },
+  quote: {
+    ccIn: x, balanceOut, reserve: C, supply: S, epoch: 4n, executable: true,
+    terms: { share, budget, cap: share > budget ? share : budget },
+    bidTerms: { floor: share, bid: bidBefore, budget, bidUsable: true, atBid },
+  },
+  ...over,
+});
+
+// promise: within the budget's capacity the quote is the bid less the fee, labelled the bid, above the share, with the
+// minimum from that quote and no capacity note; the panel's arithmetic agrees with the treasury's answer.
+await check("standing bid above share within capacity", () => {
+  const q = claimQuote(bidMarket(10n ** 18n, 2n * x, bidAfter, true), x, 50)!;
+  assert.equal(q.door, "bid");
+  assert.equal(q.standingBid, true);
+  assert.equal(q.out, bidAfter);
+  assert.ok(q.out > q.local);
+  assert.equal(q.liveMatchesLocal, true);
+  assert.equal(q.minOut, (bidAfter * 9_950n) / 10_000n);
+  assert.equal(q.bidPerCc, perCc);
+  assert.equal(q.bidCapacity, 2n * x);
+  assert.equal(q.budget, 10n ** 18n);
+  assert.equal(q.aboveCapacity, false);
+  assert.equal(q.bidNote, undefined);
+  assert.equal(q.reason, undefined);
+  // a treasury answer at the bid that the policy's arithmetic does not explain is flagged, as a share mismatch is
+  assert.equal(claimQuote(bidMarket(10n ** 18n, 2n * x, bidAfter + 1n, true), x, 50)!.liveMatchesLocal, false);
+});
+
+// promise: an amount above the capacity shows the share as the quote, names the capacity in the note and keeps the
+// minimum from the treasury's share quote.
+await check("amount above capacity falls to the share", () => {
+  const capacity = x / 2n;
+  const q = claimQuote(bidMarket(bidBefore / 2n, capacity, proRataQuote(x, C, S, 25), false), x, 50)!;
+  assert.equal(q.door, "share");
+  assert.equal(q.out, proRataQuote(x, C, S, 25));
+  assert.equal(q.liveMatchesLocal, true);
+  assert.equal(q.aboveCapacity, true);
+  assert.match(q.bidNote!, /covers up to 6,172\.5 \$CC right now; above that the quote is the share/);
+  assert.equal(q.minOut, (q.out * 9_950n) / 10_000n);
+  assert.equal(q.budget, bidBefore / 2n);
+});
+
+// promise: a policy without VERSION or the bid views, and a treasury without the budget views, read as the share
+// with no bid figures and no note (older deployments and the local seed).
+await check("policy without VERSION", () => {
+  const q = claimQuote(claimMarket({ policyVersion: undefined, bidBudget: undefined, bid: undefined }), x, 50)!;
+  assert.equal(q.standingBid, false);
+  assert.equal(q.door, "share");
+  assert.equal(q.out, proRataQuote(x, C, S, 25));
+  assert.equal(q.liveMatchesLocal, true);
+  assert.equal(q.bidPerCc, undefined);
+  assert.equal(q.bidCapacity, undefined);
+  assert.equal(q.budget, undefined);
+  assert.equal(q.aboveCapacity, false);
+  assert.equal(q.bidNote, undefined);
+  // the standing bid version with a policy that does not answer the bid views: still the share, no note
+  const partial = claimQuote(claimMarket({ policyVersion: STANDING_BID_VERSION, bid: undefined }), x, 50)!;
+  assert.equal(partial.standingBid, true);
+  assert.equal(partial.door, "share");
+  assert.equal(partial.bidNote, undefined);
+});
+
+// promise: a zero budget pays the share, shows a zero capacity and says the budget is used up; an unusable bid says so.
+await check("zero budget", () => {
+  const q = claimQuote(bidMarket(0n, 0n, proRataQuote(x, C, S, 25), false), x, 50)!;
+  assert.equal(q.door, "share");
+  assert.equal(q.out, proRataQuote(x, C, S, 25));
+  assert.equal(q.budget, 0n);
+  assert.equal(q.bidCapacity, 0n);
+  assert.equal(q.aboveCapacity, true);
+  assert.match(q.bidNote!, /budget is used up/);
+  const unusable = claimQuote(bidMarket(10n ** 18n, 0n, proRataQuote(x, C, S, 25), false, { bid: { perCc: 0n, usable: false, capacity: 0n, premiumBps: 100 } }), x, 50)!;
+  assert.equal(unusable.door, "share");
+  assert.equal(unusable.bidPerCc, undefined);
+  assert.match(unusable.bidNote!, /not usable/);
+});
+
+// promise: the pool door is the quoter's answer when it exists, else the spot less the skim, valued in BALANCE at the
+// balance pool's spot, and the comparison names the door that pays more.
+await check("pool door beside the pot", () => {
+  const Q96 = 2n ** 96n;
+  const ccSqrt = Q96 * 1_000n; // 1e6 CC base units per wei, 1e12 wei per 1e18 CC: a sale of 1e18 CC is 1e12 wei
+  const balanceSqrt = Q96 * 2_000n; // 4e6 BALANCE base units per wei
+  const quoter = poolSellQuote(10n ** 18n, { ethOut: 900_000_000_000n, ccSqrtPriceX96: ccSqrt, skimBps: 690, balanceSqrtPriceX96: balanceSqrt })!;
+  assert.equal(quoter.source, "quoter");
+  assert.equal(quoter.ethOut, 900_000_000_000n);
+  assert.equal(quoter.balanceOut, 900_000_000_000n * 4_000_000n);
+  const spot = poolSellQuote(10n ** 18n, { ccSqrtPriceX96: ccSqrt, skimBps: 690, balanceSqrtPriceX96: balanceSqrt })!;
+  assert.equal(spot.source, "spot");
+  assert.equal(spot.ethOut, 931_000_000_000n);
+  assert.equal(spot.balanceOut, 931_000_000_000n * 4_000_000n);
+  assert.equal(poolSellQuote(10n ** 18n, { ccSqrtPriceX96: ccSqrt, skimBps: 690 })!.balanceOut, undefined);
+  assert.equal(poolSellQuote(10n ** 18n, { ccSqrtPriceX96: ccSqrt }), undefined);
+  assert.equal(poolSellQuote(0n, { ethOut: 1n }), undefined);
+  assert.equal(betterDoor(quoter.balanceOut! + 1n, quoter.balanceOut), "pot");
+  assert.equal(betterDoor(quoter.balanceOut! - 1n, quoter.balanceOut), "pool");
+  assert.equal(betterDoor(quoter.balanceOut, quoter.balanceOut), "even");
+  assert.equal(betterDoor(undefined, quoter.balanceOut), undefined);
 });
 
 const acceptedClaim = () => ({
