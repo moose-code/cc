@@ -150,7 +150,7 @@ contract Phase2UpstreamBalanceTest is Fixture {
         core.redeemStatement(sid);
         assertEq(t.custody(), rating * 1e14, "the token released its reserve to the treasury");
         assertEq(token.totalSupply(), supplyBefore, "a withdrawal moves the reserve, it does not mint");
-        assertEq(t.claimReserve(), rating * 1e14 * 300 / 10_000);
+        assertEq(t.claimReserve(), rating * 1e14 * 1_000 / 10_000);
         assertEq(STATEMENTS.ownerOf(sid), address(token));
         assertEq(t.available(), 0, "no working payment while transfers are locked");
         // the lock holds the funds in: the token refuses the owner's withdrawal (AuctionTransfersLocked upstream,
