@@ -151,6 +151,8 @@ contract Phase2LifecycleTest is Test {
         assertEq(core.balanceToken(), token);
         wire.go(_wireInputs(address(t), address(c2), "controller"));
         assertEq(core.controller(), address(c2));
+        Settings memory before = core.settings();
+        uint16 costBefore = ILifecycleCore(CORE).creditCostToPotBps();
         settings.setSplit(split);
         settings.applyAsOwner();
         Settings memory s = core.settings();
@@ -159,10 +161,11 @@ contract Phase2LifecycleTest is Test {
         assertEq(s.buyToArtistBps, 300);
         assertEq(s.saleToArtistBps, 300);
         assertEq(s.saleToOperatorBps, 0);
-        assertEq(s.saleToBuybackBps, 0);
-        assertEq(s.feeToRedeemBurnBps, 0);
-        assertEq(s.redeemBurnBps, 0);
-        assertEq(ILifecycleCore(CORE).creditCostToPotBps(), 10_000);
+        // decision 262: the buy and burn shares and the credit cost share stay at their live values through stage C
+        assertEq(s.saleToBuybackBps, before.saleToBuybackBps);
+        assertEq(s.feeToRedeemBurnBps, before.feeToRedeemBurnBps);
+        assertEq(s.redeemBurnBps, before.redeemBurnBps);
+        assertEq(ILifecycleCore(CORE).creditCostToPotBps(), costBefore);
     }
 
     function _launchAndConvert() internal {

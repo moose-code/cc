@@ -8,16 +8,15 @@ import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {SettingsFields} from "./SettingsFields.sol";
 
 /// @notice the stage B settings change of docs/reviews/PHASE2-PLAN-fd85ba5-2026-10-20.md section 8: the live 39 field
-/// `Settings` with exactly `saleToBuybackBps` 0, `feeToRedeemBurnBps` 0, `redeemBurnBps` 0 and `balanceDiscountBps`
-/// `PHASE2_BALANCE_DISCOUNT_BPS` (default 2,000: the posted Credit to BALANCE payout is 80 percent of rating,
-/// decision 254), and with `PHASE2_ARTIST=<split>` the split route of decision 255 (`setArtist(split)`,
-/// `buyToArtistBps` 300, `saleToArtistBps` 300, `saleToOperatorBps` 0), every other field unchanged, and
-/// `setCreditCostToPotBps(10000)`. the approach is script/SetSettings.s.sol's (live struct, patch,
+/// `Settings` with exactly `balanceDiscountBps` `PHASE2_BALANCE_DISCOUNT_BPS` (default 2,000: the posted Credit to
+/// BALANCE payout is 80 percent of rating, decision 254), and with `PHASE2_ARTIST=<split>` the split route of decision
+/// 255 (`setArtist(split)`, `buyToArtistBps` 300, `saleToArtistBps` 300, `saleToOperatorBps` 0), every other field
+/// unchanged. `saleToBuybackBps`, `feeToRedeemBurnBps`, `redeemBurnBps` and `creditCostToPotBps` stay at their live
+/// values through stage C (decision 262, superseding decision 247 for launch). the approach is script/SetSettings.s.sol's (live struct, patch,
 /// bounds, before and after table, calldata, a simulated owner call, nothing sent without SEND=1 and --broadcast as the
 /// owner) with the patch fixed in code: `SETTINGS_PATCH` and every `SET_<field>` variable are refused, and
 /// `balanceBidOn` and `valueModeOn` in particular are stage C and go through SetSettings with the hazard check of
-/// docs/RUNBOOK.md. the two legacy pots `ethToBuyback` and `ethRedeemBurn` keep their path: this change stops the
-/// inflow and does not return them to `ethPot`.
+/// docs/RUNBOOK.md. the two pots `ethToBuyback` and `ethRedeemBurn` keep their path and their inflow.
 /// `CORE=0x... forge script script/Phase2Settings.s.sol --rpc-url $MAINNET_RPC_URL` (add `SEND=1 --broadcast` and the
 /// owner signer to send)
 contract Phase2Settings is Script {
@@ -35,7 +34,6 @@ contract Phase2Settings is Script {
     /// `ALLOW_NONPOSITIVE_MARGIN=1` records the owner's approval
     error NonPositiveMargin(int256 marginBps);
 
-    uint16 internal constant CREDIT_COST_TO_POT_BPS = 10_000;
     uint256 internal constant BPS = 10_000;
 
     string internal constant TUPLE =
@@ -54,8 +52,6 @@ contract Phase2Settings is Script {
         Settings live;
         Settings next;
         bool settingsChanged;
-        uint16 liveCostToPot;
-        bool costChanged;
     }
 
     function run() external {
@@ -71,15 +67,13 @@ contract Phase2Settings is Script {
         if (signer != core.owner()) revert NotOwner(core.owner(), signer);
         applyPatch(core, p);
         vm.stopBroadcast();
-        console.log("sent. read it back with Phase2Readback (settings rows and creditCostToPotBps)");
+        console.log("sent. read it back with Phase2Readback (artist and settings rows)");
     }
 
-    /// @notice the phase 2 patch: a copy of `live` with the three buyback and burn shares at zero and the 80 percent payout
+    /// @notice the phase 2 patch: a copy of `live` with the 80 percent payout and the split's royalty fields; the buyback
+    /// and burn shares are kept as read
     function phase2Patch(Settings memory live) internal view returns (Settings memory s) {
         s = abi.decode(abi.encode(live), (Settings));
-        s.saleToBuybackBps = 0;
-        s.feeToRedeemBurnBps = 0;
-        s.redeemBurnBps = 0;
         uint256 discount = _discountBps();
         if (discount > 9_999) revert BadDiscount(discount);
         s.balanceDiscountBps = uint16(discount);
@@ -136,29 +130,18 @@ contract Phase2Settings is Script {
         bytes32 bad = SettingsBounds.firstViolation(p.next);
         if (bad != 0) revert OutOfBounds(bad);
         p.settingsChanged = keccak256(abi.encode(p.live)) != keccak256(abi.encode(p.next));
-        p.liveCostToPot = core.creditCostToPotBps();
-        p.costChanged = p.liveCostToPot != CREDIT_COST_TO_POT_BPS;
         _table(p.live, p.next);
+        _kept(core, p.next);
         _pots(core);
         _margin(core, p.next);
-        console.log(
-            string.concat(
-                "creditCostToPotBps | ",
-                vm.toString(uint256(p.liveCostToPot)),
-                " | ",
-                vm.toString(uint256(CREDIT_COST_TO_POT_BPS)),
-                p.costChanged ? " | changes" : " | unchanged, setCreditCostToPotBps is not needed"
-            )
-        );
         _calldata(core, p);
         _simulate(core, p);
     }
 
     /// @notice the owner calls, in the stage B order: the split as artist first (so no block pays 3 percent to the bare
-    /// artist), then the credit cost share, then the settings
+    /// artist), then the settings
     function applyPatch(ICore core, Preview memory p) internal {
         if (p.artistChanged) core.setArtist(p.split);
-        if (p.costChanged) core.setCreditCostToPotBps(CREDIT_COST_TO_POT_BPS);
         if (p.settingsChanged) core.setSettings(p.next);
     }
 
@@ -219,32 +202,39 @@ contract Phase2Settings is Script {
         }
     }
 
-    /// @dev the legacy pots, which this change does not touch
+    /// @dev the buy and burn settings and the credit cost share this patch keeps at their live values (decision 262)
+    function _kept(ICore core, Settings memory next) private view {
+        console.log(
+            string.concat(
+                "kept (decision 262): saleToBuybackBps ",
+                vm.toString(uint256(next.saleToBuybackBps)),
+                " | feeToRedeemBurnBps ",
+                vm.toString(uint256(next.feeToRedeemBurnBps)),
+                " | redeemBurnBps ",
+                vm.toString(uint256(next.redeemBurnBps)),
+                " | creditCostToPotBps ",
+                vm.toString(uint256(core.creditCostToPotBps())),
+                " | unchanged"
+            )
+        );
+    }
+
+    /// @dev the two pots, which this change does not touch
     function _pots(ICore core) private view {
         console.log(
             string.concat(
-                "legacy pots (wei): ethToBuyback ",
+                "pots (wei): ethToBuyback ",
                 vm.toString(core.ethToBuyback()),
                 " | ethRedeemBurn ",
                 vm.toString(core.ethRedeemBurn())
             )
         );
         console.log(
-            "both pots keep their path (the coin buyback and the redeem burn); this change stops their inflow and does not return them to ethPot"
+            "both pots keep their path (the coin buyback and the redeem burn) and their inflow; this change does not touch them"
         );
     }
 
     function _calldata(ICore core, Preview memory p) private pure {
-        console.log("setCreditCostToPotBps calldata");
-        console.logBytes(abi.encodeCall(ICore.setCreditCostToPotBps, (CREDIT_COST_TO_POT_BPS)));
-        console.log(
-            string.concat(
-                "cast send ",
-                vm.toString(address(core)),
-                ' "setCreditCostToPotBps(uint16)" ',
-                vm.toString(uint256(CREDIT_COST_TO_POT_BPS))
-            )
-        );
         console.log("setSettings calldata");
         console.logBytes(abi.encodeCall(ICore.setSettings, (p.next)));
         console.log(
