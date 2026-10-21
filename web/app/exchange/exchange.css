@@ -181,3 +181,10 @@
   .claim-grid dd { text-align: left; }
   .claim-slippage { flex-direction: row; align-items: center; }
 }
+
+/* the accumulating view of the claim panel: CC redemption off, the backing earmarked and growing, no transaction button */
+.claim-accumulating-title { margin: 0 0 20px; color: #ffd400; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.claim-accumulating .claim-status { margin: 0 0 24px; }
+.claim-accumulating .claim-amount { margin-top: 28px; }
+.claim-accumulating .claim-preview > div dd { font-size: 16px; font-weight: 600; }
+.claim-accumulating .claim-footnote { margin-top: 16px; }

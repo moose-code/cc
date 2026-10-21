@@ -21,6 +21,7 @@ import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readControl
 import { composeModeOf } from "./lib/mode";
 import { CREDIT_TRANSFER_TOPIC, hydrateCreditPeers } from "./lib/credit-peers";
 import { creditSaleSplit, statementPot } from "./lib/split";
+import { migratedOutPatch, migrationReceivedPatch } from "./lib/migration";
 import { act, bump, bumpBalanceCommitted, idOf, lc, posOf, record, toJson, type At, type Ctx } from "./shared";
 
 // Ordered events in one transaction share transactionFact rows so retries and chain rollbacks restore the facts.
@@ -678,7 +679,7 @@ ponder.on("Treasury:TreasuryMigrated", async ({ event, context }) => {
   await treasuryEventRow(
     context, event, "TreasuryMigrated",
     { kind: "migrated_out", amount: moved, claimReserve: 0n, configEpoch, actor: lc(successor), detail: toJson({ claimsImported }) },
-    { claimReserve: 0n, configEpoch, migrated: true, successor: lc(successor), conversionEnabled: false, workingPaymentsEnabled: false, ccRedemptionEnabled: false },
+    migratedOutPatch(successor, configEpoch),
   );
 });
 
@@ -688,7 +689,7 @@ ponder.on("Treasury:MigrationReceived", async ({ event, context }) => {
   await treasuryEventRow(
     context, event, "MigrationReceived",
     { kind: "migration_received", amount: claimsImported, claimReserve, configEpoch, actor: lc(predecessor) },
-    { claimReserve, configEpoch },
+    migrationReceivedPatch(claimReserve, configEpoch),
   );
 });
 

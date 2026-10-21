@@ -712,6 +712,10 @@ export interface TreasuryInfo {
   policyVersion?: string;
   claimReserve: bigint;
   freeWorking: bigint;
+  // working() and available(): custody less the reserve and the debt, and what the Core's bid may pay now; undefined
+  // for a treasury without the views (the local anvil seed, older deployments)
+  working?: bigint;
+  available?: bigint;
   conversionToClaimBps: number;
   redemptionFeeBps: number;
   configEpoch: bigint;
@@ -759,6 +763,8 @@ export function useTreasury(account?: Address) {
           { ...t, functionName: "balanceToken" },
           { ...t, functionName: "ccToken" },
           { ...t, functionName: "selectedForClaims" },
+          { ...t, functionName: "working" },
+          { ...t, functionName: "available" },
         ] as const,
       });
       const probe = r[0];
@@ -797,6 +803,8 @@ export function useTreasury(account?: Address) {
         policyVersion: opt<string>(6),
         claimReserve: r[1].result as bigint,
         freeWorking: v<bigint>(2, 0n),
+        working: v<bigint | undefined>(15, undefined),
+        available: v<bigint | undefined>(16, undefined),
         conversionToClaimBps: Number(v<number>(3, 0)),
         redemptionFeeBps: Number(v<number>(4, 0)),
         configEpoch: BigInt(v<bigint>(5, 0n)),

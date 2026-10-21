@@ -112,6 +112,9 @@ export type ClaimMarket = {
   claimReserve: bigint;
   ccSupply: bigint;
   freeWorking: bigint;
+  // working() and available(); undefined for a treasury without the views
+  working?: bigint;
+  available?: bigint;
   conversionToClaimBps: number;
   redemptionFeeBps: number;
   configEpoch: bigint;
@@ -176,6 +179,50 @@ export function claimQuote(market: ClaimMarket | undefined, ccIn: bigint, slippa
     minOut: (out * BigInt(10_000 - slippageBps)) / 10_000n,
     reason,
   };
+}
+
+// a bps setting as a percentage: 1,000 -> "10%", 25 -> "0.25%"
+export function bpsPercent(bps: number): string {
+  return `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+}
+
+export const CLAIM_ACCUMULATING_STATUS = "CC redemption is not open yet.";
+
+// The panel's state from the treasury's own switch (decision 258: phase 2 launches with ccRedemptionEnabled false
+// and the claim backing accumulating from the first conversion at conversionToClaimBps, decision 259). While the
+// switch is off the panel is an accumulating view: the reserve, the live contribution rate, the available working
+// funds and the status, with no action enabled; the preview of the entered amount is what the current policy would
+// pay and never an executable quote. With the switch on the view is the claim form, from the same reads, so the
+// switch needs no second deployment
+export type ClaimView =
+  | {
+    mode: "accumulating";
+    status: string;
+    claimReserve: bigint;
+    contributionBps: number;
+    contributionRate: string;
+    available?: bigint;
+    // the current policy's answer for ccIn (the treasury's quoteRedemption when read, else the pro-rata arithmetic);
+    // undefined for a zero amount
+    preview?: bigint;
+    actionEnabled: false;
+    quote: undefined;
+  }
+  | { mode: "open"; status?: string; quote: ReturnType<typeof claimQuote>; actionEnabled: boolean };
+
+export function claimView(market: ClaimMarket | undefined, ccIn: bigint, slippageBps: number, walletCc?: bigint): ClaimView | undefined {
+  if (!market || market.treasury === zeroAddress || market.balanceToken === zeroAddress) return undefined;
+  if (!market.ccRedemptionEnabled) {
+    const live = market.quote && market.quote.ccIn === ccIn ? market.quote : undefined;
+    const preview = ccIn > 0n ? (live ? live.balanceOut : proRataQuote(ccIn, market.claimReserve, market.ccSupply, market.redemptionFeeBps)) : undefined;
+    return {
+      mode: "accumulating", status: CLAIM_ACCUMULATING_STATUS, claimReserve: market.claimReserve,
+      contributionBps: market.conversionToClaimBps, contributionRate: bpsPercent(market.conversionToClaimBps),
+      available: market.available, preview, actionEnabled: false, quote: undefined,
+    };
+  }
+  const quote = claimQuote(market, ccIn, slippageBps, walletCc);
+  return { mode: "open", status: quote?.reason, quote, actionEnabled: Boolean(quote && !quote.reason && quote.executable && quote.out > 0n && quote.minOut > 0n) };
 }
 
 export type ClaimAccepted = {

@@ -7,7 +7,7 @@ import { exchangeEnabled } from "../lib/exchange-access.ts";
 import { encodeAbiParameters, encodeEventTopics, type Log } from "viem";
 import { treasuryAbi } from "@cc/engine/abis";
 import {
-  CLAIM_DEADLINE_SECONDS, claimQuote, claimSliderAmount, decodeRedemption, exchangeAmount, exchangeQuote, proRataQuote, redeemClaim, sellExchange,
+  CLAIM_ACCUMULATING_STATUS, CLAIM_DEADLINE_SECONDS, bpsPercent, claimQuote, claimSliderAmount, claimView, decodeRedemption, exchangeAmount, exchangeQuote, proRataQuote, redeemClaim, sellExchange,
   type ClaimMarket, type ExchangeMarket,
 } from "../lib/exchange.ts";
 
@@ -260,6 +260,39 @@ const claimClient = (allowance: bigint, quote: readonly [bigint, bigint, bigint,
 });
 
 // promise: the approval is for exactly the amount entered, and only when the allowance is short.
+// promise: decision 258 while the treasury's redemption switch is off the panel is the accumulating view: the live contribution rate, the reserve, the available working funds, the status, a preview labelled as the current policy's answer and never an enabled action.
+await check("claim accumulating view while redemption is off", () => {
+  const x = 10n ** 20n;
+  const v = claimView(claimMarket({ ccRedemptionEnabled: false, conversionToClaimBps: 1000, available: 7n * 10n ** 18n, quote: undefined }), x, 50)!;
+  assert.equal(v.mode, "accumulating");
+  if (v.mode !== "accumulating") throw new Error("mode");
+  assert.equal(v.status, CLAIM_ACCUMULATING_STATUS);
+  assert.equal(v.contributionRate, "10%");
+  assert.equal(bpsPercent(25), "0.25%");
+  assert.equal(v.claimReserve, C);
+  assert.equal(v.available, 7n * 10n ** 18n);
+  assert.equal(v.preview, proRataQuote(x, C, S, 25));
+  assert.equal(v.actionEnabled, false);
+  assert.equal(v.quote, undefined);
+  assert.equal(claimView(claimMarket({ ccRedemptionEnabled: false, quote: undefined }), 0n, 50)!.preview, undefined);
+});
+
+// promise: decision 258 a funded reserve with the switch off is still not claimable, and the live quote read, when present, is only the preview; the switch on returns the claim form from the same reads.
+await check("claim reserve funded but closed, then open", () => {
+  const x = 10n ** 20n;
+  const live = { ccIn: x, balanceOut: 123n, reserve: C, supply: S, epoch: 4n, executable: false };
+  const closed = claimView(claimMarket({ ccRedemptionEnabled: false, claimReserve: C * 5n, quote: live }), x, 50)!;
+  assert.equal(closed.mode, "accumulating");
+  if (closed.mode !== "accumulating") throw new Error("mode");
+  assert.equal(closed.preview, 123n);
+  assert.equal(closed.actionEnabled, false);
+  const open = claimView(claimMarket({ ccRedemptionEnabled: true }), x, 50)!;
+  assert.equal(open.mode, "open");
+  if (open.mode !== "open") throw new Error("mode");
+  assert.ok(open.quote && open.quote.out > 0n);
+  assert.equal(open.actionEnabled, true);
+});
+
 await check("claim approval only when allowance short", async () => {
   for (const [allowance, approves] of [[x - 1n, true], [x, false], [x + 1n, false]] as const) {
     const calls: any[] = [];
