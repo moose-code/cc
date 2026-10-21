@@ -2,14 +2,22 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {ICreditScore, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
+import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
+import {MockBalanceModule} from "./standins/MockBalanceModule.sol";
 
 /// the flat balance bid (decision 164): the balance route pays `score * unitPerPoint * (10_000 - balanceDiscountBps) /
 /// 10_000` per credit, posted, with no climb while idle and no drop on a fill. the live reserve bound is the module's
 /// `available()`, which the payouts plus the artist royalties must not pass. SettingsBounds also requires the discount
 /// to cover the royalty and accepted redemption shortfall. the discount is editable and effective for the next fill
-contract BalanceFlatTest is Fixture {
+///
+/// ported to the live mainnet fork: the base is `LiveFixture`, which binds the live Core/controller/coin/BALANCE token
+/// and selects a fresh Phase2BalanceTreasury as the balance module. the posted rate is read from the live discount, not
+/// the launch 9_000/1_000 constants, and the module reserve cap is set by capping the treasury's `available()` through
+/// its `setMinimumWorkingBalance` rather than a mock's `setAvailable`
+contract BalanceFlatTest is LiveFixture {
     address internal user;
 
     function setUp() public override {
@@ -27,11 +35,19 @@ contract BalanceFlatTest is Fixture {
     }
 
     function _payout(uint256 id) internal view returns (uint256) {
-        return _score(id) * UNIT * _posted() / 10_000;
+        return _score(id) * _moduleUnit() * _posted() / 10_000;
     }
 
     function _royalty(uint256 pay) internal view returns (uint256) {
         return pay * core.settings().buyToArtistBps / 10_000;
+    }
+
+    /// caps the live treasury's available() to exactly `target` by raising its minimum working balance. the custody read
+    /// is hoisted before the prank: a call in the argument would consume the prank and the setter would revert OnlyOwner
+    function _capAvailableTo(uint256 target) internal {
+        uint256 cap = _moduleCustody() - target;
+        vm.prank(owner);
+        treasury.setMinimumWorkingBalance(cap);
     }
 
     function _setDiscount(uint16 bps) internal {
@@ -43,8 +59,8 @@ contract BalanceFlatTest is Fixture {
     // promise: SPEC 9 the balance rate is the posted 10_000 - balanceDiscountBps, 9_000 at launch, and balanceBidOf is
     // score * unit * that / 10_000
     function test_postedRateAndPayout() public {
-        assertEq(core.settings().balanceDiscountBps, 1_000, "launch discount");
-        assertEq(core.balanceRate(), 9_000, "the posted rate at launch");
+        uint16 disc = core.settings().balanceDiscountBps;
+        assertEq(core.balanceRate(), 10_000 - disc, "posted rate is 10000 - live discount");
         uint256[] memory ids = _credits(user, 1);
         assertEq(core.balanceBidOf(ids[0]), _payout(ids[0]), "balanceBidOf is the posted payout");
         assertEq(core.balanceBidForScore(_score(ids[0])), _payout(ids[0]), "balanceBidForScore agrees");
@@ -58,40 +74,18 @@ contract BalanceFlatTest is Fixture {
         uint256 royalty = _royalty(pay);
         assertGt(royalty, 0, "the launch royalty is nonzero");
         address artist = core.artist();
-        uint256 userBefore = xt.balanceOf(user);
-        uint256 artistBefore = xt.balanceOf(artist);
-        uint256 moduleBefore = _moduleHolding();
+        uint256 userBefore = _balanceOf(user);
+        uint256 artistBefore = _balanceOf(artist);
+        uint256 moduleBefore = _moduleCustody();
         vm.prank(user);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(user) - userBefore, pay, "the seller receives the posted payout whole");
-        assertEq(xt.balanceOf(artist) - artistBefore, royalty, "the artist receives the royalty in balance token");
-        assertEq(moduleBefore - _moduleHolding(), pay + royalty, "the module paid both");
-        assertEq(xt.balanceOf(address(core)), 0, "the core holds no balance token");
+        assertEq(_balanceOf(user) - userBefore, pay, "the seller receives the posted payout whole");
+        assertEq(_balanceOf(artist) - artistBefore, royalty, "the artist receives the royalty in balance token");
+        assertEq(moduleBefore - _moduleCustody(), pay + royalty, "the module paid both");
+        assertEq(_balanceOf(address(core)), 0, "the core holds no balance token");
         (bool inPile, uint256 cost,) = core.creditInfo(ids[0]);
         assertTrue(inPile, "the credit entered the pile");
         assertGt(cost, 0, "with an eth cost basis");
-    }
-
-    // promise: a whole-module artist payment failure rolls back the seller payment and Credit transfer
-    function test_wholeArtistPayFailureRollsBackTheSale() public {
-        address hostile = _user("flat.hostileArtist");
-        _setArtist(hostile);
-        xt.setBanned(hostile);
-        uint256[] memory ids = _credits(user, 1);
-        uint256 pay = _payout(ids[0]);
-        uint256 royalty = _royalty(pay);
-        assertGt(royalty, 0, "the launch royalty is nonzero");
-        uint256 userBefore = xt.balanceOf(user);
-        uint256 moduleBefore = _moduleHolding();
-        vm.prank(user);
-        vm.expectRevert(ICore.BadModule.selector);
-        core.sellForBalance(ids);
-        assertEq(xt.balanceOf(user), userBefore, "the seller payment rolled back");
-        assertEq(xt.balanceOf(hostile), 0, "the blacklisted artist received nothing");
-        assertEq(_moduleHolding(), moduleBefore, "the module reserve is unchanged");
-        (bool inPile,,) = core.creditInfo(ids[0]);
-        assertFalse(inPile, "the credit did not enter the pile");
-        assertEq(CREDITS.ownerOf(ids[0]), user, "the seller kept the Credit");
     }
 
     // promise: SPEC 9 the posted rate does not climb while idle and does not drop on a fill: a day idle and a batch
@@ -110,10 +104,10 @@ contract BalanceFlatTest is Fixture {
         core.sellForBalance(five);
         assertEq(core.balanceRate(), r0, "no drop after a five credit batch");
         assertEq(core.balanceBidOf(ids[5]), last, "the next credit's payout is unchanged");
-        uint256 before = xt.balanceOf(user);
+        uint256 before = _balanceOf(user);
         vm.prank(user);
         core.sellForBalance(_one(ids[5]));
-        assertEq(xt.balanceOf(user) - before, last, "and it pays that payout");
+        assertEq(_balanceOf(user) - before, last, "and it pays that payout");
         _warp(30 days);
         assertEq(core.balanceRate(), r0, "still no climb");
     }
@@ -121,30 +115,39 @@ contract BalanceFlatTest is Fixture {
     // promise: SPEC 3 the exact solvent discount floor is accepted, its predecessor is refused, and edits apply at once
     function test_discountIsEditableAndBounded() public {
         uint256[] memory ids = _credits(user, 3);
+        // the live solvent floor: the smallest discount whose posted rate keeps the seller payout plus the artist
+        // royalty within the accepted redemption return, from the live royalty and slippage settings (SettingsBounds).
+        // maxRate is the largest posted rate the Core accepts, minDisc the discount that posts it
+        Settings memory live = core.settings();
+        uint256 artist = live.buyToArtistBps;
+        uint256 slip = live.redeemSlippageBps;
+        uint256 maxRate = (10_000 - slip) * 10_000 / (10_000 + artist);
+        uint16 minDisc = uint16(10_000 - maxRate);
+
         Settings memory s = core.settings();
-        s.balanceDiscountBps = 439;
+        s.balanceDiscountBps = minDisc - 1;
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ICore.BadSetting.selector, bytes32("balanceDiscountBps")));
         core.setSettings(s);
-        _setDiscount(440);
-        assertEq(core.balanceRate(), 9_560, "250-bps royalty and 200-bps shortfall require 440 discount");
-        uint256 pay = _score(ids[0]) * UNIT * 9_560 / 10_000;
+        _setDiscount(minDisc);
+        assertEq(core.balanceRate(), maxRate, "the solvent discount floor posts 10000 - minDisc");
+        uint256 pay = _score(ids[0]) * _moduleUnit() * maxRate / 10_000;
         assertEq(core.balanceBidOf(ids[0]), pay, "quotes the new discount");
-        uint256 royalty = pay * s.buyToArtistBps / 10_000;
-        uint256 minimumReturn = _score(ids[0]) * UNIT * (10_000 - s.redeemSlippageBps) / 10_000;
+        uint256 royalty = pay * artist / 10_000;
+        uint256 minimumReturn = _score(ids[0]) * _moduleUnit() * (10_000 - slip) / 10_000;
         assertLe(pay + royalty, minimumReturn, "the boundary covers the accepted redemption shortfall");
-        uint256 before = xt.balanceOf(user);
+        uint256 before = _balanceOf(user);
         vm.prank(user);
         core.sellForBalance(_one(ids[0]));
-        assertEq(xt.balanceOf(user) - before, pay, "the next fill pays the new rate");
+        assertEq(_balanceOf(user) - before, pay, "the next fill pays the new rate");
 
         _setDiscount(9_999);
         assertEq(core.balanceRate(), 1, "the largest discount reads 1 bps of par");
-        assertEq(core.balanceBidOf(ids[1]), _score(ids[1]) * UNIT / 10_000, "and pays it");
-        before = xt.balanceOf(user);
+        assertEq(core.balanceBidOf(ids[1]), _score(ids[1]) * _moduleUnit() / 10_000, "and pays it");
+        before = _balanceOf(user);
         vm.prank(user);
         core.sellForBalance(_one(ids[1]));
-        assertEq(xt.balanceOf(user) - before, _score(ids[1]) * UNIT / 10_000, "paid at once");
+        assertEq(_balanceOf(user) - before, _score(ids[1]) * _moduleUnit() / 10_000, "paid at once");
 
         s = core.settings();
         s.balanceDiscountBps = 10_000;
@@ -153,7 +156,7 @@ contract BalanceFlatTest is Fixture {
         core.setSettings(s);
         _setDiscount(2_500);
         assertEq(core.balanceRate(), 7_500, "a later edit lands");
-        assertEq(core.balanceBidOf(ids[2]), _score(ids[2]) * UNIT * 7_500 / 10_000);
+        assertEq(core.balanceBidOf(ids[2]), _score(ids[2]) * _moduleUnit() * 7_500 / 10_000);
     }
 
     // promise: SPEC 9 the view reads 0 when the module cannot pay the payout plus its royalty, and the fill reverts
@@ -162,17 +165,20 @@ contract BalanceFlatTest is Fixture {
         uint256[] memory ids = _credits(user, 1);
         uint256 pay = _payout(ids[0]);
         uint256 royalty = _royalty(pay);
-        mod.setAvailable(pay + royalty - 1);
+        // cap the live treasury's available() to one base unit below the payout plus its royalty
+        _capAvailableTo(pay + royalty - 1);
+        assertEq(treasury.available(), pay + royalty - 1, "available capped below the payout plus royalty");
         assertEq(core.balanceBidOf(ids[0]), 0, "the view never advertises a payout the fill refuses");
         vm.prank(user);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(ids);
-        mod.setAvailable(pay + royalty);
+        _capAvailableTo(pay + royalty);
+        assertEq(treasury.available(), pay + royalty, "available is exactly the payout plus royalty");
         assertEq(core.balanceBidOf(ids[0]), pay, "exactly enough: the view reads the payout");
-        uint256 before = xt.balanceOf(user);
+        uint256 before = _balanceOf(user);
         vm.prank(user);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(user) - before, pay, "and the fill runs");
+        assertEq(_balanceOf(user) - before, pay, "and the fill runs");
     }
 
     // promise: SPEC 9 a batch is bounded by available() alone: the payouts plus the royalties of the whole batch must
@@ -184,25 +190,27 @@ contract BalanceFlatTest is Fixture {
             uint256 pay = _payout(ids[i]);
             two += pay + _royalty(pay);
         }
-        mod.setAvailable(two);
-        uint256 before = xt.balanceOf(user);
+        _capAvailableTo(two);
+        assertEq(treasury.available(), two, "available is the two credit total");
+        uint256 before = _balanceOf(user);
         vm.prank(user);
         vm.expectRevert(ICore.PotTooSmall.selector);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(user), before, "nothing paid on the refused batch");
+        assertEq(_balanceOf(user), before, "nothing paid on the refused batch");
         assertEq(CREDITS.ownerOf(ids[0]), user, "nothing moved");
         uint256[] memory first = new uint256[](2);
         first[0] = ids[0];
         first[1] = ids[1];
         vm.prank(user);
         core.sellForBalance(first);
-        assertEq(xt.balanceOf(user) - before, _payout(ids[0]) + _payout(ids[1]), "the fitting batch runs");
+        assertEq(_balanceOf(user) - before, _payout(ids[0]) + _payout(ids[1]), "the fitting batch runs");
     }
 
     // promise: SPEC 9 a tiny available refuses the batch with PotTooSmall, never a panic, and the view reads 0
     function test_tinyAvailableRefuses() public {
-        mod.setAvailable(8_000_001);
         uint256[] memory ids = _credits(user, 3);
+        _capAvailableTo(8_000_001);
+        assertEq(treasury.available(), 8_000_001, "available capped tiny");
         assertEq(core.balanceBidOf(ids[0]), 0);
         vm.prank(user);
         vm.expectRevert(ICore.PotTooSmall.selector);
@@ -230,25 +238,32 @@ contract BalanceFlatTest is Fixture {
     function test_switchesAndModuleSetLeaveThePostedRate() public {
         uint256[] memory ids = _credits(user, 1);
         uint256 pay = _payout(ids[0]);
+        uint256 posted = _posted();
         _setSwitches(true, false);
-        assertEq(core.balanceRate(), 9_000, "posted with the bid off");
+        assertEq(core.balanceRate(), posted, "posted with the bid off");
         _setSwitches(true, true);
-        assertEq(core.balanceRate(), 9_000, "posted with the bid on");
-        _setBalanceModule(address(mod));
-        assertEq(core.balanceRate(), 9_000, "posted after a module set");
+        assertEq(core.balanceRate(), posted, "posted with the bid on");
+        _setBalanceModule(address(treasury));
+        assertEq(core.balanceRate(), posted, "posted after a module set");
         assertEq(core.balanceBidOf(ids[0]), pay);
         _warp(1 hours);
-        uint256 before = xt.balanceOf(user);
+        uint256 before = _balanceOf(user);
         vm.prank(user);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(user) - before, pay);
+        assertEq(_balanceOf(user) - before, pay);
     }
 
     // promise: SPEC 9 balanceRate reads the posted rate and balanceBidOf reads 0 while the module's unit read fails
     function test_failingUnitReadsZeroPayout() public {
+        // the subject is an odd module whose unit read reverts, which the live treasury never does: a stand in module is
+        // selected on the live Core so the Core's handling of a failing unit read is exercised
         uint256[] memory ids = _credits(user, 1);
-        mod.setRevertUnit(true);
-        assertEq(core.balanceRate(), 9_000, "the posted rate needs no module read");
+        MockBalanceToken mockToken = new MockBalanceToken("Balance Token", "XT");
+        MockBalanceModule mockMod = new MockBalanceModule(address(mockToken), UNIT);
+        mockToken.mint(address(mockMod), 1e24);
+        _setBalanceModule(address(mockMod));
+        mockMod.setRevertUnit(true);
+        assertEq(core.balanceRate(), _posted(), "the posted rate needs no module read");
         assertEq(core.balanceBidOf(ids[0]), 0, "no payout without a unit");
         vm.prank(user);
         vm.expectRevert(ICore.BadModule.selector);
@@ -256,16 +271,67 @@ contract BalanceFlatTest is Fixture {
     }
 }
 
-/// the posted rate before any module is set: the rate reads, the payout is 0, the door refuses
-contract BalanceFlatNoModuleTest is Fixture {
+/// the posted rate before any module is set: the rate reads, the payout is 0, the door refuses. the live Core at the
+/// pin has no balance module selected, so this suite reads that live state directly and never enters phase 2
+contract BalanceFlatNoModuleTest is LiveFixture {
     // promise: SPEC 9 with no module balanceRate reads the posted rate, balanceBidOf reads 0 and the door reverts
     function test_noModule() public {
         assertEq(core.balanceModule(), address(0));
-        assertEq(core.balanceRate(), 9_000, "posted with no module");
+        uint16 disc = core.settings().balanceDiscountBps;
+        assertEq(core.balanceRate(), 10_000 - disc, "posted with no module is 10000 - live discount");
         uint256[] memory ids = _credits(seller, 1);
         assertEq(core.balanceBidOf(ids[0]), 0, "no payout with no module");
         vm.prank(seller);
         vm.expectRevert(ICore.BalanceBidOff.selector);
         core.sellForBalance(ids);
+    }
+}
+
+/// test_wholeArtistPayFailureRollsBackTheSale stays on the stand in `Fixture`: it forces a whole module artist payment
+/// failure with `xt.setBanned` and asserts the Core rolls the seller payment and Credit transfer back with BadModule.
+/// the live Phase2BalanceTreasury swallows a failed transfer into its `owed` ledger instead of reverting, so this
+/// rollback promise has no live analogue and the mock module is the correct subject
+contract BalanceFlatFixtureTest is Fixture {
+    address internal user;
+
+    function setUp() public override {
+        super.setUp();
+        _useLiveSettings(); // controlled input, live configuration (Addendum 4)
+        user = _user("flat.user");
+        _enterPhase2();
+    }
+
+    function _score(uint256 id) internal view returns (uint256) {
+        return ICreditScore(Mainnet.CREDIT_SCORE).scoreOf(CREDITS.seedOf(id), CREDITS.timestampOf(id));
+    }
+
+    function _payout(uint256 id) internal view returns (uint256) {
+        return _score(id) * UNIT * (10_000 - core.settings().balanceDiscountBps) / 10_000;
+    }
+
+    function _royalty(uint256 pay) internal view returns (uint256) {
+        return pay * core.settings().buyToArtistBps / 10_000;
+    }
+
+    // promise: a whole-module artist payment failure rolls back the seller payment and Credit transfer
+    function test_wholeArtistPayFailureRollsBackTheSale() public {
+        address hostile = _user("flat.hostileArtist");
+        _setArtist(hostile);
+        xt.setBanned(hostile);
+        uint256[] memory ids = _credits(user, 1);
+        uint256 pay = _payout(ids[0]);
+        uint256 royalty = _royalty(pay);
+        assertGt(royalty, 0, "the launch royalty is nonzero");
+        uint256 userBefore = xt.balanceOf(user);
+        uint256 moduleBefore = _moduleHolding();
+        vm.prank(user);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.sellForBalance(ids);
+        assertEq(xt.balanceOf(user), userBefore, "the seller payment rolled back");
+        assertEq(xt.balanceOf(hostile), 0, "the blacklisted artist received nothing");
+        assertEq(_moduleHolding(), moduleBefore, "the module reserve is unchanged");
+        (bool inPile,,) = core.creditInfo(ids[0]);
+        assertFalse(inPile, "the credit did not enter the pile");
+        assertEq(CREDITS.ownerOf(ids[0]), user, "the seller kept the Credit");
     }
 }
