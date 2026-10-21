@@ -1,5 +1,8 @@
 import { formatUnits } from "viem";
 import { chain } from "./config";
+import { decimalAmount, subscriptZeros } from "./price-format";
+
+export { decimalAmount, ethPerPointPrice } from "./price-format";
 
 export const BALANCE_SYMBOL = "$BALANCE";
 
@@ -40,10 +43,6 @@ export function commas(n: number | bigint, max = 0): string {
   return typeof n === "bigint" ? n.toLocaleString("en-US") : n.toLocaleString("en-US", { maximumFractionDigits: Math.min(max, 2) });
 }
 
-export function decimalAmount(n: number): string {
-  if (n > 0 && n < 0.01) return "<0.01";
-  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
-}
 
 // ETH amounts follow the global two-decimal display rule; small nonzero values remain distinguishable from zero.
 export function eth(wei: bigint, _dp = 2): string {
@@ -71,7 +70,6 @@ export function usd(n: number): string {
 
 // Token price in USD: subscript-zero notation under $0.001 ($0.0₃151), copied
 // from the artcoins site's PriceStats. "—" for a non-positive or non-finite value.
-const SUBSCRIPT_DIGITS = ["₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉"];
 // A sub-cent price split for display: "$0.0", the count of further zeros, then three significant digits ($0.0₄983 is
 // 0.0000983). zeros is undefined at a cent and above, where `text` is the whole price.
 export function usdPriceParts(value: number): { text: string; zeros?: number; sig?: string } {
@@ -82,13 +80,7 @@ export function usdPriceParts(value: number): { text: string; zeros?: number; si
 
 export function usdPrice(value: number): string {
   if (!isFinite(value) || value <= 0) return "—";
-  if (value < 0.001) {
-    // toExponential avoids the fixed-point artifacts of toFixed on tiny values
-    const [mantissa, exp] = value.toExponential().split("e");
-    const zeros = -parseInt(exp, 10) - 1;
-    const sig = mantissa.replace(".", "").slice(0, 3);
-    return `$0.0${String(zeros).split("").map((d) => SUBSCRIPT_DIGITS[Number(d)]).join("")}${sig}`;
-  }
+  if (value < 0.001) return `$${subscriptZeros(value)}`;
   if (value < 1) return `$${value.toFixed(4)}`;
   if (value < 1000) return `$${value.toFixed(2)}`;
   if (value < 1_000_000) return `$${(value / 1000).toFixed(2)}K`;

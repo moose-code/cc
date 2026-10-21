@@ -12,7 +12,7 @@ import { useStatementRating } from "./Cards";
 import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import Link from "next/link";
-import { relTime, eth, evmNowTx, rating, commas } from "@/lib/format";
+import { relTime, eth, ethPerPointPrice, evmNowTx, rating, commas } from "@/lib/format";
 import { CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
 import { CCLogo } from "./CCLogo";
@@ -70,7 +70,7 @@ export function Tween({ wei }: { wei: bigint | undefined }) {
 // The current eth bid per point for the header: ethRate is per 100 points.
 export function useBid() {
   const { data: snap } = useSnapshot();
-  return snap ? eth(snap.ethRate / 100n, 7) : undefined;
+  return snap ? ethPerPointPrice(snap.ethRate / 100n) : undefined;
 }
 
 // The spendable pot (Core.room: the pot less the processing reserve), at the top of the home rail.
