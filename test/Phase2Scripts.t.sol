@@ -347,41 +347,50 @@ contract Phase2ScriptsTest is Fixture {
         );
     }
 
-    // promise: PLAN section 8 stage B the settings script changes exactly saleToBuybackBps, feeToRedeemBurnBps and redeemBurnBps to 0 and creditCostToPotBps to 10000, and refuses the stage C switches
-    function test_settingsPatchChangesExactlyTheFourFieldsAndTheCreditCost() public {
-        // the fixture launches with feeToRedeemBurnBps 0; mainnet carries the RUNBOOK's 1,000, so set it first
+    // promise: decision 262 without a split the settings script changes exactly balanceDiscountBps, keeps the three buy and burn shares and creditCostToPotBps at their live values, and refuses the stage C switches
+    function test_settingsPatchChangesOnlyThePayoutAndKeepsTheBurns() public {
+        // the fixture launches with feeToRedeemBurnBps 0; mainnet carries 1,000, so set it first to see it kept
         Settings memory live = core.settings();
         live.feeToRedeemBurnBps = 1_000;
         _setSettings(live);
         live = core.settings();
         assertEq(live.feeToRedeemBurnBps, 1_000);
+        uint16 costBefore = core.creditCostToPotBps();
         Phase2Settings.Preview memory p = settings.previewOn();
         uint256 changed;
         for (uint256 i; i < SettingsFields.N; ++i) {
             if (SettingsFields.get(p.live, i) != SettingsFields.get(p.next, i)) ++changed;
         }
-        assertEq(changed, 4, "four fields change");
-        assertEq(p.next.saleToBuybackBps, 0);
-        assertEq(p.next.feeToRedeemBurnBps, 0);
-        assertEq(p.next.redeemBurnBps, 0);
+        assertEq(changed, 1, "only the payout changes");
+        assertEq(p.next.saleToBuybackBps, live.saleToBuybackBps);
+        assertEq(p.next.feeToRedeemBurnBps, 1_000);
+        assertEq(p.next.redeemBurnBps, live.redeemBurnBps);
         assertEq(p.next.balanceDiscountBps, 2_000, "the posted payout is 80 percent of rating");
         assertEq(keccak256(abi.encode(p.live)), keccak256(abi.encode(live)), "the live struct is read as is");
         assertEq(keccak256(abi.encode(core.settings())), keccak256(abi.encode(live)), "the preview sends nothing");
         settings.applyAsOwner();
         assertEq(keccak256(abi.encode(core.settings())), keccak256(abi.encode(p.next)));
-        assertEq(core.creditCostToPotBps(), 10_000);
+        assertEq(core.creditCostToPotBps(), costBefore, "the credit cost share is kept");
         settings.force("balanceBidOn");
         vm.expectRevert(abi.encodeWithSelector(Phase2Settings.StageCField.selector, "balanceBidOn"));
         settings.refuse();
     }
 
-    // promise: decision 255 with a split address the patch makes the split the artist and every artist flow 3 percent with the sale operator cut folded in, in the order split, cost share, settings
+    // promise: decision 255 with a split address the patch makes the split the artist and every artist flow 3 percent with the sale operator cut folded in, split first, then the settings; with decision 262 those four and the payout are the only fields that change
     function test_settingsPatchWiresTheSplitAsArtist() public {
         address split = address(new Phase2BalanceTokenStandin()); // any contract with code stands in for the split
         settings.setSplit(split);
         Phase2Settings.Preview memory p = settings.previewOn();
         assertEq(p.split, split);
         assertTrue(p.artistChanged);
+        bytes32[39] memory names = SettingsFields.names();
+        for (uint256 i; i < SettingsFields.N; ++i) {
+            bytes32 n = names[i];
+            if (
+                n == "balanceDiscountBps" || n == "buyToArtistBps" || n == "saleToArtistBps" || n == "saleToOperatorBps"
+            ) continue;
+            assertEq(SettingsFields.get(p.live, i), SettingsFields.get(p.next, i), "every other field is kept");
+        }
         assertEq(p.next.buyToArtistBps, 300);
         assertEq(p.next.saleToArtistBps, 300);
         assertEq(p.next.saleToOperatorBps, 0);
