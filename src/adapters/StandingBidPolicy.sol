@@ -23,6 +23,7 @@ interface IBidCore {
 interface IBidTreasury {
     function core() external view returns (address);
     function bidBudgetAvailable() external view returns (uint256);
+    function redemptionFeeBps() external view returns (uint16);
     function unitPerPoint() external view returns (uint256);
 }
 
@@ -157,24 +158,31 @@ contract StandingBidPolicy is IRedemptionPolicy {
         ok = perCC != 0;
     }
 
-    /// the most CC the bid covers now at the current budget, before the fee. zero while the bid is unusable
+    /// the most CC the bid covers now at the current budget, after the treasury's fee as `quote` applies it. zero
+    /// while the bid is unusable or the fee takes everything
     function bidCapacity() external view returns (uint256 cc) {
         (uint256 perCC, bool ok) = bidPerCC();
         if (!ok) return 0;
         (uint256 budget, bool read) = _budget();
         if (!read) return 0;
-        return FixedPointMathLib.fullMulDiv(budget, 1e18, perCC);
+        uint256 fee = TREASURY.redemptionFeeBps();
+        if (fee >= BPS) return 0;
+        return FixedPointMathLib.fullMulDiv(budget * BPS, 1e18, perCC * (BPS - fee));
     }
 
-    /// the terms of a burn of `ccIn` now, for a panel: the floor, the bid, the budget and which one `quote` returns
+    /// the terms of a burn of `ccIn` now, for a panel, after the treasury's fee as `quote` applies it: the floor, the
+    /// bid, the budget and whether `quote` returns the bid
     function terms(uint256 ccIn, uint256 claimReserve, uint256 ccSupply)
         external
         view
         returns (uint256 floor, uint256 bid, uint256 budget, bool bidUsable, bool atBid)
     {
         if (ccIn == 0 || ccSupply == 0 || ccIn > ccSupply) return (0, 0, 0, false, false);
-        floor = FixedPointMathLib.fullMulDiv(ccIn, claimReserve, ccSupply);
+        uint256 fee = TREASURY.redemptionFeeBps();
+        if (fee > BPS) fee = BPS;
+        floor = FixedPointMathLib.fullMulDiv(FixedPointMathLib.fullMulDiv(ccIn, claimReserve, ccSupply), BPS - fee, BPS);
         (bid, bidUsable) = bidFor(ccIn);
+        bid = FixedPointMathLib.fullMulDiv(bid, BPS - fee, BPS);
         (budget,) = _budget();
         atBid = bidUsable && bid > floor && bid <= budget;
     }

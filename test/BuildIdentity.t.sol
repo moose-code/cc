@@ -31,9 +31,9 @@ contract BuildIdentityTest is Fixture {
     uint256 internal constant RENDERER_RUNTIME = 4_464;
     /// the phase 2 artifacts, deployed by the phase 2 scripts and never by the launch
     uint256 internal constant CONTROLLER_V2_RUNTIME = 14_339;
-    uint256 internal constant TREASURY_RUNTIME = 13_650;
+    uint256 internal constant TREASURY_RUNTIME = 13_622;
     uint256 internal constant POLICY_RUNTIME = 656;
-    uint256 internal constant STANDING_BID_RUNTIME = 6_833;
+    uint256 internal constant STANDING_BID_RUNTIME = 7_212;
 
     function _json(string memory name) internal view returns (string memory) {
         return vm.readFile(string.concat("out/", name, ".sol/", name, ".json"));

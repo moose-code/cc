@@ -298,10 +298,16 @@ contract Phase2BalanceTreasury is IBalanceModule {
     /// the budget a policy may pay above the proportional share now: the carried budget plus the accrual since it was
     /// last settled, at most `bidBudgetMax`, at most the claim reserve
     function bidBudgetAvailable() public view returns (uint256) {
-        uint256 acc = uint256(bidBudgetCarried) + uint256(bidBudgetPerDay) * (block.timestamp - bidBudgetTime) / 1 days;
-        if (acc > bidBudgetMax) acc = bidBudgetMax;
+        uint256 acc = _accruedBudget();
         uint256 reserve = claimReserve;
         return acc > reserve ? reserve : acc;
+    }
+
+    /// the carried budget plus the accrual since it was settled, at most `bidBudgetMax`; the reserve bound is applied
+    /// by `bidBudgetAvailable`, so accrual above a small reserve is kept, not discarded, when a bid settles it
+    function _accruedBudget() private view returns (uint256 acc) {
+        acc = uint256(bidBudgetCarried) + uint256(bidBudgetPerDay) * (block.timestamp - bidBudgetTime) / 1 days;
+        if (acc > bidBudgetMax) acc = bidBudgetMax;
     }
 
     /// the terms of a burn of `ccIn` now: the proportional share of the claim reserve, the bid budget, and the cap the
@@ -413,7 +419,8 @@ contract Phase2BalanceTreasury is IBalanceModule {
         if (ccIn == 0 || ccIn > supply) revert InvalidAmount();
         uint256 reserve = claimReserve;
         uint256 share = FixedPointMathLib.fullMulDiv(ccIn, reserve, supply);
-        uint256 budget = bidBudgetAvailable();
+        uint256 accrued = _accruedBudget();
+        uint256 budget = accrued > reserve ? reserve : accrued;
         uint256 cap = share > budget ? share : budget;
         (bool ok, uint256 out) = _policyQuote(ccIn, reserve, supply);
         if (!ok || out > cap || out > reserve) revert BadPolicy();
@@ -423,9 +430,10 @@ contract Phase2BalanceTreasury is IBalanceModule {
         if (before < reserve + totalOwed) revert Insolvent();
         claimReserve = reserve - out;
         if (out > share) {
-            // out <= cap and out > share, so cap is the budget and the subtraction holds
+            // out <= cap and out > share, so cap is the budget, budget <= accrued and the subtraction holds; the
+            // accrual above the reserve stays carried
             // forge-lint: disable-next-line(unsafe-typecast)
-            bidBudgetCarried = uint128(budget - out);
+            bidBudgetCarried = uint128(accrued - out);
             // forge-lint: disable-next-line(unsafe-typecast)
             bidBudgetTime = uint40(block.timestamp);
             emit BidPaid(out - share, budget - out);
@@ -482,8 +490,7 @@ contract Phase2BalanceTreasury is IBalanceModule {
     /// proportional share at most. a burner's terms change, so the epoch advances
     function setBidBudget(uint128 perDay, uint128 max_) external onlyOwner {
         if (perDay > max_) revert BadSetting("bidBudget");
-        uint256 acc = uint256(bidBudgetCarried) + uint256(bidBudgetPerDay) * (block.timestamp - bidBudgetTime) / 1 days;
-        if (acc > bidBudgetMax) acc = bidBudgetMax;
+        uint256 acc = _accruedBudget();
         if (acc > max_) acc = max_;
         // forge-lint: disable-next-line(unsafe-typecast)
         bidBudgetCarried = uint128(acc);
