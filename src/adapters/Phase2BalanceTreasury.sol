@@ -68,7 +68,8 @@ interface IPhase2Successor {
 /// funding and reallocation, migration and CC burns. the owner is the Core's owner. the owner can move backing back to
 /// working funds while CC redemption is paused and can withdraw free working funds: backing is owner managed, not
 /// inaccessible. every administrative change to a burner's terms advances `configEpoch`, which `redeemCC` pins.
-/// the redemption policy is a bounded static read whose answer is capped at the proportional share computed here
+/// the redemption policy is a bounded static read whose answer is capped at the larger of the proportional share
+/// computed here and the standing bid budget (`setBidBudget`, zero at deployment)
 contract Phase2BalanceTreasury is IBalanceModule {
     address public immutable core;
     address public immutable override balanceToken;
@@ -82,7 +83,7 @@ contract Phase2BalanceTreasury is IBalanceModule {
     /// gas kept back from a payment transfer so an unpaid amount can still be recorded: two storage writes and an event
     uint256 private constant ACCRUE_RESERVE = 60_000;
     /// gas of a policy read. the policy is pure arithmetic; a policy that needs more fails closed
-    uint256 private constant POLICY_GAS = 200_000;
+    uint256 private constant POLICY_GAS = 300_000;
     /// the upstream funding phase after which ordinary transfers can open
     uint8 private constant FUNDING_COMPLETE = 3;
     /// transient reentrancy lock slot, keccak256("Phase2BalanceTreasury.lock") less one
@@ -137,6 +138,8 @@ contract Phase2BalanceTreasury is IBalanceModule {
     event RedemptionFeeSet(uint16 bps, uint64 configEpoch);
     event MinimumWorkingBalanceSet(uint256 amount);
     event RedemptionPolicySet(address indexed policy, uint64 configEpoch);
+    event BidBudgetSet(uint128 perDay, uint128 max, uint128 carried, uint64 configEpoch);
+    event BidPaid(uint256 aboveShare, uint256 budgetLeft);
     event ClaimsFunded(address indexed from, uint256 amount, uint256 claimReserve);
     event ClaimsAllocated(uint256 amount, uint256 claimReserve);
     event ClaimsReturned(uint256 amount, uint256 claimReserve, uint64 configEpoch);
@@ -164,8 +167,16 @@ contract Phase2BalanceTreasury is IBalanceModule {
     bool public ccRedemptionEnabled;
     /// the quote `redeemCC` reads. replaceable by the owner; replacement turns CC redemption off
     address public redemptionPolicy;
-    /// advances on every administrative change to a burner's terms: policy, fee, a claim reduction, migration
+    /// advances on every administrative change to a burner's terms: policy, fee, the bid budget, a claim reduction,
+    /// migration
     uint64 public configEpoch;
+    /// the standing bid budget: claim reserve a policy may pay above the proportional share. it accrues at
+    /// `bidBudgetPerDay` per day on top of `bidBudgetCarried` since `bidBudgetTime`, never above `bidBudgetMax` and
+    /// never above the claim reserve. all zero at deployment, so a policy can pay the proportional share at most
+    uint128 public bidBudgetPerDay;
+    uint128 public bidBudgetMax;
+    uint128 public bidBudgetCarried;
+    uint40 public bidBudgetTime;
     /// true after `migrateTo`: no switch can be turned on again and the claim reserve is zero
     bool public migrated;
 
@@ -284,6 +295,25 @@ contract Phase2BalanceTreasury is IBalanceModule {
         return freeWorking();
     }
 
+    /// the budget a policy may pay above the proportional share now: the carried budget plus the accrual since it was
+    /// last settled, at most `bidBudgetMax`, at most the claim reserve
+    function bidBudgetAvailable() public view returns (uint256) {
+        uint256 acc = uint256(bidBudgetCarried) + uint256(bidBudgetPerDay) * (block.timestamp - bidBudgetTime) / 1 days;
+        if (acc > bidBudgetMax) acc = bidBudgetMax;
+        uint256 reserve = claimReserve;
+        return acc > reserve ? reserve : acc;
+    }
+
+    /// the terms of a burn of `ccIn` now: the proportional share of the claim reserve, the bid budget, and the cap the
+    /// policy's answer must respect, the larger of the two
+    function redemptionTerms(uint256 ccIn) public view returns (uint256 share, uint256 budget, uint256 cap) {
+        uint256 supply = ITreasuryCoin(ccToken).totalSupply();
+        budget = bidBudgetAvailable();
+        if (ccIn == 0 || supply == 0 || ccIn > supply) return (0, budget, budget);
+        share = FixedPointMathLib.fullMulDiv(ccIn, claimReserve, supply);
+        cap = share > budget ? share : budget;
+    }
+
     /// the balance token `redeemCC(ccIn)` would pay now and whether it would execute for reasons other than the burner's
     /// own minimum and deadline. `balanceOut` is zero for an input the policy or the cap refuses
     function quoteRedemption(uint256 ccIn)
@@ -296,7 +326,8 @@ contract Phase2BalanceTreasury is IBalanceModule {
         epoch = configEpoch;
         if (ccIn == 0 || ccIn > supply) return (0, reserve, supply, epoch, false);
         (bool ok, uint256 out) = _policyQuote(ccIn, reserve, supply);
-        if (!ok || out == 0 || out > FixedPointMathLib.fullMulDiv(ccIn, reserve, supply)) {
+        (,, uint256 cap) = redemptionTerms(ccIn);
+        if (!ok || out == 0 || out > cap) {
             return (0, reserve, supply, epoch, false);
         }
         balanceOut = out;
@@ -362,10 +393,11 @@ contract Phase2BalanceTreasury is IBalanceModule {
 
     // ------------------------------------------------------------------ CC redemption
 
-    /// burns `ccIn` of the caller's CC and pays `recipient` the policy's quote, at most the proportional share of the
-    /// claim reserve snapshotted before the burn. the burn, the ledger change and the payment are one transaction: a
-    /// failed, short or unsupported burn or payment reverts everything, and no user debt is ever recorded. the caller
-    /// has approved this treasury on the coin for `burnFrom`
+    /// burns `ccIn` of the caller's CC and pays `recipient` the policy's quote, at most the larger of the proportional
+    /// share of the claim reserve snapshotted before the burn and the bid budget. a payment above the share is taken
+    /// from the budget; a payment at or under it leaves the budget alone. the burn, the ledger change and the payment
+    /// are one transaction: a failed, short or unsupported burn or payment reverts everything, and no user debt is
+    /// ever recorded. the caller has approved this treasury on the coin for `burnFrom`
     function redeemCC(
         uint256 ccIn,
         address recipient,
@@ -380,14 +412,24 @@ contract Phase2BalanceTreasury is IBalanceModule {
         uint256 supply = ITreasuryCoin(ccToken).totalSupply();
         if (ccIn == 0 || ccIn > supply) revert InvalidAmount();
         uint256 reserve = claimReserve;
-        uint256 cap = FixedPointMathLib.fullMulDiv(ccIn, reserve, supply);
+        uint256 share = FixedPointMathLib.fullMulDiv(ccIn, reserve, supply);
+        uint256 budget = bidBudgetAvailable();
+        uint256 cap = share > budget ? share : budget;
         (bool ok, uint256 out) = _policyQuote(ccIn, reserve, supply);
-        if (!ok || out > cap) revert BadPolicy();
+        if (!ok || out > cap || out > reserve) revert BadPolicy();
         if (out == 0) revert ZeroAmount();
         if (out < minBalanceOut) revert Slippage();
         uint256 before = custody();
         if (before < reserve + totalOwed) revert Insolvent();
         claimReserve = reserve - out;
+        if (out > share) {
+            // out <= cap and out > share, so cap is the budget and the subtraction holds
+            // forge-lint: disable-next-line(unsafe-typecast)
+            bidBudgetCarried = uint128(budget - out);
+            // forge-lint: disable-next-line(unsafe-typecast)
+            bidBudgetTime = uint40(block.timestamp);
+            emit BidPaid(out - share, budget - out);
+        }
         ITreasuryCoin(ccToken).burnFrom(msg.sender, ccIn);
         if (ITreasuryCoin(ccToken).totalSupply() != supply - ccIn) revert BurnMismatch();
         uint256 held = SafeTransferLib.balanceOf(balanceToken, recipient);
@@ -435,14 +477,33 @@ contract Phase2BalanceTreasury is IBalanceModule {
         emit RedemptionFeeSet(v, configEpoch);
     }
 
+    /// the standing bid budget: `perDay` accrues on top of what is carried, never above `max_`. the accrual so far is
+    /// settled first and kept, lowered to the new maximum. zero and zero turns the bid off: a policy then pays the
+    /// proportional share at most. a burner's terms change, so the epoch advances
+    function setBidBudget(uint128 perDay, uint128 max_) external onlyOwner {
+        if (perDay > max_) revert BadSetting("bidBudget");
+        uint256 acc = uint256(bidBudgetCarried) + uint256(bidBudgetPerDay) * (block.timestamp - bidBudgetTime) / 1 days;
+        if (acc > bidBudgetMax) acc = bidBudgetMax;
+        if (acc > max_) acc = max_;
+        // forge-lint: disable-next-line(unsafe-typecast)
+        bidBudgetCarried = uint128(acc);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        bidBudgetTime = uint40(block.timestamp);
+        bidBudgetPerDay = perDay;
+        bidBudgetMax = max_;
+        _bumpEpoch();
+        // forge-lint: disable-next-line(unsafe-typecast)
+        emit BidBudgetSet(perDay, max_, uint128(acc), configEpoch);
+    }
+
     /// any amount. lowers `available()` only
     function setMinimumWorkingBalance(uint256 v) external onlyOwner {
         minimumWorkingBalance = v;
         emit MinimumWorkingBalanceSet(v);
     }
 
-    /// replaces the quote. the new policy must have code, answer the probe and never quote above the proportional
-    /// share on a sample. CC redemption turns off; turning it on again is a separate owner call after readback
+    /// replaces the quote. the new policy must have code, answer the probe and quote a sample at most its proportional
+    /// share or the bid budget now. CC redemption turns off; turning it on again is a separate owner call after readback
     function setRedemptionPolicy(address policy) external onlyOwner {
         _setPolicy(policy);
         ccRedemptionEnabled = false;
@@ -455,7 +516,10 @@ contract Phase2BalanceTreasury is IBalanceModule {
             policy.staticcall{gas: POLICY_GAS}(abi.encodeCall(IRedemptionPolicy.isRedemptionPolicy, ()));
         if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) != 1) revert BadPolicy();
         (ok, ret) = policy.staticcall{gas: POLICY_GAS}(abi.encodeCall(IRedemptionPolicy.quote, (1e18, 1e18, 4e18, 0)));
-        if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) > 0.25e18) revert BadPolicy();
+        uint256 limit = 0.25e18;
+        uint256 budget = bidBudgetAvailable();
+        if (budget > limit) limit = budget;
+        if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) > limit) revert BadPolicy();
         redemptionPolicy = policy;
         _bumpEpoch();
         emit RedemptionPolicySet(policy, configEpoch);

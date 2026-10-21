@@ -207,6 +207,14 @@ export const treasuryAbi = parseAbi([
   "function predecessor() view returns (address)",
   "function unitPerPoint() view returns (uint256)",
   "function owner() view returns (address)",
+  // the standing bid budget (decision 258): the budget a policy may pay above the proportional share now, the terms
+  // of a burn (share, budget, cap) and the budget settings. zero on a treasury built before the budget
+  "function bidBudgetAvailable() view returns (uint256)",
+  "function redemptionTerms(uint256 ccIn) view returns (uint256 share, uint256 budget, uint256 cap)",
+  "function bidBudgetPerDay() view returns (uint128)",
+  "function bidBudgetMax() view returns (uint128)",
+  "function bidBudgetCarried() view returns (uint128)",
+  "function bidBudgetTime() view returns (uint40)",
   // actions open to the public
   "function redeemCC(uint256 ccIn, address recipient, uint256 minBalanceOut, uint256 deadline, uint64 expectedConfigEpoch) returns (uint256 balanceOut)",
   "function claim(address to) returns (uint256 amount)",
@@ -220,6 +228,8 @@ export const treasuryAbi = parseAbi([
   "event RedemptionFeeSet(uint16 bps, uint64 configEpoch)",
   "event MinimumWorkingBalanceSet(uint256 amount)",
   "event RedemptionPolicySet(address indexed policy, uint64 configEpoch)",
+  "event BidBudgetSet(uint128 perDay, uint128 max, uint128 carried, uint64 configEpoch)",
+  "event BidPaid(uint256 aboveShare, uint256 budgetLeft)",
   "event ClaimsFunded(address indexed from, uint256 amount, uint256 claimReserve)",
   "event ClaimsAllocated(uint256 amount, uint256 claimReserve)",
   "event ClaimsReturned(uint256 amount, uint256 claimReserve, uint64 configEpoch)",
@@ -264,6 +274,42 @@ export const redemptionPolicyAbi = parseAbi([
   "function VERSION() view returns (string)",
   "function isRedemptionPolicy() view returns (bool)",
   "function quote(uint256 ccIn, uint256 claimReserve, uint256 ccSupply, uint256 feeBps) view returns (uint256 out)",
+]);
+
+// The standing bid policy (src/adapters/StandingBidPolicy.sol, decision 258): the bid per CC from the Core's coin pool
+// and ControllerV2's balance price plus the premium, the terms of a burn, the budget's capacity in CC, the CC
+// reference it keeps and its permissionless refresh. VERSION is "standing-bid-v1".
+export const standingBidAbi = parseAbi([
+  "function VERSION() view returns (string)",
+  "function isRedemptionPolicy() view returns (bool)",
+  "function quote(uint256 ccIn, uint256 claimReserve, uint256 ccSupply, uint256 feeBps) view returns (uint256 out)",
+  "function TREASURY() view returns (address)",
+  "function CORE() view returns (address)",
+  "function owner() view returns (address)",
+  "function premiumBps() view returns (uint16)",
+  "function MAX_PREMIUM_BPS() view returns (uint16)",
+  "function bidQuote() view returns (uint32 referenceRateBpsPerHour, uint16 referenceStepBps, uint16 tolBps, uint32 referenceMaxStale, uint32 referenceMinSeconds, uint128 minLiquidity)",
+  "function referencePrice() view returns (uint256)",
+  "function referenceTime() view returns (uint40)",
+  "function bidPerCC() view returns (uint256 perCC, bool ok)",
+  "function bidFor(uint256 ccIn) view returns (uint256 out, bool ok)",
+  "function bidCapacity() view returns (uint256 cc)",
+  "function terms(uint256 ccIn, uint256 claimReserve, uint256 ccSupply) view returns (uint256 floor, uint256 bid, uint256 budget, bool bidUsable, bool atBid)",
+  "function protectedCCPrice() view returns (uint256 price, bool ok)",
+  "function protectedBalancePrice() view returns (uint256 price, bool ok)",
+  "function ccSpot() view returns (uint256 spot, bool ok)",
+  "function refreshDue() view returns (bool)",
+  "function refreshReference() returns (bool)",
+  "event PremiumSet(uint16 premiumBps)",
+  "event QuoteSet((uint32 referenceRateBpsPerHour, uint16 referenceStepBps, uint16 tolBps, uint32 referenceMaxStale, uint32 referenceMinSeconds, uint128 minLiquidity) quote)",
+  "event ReferenceSeeded(uint256 referencePrice, uint256 spot)",
+  "event ReferenceRefreshed(uint256 referencePrice, uint256 spot)",
+  "error OnlyOwner()",
+  "error InvalidConfiguration()",
+  "error BadSetting(bytes32 field)",
+  "error ZeroInput()",
+  "error InputAboveSupply()",
+  "error BadFee()",
 ]);
 
 // Credits: the holdings read, the owner read and the Core approval.

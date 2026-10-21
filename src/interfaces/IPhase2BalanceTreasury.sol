@@ -34,6 +34,8 @@ interface IPhase2BalanceTreasury {
     error ZeroAmount();
     error ZeroSupply();
 
+    event BidBudgetSet(uint128 perDay, uint128 max, uint128 carried, uint64 configEpoch);
+    event BidPaid(uint256 aboveShare, uint256 budgetLeft);
     event CCRedeemed(
         address indexed burner,
         address indexed recipient,
@@ -66,6 +68,11 @@ interface IPhase2BalanceTreasury {
     function allocateToClaims(uint256 amount) external;
     function available() external view returns (uint256);
     function balanceToken() external view returns (address);
+    function bidBudgetAvailable() external view returns (uint256);
+    function bidBudgetCarried() external view returns (uint128);
+    function bidBudgetMax() external view returns (uint128);
+    function bidBudgetPerDay() external view returns (uint128);
+    function bidBudgetTime() external view returns (uint40);
     function ccRedemptionEnabled() external view returns (bool);
     function ccToken() external view returns (address);
     function claim(address to) external returns (uint256 amount);
@@ -100,11 +107,13 @@ interface IPhase2BalanceTreasury {
     ) external returns (uint256 balanceOut);
     function redemptionFeeBps() external view returns (uint16);
     function redemptionPolicy() external view returns (address);
+    function redemptionTerms(uint256 ccIn) external view returns (uint256 share, uint256 budget, uint256 cap);
     function rescueToken(address token, address to, uint256 amount) external;
     function retirementFinalized() external view returns (bool);
     function returnClaimsToWorking(uint256 amount) external;
     function selected() external view returns (bool);
     function selectedForClaims() external view returns (bool);
+    function setBidBudget(uint128 perDay, uint128 max_) external;
     function setConversionToClaimBps(uint16 v) external;
     function setMinimumWorkingBalance(uint256 v) external;
     function setRedemptionFeeBps(uint16 v) external;
