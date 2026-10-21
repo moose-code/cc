@@ -30,7 +30,11 @@ contract CreatePushSplitTest is Test {
     CreatePushSplit internal s;
 
     function setUp() public {
-        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envOr("SPLIT_FORK_BLOCK", uint256(26_238_200)));
+        // the form split exists from block 26,238,176; an RPC whose head is older (CI's pinned local fork) skips
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
+        uint256 at = vm.envOr("SPLIT_FORK_BLOCK", uint256(26_238_200));
+        vm.skip(block.number < at);
+        vm.rollFork(at);
         s = new CreatePushSplit();
     }
 
