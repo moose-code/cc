@@ -26,8 +26,8 @@ export type ClaimPanelProps = {
   walletCc: string;
   connected: boolean;
   amount: string;
-  onAmountChange: (value: string) => void;
-  onMax: () => void;
+  amountBps: number;
+  onAmountChange: (value: number) => void;
   quoted: string;
   minimum: string;
   epoch: string;
@@ -88,26 +88,26 @@ export function ClaimPanel(p: ClaimPanelProps) {
           </div>
         ) : (
           <>
-            <label className="claim-amount" htmlFor="claim-amount">
-              <span>{p.ccSymbol} to burn</span>
-              <span className="claim-amount-row">
-                <input
-                  id="claim-amount"
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  placeholder="0"
-                  value={p.amount}
-                  disabled={p.busy}
-                  onChange={(e) => p.onAmountChange(e.target.value)}
-                />
-                <button type="button" disabled={p.busy || !p.connected} onClick={p.onMax}>max</button>
-              </span>
-            </label>
+            <div className="claim-amount">
+              <label htmlFor="claim-amount">{p.ccSymbol} to burn</label>
+              <output className="claim-amount-value" htmlFor="claim-amount">{p.amount} {p.ccSymbol}</output>
+              <input
+                id="claim-amount"
+                type="range"
+                min="0"
+                max="10000"
+                step="1"
+                value={p.amountBps}
+                disabled={p.busy || !p.connected}
+                aria-valuetext={`${p.amount} ${p.ccSymbol}`}
+                onChange={(e) => p.onAmountChange(Number(e.target.value))}
+              />
+              <span className="claim-range-labels" aria-hidden="true"><span>0</span><span>100%</span></span>
+            </div>
             <dl className="claim-quote">
               <div><dt>you receive</dt><dd>{p.quoted} {p.balanceSymbol}</dd></div>
               <div><dt>minimum you receive</dt><dd>{p.minimum} {p.balanceSymbol}</dd></div>
-              <div><dt>terms epoch</dt><dd>{p.epoch}</dd></div>
+              <div><dt>terms version (epoch)</dt><dd>{p.epoch}</dd></div>
             </dl>
             {p.liveMismatch && <p className="claim-note" role="status">The treasury&apos;s quote differs from the pro-rata arithmetic; the treasury&apos;s quote is shown and used.</p>}
             <div className="claim-slippage">
@@ -119,8 +119,9 @@ export function ClaimPanel(p: ClaimPanelProps) {
               </div>
             </div>
             <p className="claim-explanation">
-              The quote, the minimum and the terms epoch are pinned when you confirm. The transaction expires 20 minutes after
-              confirmation, and reverts if the owner changes the terms, if the treasury pays under your minimum, or if redemption closes.
+              The terms epoch is the treasury&apos;s version number for redemption settings, not a date or time period. Your quote pins
+              that version when you confirm, so the transaction reverts if the owner changes the terms. It also expires after 20 minutes
+              and reverts if the treasury pays under your minimum or redemption closes.
             </p>
             {p.status && <p className="claim-status" role="status">{p.status}</p>}
             {p.error && <p className="claim-error" role="alert">{p.error}</p>}

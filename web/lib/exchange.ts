@@ -49,11 +49,13 @@ export function exchangeQuote(market: ExchangeMarket | undefined, scores: bigint
   };
 }
 
-// Never round the displayed minimum above or below the exact amount encoded in the transaction.
-export function exchangeAmount(amount: bigint, decimals: number, precision = decimals) {
+// Display token amounts with at most two decimals without changing their exact base-unit transaction values.
+// Truncation never presents a minimum higher than the one encoded in the transaction.
+export function exchangeAmount(amount: bigint, decimals: number) {
   const [whole, fraction = ""] = formatUnits(amount, decimals).split(".");
-  const tail = fraction.slice(0, precision).replace(/0+$/, "");
-  return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (tail ? `.${tail}` : "");
+  const tail = fraction.slice(0, 2).replace(/0+$/, "");
+  if (amount > 0n && whole === "0" && !tail) return "<0.01";
+  return BigInt(whole).toLocaleString("en-US") + (tail ? `.${tail}` : "");
 }
 
 export async function sellExchange(
@@ -78,7 +80,7 @@ export async function sellExchange(
   // A fresh full-batch simulation after approval checks price, custody, return locks, reserve and royalty together.
   await client.simulateContract(sale);
   checkConsent();
-  await write({ ...sale, chainId });
+  return write({ ...sale, chainId });
 }
 
 // ---- phase 2 claim: burn CC for a share of the treasury's claim reserve ------------------------------------------
@@ -92,6 +94,11 @@ export async function sellExchange(
 
 export const CLAIM_DEADLINE_SECONDS = 20 * 60;
 export const PRO_RATA_VERSION = "pro-rata-v1";
+
+export function claimSliderAmount(walletCc: bigint, bps: number): bigint {
+  if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) throw new Error("Invalid burn slider position");
+  return walletCc * BigInt(bps) / 10_000n;
+}
 
 // the live quoteRedemption answer for one amount
 export type ClaimQuoteRead = { ccIn: bigint; balanceOut: bigint; reserve: bigint; supply: bigint; epoch: bigint; executable: boolean };

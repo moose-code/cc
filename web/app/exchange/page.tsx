@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useAccount, useConfig, usePublicClient } from "wagmi";
 import { getAccount } from "wagmi/actions";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { parseUnits, type Address } from "viem";
+import type { Address } from "viem";
 import { ClaimPanel, type ClaimReceipt } from "@/components/ClaimPanel";
-import { ExchangeView } from "@/components/ExchangeView";
+import { ExchangeView, type ExchangeReceipt } from "@/components/ExchangeView";
 import { chain, core, credits, engineDeployed } from "@/lib/config";
 import {
-  CLAIM_DEADLINE_SECONDS, PRO_RATA_VERSION, claimQuote, decodeRedemption, exchangeAmount, exchangeQuote, redeemClaim, sellExchange,
+  CLAIM_DEADLINE_SECONDS, PRO_RATA_VERSION, claimQuote, claimSliderAmount, decodeRedemption, exchangeAmount, exchangeQuote, redeemClaim, sellExchange,
   type ClaimMarket,
 } from "@/lib/exchange";
 import { rating, type BalanceTokenInfo } from "@/lib/format";
@@ -38,7 +38,7 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
   const { openConnectModal } = useConnectModal();
   const now = useNow(1000);
   const treasury = useTreasury(account);
-  const [amount, setAmount] = useState("");
+  const [amountBps, setAmountBps] = useState(0);
   const [slippage, setSlippage] = useState(50);
   const [receipt, setReceipt] = useState<ClaimReceipt>();
   // the figures frozen at consent: the market, the quote and the amount shown while the wallet confirms
@@ -46,7 +46,7 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
   const live = treasury.data ?? undefined;
   const info = review?.info ?? live;
   const ccDecimals = info?.coinDecimals ?? 18;
-  const ccIn = review?.ccIn ?? parseAmount(amount, ccDecimals);
+  const ccIn = review?.ccIn ?? claimSliderAmount(info?.walletCc ?? 0n, amountBps);
   const liveQuote = useClaimQuote(review ? undefined : info?.treasury, ccIn);
   const tolerance = review?.slippage ?? slippage;
   const market: ClaimMarket | undefined = review?.market ?? (info && {
@@ -58,9 +58,9 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
   });
   const quote = market ? claimQuote(market, ccIn, tolerance, info?.walletCc) : undefined;
   const { run, pending, err } = useTx();
-  const bal = (value: bigint | undefined, precise = false) => value === undefined || info?.balanceDecimals === undefined
-    ? "—" : exchangeAmount(value, info.balanceDecimals, precise ? info.balanceDecimals : 6);
-  const cc = (value: bigint | undefined, precise = false) => value === undefined ? "—" : exchangeAmount(value, ccDecimals, precise ? ccDecimals : 6);
+  const bal = (value: bigint | undefined) => value === undefined || info?.balanceDecimals === undefined
+    ? "—" : exchangeAmount(value, info.balanceDecimals);
+  const cc = (value: bigint | undefined) => value === undefined ? "—" : exchangeAmount(value, ccDecimals);
   const wrongChain = Boolean(account && chainId !== chain.id);
   const quoted = Boolean(quote && !quote.reason && quote.executable && quote.out > 0n && (review || liveQuote.data?.ccIn === ccIn));
   const status = pending ? "Your amount, minimum, deadline and terms epoch are held while you confirm in your wallet."
@@ -69,7 +69,7 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
     : !info ? "Reading the treasury…"
     : !account ? "Connect your wallet to burn CC."
     : wrongChain ? `Switch your wallet to ${chain.name} to burn CC.`
-    : amount !== "" && ccIn === 0n ? "Enter a valid amount of CC."
+    : amountBps > 0 && ccIn === 0n ? "This wallet balance is too small for that slider position."
     : quote?.reason ?? (ccIn > 0n && !liveQuote.data ? "Reading the quote…" : undefined);
   const blocked = !account || wrongChain || !info || !quote || !quoted || quote.minOut <= 0n || Boolean(treasury.error);
   const label = pending ? "confirming burn…" : !info?.ccRedemptionEnabled ? "redemption not open yet" : ccIn === 0n ? "enter an amount to burn" : "burn CC for BALANCE";
@@ -92,8 +92,8 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
       // the receipt's own CCRedeemed log is the record of what was burned and received
       const rc = await client.getTransactionReceipt({ hash });
       const done = decodeRedemption(rc.logs, info.treasury);
-      if (done) setReceipt({ burned: cc(done.burned, true), received: bal(done.received, true), hash });
-      setAmount("");
+      if (done) setReceipt({ burned: cc(done.burned), received: bal(done.received), hash });
+      setAmountBps(0);
     }, [], consentIsCurrent);
     setReview(undefined);
   }
@@ -119,11 +119,11 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
     backingPerCc={bal(quote?.backingPerCc ?? (info ? (info.ccSupply > 0n ? (info.claimReserve * 10n ** 18n) / info.ccSupply : 0n) : undefined))}
     walletCc={cc(info?.walletCc)}
     connected={Boolean(account)}
-    amount={review ? formatAmount(review.ccIn, ccDecimals) : amount}
-    onAmountChange={(value) => { setReceipt(undefined); setAmount(value); }}
-    onMax={() => { if (info?.walletCc !== undefined) setAmount(formatAmount(info.walletCc, ccDecimals)); }}
+    amount={cc(ccIn)}
+    amountBps={amountBps}
+    onAmountChange={(value) => { setReceipt(undefined); setAmountBps(value); }}
     quoted={bal(quoted ? quote?.out : undefined)}
-    minimum={bal(quoted ? quote?.minOut : undefined, true)}
+    minimum={bal(quoted ? quote?.minOut : undefined)}
     epoch={quoted && quote ? quote.epoch.toString() : "—"}
     liveMismatch={quote?.liveMatchesLocal === false}
     slippageBps={tolerance}
@@ -132,22 +132,11 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
     status={status}
     error={err ?? undefined}
     receipt={receipt}
-    onReset={() => setReceipt(undefined)}
+    onReset={() => { setReceipt(undefined); setAmountBps(0); }}
     action={!account
       ? <button type="button" onClick={openConnectModal}>connect wallet</button>
       : <button type="button" disabled={blocked || pending} onClick={burn}>{label}</button>}
   />;
-}
-
-// the entered CC amount in base units; 0 for an empty or malformed entry
-function parseAmount(value: string, decimals: number): bigint {
-  const trimmed = value.trim().replace(/,/g, "");
-  if (!/^\d*(\.\d*)?$/.test(trimmed) || trimmed === "" || trimmed === ".") return 0n;
-  try { return parseUnits(trimmed, decimals); } catch { return 0n; }
-}
-
-function formatAmount(value: bigint, decimals: number): string {
-  return exchangeAmount(value, decimals).replace(/,/g, "");
 }
 
 function Exchange({ account, chainId }: { account?: Address; chainId?: number }) {
@@ -161,6 +150,7 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
   const wallet = useWalletCredits(account);
   const [selected, setSelected] = useState(new Set<number>());
   const [slippage, setSlippage] = useState(50);
+  const [receipt, setReceipt] = useState<ExchangeReceipt>();
   const [review, setReview] = useState<{
     market: Snapshot; token: BalanceTokenInfo; wallet: typeof wallet.data; selected: Set<number>; slippage: number;
   }>();
@@ -173,8 +163,8 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
   const order = rows.filter((credit) => selection.has(credit.id));
   const quote = exchangeQuote(market, order.map((credit) => credit.score), tolerance);
   const decimals = token?.address === market?.balanceToken ? token?.decimals : undefined;
-  const amount = (value: bigint | undefined, precise = false) => value === undefined || decimals === undefined
-    ? "—" : exchangeAmount(value, decimals, precise ? decimals : 6);
+  const amount = (value: bigint | undefined) => value === undefined || decimals === undefined
+    ? "—" : exchangeAmount(value, decimals);
   const wrongChain = Boolean(account && chainId !== chain.id);
   const available = Boolean(engineDeployed && market?.balanceOn && market.settings.balanceBidOn && decimals !== undefined);
   const quoteAvailable = Boolean(available && quote && !quote.reason && !snapshot.error);
@@ -204,13 +194,15 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
       ids: order.map((credit) => BigInt(credit.id)),
       minOut: quote.minOut, token: market.balanceToken,
     };
+    setReceipt(undefined);
     setReview({ market, token, wallet: [...rows], selected: new Set(selection), slippage: tolerance });
     const consentIsCurrent = () => {
       const current = getAccount(config);
       return mounted.current && current.address === account && current.chainId === chain.id;
     };
     await run(async (write) => {
-      await sellExchange(client, write, accepted, consentIsCurrent);
+      const hash = await sellExchange(client, write, accepted, consentIsCurrent);
+      setReceipt({ count: accepted.ids.length, minimum: amount(accepted.minOut), hash });
       setSelected(new Set());
     }, [], consentIsCurrent);
     setReview(undefined);
@@ -230,7 +222,7 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     total={amount(quoteAvailable && order.length > 0 ? quote?.total : undefined)}
     fee={quoteAvailable && quote && order.length > 0 ? `−${amount(quote.fee)}` : market ? `${(10_000 - Number(market.balanceRate)) / 100}%` : "—"}
     adjustment={quoteAvailable && quote && order.length > 0 && quote.adjustment > 0n ? `−${amount(quote.adjustment)}` : undefined}
-    minimum={amount(quoteAvailable && order.length > 0 ? quote?.minOut : undefined, true)}
+    minimum={amount(quoteAvailable && order.length > 0 ? quote?.minOut : undefined)}
     rate={market ? `${Number(market.balanceRate) / 100}%` : "the posted rate"}
     slippageBps={tolerance}
     onSlippageChange={setSlippage}
@@ -244,6 +236,8 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     busy={pending}
     status={status ?? (order.length === 0 ? "Select Credits to see their payout." : undefined)}
     error={err ?? undefined}
+    receipt={receipt}
+    onReset={() => setReceipt(undefined)}
     action={!account
       ? <button type="button" onClick={openConnectModal}>connect wallet</button>
       : <button type="button" disabled={blocked || pending} onClick={sell}>{label}</button>}

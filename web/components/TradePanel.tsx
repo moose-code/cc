@@ -8,7 +8,7 @@ import { engineDeployed, chain } from "@/lib/config";
 import { useCcMarket, potShareBps, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { commas, eth, evmNowAddress, evmNowTx, leftLabel, shortAddr, tokens, usd, usdCompact, usdPrice, usdPriceParts } from "@/lib/format";
+import { commas, decimalAmount, eth, evmNowAddress, evmNowTx, leftLabel, shortAddr, tokens, usd, usdCompact, usdPrice, usdPriceParts } from "@/lib/format";
 
 // The token's DexScreener page (chart, pool and market data) on Ethereum.
 const dexScreener = (token: string) => `https://dexscreener.com/ethereum/${token.toLowerCase()}`;
@@ -270,8 +270,8 @@ export function TradePanel({ market, pick }: { market?: Market; pick?: { side: "
 
   const inUnit = side === "buy" ? "ETH" : tag;
   const outUnit = side === "buy" ? tag : "ETH";
-  const bal = payBal != null ? (side === "buy" ? Number(formatUnits(payBal, 18)).toFixed(4) : tokens(payBal, dec)) : null;
-  const outText = amountIn === 0n ? "0.00" : side === "buy" ? commas(Math.floor(receive)) : receive.toFixed(5);
+  const bal = payBal != null ? (side === "buy" ? eth(payBal) : tokens(payBal, dec)) : null;
+  const outText = amountIn === 0n ? "0" : side === "buy" ? commas(Math.floor(receive)) : decimalAmount(receive);
   const hasAmount = amountIn > 0n;
   const minText =
     quoteOut == null

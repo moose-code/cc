@@ -12,6 +12,8 @@ export type ExchangeRow = {
   note?: string;
 };
 
+export type ExchangeReceipt = { count: number; minimum: string; hash: string };
+
 export type ExchangeViewProps = {
   rows: ExchangeRow[];
   walletReady: boolean;
@@ -32,13 +34,15 @@ export type ExchangeViewProps = {
   busy: boolean;
   status?: string;
   error?: string;
+  receipt?: ExchangeReceipt;
+  onReset: () => void;
   action: ReactNode;
 };
 
 export function ExchangeView({
   rows, walletReady, connected, selectionCount, quoteAvailable, selectedRating, total, fee, adjustment,
   minimum, rate, slippageBps, onSlippageChange, onToggle, onSelectAll,
-  allSelected, busy, status, error, action,
+  allSelected, busy, status, error, receipt, onReset, action,
 }: ExchangeViewProps) {
   const selected = rows.filter((row) => row.selected);
   return (
@@ -95,6 +99,18 @@ export function ExchangeView({
       </section>
 
       <section className="exchange-summary" aria-labelledby="exchange-receive-title" aria-busy={busy}>
+        {receipt ? (
+          <div className="exchange-success" role="status">
+            <p className="exchange-success-title" id="exchange-receive-title">sale complete</p>
+            <p className="exchange-success-value">{receipt.count}</p>
+            <p className="exchange-success-currency">Credit{receipt.count === 1 ? "" : "s"} sold for $BALANCE</p>
+            <dl className="exchange-breakdown">
+              <div><dt>minimum received</dt><dd>{receipt.minimum} $BALANCE</dd></div>
+              <div><dt>transaction</dt><dd><code title={receipt.hash}>{shortHash(receipt.hash)}</code></dd></div>
+            </dl>
+            <button type="button" onClick={onReset}>sell more Credits</button>
+          </div>
+        ) : <>
         <div className="exchange-summary-content">
           {status && <p className="exchange-quote-status" role="status">{status}</p>}
           <p className="exchange-eyebrow" id="exchange-receive-title">you receive</p>
@@ -125,7 +141,12 @@ export function ExchangeView({
           {action}
           <p>First sale asks once to approve the collection.</p>
         </div>
+        </>}
       </section>
     </main>
   );
+}
+
+function shortHash(hash: string): string {
+  return hash.length > 20 ? `${hash.slice(0, 10)}…${hash.slice(-8)}` : hash;
 }

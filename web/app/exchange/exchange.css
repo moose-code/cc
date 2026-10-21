@@ -138,10 +138,10 @@
 .claim-grid code, .claim-receipt code { font-size: 12px; }
 .claim-form { display: flex; min-width: 0; flex-direction: column; justify-content: flex-start; padding: 72px 11% 48px; background: #1a1a1a; color: #f6f5f0; }
 .claim-amount { display: block; color: #a6a39a; font-size: 14px; }
-.claim-amount-row { display: flex; gap: 8px; margin-top: 12px; }
-.claim-amount input { flex: 1; min-width: 0; padding: 14px 16px; font: inherit; font-size: 22px; color: #f6f5f0; background: transparent; border: 1px solid #55554d; }
-.claim-amount button { padding: 0 16px; font: inherit; color: #f6f5f0; background: transparent; border: 1px solid #55554d; cursor: pointer; }
-.claim-amount button:disabled { cursor: default; opacity: 0.6; }
+.claim-amount-value { display: block; margin-top: 12px; color: #f6f5f0; font-size: 28px; font-weight: 600; overflow-wrap: anywhere; }
+.claim-amount input[type="range"] { width: 100%; margin: 22px 0 0; accent-color: #ffd400; cursor: pointer; }
+.claim-amount input[type="range"]:disabled { cursor: default; opacity: 0.6; }
+.claim-range-labels { display: flex; justify-content: space-between; margin-top: 5px; color: #77766e; font-size: 11px; }
 .claim-quote, .claim-receipt { margin: 28px 0 0; font-size: 13px; }
 .claim-quote > div, .claim-receipt > div { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 14px 0; border-top: 1px solid #383834; color: #aaa79d; }
 .claim-quote dd, .claim-receipt dd { margin: 0; text-align: right; color: #f6f5f0; overflow-wrap: anywhere; }
@@ -161,6 +161,10 @@
 .claim-success-currency { margin: 8px 0 0; font-size: 18px; font-weight: 600; }
 .claim-success .claim-receipt { margin: 44px 0 28px; }
 .claim-success > button { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 66px; padding: 18px; color: #1a1a1a; background: #ffd400; border: 1px solid #ffd400; font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; text-align: center; }
+.exchange-success-title { margin: 0 0 28px; color: #ffd400; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+.exchange-success-value { margin: 0; font-size: clamp(64px, 7vw, 108px); line-height: 1; font-weight: 500; letter-spacing: -3px; }
+.exchange-success-currency { margin: 10px 0 0; font-size: 18px; font-weight: 600; }
+.exchange-success > button { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 66px; margin-top: 28px; padding: 18px; color: #1a1a1a; background: #ffd400; border: 1px solid #ffd400; font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; text-align: center; }
 .claim-form > button { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 66px; padding: 18px; color: #1a1a1a; background: #ffd400; border: 1px solid #ffd400; font: inherit; font-size: 17px; font-weight: 600; cursor: pointer; text-align: center; }
 .claim-form > button:disabled { cursor: default; opacity: 0.45; }
 .claim-panel button:focus-visible, .claim-panel input:focus-visible { outline: 3px solid #00a3e0; outline-offset: 4px; }

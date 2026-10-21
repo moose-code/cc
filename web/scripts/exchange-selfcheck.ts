@@ -7,7 +7,7 @@ import { exchangeEnabled } from "../lib/exchange-access.ts";
 import { encodeAbiParameters, encodeEventTopics, type Log } from "viem";
 import { treasuryAbi } from "@cc/engine/abis";
 import {
-  CLAIM_DEADLINE_SECONDS, claimQuote, decodeRedemption, exchangeAmount, exchangeQuote, proRataQuote, redeemClaim, sellExchange,
+  CLAIM_DEADLINE_SECONDS, claimQuote, claimSliderAmount, decodeRedemption, exchangeAmount, exchangeQuote, proRataQuote, redeemClaim, sellExchange,
   type ClaimMarket, type ExchangeMarket,
 } from "../lib/exchange.ts";
 
@@ -23,7 +23,7 @@ const scores = [400n, 525n, 310n].map((points) => points * 10_000n);
 let cases = 0;
 async function check(name: string, run: () => unknown) { await run(); cases++; console.log(`ok ${name}`); }
 
-// promise: the mockup's protocol fee reconciles to the batch payout without deducting the artist royalty.
+// promise: the mockup's protocol fee reconciles to the batch payout and display amounts have at most two decimals.
 await check("fee and artist royalty", () => {
   const quote = exchangeQuote(market, scores, 50)!;
   assert.equal(quote.total, 1_111_500_000_000_000_000_000n);
@@ -31,17 +31,18 @@ await check("fee and artist royalty", () => {
   assert.equal(quote.royalty, 27_787_500_000_000_000_000n);
   assert.equal(quote.gross, quote.fee + quote.adjustment + quote.total);
   assert.equal(exchangeAmount(quote.total, 18), "1,111.5");
-  assert.equal(exchangeAmount(quote.minOut, 18), "1,105.9425");
+  assert.equal(exchangeAmount(quote.minOut, 18), "1,105.94");
 });
 
-// promise: the displayed minimum is exact and tolerance changes only the floor, never the quoted fee/payout.
+// promise: display truncation never overstates a minimum, while tolerance changes only the exact transaction floor.
 await check("minimum and precision", () => {
   const exact = exchangeQuote(market, scores, 0)!;
   const tolerant = exchangeQuote(market, scores, 100)!;
   assert.equal(exact.minOut, exact.total);
   assert.equal(tolerant.total, exact.total);
-  assert.equal(exchangeAmount(tolerant.minOut, 18), "1,100.385");
-  assert.equal(exchangeAmount(1_000_000_000_000_000_001n, 18), "1.000000000000000001");
+  assert.equal(exchangeAmount(tolerant.minOut, 18), "1,100.38");
+  assert.equal(exchangeAmount(1_000_000_000_000_000_001n, 18), "1");
+  assert.equal(exchangeAmount(1n, 18), "<0.01");
   assert.throws(() => exchangeQuote(market, scores, 10_000), /Unsupported/);
 });
 
@@ -89,7 +90,7 @@ await check("consent survives approval", async () => {
     readContract: async () => false,
     simulateContract: async (sale: any) => { calls.push({ ...sale, simulated: true }); },
   };
-  await sellExchange(client, async (sale) => {
+  const hash = await sellExchange(client, async (sale) => {
     calls.push(sale);
     if (sale.functionName === "setApprovalForAll") { request.ids.push(999n); request.minOut = 1n; request.token = zeroAddress as any; }
     return "0x123";
@@ -99,6 +100,7 @@ await check("consent survives approval", async () => {
   assert.deepEqual(calls[2].args, [accepted().ids, accepted().minOut, token]);
   assert.equal(calls[2].account, request.account);
   assert.equal(calls[2].chainId, 1);
+  assert.equal(hash, "0x123");
 });
 
 // promise: approved wallets skip approval; a failed fresh simulation never submits a sale.
@@ -173,6 +175,13 @@ await check("development route and explicit publication", () => {
 });
 
 // ---- phase 2 claim panel: burn CC for a share of the claim reserve ------------------------------------------------
+
+// promise: the burn slider uses exact bigint proportions and its maximum is the wallet's complete CC balance.
+await check("claim slider amount", () => {
+  assert.equal(claimSliderAmount(10_004_161_179_123_456_789_000_000n, 5_000), 5_002_080_589_561_728_394_500_000n);
+  assert.equal(claimSliderAmount(10_004_161_179_123_456_789_000_000n, 10_000), 10_004_161_179_123_456_789_000_000n);
+  assert.throws(() => claimSliderAmount(1n, 10_001), /Invalid burn slider/);
+});
 
 const treasury = "0x00000000000000000000000000000000000000d1" as const;
 const coin = "0x00000000000000000000000000000000000000c2" as const;
