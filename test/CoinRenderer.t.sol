@@ -45,8 +45,9 @@ contract CoinRendererTest is LiveFixture {
         vm.expectRevert(ICoinRenderer.CoreSet.selector);
         fresh.setCore(ICore(payable(address(core))));
         vm.stopPrank();
+        CoinRenderer unbound = new CoinRenderer(owner);
         vm.expectRevert(ICoinRenderer.ZeroCore.selector);
-        new CoinRenderer(owner).image();
+        unbound.image();
     }
 
     function _cells(string memory svg) private pure returns (uint256 n) {

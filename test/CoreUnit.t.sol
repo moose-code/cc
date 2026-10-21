@@ -409,6 +409,8 @@ contract CoreUnitTest is CoreBase {
         uint256 priceB = ICreditStrategy(STRATEGY).nftForSale(LISTED_B);
         _fundAndClimb(LISTED_A, priceA);
         _warpUntilCeiling(LISTED_B, priceB);
+        // the delivered-wrong-id leg pays priceB for LISTED_A, so LISTED_A's bid must also cover priceB at the live rate
+        if (priceB > priceA) _warpUntilCeiling(LISTED_A, priceB);
         uint256 pot = core.ethPot();
         uint256 rate = core.ethRate();
         uint256 size0 = core.pileSize();

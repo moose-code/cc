@@ -129,6 +129,16 @@ abstract contract LiveFixture is Fixture {
         return keccak256(bytes(vm.envOr("LIVE_STAGE", string("")))) == keccak256("B");
     }
 
+    /// @notice a Statement purchase. in stage B ControllerV2 starts with Statement sales off (the owner opens them in
+    /// stage C), so a test that sells a Statement has the owner open them first, the real setter path
+    function _buy(address who, uint256 sid) internal virtual override returns (uint256 price) {
+        if (_liveStageB() && !IStatementSales(address(ctl)).statementSalesEnabled()) {
+            vm.prank(owner);
+            IStatementSales(address(ctl)).setStatementSales(true);
+        }
+        return super._buy(who, sid);
+    }
+
     // ------------------------------------------------------------------ live BALANCE funding (the ink rule)
 
     /// @notice places `amount` of live BALANCE on `to` by impersonating a real holder, the only way to fund an account
@@ -371,6 +381,11 @@ abstract contract LiveFixture is Fixture {
         revert("live pile never reaches a composable page: check creditWindow and the live pile");
     }
 
+}
+
+interface IStatementSales {
+    function statementSalesEnabled() external view returns (bool);
+    function setStatementSales(bool enabled) external;
 }
 
 interface IERC20Lite {

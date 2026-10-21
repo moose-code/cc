@@ -58,7 +58,8 @@ contract ArtistRoyaltyTest is LiveFixture {
 
     // promise: SPEC 3 the launch royalty is 250 bps and the artist is set
     function test_launchValues() public view {
-        assertEq(_bps(), 250);
+        // stage B applies the decision 255 split route: every artist flow carries 300
+        assertEq(_bps(), _liveStageB() ? 300 : 250);
         assertTrue(core.artist() != address(0));
     }
 

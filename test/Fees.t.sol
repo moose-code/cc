@@ -168,6 +168,10 @@ abstract contract FeeBase is FeeHelpers, LiveFixture {
         return super._composeOnce();
     }
 
+    function _buy(address who, uint256 sid) internal virtual override(Fixture, LiveFixture) returns (uint256 price) {
+        return super._buy(who, sid);
+    }
+
     function setUp() public virtual override(Fixture, LiveFixture) {
         super.setUp();
         // book any fee income unbooked at the pin so the pot and skim deltas in the ported tests start from clean

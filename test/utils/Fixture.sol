@@ -566,7 +566,7 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @notice `who` buys statement `sid` through the controller at the asking price of this block. `who` is funded
     /// for it. returns the price paid
-    function _buy(address who, uint256 sid) internal returns (uint256 price) {
+    function _buy(address who, uint256 sid) internal virtual returns (uint256 price) {
         price = ctl.priceOf(sid);
         vm.deal(who, who.balance + price);
         vm.prank(who);
