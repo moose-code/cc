@@ -20,6 +20,7 @@ export const coreAbi = parseAbi([
   "function sharedRate() view returns (uint256)",
   "function balanceBidOf(uint256 id) view returns (uint256)",
   "function floorRate() view returns (uint256)",
+  "function RATE_START() view returns (uint256)",
   "function rateAtCheckpoint() view returns (uint256)",
   "function checkpointTime() view returns (uint64)",
   "function lastFillTime() view returns (uint64)",

@@ -12,8 +12,8 @@ const near = (a, b, tol, msg) => {
 };
 const ok = (c, msg) => { n++; assert.ok(c, msg); };
 const H = 3600;
-// LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, feeToRedeemBurnBps 0) run on it, with the 12 hour statement line, the anchor fraction 5000, the credit start 30000 and no reserve floor the curve checks were written for. the launch floor (saleFloorBps 10000) and split (saleToBuybackBps 5000 with no artist or operator cut) are kept so the hand computed curves rest at cost; the launch values have their own checks against mainnet.json
-const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, dropPerCreditPct: 0.5, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0, decayHours: 12, anchorMoveBps: 5000, creditStartBps: 30000, reserveWei: 0 };
+// LEGACY: the checks below that hand compute a single bid (a 0.0067 eth opening rate, one percent a minute climb, feeToRedeemBurnBps 0) run on it, with the 12 hour statement line, the anchor fraction 5000, the credit start 30000 and no reserve floor the curve checks were written for. the launch floor (saleFloorBps 10000) and split (saleToBuybackBps 5000 with no artist or operator cut) are kept so the hand computed curves rest at cost. keeperFee 0.0003 pins the gas-and-fee payment checks to the fee their arithmetic was written for (the live keeperFee is asserted against live-state.json in the live-values block). the live values have their own checks against sim/live-state.json
+const LEGACY = { spendCapBps: 10000, multiplierCap: 1, stepSec: 3600, rateStart: 6.668e15, climbPerMin: 1, recoveryClimbPerMin: 1, dropPerCreditPct: 0.5, idleLoosenPct: 0.01, ceilPct: 300, rateCap: 53344000000000000, saleToBuybackBps: 5000, saleToArtistBps: 0, saleToOperatorBps: 0, feeToRedeemBurnBps: 0, keeperFee: 0.0003, decayHours: 12, anchorMoveBps: 5000, creditStartBps: 30000, reserveWei: 0 };
 // whole market runs price the rate per 100 points: the per credit rates above are per 433 point credit (the calibration credit), and so is the 0.5 percent drop, so simL rescales them by 100 / 433 (the drop to whole basis points)
 const PER_100 = 100 / 433;
 const simL = (o = {}) => simulate(Object.assign({}, LEGACY, { rateStart: LEGACY.rateStart * PER_100, rateCap: LEGACY.rateCap * PER_100, dropPerCreditPct: Math.round(LEGACY.dropPerCreditPct * PER_100 * 100) / 100 }, o));
@@ -32,60 +32,65 @@ const fresh = (over = {}, pot = 1000) => {
 };
 const R0 = 6.668e15;
 
-// the launch values are the ones in script/config/mainnet.json, field for field. the file is the other half of the launch package: where it already
-// promise: carries a field of the rules in docs/DECISIONS.md section 9 it must match, and a field of the old rules (reserveBps) must be gone from the model
+// the live values are the deployed Core and controller's, read at a pinned block into sim/live-state.json. the config
+// stays the source only for the fields the chain holds no view for: the launch.* pool and distribution block and the
+// controller sale anchorHalfLife, anchorMinCost and anchorMoveBps
+// promise: the model's parameters are the live state field for field, carry the rules of docs/DECISIONS.md section 9, and the old rules (reserveBps) are gone from the model
 {
+  const live = JSON.parse(fs.readFileSync(new URL('./live-state.json', import.meta.url), 'utf8'));
   const cfg = JSON.parse(fs.readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8'));
-  // the stepped bid fields of the Core, config name to model name (percent and hours in the model)
-  const STEPPED = { dropPer100PointsBps: 115, dropFloorBps: 1, climbPerMinBps: 200, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 200, recoveryGapBps: 1000 };
+  // the controller sale block: the chain-held fields from the live state, the three no view holds from the config
+  const saleExp = { ...cfg.sale, ...live.sale };
+  // the stepped bid fields of the Core, config name to model name (percent and hours in the model); the live values
+  const STEPPED = { dropPer100PointsBps: 29, dropFloorBps: 1, climbPerMinBps: 100, ceilBps: 11000, idleLoosenBps: 600, peakHalfLife: 21600, recoveryClimbPerMinBps: 100, recoveryGapBps: 1000 };
   const STEPPED_SIM = { dropPerCreditPct: 'dropPer100PointsBps', dropToPct: 'dropFloorBps', climbPerMin: 'climbPerMinBps', ceilPct: 'ceilBps', idleLoosenPct: 'idleLoosenBps', recoveryClimbPerMin: 'recoveryClimbPerMinBps', recoveryGapPct: 'recoveryGapBps', peakHalfLifeHours: 'peakHalfLife' };
-  for (const [k, v] of Object.entries(STEPPED)) near(cfg.settings[k], v, 1e-12, 'launch stepped bid rule ' + k);
-  // the sim defaults are the launch bid rule, field for field with the config (bps to percent). the model has one bid rule
+  for (const [k, v] of Object.entries(STEPPED)) near(live.settings[k], v, 1e-12, 'live stepped bid rule ' + k);
+  // the sim defaults are the live bid rule, field for field with the live state (bps to percent). the model has one bid rule
   ok(DEFAULTS.bidRule === undefined, 'the bid rule is one rule: the model carries no bidRule key');
-  near(DEFAULTS.dropPerCreditPct, cfg.settings.dropPer100PointsBps / 100, 1e-12, 'default dropPerCreditPct');
-  near(DEFAULTS.dropToPct, cfg.settings.dropFloorBps / 100, 1e-12, 'default dropToPct');
-  near(DEFAULTS.climbPerMin, cfg.settings.climbPerMinBps / 100, 1e-12, 'default climbPerMin');
-  near(DEFAULTS.ceilPct, cfg.settings.ceilBps / 100, 1e-12, 'default ceilPct');
-  near(DEFAULTS.idleLoosenPct, cfg.settings.idleLoosenBps / 100, 1e-12, 'default idleLoosenPct');
-  near(DEFAULTS.recoveryClimbPerMin, cfg.settings.recoveryClimbPerMinBps / 100, 1e-12, 'default recoveryClimbPerMin');
-  near(DEFAULTS.recoveryGapPct, cfg.settings.recoveryGapBps / 100, 1e-12, 'default recoveryGapPct');
-  near(DEFAULTS.peakHalfLifeHours, cfg.settings.peakHalfLife / 3600, 1e-12, 'default peakHalfLifeHours');
-  ok(cfg.settings.clampCredits === undefined && DEFAULTS.clampCredits === undefined, 'the clamp divisor is gone from the config and the model');
-  near(DEFAULTS.rateStart, cfg.rateStart, 1e-12, 'default rateStart');
-  // every other setting of the config is a SETTINGS field with the same value (eth and gwei in the model, wei in the config)
-  for (const [k, v] of Object.entries(cfg.settings)) {
+  near(DEFAULTS.dropPerCreditPct, live.settings.dropPer100PointsBps / 100, 1e-12, 'default dropPerCreditPct');
+  near(DEFAULTS.dropToPct, live.settings.dropFloorBps / 100, 1e-12, 'default dropToPct');
+  near(DEFAULTS.climbPerMin, live.settings.climbPerMinBps / 100, 1e-12, 'default climbPerMin');
+  near(DEFAULTS.ceilPct, live.settings.ceilBps / 100, 1e-12, 'default ceilPct');
+  near(DEFAULTS.idleLoosenPct, live.settings.idleLoosenBps / 100, 1e-12, 'default idleLoosenPct');
+  near(DEFAULTS.recoveryClimbPerMin, live.settings.recoveryClimbPerMinBps / 100, 1e-12, 'default recoveryClimbPerMin');
+  near(DEFAULTS.recoveryGapPct, live.settings.recoveryGapBps / 100, 1e-12, 'default recoveryGapPct');
+  near(DEFAULTS.peakHalfLifeHours, live.settings.peakHalfLife / 3600, 1e-12, 'default peakHalfLifeHours');
+  ok(live.settings.clampCredits === undefined && DEFAULTS.clampCredits === undefined, 'the clamp divisor is gone from the live state and the model');
+  near(DEFAULTS.rateStart, live.rateStart, 1e-12, 'default rateStart');
+  // every other live setting is a SETTINGS field with the same value (eth and gwei in the model, wei in the live state)
+  for (const [k, v] of Object.entries(live.settings)) {
     if (k in STEPPED) continue;
     near(SETTINGS[k], k === 'buybackSlice' || k === 'keeperFee' || k === 'callerFee' || k === 'swapFeeCc' || k === 'reserveWei' ? v / 1e18 : k === 'keeperMaxBaseFee' || k === 'callerMaxBaseFee' ? v / 1e9 : v, 1e-12, 'setting ' + k);
   }
-  for (const k of Object.keys(SETTINGS)) ok(cfg.settings[STEPPED_SIM[k] ?? k] !== undefined, 'the config carries ' + k);
-  for (const k of Object.keys(cfg.settings)) ok(k in STEPPED || k in SETTINGS, 'the model carries ' + k);
-  for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], k === 'anchorMinCost' ? +cfg.sale[k] / 1e18 : +cfg.sale[k], 1e-12, 'controller ' + k); // eth in the model, wei in the config
+  for (const k of Object.keys(SETTINGS)) ok(live.settings[STEPPED_SIM[k] ?? k] !== undefined, 'the live state carries ' + k);
+  for (const k of Object.keys(live.settings)) ok(k in STEPPED || k in SETTINGS, 'the model carries ' + k);
+  for (const k of Object.keys(CONTROLLER)) near(+CONTROLLER[k], k === 'anchorMinCost' ? +saleExp[k] / 1e18 : +saleExp[k], 1e-12, 'controller ' + k); // eth in the model, wei in the live state and config
   assert.deepEqual(Object.keys(cfg.sale).sort(), Object.keys(CONTROLLER).sort()); n++; // the sale block and the model carry the same fields
-  // the launch rateStart is 100 percent of market
-  assert.equal(cfg.rateStart, 4_650_000_000_000_000, 'launch rateStart is 0.00465 eth per 100 points'); n++;
-  // the launch rate cap is the config value and 3 times rateStart
-  near(SETTINGS.rateCap, cfg.settings.rateCap, 1e-12, 'launch rateCap'); assert.equal(cfg.settings.rateCap, 3 * cfg.rateStart, 'launch rateCap is 3 times rateStart'); n++;
-  // the pool and payee values of the v2 launch
+  // the live opening rate is 0.0057 eth per 100 points (the owner raised it from the 0.0056 launch config after launch)
+  assert.equal(live.rateStart, 5_700_000_000_000_000, 'the live opening rate is 0.0057 eth per 100 points'); n++;
+  // the live rate cap is the live value and 3 times the opening rate
+  near(SETTINGS.rateCap, live.settings.rateCap, 1e-12, 'live rateCap'); assert.equal(live.settings.rateCap, 3 * live.rateStart, 'the rate cap is 3 times the opening rate'); n++;
+  // the pool and payee values of the v2 launch (config only, the chain holds no view)
   for (const k of ['baselineSkimBps', 'bountyBps', 'sniperStartBps']) near(DEFAULTS[k], cfg.launch[k], 1e-12, 'launch ' + k);
   near(DEFAULTS.sniperSeconds, cfg.launch.sniperSeconds, 1e-12, 'launch sniperSeconds');
   near(DEFAULTS.sniperEndBps, cfg.launch.baselineSkimBps, 1e-12, 'the sniper skim falls to the baseline');
   ok(cfg.launch.lpFeePips === undefined, 'the lp fee is implicit on the master stack (decision 126), so the model has no lp income');
-  near(SETTINGS.payeePpm, cfg.settings.payeePpm, 1e-12, 'payeePpm'); near(SETTINGS.payeePpm, 0, 1e-12, 'payeePpm 0 at launch (decision 120)');
-  near(SETTINGS.saleToArtistBps, cfg.settings.saleToArtistBps, 1e-12, 'saleToArtistBps'); near(SETTINGS.saleToOperatorBps, cfg.settings.saleToOperatorBps, 1e-12, 'saleToOperatorBps');
-  near(SETTINGS.swapFeeCc, cfg.settings.swapFeeCc / 1e18, 1e-12, 'swapFeeCc whole coins'); near(SETTINGS.swapFeeCc, 10000, 1e-12, 'swapFeeCc is ten thousand coins');
+  near(SETTINGS.payeePpm, live.settings.payeePpm, 1e-12, 'payeePpm'); near(SETTINGS.payeePpm, 0, 1e-12, 'payeePpm 0 (decision 120)');
+  near(SETTINGS.saleToArtistBps, live.settings.saleToArtistBps, 1e-12, 'saleToArtistBps'); near(SETTINGS.saleToOperatorBps, live.settings.saleToOperatorBps, 1e-12, 'saleToOperatorBps');
+  near(SETTINGS.swapFeeCc, live.settings.swapFeeCc / 1e18, 1e-12, 'swapFeeCc whole coins'); near(SETTINGS.swapFeeCc, 10000, 1e-12, 'swapFeeCc is ten thousand coins');
   // the fee split (decision 186): 690 bps of volume skim, bountyBps 9000 to the engine, the rest to protocol
   near(cfg.launch.baselineSkimBps, 690, 1e-12, 'baseline skim 690 bps'); near(cfg.launch.bountyBps, 9000, 1e-12, 'bounty 9000'); near(10000 - cfg.launch.bountyBps, 1000, 1e-12, 'the protocol share of the skim is 1000 bps'); n += 3;
-  // the credit block (the Credit struct of the launch config) is the model's CREDIT, field for field, and the launch values are the ones of FLOW 88 to 90
-  assert.deepEqual(Object.keys(cfg.credit).sort(), Object.values(CREDIT_CONFIG_KEY).sort()); n++; // the config credit block is the model's CREDIT, field for field (decision 123 dropped royaltyRecipient)
-  for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +cfg.credit[ck], 1e-12, 'credit ' + k);
+  // the live credit block is the model's CREDIT, field for field (names from the config credit block, FLOW 88 to 90)
+  assert.deepEqual(Object.keys(cfg.credit).sort(), Object.values(CREDIT_CONFIG_KEY).sort()); n++; // the config credit block names the model's CREDIT, field for field (decision 123 dropped royaltyRecipient)
+  for (const [k, ck] of Object.entries(CREDIT_CONFIG_KEY)) near(+CREDIT[k], +live.credit[ck], 1e-12, 'credit ' + k);
   assert.deepEqual(CREDIT, { creditCostToPotBps: 8000, chosenComposeOn: false, minCcToChoose: 1e18, creditSaleOn: true, creditWindow: 4 * H, creditSpreadBps: 1000, creditStartBps: 15000 }); n++;
   ok(CREDIT.royaltyBps === undefined && cfg.credit.royaltyBps === undefined, 'the royalty is gone from the model and the config (decision 123)'); n++;
   assert.equal(creditViolation(CREDIT), null); n++;
   assert.equal(firstViolation(SETTINGS), null); n++;
   assert.equal(controllerViolation(CONTROLLER), null); n++;
-  // the launch rules: statements fall to cost and stay there (FLOW 85), the balance bid starts off and redeemOn is true (decision 119), the whole engine share of the skim goes to the buying pot at launch (feeToRedeemBurnBps 0, decision 155; the phase-2 wiring sets it to 1,000), and each redemption releases 20 percent of the redeem burn reserve
+  // the live rules: statements fall to cost and stay there (FLOW 85), the balance bid is off and redeemOn is true (decision 119), the phase-2 wiring routes 1,000 bps of the engine fee share to the redeem burn reserve (feeToRedeemBurnBps 1000, decision 155; 0 at launch), and each redemption releases 20 percent of the redeem burn reserve
   assert.deepEqual(CONTROLLER, { markupBps: 15000, startCapBps: 100000, decayHours: 4, anchorHalfLife: 7 * 24 * H, anchorMinCost: 0.1, anchorMoveBps: 0 }); n++;
-  assert.equal(SETTINGS.saleFloorBps, 10000); assert.equal(SETTINGS.feeToBuybackBps, undefined); assert.equal(SETTINGS.feeToRedeemBurnBps, 0); n += 3;
+  assert.equal(SETTINGS.saleFloorBps, 10000); assert.equal(SETTINGS.feeToBuybackBps, undefined); assert.equal(SETTINGS.feeToRedeemBurnBps, 1000); n += 3;
   assert.equal(SETTINGS.redeemOn, true); assert.equal(SETTINGS.balanceBidOn, false); assert.equal(SETTINGS.balanceMode, undefined); assert.equal(SETTINGS.redeemSlippageBps, 200); assert.equal(SETTINGS.balanceBidMarginBps, 1000); assert.equal(SETTINGS.redeemBurnBps, 2000); n += 6;
   ok(SETTINGS.redeemAfter === undefined && SETTINGS.balanceToBuybackBps === undefined && SETTINGS.xAuctionHalfLife === undefined && SETTINGS.balanceSliceCredits === undefined && SETTINGS.balanceLaneToBuybackBps === undefined && SETTINGS.xRateCap === undefined, 'the balance token auction is gone from the model');
   ok(DEFAULTS.balancePoolSet === false && DEFAULTS.balanceDay === null, 'the balance token pool key is unset and the balance side is off at launch');
@@ -514,9 +519,9 @@ const R0 = 6.668e15;
 }
 // promise: the redeem burn reserve (FLOW 86): feeToRedeemBurnBps of the fee eth fills it, the rest goes to the pot
 {
-  const d = new Core(Object.assign({}, DEFAULTS, { buyToArtistBps: 0 }), 0); // launch values: 0 to the reserve, the phase-2 wiring sets it to 1,000
+  const d = new Core(Object.assign({}, DEFAULTS, { buyToArtistBps: 0 }), 0); // the live feeToRedeemBurnBps is 1,000 (0 at launch): a tenth of the engine fee share fills the reserve
   const r = d.addFees(8, 0);
-  near(d.ethRedeemBurn, 0, 1e-12, 'launch reserve share of the fees'); near(d.ethPot, 8, 1e-12, 'the whole engine share to the pot'); near(d.ethToBuyback, 0, 1e-12, 'nothing to the buyback pot'); near(d.feeToRedeemBurn, 0, 1e-12, 'booked');
+  near(d.ethRedeemBurn, 0.8, 1e-12, 'the live reserve share of the fees'); near(d.ethPot, 7.2, 1e-12, 'the rest of the engine share to the pot'); near(d.ethToBuyback, 0, 1e-12, 'nothing to the buyback pot'); near(d.feeToRedeemBurn, 0.8, 1e-12, 'booked');
   near(r.toRedeemBurn + r.toPot, 8, 1e-12, 'the fee split adds up');
   const e = new Core(Object.assign({}, DEFAULTS, { feeToRedeemBurnBps: 2500 }, { buyToArtistBps: 0 }), 0);
   e.addFees(10, 0);
@@ -891,9 +896,9 @@ const R0 = 6.668e15;
   // a small pot pays a share of the fee: the swap budget over the largest budget the setting allows
   const part = fresh({ basefeeGwei: 10 }); part.ethToBuyback = 0.0265; // slice 0.0265, maxPay 0.0033 at the 5 gwei cap, largest budget 0.5 - 0.0033
   near(part.takeBuybackSlice(0).tip, 270000 * 5e-9 + 0.0003 * (0.0265 - 0.0033) / (0.5 - 0.0033), 1e-12, 'the keeper fee scales with the budget');
-  // the buybackSlice lower bound is 0.01 eth: twice the largest launch payment (0.0066) is below it, so the fixed floor binds (decision 119)
+  // the buybackSlice lower bound is twice the largest payment at the live keeper fee (600,000 gas at 5 gwei plus 0.0002 = 0.0032, so 0.0064): 0.01 is inside and a slice below the bound is refused (decision 119)
   ok(firstViolation(Object.assign({}, SETTINGS, { buybackSlice: 0.01 })) === null, 'at the 0.01 eth floor is inside'); n++;
-  assert.equal(firstViolation(Object.assign({}, SETTINGS, { buybackSlice: 0.0065 })), 'buybackSlice'); n++;
+  assert.equal(firstViolation(Object.assign({}, SETTINGS, { buybackSlice: 0.0063 })), 'buybackSlice'); n++;
   const free = fresh({ keeperFee: 0, basefeeGwei: 1 }); free.ethToBuyback = 1;
   near(free.takeBuybackSlice(0).tip, 270000e-9, 1e-12, 'no keeper fee leaves the gas refund');
   assert.throws(() => free.setSettings({ keeperFee: -1 }, 0), /keeperFee/); assert.throws(() => free.setSettings({ keeperMaxBaseFee: -1 }, 0), /keeperMaxBaseFee/);
@@ -917,15 +922,18 @@ const R0 = 6.668e15;
 // skim schedule: anti sniper 90 percent falling to the 6.9 percent baseline over 30 minutes. the Core gets bountyBps 9000 of the baseline
 // promise: plus the whole anti sniper extra (decision 120). once payeeOn the payee takes payeePpm of the income (0 at launch; this block sets 75,185 ppm to exercise the push)
 {
-  near(skimFraction(DEFAULTS, 0), 0.9, 1e-12, 'launch skim'); near(skimFraction(DEFAULTS, 900), (0.9 + 0.069) / 2, 1e-12, 'midway');
-  near(skimFraction(DEFAULTS, 1800), 0.069, 1e-12, 'end of window'); near(skimFraction(DEFAULTS, 99999), 0.069, 1e-12, 'baseline');
-  near(bountyFeeFraction(DEFAULTS, 0.069), 0.0621, 1e-12, 'Core 6.21 percent of volume at baseline'); near(bountyFeeFraction(DEFAULTS, 0.9), 0.8931, 1e-12, 'extra to the Core');
+  // the live launch ramp (config launch.*, the chain holds no view): sniperStartBps falls to the baseline over skimSeconds
+  const skimStart = DEFAULTS.sniperStartBps / 1e4, skimBase = DEFAULTS.baselineSkimBps / 1e4, skimWin = DEFAULTS.skimSeconds;
+  near(skimFraction(DEFAULTS, 0), skimStart, 1e-12, 'skim at the open'); near(skimFraction(DEFAULTS, skimWin / 2), (skimStart + skimBase) / 2, 1e-12, 'midway');
+  near(skimFraction(DEFAULTS, skimWin), skimBase, 1e-12, 'end of window'); near(skimFraction(DEFAULTS, 99999), skimBase, 1e-12, 'baseline');
+  near(bountyFeeFraction(DEFAULTS, skimBase), skimBase * DEFAULTS.bountyBps / 1e4, 1e-12, 'Core gets bountyBps of the baseline'); near(bountyFeeFraction(DEFAULTS, skimStart), skimBase * DEFAULTS.bountyBps / 1e4 + (skimStart - skimBase), 1e-12, 'the whole anti sniper extra to the Core');
   // Core._book: the payee takes payeePpm of each book once payeeOn. the first book at or after sniperSeconds with income sets payeeOn and takes 0
   // feeToRedeemBurnBps is 1,000 here (its phase-2 value) to exercise the reserve split with the payee; launch is 0
+  const snip = SETTINGS.sniperSeconds; // the live sniper latch time (4,140 s): the payee share starts at the first book at or after it
   const pc = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }, { buyToArtistBps: 0 }), 0);
-  pc.addFees(100, 1799); near(pc.ethPot, 90, 1e-12, 'before the window the pot gets 90 of 100, the reserve 10'); near(pc.payeePaid, 0, 1e-12, 'the payee gets 0 before the window');
-  pc.addFees(100, 1800); near(pc.ethPot, 180, 1e-12, 'the first book at the window end shares 0'); ok(pc.payeeOn && pc.payeePaid === 0, 'the payee share starts');
-  pc.addFees(100, 1900); near(pc.payeePaid, 7.5185, 1e-12, 'the payee takes payeePpm after the window');
+  pc.addFees(100, snip - 1); near(pc.ethPot, 90, 1e-12, 'before the window the pot gets 90 of 100, the reserve 10'); near(pc.payeePaid, 0, 1e-12, 'the payee gets 0 before the window');
+  pc.addFees(100, snip); near(pc.ethPot, 180, 1e-12, 'the first book at the window end shares 0'); ok(pc.payeeOn && pc.payeePaid === 0, 'the payee share starts');
+  pc.addFees(100, snip + 100); near(pc.payeePaid, 7.5185, 1e-12, 'the payee takes payeePpm after the window');
   near(pc.ethPot, 180 + 83.23335, 1e-9, 'the pot gets the income less the payee and the reserve share');
   near(pc.ethRedeemBurn, 20 + 9.24815, 1e-9, 'the reserve takes feeToRedeemBurnBps of the income after the payee');
   const pz = new Core(DEFAULTS, 0); pz.addFees(0, 5000); ok(!pz.payeeOn, 'a zero income book leaves payeeOn false');
@@ -933,10 +941,15 @@ const R0 = 6.668e15;
   // Core.fund: whole, the payee and reserve shares are 0
   const pf = new Core(Object.assign({}, DEFAULTS, { payeePpm: 75185, feeToRedeemBurnBps: 1000 }, { buyToArtistBps: 0 }), 0); pf.addFees(100, 1900); pf.fund(50, 1900);
   near(pf.ethPot, 90 + 50, 1e-12, 'fund adds to the pot whole'); near(pf.ethRedeemBurn, 10, 1e-12, 'fund books a reserve share of 0'); near(pf.payeePaid, 0, 1e-12, 'and a payee share of 0');
+  // the first hour volume splits the day one total (volDay0) by the anti sniper window: sniperVolShare of the hour inside
+  // the window, the rest after. the split assumes the window closes within the first hour, so this anchor pins skimSeconds
+  // to a 30 minute window; the live launch window is 4,140 s (69 minutes) and overruns the first hour model, tracked
+  // separately from this sim parameter update
+  const vp = { ...DEFAULTS, skimSeconds: 1800 };
   let d0 = 0;
-  for (let t = 0; t < 3600; t += 120) d0 += stepVolume(DEFAULTS, t, 120);
+  for (let t = 0; t < 3600; t += 120) d0 += stepVolume(vp, t, 120);
   near(d0, 1557 * 0.586, 1e-9, 'first hour volume');
-  for (let h = 1; h < 24; h++) d0 += stepVolume(DEFAULTS, h * 3600, 3600);
+  for (let h = 1; h < 24; h++) d0 += stepVolume(vp, h * 3600, 3600);
   near(d0, 1557, 1e-9, 'day one volume');
 }
 // promise: whole runs: deterministic, every eth identity closes, nothing negative
@@ -983,7 +996,7 @@ const R0 = 6.668e15;
 // promise: the balance side in hold mode redeems at the floor and stops the bid, the balance side on adds the balance token bid, whose credits join the one pile (FLOW 92)
 {
   const base = { days: 30, seed: 3, stepSec: 300 };
-  const L = simulate(base);
+  const L = simulate(Object.assign({ feeToRedeemBurnBps: 0 }, base)); // the launch split (0 to the reserve); the live default is 1,000, exercised by res, hold and on below
   const closes = (r, tag) => { ok(Math.abs(r.stats.potCheck) < 1e-6 && Math.abs(r.stats.saleCheck) < 1e-9 && Math.abs(r.stats.buybackCheck) < 1e-9 && Math.abs(r.stats.redeemCheck) < 1e-9, 'accounting closes ' + tag); };
   closes(L, 'at launch');
   ok(L.core.s.redeemOn === true && L.core.s.balanceBidOn === false && L.core.moduleSet === false && L.T.redeemed === 0 && L.T.boughtX === 0 && L.core.balancePot === 0, 'redeemOn true but no module set, balanceBidOn false: no redemption, no balance token bid');
