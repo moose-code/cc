@@ -10,7 +10,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
-import {ValueBase} from "./ValueMode.t.sol";
+import {ValueBase, ValueFixtureBase} from "./ValueMode.t.sol";
 
 /// promise: SPEC 4 with value mode off, bid, drop, ceiling, credit sale price and statement decay match formulas using
 /// the current settings and getters. these checks do not compare against a pinned historical implementation. value mode
@@ -87,7 +87,9 @@ contract ModeOffPricingRulesTest is Fixture {
         uint256 floor = hi * ctl.floorMultBps() / BPS;
         uint256 coreFloor = cost * core.settings().saleFloorBps / BPS;
         if (floor < coreFloor) floor = coreFloor;
-        assertEq(ctl.creditPrice(id), floor * ctl.creditStartBps() / BPS, "the start ask is creditStartBps of the floor");
+        assertEq(
+            ctl.creditPrice(id), floor * ctl.creditStartBps() / BPS, "the start ask is creditStartBps of the floor"
+        );
         assertEq(ctl.creditStartBps(), 15_000, "the launch 1.5x start");
     }
 
@@ -96,7 +98,11 @@ contract ModeOffPricingRulesTest is Fixture {
     function test_statementDecay() public {
         Composed memory c = _composeOnce();
         // the reference moves with the climbing floor rate, so read it fresh at each age
-        assertEq(ctl.priceOf(c.sid), ctl.referenceOf(c.sid) * ctl.startBps() / BPS, "the start ask is startBps of the reference");
+        assertEq(
+            ctl.priceOf(c.sid),
+            ctl.referenceOf(c.sid) * ctl.startBps() / BPS,
+            "the start ask is startBps of the reference"
+        );
         _warp(uint256(ctl.decayHours()) * 1 hours + 1);
         assertEq(
             ctl.priceOf(c.sid),
@@ -172,7 +178,16 @@ contract ModeOffPricingRulesTest is Fixture {
             }),
             spot
         );
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18}));
+        ctl.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_000,
+                referenceStepBps: 500,
+                tolBps: 450,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 0,
+                minLiquidity: 1e18
+            })
+        );
         vm.stopPrank();
         mod.setAvailable(1e30);
     }
@@ -235,7 +250,7 @@ contract ModeOffBalanceRouteTest is ValueBase {
         core.sellForBalance(_one(id));
         vm.stopPrank();
         (uint256 spot,) = ctl.spotPrice();
-        back = xt.balanceOf(TRIPPER) * spot / 1e18;
+        back = _balanceOf(TRIPPER) * spot / 1e18;
     }
 
     /// the pool spot at which selling credit `id` for balance and dumping the balance into the pool returns exactly the
@@ -269,11 +284,131 @@ contract ModeOffBalanceRouteTest is ValueBase {
         assertGt(back, paid, "mode off, spot above the curve: the round trip is profitable");
     }
 
-    // the same setup in value mode: both legs price off the reference, so the round trip loses the spread
+    /// external self-call wrapper so a live balance round trip can be wrapped in try/catch: the vm cheatcodes inside
+    /// `_balanceTrip` run through the external self-call, and the tuple is returned to the caller
+    function balanceTripExternalMO(uint256 id) external returns (uint256 paid, uint256 back) {
+        return _balanceTrip(id);
+    }
+
+    // promise: the same setup in value mode: both legs price off the reference, so the round trip loses the spread,
+    // proven live: at the break-even lead the live round trip either fails closed (the value quote is unusable) or
+    // loses at least the spread. the exact loss bound runs on the controlled pool in ModeOffBalanceRouteFixtureTest
+    function test_valueModeClosesTheRoundTripWhenSpotLeads_liveFailsClosedOrLoses() public {
+        _closureAtCapLiveFailsClosedOrLoses(11_000);
+    }
+
+    // promise: the same at a 30,000 bps balance cap: value mode still closes the round trip, proven live as fail closed or loses
+    function test_valueModeClosesTheRoundTripWhenSpotLeads_cap30000_liveFailsClosedOrLoses() public {
+        _closureAtCapLiveFailsClosedOrLoses(30_000);
+    }
+
+    /// on the live deep pool the break-even 1.3x lead drives the spot past what the rate-limited reference can track, so
+    /// the value quote goes unusable and `creditPrice`/`buyCredit` revert `NoQuote` before any profitable round trip
+    /// exists. the try/catch accepts either outcome: a fail-closed revert, or an executed trip that loses the spread
+    function _closureAtCapLiveFailsClosedOrLoses(uint32 cap) internal {
+        uint256[] memory ids = _arm();
+        uint256 target = _breakEvenSpot(ids[0]) * 130 / 100;
+        _valueOn();
+        Settings memory s = core.settings();
+        s.balanceBidCapBps = cap;
+        _setSettings(s);
+        _swapToSpot(target);
+        // the prior-block sample catches the pushed spot while the reference walks one step a block behind it
+        for (uint256 i; i < 3; ++i) {
+            vm.warp(block.timestamp + 1 hours);
+            vm.roll(block.number + 1);
+            ctl.refreshReference();
+        }
+        try this.balanceTripExternalMO(ids[0]) returns (uint256 paid, uint256 back) {
+            uint256 m = 10_000 + ctl.creditSpreadBps();
+            assertLe(back * m, (paid + 1) * 10_000, "value mode: the round trip loses at least the spread at the cap");
+        } catch {
+            // fail closed: the value quote is unusable at the pushed lead, so no profitable round trip exists
+        }
+    }
+
+    // promise: value mode closes the round trip at a trackable lead: a small spot push the reference can follow within
+    // referenceStepBps per refresh keeps the quote usable, and the balance round trip executes and loses the spread
+    function test_valueModeClosesTheRoundTripAtTrackableLead() public {
+        uint256[] memory ids = _arm();
+        _valueOn();
+        _swapSpot(200); // +2 percent, inside the reference's per-refresh step so it catches up over the refreshes below
+        for (uint256 i; i < 3; ++i) {
+            vm.warp(block.timestamp + 1 hours);
+            vm.roll(block.number + 1);
+            ctl.refreshReference();
+        }
+        (uint256 paid, uint256 back) = _balanceTrip(ids[0]);
+        assertLe(
+            back * (10_000 + ctl.creditSpreadBps()),
+            (paid + 1) * 10_000,
+            "value mode closes the round trip at a trackable lead"
+        );
+    }
+
+    // promise: with value mode off the reference still warms up: a real swap moves the spot and a refresh moves the
+    // reference toward it by at most the step
+    function test_referenceWarmsUpWhileModeIsOff() public {
+        assertFalse(core.settings().valueModeOn, "value mode off");
+        uint256 ref0 = ctl.referencePrice();
+        uint256 t0 = ctl.referenceTime();
+        uint256 moved = _swapToSpot(ref0 * 13 / 10);
+        _warp(30 minutes);
+        vm.roll(block.number + 1);
+        assertTrue(ctl.refreshReference(), "the refresh runs");
+        uint256 ref1 = ctl.referencePrice();
+        assertGt(ref1, ref0, "the reference moved toward the spot");
+        assertLe(ref1, ref0 * 10_500 / 10_000, "by at most the step");
+        assertLt(ref1, moved, "and trails the spot");
+        assertGt(ctl.referenceTime(), t0, "the sample time moved");
+    }
+}
+
+/// controlled-pool mechanics: pushes the spot to a 1.3x break-even lead the rate-limited reference cannot track. on the
+/// live deep pool this lead fails the value quote closed (see `_closureAtCapLiveFailsClosedOrLoses` in
+/// ModeOffBalanceRouteTest); here the shallow controlled pool keeps the quote usable, so the exact closure invariant
+/// runs: in value mode both legs price off the reference and the round trip loses the spread. pre-port bodies verbatim
+contract ModeOffBalanceRouteFixtureTest is ValueFixtureBase {
+    address internal constant TRIPPER = address(0x7419);
+
+    function _arm() internal returns (uint256[] memory ids) {
+        ids = _fillEthPile(4);
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(50 ether);
+    }
+
+    /// buys credit `id` at its ask, sells it for balance token in the next second and returns the eth paid and the
+    /// balance token received valued at the pool spot
+    function _balanceTrip(uint256 id) internal returns (uint256 paid, uint256 back) {
+        ctl.refreshReference();
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(TRIPPER, price * 2);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price * 2}(id);
+        paid = price * 2 - TRIPPER.balance;
+        _nextSecond();
+        vm.startPrank(TRIPPER);
+        CREDITS.setApprovalForAll(address(core), true);
+        core.sellForBalance(_one(id));
+        vm.stopPrank();
+        (uint256 spot,) = ctl.spotPrice();
+        back = xt.balanceOf(TRIPPER) * spot / 1e18;
+    }
+
+    /// the pool spot at which selling credit `id` for balance and dumping the balance into the pool returns exactly the
+    /// ask, wei per 1e18 base units, from the mode off payout and the mode off ask
+    function _breakEvenSpot(uint256 id) internal view returns (uint256) {
+        return ctl.creditPrice(id) * 1e18 / core.balanceBidOf(id);
+    }
+
+    // promise: the same setup in value mode: both legs price off the reference, so the round trip loses the spread
     function test_valueModeClosesTheRoundTripWhenSpotLeads() public {
         _closureAtCap(11_000);
     }
 
+    // promise: the same at a 30,000 bps balance cap: value mode still closes the round trip
     function test_valueModeClosesTheRoundTripWhenSpotLeads_cap30000() public {
         _closureAtCap(30_000);
     }
@@ -295,22 +430,5 @@ contract ModeOffBalanceRouteTest is ValueBase {
         (uint256 paid, uint256 back) = _balanceTrip(ids[0]);
         uint256 m = 10_000 + ctl.creditSpreadBps();
         assertLe(back * m, (paid + 1) * 10_000, "value mode: the round trip loses at least the spread at the cap");
-    }
-
-    // promise: with value mode off the reference still warms up: a real swap moves the spot and a refresh moves the
-    // reference toward it by at most the step
-    function test_referenceWarmsUpWhileModeIsOff() public {
-        assertFalse(core.settings().valueModeOn, "value mode off");
-        uint256 ref0 = ctl.referencePrice();
-        uint256 t0 = ctl.referenceTime();
-        uint256 moved = _swapToSpot(ref0 * 13 / 10);
-        _warp(30 minutes);
-        vm.roll(block.number + 1);
-        assertTrue(ctl.refreshReference(), "the refresh runs");
-        uint256 ref1 = ctl.referencePrice();
-        assertGt(ref1, ref0, "the reference moved toward the spot");
-        assertLe(ref1, ref0 * 10_500 / 10_000, "by at most the step");
-        assertLt(ref1, moved, "and trails the spot");
-        assertGt(ctl.referenceTime(), t0, "the sample time moved");
     }
 }
