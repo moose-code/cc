@@ -6,7 +6,7 @@ import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {ICredits, ICreditScore, Mainnet, Settings, POINT_UNIT} from "../../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
-import {ValueBase} from "../ValueMode.t.sol";
+import {ValueFixtureBase as ValueBase} from "../ValueMode.t.sol";
 
 /// @notice the actors of the value mode suite: they sell credits into the eth and the balance bid, buy pile credits and
 /// statements from the controller, move the pool spot, call `refreshReference()` and let time pass. every action records what

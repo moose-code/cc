@@ -14,6 +14,7 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {TestSwapRouter} from "./TestSwapRouter.sol";
 import {V2Stack} from "./V2Stack.sol";
+import {LiveStageB} from "./LiveStageB.sol";
 
 /// @notice the owner rule of the phase 2 live fork work: a contract that exists on mainnet is bound at its live
 /// address with its live code and state, never redeployed. this fixture forks mainnet at a recent pinned block and
@@ -106,6 +107,17 @@ abstract contract LiveFixture is Fixture {
         });
         poolId = keccak256(abi.encode(launchKey));
         launchTime = block.timestamp;
+
+        // LIVE_STAGE=B: the owner's stage B sends, run through the production scripts, so `ctl` is ControllerV2 and
+        // the treasury is the selected module with the settings patch applied
+        if (_liveStageB()) {
+            LiveStageB.State memory st = LiveStageB.run(address(core), liveBalanceToken);
+            ctl = IControllerV1(st.controllerV2);
+            treasury = IPhase2BalanceTreasury(st.treasury);
+            assertEq(core.controller(), st.controllerV2, "stage B: ControllerV2 is the controller");
+            assertEq(core.balanceModule(), st.treasury, "stage B: the treasury is the module");
+            assertEq(core.artist(), st.split, "stage B: the split is the artist");
+        }
     }
 
     // ------------------------------------------------------------------ two live states
@@ -142,7 +154,7 @@ abstract contract LiveFixture is Fixture {
     /// sale, and the live fee settings route most skim to the buyback and burn pots, so the swap estimate never reaches
     /// the spendable target. a direct `fund` of `eth + reserve` is deterministic and leaves `eth` spendable. the reserve
     /// is a live setting, never zeroed to force a pass
-    function _fundPot(uint256 eth) internal override {
+    function _fundPot(uint256 eth) internal virtual override {
         uint256 target = eth + core.reserve();
         if (core.ethPot() < target) {
             uint256 need = target - core.ethPot();
@@ -190,15 +202,18 @@ abstract contract LiveFixture is Fixture {
     /// treasury funded a working balance. no balance pool key is set here, so the suites that assert the key-unset state
     /// still see it; a suite that needs the key calls `_setLiveBalancePool`
     function _enterPhase2() internal virtual override {
-        address policyAddr = vm.deployCode("ProRataRedemptionPolicy.sol:ProRataRedemptionPolicy");
-        treasury = IPhase2BalanceTreasury(
-            vm.deployCode(
-                "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
-                abi.encode(address(core), liveBalanceToken, policyAddr, address(0))
-            )
-        );
-        vm.prank(owner);
-        core.setBalanceModule(address(treasury));
+        // in stage B the production treasury is already selected; a second one would not be the launch state
+        if (address(treasury) == address(0)) {
+            address policyAddr = vm.deployCode("ProRataRedemptionPolicy.sol:ProRataRedemptionPolicy");
+            treasury = IPhase2BalanceTreasury(
+                vm.deployCode(
+                    "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
+                    abi.encode(address(core), liveBalanceToken, policyAddr, address(0))
+                )
+            );
+            vm.prank(owner);
+            core.setBalanceModule(address(treasury));
+        }
         _setSwitches(true, true);
         vm.prank(owner);
         treasury.setSwitches(true, true, false);
@@ -280,7 +295,7 @@ abstract contract LiveFixture is Fixture {
     /// @notice fills the eth pile against live state. the base helper sizes the pot at `ethRate * n`, which assumes a
     /// 100 point credit; live Credits carry high and varied scores, so the pot is sized from the sum of the score scaled
     /// bids at the restated opening rate instead, and funded past it so no sale in the batch hits `PotTooSmall`
-    function _fillEthPile(uint256 n) internal override returns (uint256[] memory ids) {
+    function _fillEthPile(uint256 n) internal virtual override returns (uint256[] memory ids) {
         ids = _credits(seller, n);
         uint256 opening = core.RATE_START();
         if (core.rateAtCheckpoint() > opening) {
@@ -302,7 +317,7 @@ abstract contract LiveFixture is Fixture {
     /// @notice composes one page against live state. the live controller runs with the credit sale on, so `nextPage` is
     /// ready only once the oldest page is past the credit window; the live Core holds a steady pile of pre launch
     /// Credits, so a warp past the window makes it composable. then the base compose runs unchanged
-    function _composeOnce() internal override returns (Composed memory c) {
+    function _composeOnce() internal virtual override returns (Composed memory c) {
         if (!isComposed) _warpComposeReady();
         return super._composeOnce();
     }

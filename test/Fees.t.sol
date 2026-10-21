@@ -148,6 +148,19 @@ abstract contract FeeHelpers is Fixture {
 /// v2-mainnet stack the live coin runs on. the diamond `FeeHelpers, LiveFixture` resolves because LiveFixture's
 /// `_enterPhase2` is virtual; both inherited functions are named in the override specifier the compiler demands
 abstract contract FeeBase is FeeHelpers, LiveFixture {
+    // the live helpers apply: LiveFixture's overrides of the three shared Fixture helpers win over FeeHelpers' inherited ones
+    function _fundPot(uint256 eth) internal virtual override(Fixture, LiveFixture) {
+        super._fundPot(eth);
+    }
+
+    function _fillEthPile(uint256 n) internal virtual override(Fixture, LiveFixture) returns (uint256[] memory ids) {
+        return super._fillEthPile(n);
+    }
+
+    function _composeOnce() internal virtual override(Fixture, LiveFixture) returns (Composed memory c) {
+        return super._composeOnce();
+    }
+
     function setUp() public virtual override(Fixture, LiveFixture) {
         super.setUp();
         // book any fee income unbooked at the pin so the pot and skim deltas in the ported tests start from clean
