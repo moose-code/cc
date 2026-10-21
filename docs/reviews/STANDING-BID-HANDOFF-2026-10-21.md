@@ -52,7 +52,24 @@ Each step previews, prints a plan hash, and sends only with `SEND=1 STANDING_BID
 
 ## 5. verification
 
-Filled at the end of the build; see docs/STATUS.md section 1 for the final counts and commit.
+At `eee36b0`, on the chain id 1 fork at block 26,208,025 unless noted (docs/STATUS.md section 1 has the same list):
+
+| suite | result |
+|---|---|
+| Phase2Treasury (no fork) | 31 + 28 + 1 |
+| StandingBidPolicy, real coin pool and a standin value mode pool | 6 |
+| StandingBidScripts | 7 |
+| Phase2Scripts | 9 |
+| Phase2TreasuryCore | 6 |
+| ControllerV2 | 7 |
+| BuildIdentity at the new pins | 7 |
+| CreatePushSplit | 2 |
+| InvariantsPhase2Treasury, 32 runs of depth 64 | 6 invariants and the handler test |
+| Phase2UpstreamBalance, SetSettings | 2, 9 + 4 |
+| keeper, indexer, web selfcheck | 174, 24, 25, each with its typecheck |
+| local end to end | `PHASE=phase2` and `BID=1 PHASE=phase2` both pass |
+
+Not run: the `CANDIDATE_RUN=1` suite and deep campaigns; nothing was sent to mainnet.
 
 ## 6. what the adversarial review found and what was done
 
