@@ -24,6 +24,13 @@ abstract contract Phase2Checks is LaunchChecks {
     /// payout) and the claim earmark, bps of the rating. a Credit the engine acquires with ETH and inventory it already
     /// holds carry a different cost, so this is the BALANCE funded margin only. a non positive margin fails the run
     /// while working payments are on, unless ACCEPT_NONPOSITIVE_MARGIN=1 records the owner's approval
+    /// @dev the real token's `unreleasedSupply()`, "n/a" on a token without it (the standin)
+    function _unreleased(address token) private view returns (string memory) {
+        (bool ok, bytes memory ret) = token.staticcall(abi.encodeWithSignature("unreleasedSupply()"));
+        if (!ok || ret.length < 32) return "n/a";
+        return vm.toString(abi.decode(ret, (uint256)));
+    }
+
     function _marginRow(ICore core, IPhase2BalanceTreasury t) private {
         Settings memory s = core.settings();
         uint256 payout = 10_000 - s.balanceDiscountBps;
@@ -124,6 +131,10 @@ abstract contract Phase2Checks is LaunchChecks {
             )
         );
         _marginRow(core, t);
+        _info(
+            "token: unreleasedSupply (the real token's release cap; a conversion above it reverts)",
+            _unreleased(t.balanceToken())
+        );
         _info("treasury: configEpoch", vm.toString(uint256(t.configEpoch())));
         _info("treasury: migrated", vm.toString(t.migrated()));
         _info("treasury: selected", vm.toString(t.selected()));

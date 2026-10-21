@@ -97,7 +97,9 @@ contract Phase2BalanceTokenStandin is ERC20 {
 
     // ------------------------------------------------------------------ the upstream surface
 
+    /// as upstream `quote`: a statement this token already holds (converted) is refused
     function quote(uint256 id) public view returns (uint256) {
+        require(IStandinStatements(statements).ownerOf(id) != address(this), "already withdrawn");
         return IStandinStatements(statements).creditScoreOf(id) * SCORE_TO_TOKEN;
     }
 
@@ -121,13 +123,21 @@ contract Phase2BalanceTokenStandin is ERC20 {
 
     // ------------------------------------------------------------------ transfers under the gate and the fault modes
 
-    function _locked(address from) private view returns (bool) {
+    /// the upstream `_update` rule read against the pinned upstream commit 54ef94cf and the live token: a movement (not a
+    /// mint, not from the token itself) needs the retirement finalized; a movement to a holder also needs funding
+    /// phase 3 and the open block reached; a burn only needs the retirement. not modelled: upstream moves "ink" with
+    /// every transfer, one unit per token unit, so a balance that arrived through a release or a transfer always
+    /// carries enough and only a balance written by a cheat reverts (`EmptyInk`); the release cap `unreleasedSupply`;
+    /// the format and history bookkeeping. the treasury's paths depend on none of these
+    function _locked(address from, address to) private view returns (bool) {
         if (from == address(this) || from == address(0)) return false;
-        return totalRetired != launchRetirement || fundingPhase != 3 || block.number < transfersOpenBlock;
+        if (totalRetired != launchRetirement) return true;
+        if (to == address(0)) return false;
+        return fundingPhase != 3 || block.number < transfersOpenBlock;
     }
 
     function transfer(address to, uint256 amount) public override returns (bool) {
-        require(!_locked(msg.sender), "transfers locked");
+        require(!_locked(msg.sender, to), "transfers locked");
         if (to == banned) revert("banned recipient");
         if (mode == 2) revert("transfer reverts");
         if (mode == 3) {
@@ -142,7 +152,7 @@ contract Phase2BalanceTokenStandin is ERC20 {
     }
 
     function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
-        require(!_locked(from), "transfers locked");
+        require(!_locked(from, to), "transfers locked");
         return super.transferFrom(from, to, amount);
     }
 }
