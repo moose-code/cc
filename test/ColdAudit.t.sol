@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -33,79 +34,124 @@ contract RevertingAvailableModule {
     }
 }
 
-/// Audit probes use the test-rate fixture. The balance price pool below is a real v4 pool with minted
-/// liquidity, and its spot moves only through swaps.
-contract ColdAuditTest is Fixture {
+/// @notice the balance-module probes of the cold audit, ported to the live Core. the balance module is not a deployed
+/// mainnet contract, so a hostile, thin or fresh module probe selects a MockBalanceModule on the LIVE Core by owner
+/// prank (the owner rule binds deployed contracts, not the module double); the donation and rescue probes select the
+/// live Phase2BalanceTreasury through the LiveFixture `_enterPhase2` override and move the live BALANCE token. scores
+/// are the live CreditScore readings through `_scoreOf` (no `vm.mockCall` of the live CreditScore, brief addendum 3),
+/// and the cold-pot assumptions are rewritten to relative deltas against the warm live Core. the controlled value-mode
+/// pool probes and the cold-state view probes cannot reach the live steady state and stay on `Fixture` below.
+contract ColdAuditTest is LiveFixture {
+    // promise: balanceBidOf reads 0 when the module cannot pay the credit's floor, and the fill still reverts (C05)
+    function test_thinModuleBalanceBidReadsZero() public {
+        // the subject is a module too thin to cover the credit's floor payout. the module is not a live contract, so a
+        // MockBalanceModule is selected on the live Core by owner prank; the score is the live CreditScore reading
+        uint256 id = _credits(seller, 1)[0];
+        MockBalanceToken token = new MockBalanceToken("Thin", "THIN");
+        MockBalanceModule thin = new MockBalanceModule(address(token), UNIT);
+        _setBalanceModule(address(thin));
+        _setSwitches(true, true);
+        // the posted par payout the module must cover: the credit's real score times the unit at the live balance rate
+        uint256 par = _scoreOf(id) * UNIT * core.balanceRate() / 10_000;
+        assertGt(par, 0, "the real credit has a positive floor payout");
+        thin.setAvailable(par - 1);
+        assertEq(core.balanceBidOf(id), 0, "the view reads 0 for a payout the module cannot fill");
+        assertLt(thin.available(), par, "the module committed less than the floor payout");
+        vm.prank(seller);
+        vm.expectRevert(ICore.PotTooSmall.selector);
+        core.sellForBalance(_one(id));
+        emit log_named_uint("available balance tokens", thin.available());
+    }
+
+    // promise: a balance token sent to the Core reaches the module or a recoverable balance path on the next call
+    function test_balanceTokenSentToCoreRemainsOutsideModule() public {
+        _enterPhase2();
+        uint256 coreBefore = _balanceOf(address(core));
+        uint256 modBefore = _moduleCustody();
+        _acquireBalance(address(core), 1e18);
+        assertEq(_balanceOf(address(core)), coreBefore + 1e18, "the Core received the direct balance token donation");
+        core.book();
+        assertEq(_moduleCustody(), modBefore, "booking cannot move a direct token donation into the module");
+        assertEq(_balanceOf(address(core)), coreBefore + 1e18, "the direct token donation remains in Core custody");
+        emit log_named_uint("balance tokens stranded at Core", _balanceOf(address(core)));
+    }
+
+    // promise: rescueToken recovers a stray ERC20 the Core holds and refuses the balance token (decision 159, C06)
+    function test_rescueTokenRecoversStrayErc20AndRefusesBalanceToken() public {
+        _enterPhase2();
+        MockBalanceToken stray = new MockBalanceToken("Stray", "STR");
+        stray.mint(address(core), 5e18);
+        vm.prank(owner);
+        core.rescueToken(address(stray), owner, 5e18);
+        assertEq(stray.balanceOf(owner), 5e18, "the stray token is recovered to the owner");
+        assertEq(stray.balanceOf(address(core)), 0, "none is left at the Core");
+        // the live balance token may leave only through the module path, so rescueToken refuses it
+        uint256 coreBefore = _balanceOf(address(core));
+        _acquireBalance(address(core), 1e18);
+        vm.prank(owner);
+        vm.expectRevert(ICore.ForbiddenTarget.selector);
+        core.rescueToken(liveBalanceToken, owner, 1e18);
+        assertEq(_balanceOf(address(core)), coreBefore + 1e18, "the balance token stays with the Core");
+    }
+
+    // promise: a new, zero-balance module accepts the first eligible real Statement redemption and receives the
+    // correct balance-token amount before any balance-side fill
+    function test_firstRedeemIntoFreshEmptyModule() public {
+        Composed memory c = _composeOnce();
+        MockBalanceToken token = new MockBalanceToken("Fresh Balance", "FB");
+        MockBalanceModule fresh = new MockBalanceModule(address(token), UNIT);
+        _setBalanceModule(address(fresh));
+        _setSwitches(true, true);
+        assertEq(fresh.available(), 0);
+        _makeEligible(c.sid);
+        assertTrue(ctl.atFloor(c.sid));
+        uint256 owed = core.ratingOf(c.sid) * UNIT;
+        vm.prank(keeper);
+        core.redeemStatement(c.sid);
+        assertEq(token.balanceOf(address(fresh)), owed);
+        assertEq(STATEMENTS.ownerOf(c.sid), address(fresh));
+        emit log_named_uint("first fresh-module redemption base units", owed);
+    }
+
+    // promise: an owner cannot install a module whose available() reverts, even while real hook income is unbooked
+    function test_coldModuleSetRejectsRevertingAvailableWithoutBookingIncome() public {
+        _enterPhase2();
+        autoBook = false;
+        uint256 potBefore = core.ethPot();
+        _buyCoin(funder, 0.005 ether);
+        // the hook pushed fee income that no engine call has booked: the surplus the Core holds above its pots
+        uint256 pending = address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn();
+        assertGt(pending, 0, "the real hook push left unbooked income");
+        address oldModule = core.balanceModule();
+        RevertingAvailableModule bad = new RevertingAvailableModule(liveBalanceToken);
+        vm.prank(owner);
+        vm.expectRevert(ICore.BadModule.selector);
+        core.setBalanceModule(address(bad));
+        assertEq(core.balanceModule(), oldModule, "the rejected module is not installed");
+        assertEq(core.ethPot(), potBefore, "the rejected set did not book the pending income");
+        assertEq(
+            address(core).balance - core.ethToBuyback() - core.ethRedeemBurn() - core.ethPot(),
+            pending,
+            "the pending income is still unbooked"
+        );
+    }
+}
+
+/// @notice kept on `Fixture` as a named value-mode pool-mechanics suite. `_valuePool` builds a BESPOKE controlled v4
+/// pool: it initializes a fresh native eth / balance token pool at a known sqrt price (OPEN_SP), mints a controlled
+/// amount of liquidity, points the controller at it and then moves the spot with controlled swaps. the promises below
+/// assert the controller's reference-walk cadence, JIT-liquidity sampling, exact-spot rounding and same-block clamp
+/// arithmetic against that controlled pool, and several also start from a cold pot or an empty pile. the live
+/// steady-state eth / BALANCE pool cannot reproduce the controlled spot, depth or swap magnitudes, and the warm live
+/// Core cannot reproduce the cold pot or empty pile; the dedicated test/ValueMode.t.sol suite owns the live value-mode
+/// coverage. this bespoke pool is not the generic `_setBalancePool`, so the `_setLiveBalancePool` rewrite does not
+/// apply here.
+contract ColdValuePoolTest is Fixture {
     using StateLibrary for IPoolManager;
     using PoolIdLibrary for PoolKey;
+
     uint160 internal constant OPEN_SP = uint160(FixedPoint96.Q96 * 10 / 7);
     PoolKey internal balanceKey;
-
-    struct ColdRead {
-        uint256 rate;
-        uint256 bid;
-        uint256 scoreBid;
-        uint256 floor;
-        uint256 multiplier;
-        uint256 value;
-        uint256 balanceRate;
-        uint256 balanceBid;
-        uint64 bucket;
-        uint128 budget;
-        uint128 spent;
-    }
-
-    // promise: a first book does not credit prior unbooked time to the bid; its booked-pot multiplier updates at once
-    function test_coldViewMatrixFirstBook() public {
-        autoBook = false;
-        uint256 id = _credits(seller, 1)[0];
-        _buyCoin(funder, 2 ether);
-        assertEq(core.ethPot(), 0);
-        uint256 start = block.timestamp;
-        uint256[4] memory ages = [uint256(0), 10 minutes, 2 hours, 24 hours];
-        for (uint256 i; i < ages.length; ++i) {
-            vm.warp(start + ages[i]);
-            uint256 snap = vm.snapshotState();
-            ColdRead memory c;
-            c.rate = core.ethRate();
-            c.bid = core.bidOf(id);
-            c.scoreBid = core.bidForScore(_scoreOf(id));
-            c.floor = core.floorRate();
-            c.multiplier = core.climbMultiplier();
-            c.value = ctl.valueOf(1_000_000);
-            c.balanceRate = core.balanceRate();
-            c.balanceBid = core.balanceBidOf(id);
-            (c.bucket, c.budget, c.spent) = core.spendState();
-            (bool ready,,) = ctl.nextPage();
-            assertFalse(ready, "a cold pile has no page");
-            assertEq(c.balanceBid, 0, "no module means no balance payout");
-            assertEq(ctl.referencePrice(), 0, "no balance pool key means no reference");
-            assertEq(core.ethToBuyback(), 0, "no sale means no buyback pot");
-            vm.expectRevert(IControllerV1.NotForSale.selector);
-            ctl.creditPrice(id);
-            vm.expectRevert(IControllerV1.NotForSale.selector);
-            ctl.priceOf(1);
-            vm.expectRevert(IControllerV1.NotForSale.selector);
-            ctl.atFloor(1);
-            core.book();
-            assertEq(core.ethRate(), c.rate, "ethRate fixed point");
-            assertEq(core.bidOf(id), c.bid, "bidOf fixed point");
-            assertEq(core.bidForScore(_scoreOf(id)), c.scoreBid, "bidForScore fixed point");
-            assertEq(core.floorRate(), c.floor, "floorRate fixed point");
-            assertEq(c.multiplier, 10_000, "unbooked fees do not enlarge the multiplier");
-            assertGt(core.climbMultiplier(), c.multiplier, "the booked pot enlarges the multiplier");
-            assertEq(ctl.valueOf(1_000_000), c.value, "valueOf fixed point");
-            assertEq(core.balanceRate(), c.balanceRate, "balanceRate fixed point");
-            (uint64 b2, uint128 bgt2, uint128 spent2) = core.spendState();
-            assertEq(b2, c.bucket);
-            assertEq(bgt2, c.budget, "spendState budget fixed point");
-            assertEq(spent2, c.spent);
-            emit log_named_uint("cold age seconds", ages[i]);
-            emit log_named_uint("ethRate wei per 100 points", c.rate);
-            emit log_named_uint("pending-aware spend budget wei", c.budget);
-            vm.revertToState(snap);
-        }
-    }
 
     function _valuePool() internal {
         _enterPhase2();
@@ -253,125 +299,6 @@ contract ColdAuditTest is Fixture {
         assertEq(charged, quoted, "the view quote equals the first statement buy charge");
         emit log_named_uint("priceOf view wei", quoted);
         emit log_named_uint("statement buy charged wei", charged);
-    }
-
-    // promise: balanceBidOf reads 0 when the module cannot pay the credit's floor, and the fill still reverts (C05)
-    function test_thinModuleBalanceBidReadsZero() public {
-        _enterPhase2();
-        uint256 id = _credits(seller, 1)[0];
-        _unitScore(id);
-        mod.setAvailable(1e15);
-        assertEq(core.balanceBidOf(id), 0, "the view reads 0 for a payout the module cannot fill");
-        assertLt(mod.available(), 9e15, "the module committed less than the 90 percent floor payout");
-        vm.prank(seller);
-        vm.expectRevert(ICore.PotTooSmall.selector);
-        core.sellForBalance(_one(id));
-        emit log_named_uint("available balance tokens", mod.available());
-    }
-
-    // promise: a balance token sent to the Core reaches the module or a recoverable balance path on the next call
-    function test_balanceTokenSentToCoreRemainsOutsideModule() public {
-        _enterPhase2();
-        uint256 before = mod.available();
-        xt.mint(address(core), 1e18);
-        assertEq(xt.balanceOf(address(core)), 1e18);
-        core.book();
-        assertEq(mod.available(), before, "booking cannot move a direct token donation into the module");
-        assertEq(xt.balanceOf(address(core)), 1e18, "the direct token donation remains in Core custody");
-        emit log_named_uint("balance tokens stranded at Core", xt.balanceOf(address(core)));
-    }
-
-    // promise: rescueToken recovers a stray ERC20 the Core holds and refuses the balance token (decision 159, C06)
-    function test_rescueTokenRecoversStrayErc20AndRefusesBalanceToken() public {
-        _enterPhase2();
-        MockBalanceToken stray = new MockBalanceToken("Stray", "STR");
-        stray.mint(address(core), 5e18);
-        vm.prank(owner);
-        core.rescueToken(address(stray), owner, 5e18);
-        assertEq(stray.balanceOf(owner), 5e18, "the stray token is recovered to the owner");
-        assertEq(stray.balanceOf(address(core)), 0, "none is left at the Core");
-        // the balance token may leave only through the module path, so rescueToken refuses it
-        xt.mint(address(core), 1e18);
-        vm.prank(owner);
-        vm.expectRevert(ICore.ForbiddenTarget.selector);
-        core.rescueToken(address(xt), owner, 1e18);
-        assertEq(xt.balanceOf(address(core)), 1e18, "the balance token stays with the Core");
-    }
-
-    // promise: a new, zero-balance module accepts the first eligible real Statement redemption and receives the
-    // correct balance-token amount before any balance-side fill
-    function test_firstRedeemIntoFreshEmptyModule() public {
-        Composed memory c = _composeOnce();
-        MockBalanceToken token = new MockBalanceToken("Fresh Balance", "FB");
-        MockBalanceModule fresh = new MockBalanceModule(address(token), UNIT);
-        _setBalanceModule(address(fresh));
-        assertEq(fresh.available(), 0);
-        _makeEligible(c.sid);
-        assertTrue(ctl.atFloor(c.sid));
-        uint256 owed = core.ratingOf(c.sid) * UNIT;
-        vm.prank(keeper);
-        core.redeemStatement(c.sid);
-        assertEq(token.balanceOf(address(fresh)), owed);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(fresh));
-        emit log_named_uint("first fresh-module redemption base units", owed);
-    }
-
-    // promise: an owner cannot install a module whose available() reverts, even while real hook income is unbooked
-    function test_coldModuleSetRejectsRevertingAvailableWithoutBookingIncome() public {
-        _enterPhase2();
-        autoBook = false;
-        _buyCoin(funder, 0.005 ether);
-        uint256 pending = address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn();
-        assertGt(pending, 0);
-        address oldModule = core.balanceModule();
-        RevertingAvailableModule bad = new RevertingAvailableModule(address(xt));
-        vm.prank(owner);
-        vm.expectRevert(ICore.BadModule.selector);
-        core.setBalanceModule(address(bad));
-        assertEq(core.balanceModule(), oldModule);
-        assertEq(core.ethPot(), 0);
-        assertEq(address(core).balance - core.ethToBuyback() - core.ethRedeemBurn(), pending);
-    }
-
-    // promise: cold owner levers make their documented state changes but only setSettings books pending hook income
-    function test_coldOwnerRateSettingsControllerAndPauseBooking() public {
-        autoBook = false;
-        _buyCoin(funder, 2 ether);
-        vm.warp(block.timestamp + 600);
-        uint256 pending = address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn();
-        assertGt(pending, 0);
-        uint256 snap = vm.snapshotState();
-
-        vm.prank(owner);
-        core.setRate(OPEN_RATE);
-        assertEq(core.ethPot(), 0, "setRate does not book the real fee income");
-        assertEq(address(core).balance, pending);
-        vm.revertToState(snap);
-
-        Settings memory s = core.settings();
-        s.rateCap = type(uint64).max;
-        s.climbPerMinBps = type(uint16).max;
-        s.recoveryClimbPerMinBps = type(uint16).max;
-        s.ceilBps = type(uint16).max;
-        s.balanceBidCapBps = type(uint32).max;
-        _setSettings(s);
-        assertEq(
-            core.ethPot(),
-            pending * (10_000 - s.feeToRedeemBurnBps) / 10_000,
-            "setSettings books the pot share before changing widened bounds"
-        );
-        assertEq(core.ethRedeemBurn(), pending * s.feeToRedeemBurnBps / 10_000);
-        vm.revertToState(snap);
-
-        vm.prank(owner);
-        core.setController(address(ctl));
-        assertEq(core.ethPot(), 0, "controller probe does not book");
-        vm.prank(owner);
-        core.setPaused(true);
-        assertTrue(core.paused());
-        assertEq(core.ethPot(), 0, "pause does not book");
-        assertEq(address(core).balance, pending);
-        emit log_named_uint("pending hook income before and after cold owner calls", pending);
     }
 
     // promise: the launch reference cadence limits a tenfold real-pool spot spike to six 200 bps steps in an hour
@@ -620,6 +547,120 @@ contract ColdAuditTest is Fixture {
         emit log_named_uint("manipulated Credit ask wei", manipulatedCharge);
         emit log_named_uint("v4 swap round-trip loss wei", poolLoss);
         emit log_named_uint("three-call gas at fork base fee wei", gasCost);
+    }
+}
+
+/// @notice kept on `Fixture` as a named cold-state deploy-mechanics suite. the promises assert the launch-cold
+/// invariants: an empty pot (so climbMultiplier sits at its 10_000 baseline), a cold pile with no page ready, no
+/// surplus eth, and setSettings booking the exact pending share from a zero pot. the warm live Core holds a nonzero
+/// pot, a deep pile and surplus eth it carries outside its pots, so these cold premises cannot be reached by any
+/// owner setter path; the suite stays on the freshly deployed fixture.
+contract ColdCoreViewTest is Fixture {
+    struct ColdRead {
+        uint256 rate;
+        uint256 bid;
+        uint256 scoreBid;
+        uint256 floor;
+        uint256 multiplier;
+        uint256 value;
+        uint256 balanceRate;
+        uint256 balanceBid;
+        uint64 bucket;
+        uint128 budget;
+        uint128 spent;
+    }
+
+    // promise: a first book does not credit prior unbooked time to the bid; its booked-pot multiplier updates at once
+    function test_coldViewMatrixFirstBook() public {
+        autoBook = false;
+        uint256 id = _credits(seller, 1)[0];
+        _buyCoin(funder, 2 ether);
+        assertEq(core.ethPot(), 0);
+        uint256 start = block.timestamp;
+        uint256[4] memory ages = [uint256(0), 10 minutes, 2 hours, 24 hours];
+        for (uint256 i; i < ages.length; ++i) {
+            vm.warp(start + ages[i]);
+            uint256 snap = vm.snapshotState();
+            ColdRead memory c;
+            c.rate = core.ethRate();
+            c.bid = core.bidOf(id);
+            c.scoreBid = core.bidForScore(_scoreOf(id));
+            c.floor = core.floorRate();
+            c.multiplier = core.climbMultiplier();
+            c.value = ctl.valueOf(1_000_000);
+            c.balanceRate = core.balanceRate();
+            c.balanceBid = core.balanceBidOf(id);
+            (c.bucket, c.budget, c.spent) = core.spendState();
+            (bool ready,,) = ctl.nextPage();
+            assertFalse(ready, "a cold pile has no page");
+            assertEq(c.balanceBid, 0, "no module means no balance payout");
+            assertEq(ctl.referencePrice(), 0, "no balance pool key means no reference");
+            assertEq(core.ethToBuyback(), 0, "no sale means no buyback pot");
+            vm.expectRevert(IControllerV1.NotForSale.selector);
+            ctl.creditPrice(id);
+            vm.expectRevert(IControllerV1.NotForSale.selector);
+            ctl.priceOf(1);
+            vm.expectRevert(IControllerV1.NotForSale.selector);
+            ctl.atFloor(1);
+            core.book();
+            assertEq(core.ethRate(), c.rate, "ethRate fixed point");
+            assertEq(core.bidOf(id), c.bid, "bidOf fixed point");
+            assertEq(core.bidForScore(_scoreOf(id)), c.scoreBid, "bidForScore fixed point");
+            assertEq(core.floorRate(), c.floor, "floorRate fixed point");
+            assertEq(c.multiplier, 10_000, "unbooked fees do not enlarge the multiplier");
+            assertGt(core.climbMultiplier(), c.multiplier, "the booked pot enlarges the multiplier");
+            assertEq(ctl.valueOf(1_000_000), c.value, "valueOf fixed point");
+            assertEq(core.balanceRate(), c.balanceRate, "balanceRate fixed point");
+            (uint64 b2, uint128 bgt2, uint128 spent2) = core.spendState();
+            assertEq(b2, c.bucket);
+            assertEq(bgt2, c.budget, "spendState budget fixed point");
+            assertEq(spent2, c.spent);
+            emit log_named_uint("cold age seconds", ages[i]);
+            emit log_named_uint("ethRate wei per 100 points", c.rate);
+            emit log_named_uint("pending-aware spend budget wei", c.budget);
+            vm.revertToState(snap);
+        }
+    }
+
+    // promise: cold owner levers make their documented state changes but only setSettings books pending hook income
+    function test_coldOwnerRateSettingsControllerAndPauseBooking() public {
+        autoBook = false;
+        _buyCoin(funder, 2 ether);
+        vm.warp(block.timestamp + 600);
+        uint256 pending = address(core).balance - core.ethPot() - core.ethToBuyback() - core.ethRedeemBurn();
+        assertGt(pending, 0);
+        uint256 snap = vm.snapshotState();
+
+        vm.prank(owner);
+        core.setRate(OPEN_RATE);
+        assertEq(core.ethPot(), 0, "setRate does not book the real fee income");
+        assertEq(address(core).balance, pending);
+        vm.revertToState(snap);
+
+        Settings memory s = core.settings();
+        s.rateCap = type(uint64).max;
+        s.climbPerMinBps = type(uint16).max;
+        s.recoveryClimbPerMinBps = type(uint16).max;
+        s.ceilBps = type(uint16).max;
+        s.balanceBidCapBps = type(uint32).max;
+        _setSettings(s);
+        assertEq(
+            core.ethPot(),
+            pending * (10_000 - s.feeToRedeemBurnBps) / 10_000,
+            "setSettings books the pot share before changing widened bounds"
+        );
+        assertEq(core.ethRedeemBurn(), pending * s.feeToRedeemBurnBps / 10_000);
+        vm.revertToState(snap);
+
+        vm.prank(owner);
+        core.setController(address(ctl));
+        assertEq(core.ethPot(), 0, "controller probe does not book");
+        vm.prank(owner);
+        core.setPaused(true);
+        assertTrue(core.paused());
+        assertEq(core.ethPot(), 0, "pause does not book");
+        assertEq(address(core).balance, pending);
+        emit log_named_uint("pending hook income before and after cold owner calls", pending);
     }
 }
 
