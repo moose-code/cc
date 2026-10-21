@@ -7,7 +7,7 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
 import {IProRataRedemptionPolicy} from "../src/interfaces/IProRataRedemptionPolicy.sol";
-import {Settings} from "../src/interfaces/Interfaces.sol";
+import {Settings, IBalanceModule, ICreditScore, ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {LaunchChecks} from "./Checks.sol";
 
 /// @notice the read only rows of the phase 2 stack (docs/reviews/PHASE2-PLAN-fd85ba5-2026-10-20.md section 8): the
@@ -199,11 +199,82 @@ abstract contract Phase2Checks is LaunchChecks {
             )
         );
         _info("core: creditCostToPotBps", vm.toString(uint256(core.creditCostToPotBps())));
+        _payouts(core, ctl, s);
         _info(
             "core: legacy pots ethToBuyback / ethRedeemBurn (wei)",
             string.concat(vm.toString(core.ethToBuyback()), " / ", vm.toString(core.ethRedeemBurn()))
         );
         _hazard(s, ctl, controllerV2);
+    }
+
+    /// @dev the executable BALANCE payout of representative pile Credits against the posted rate, and which constraint
+    /// binds: the value mode clamp (`balanceClampFor`, the eth bid for the score at the protected sale price, which
+    /// `rateCap` bounds), the module's `available()` (working funds and the floor), or the posted rate. `PAYOUT_CREDIT_IDS`
+    /// names the Credits (comma separated), else the first five of the pile. while the balance bid is on, a sampled
+    /// payout under 95 percent of the posted rate fails the run unless `ACCEPT_PAYOUT_SHORTFALL=1` records the owner's
+    /// approval; raising `rateCap` to restore the rate also raises the eth acquisition prices and is never done here
+    function _payouts(ICore core, address ctl, Settings memory s) private {
+        address module = core.balanceModule();
+        if (module == address(0) || module.code.length == 0) {
+            _info("payout: no balance module selected, no executable payout to sample", "");
+            return;
+        }
+        uint256[] memory ids = _payoutIds(core);
+        if (ids.length == 0) {
+            _info("payout: the pile is empty and PAYOUT_CREDIT_IDS is unset, nothing to sample", "");
+            return;
+        }
+        uint256 unit = IBalanceModule(module).unitPerPoint();
+        uint256 rate = core.balanceRate();
+        bool shortfall;
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 score = ICreditScore(Mainnet.CREDIT_SCORE)
+                .scoreOf(ICredits(Mainnet.CREDITS).seedOf(ids[i]), ICredits(Mainnet.CREDITS).timestampOf(ids[i]));
+            uint256 posted = score * unit * rate / 10_000;
+            uint256 executable = core.balanceBidOf(ids[i]);
+            (uint256 clamp, bool clampOk) = _clamp(ctl, score, posted);
+            string memory binding = !s.balanceBidOn
+                ? "balanceBidOn off"
+                : (s.valueModeOn && clampOk && clamp < posted)
+                    ? "value clamp: ethPrice over the protected sale price (rateCap bounds it)"
+                    : executable == 0 ? "available(): working funds or the floor" : "posted rate";
+            _info(
+                string.concat("payout: credit ", vm.toString(ids[i])),
+                string.concat(
+                    "score ",
+                    vm.toString(score),
+                    " posted ",
+                    vm.toString(posted),
+                    " executable ",
+                    vm.toString(executable),
+                    " binding: ",
+                    binding
+                )
+            );
+            if (s.balanceBidOn && executable < posted * 95 / 100) shortfall = true;
+        }
+        _check(
+            "payout: every sampled executable payout is within 5 percent of the posted rate while the bid is on, or ACCEPT_PAYOUT_SHORTFALL=1 records the owner's approval",
+            !shortfall || vm.envOr("ACCEPT_PAYOUT_SHORTFALL", false),
+            shortfall ? "a sampled payout is materially under the posted rate" : "no shortfall"
+        );
+    }
+
+    function _payoutIds(ICore core) private view returns (uint256[] memory ids) {
+        uint256[] memory given = vm.envOr("PAYOUT_CREDIT_IDS", ",", new uint256[](0));
+        if (given.length != 0) return given;
+        uint256 n = core.pileSize();
+        if (n > 5) n = 5;
+        if (n == 0) return ids;
+        return core.pilePage(0, n);
+    }
+
+    /// @dev the controller's `balanceClampFor` through a staticcall that reports a failure as not ok
+    function _clamp(address ctl, uint256 score, uint256 posted) private view returns (uint256 paid, bool ok) {
+        (bool success, bytes memory ret) =
+            ctl.staticcall(abi.encodeCall(IControllerV1.balanceClampFor, (score, posted)));
+        if (!success || ret.length < 64) return (0, false);
+        (paid, ok) = abi.decode(ret, (uint256, bool));
     }
 
     /// @dev the hazard state of docs/RUNBOOK.md (activation order): the balance bid on, value mode off and a balance pool

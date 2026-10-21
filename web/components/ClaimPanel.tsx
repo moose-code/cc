@@ -69,7 +69,7 @@ export function ClaimPanel(p: ClaimPanelProps) {
           <div><dt>{p.ccSymbol} total supply</dt><dd>{p.ccSupply}</dd></div>
           <div><dt>contribution rate</dt><dd>{p.contributionRate} of each conversion</dd></div>
           <div><dt>redemption fee</dt><dd>{p.feeRate}</dd></div>
-          <div><dt>backing per {p.ccSymbol}</dt><dd>{p.backingPerCc} {p.balanceSymbol}</dd></div>
+          <div><dt>redeemable share per {p.ccSymbol} (claim reserve over the total supply)</dt><dd>{p.backingPerCc} {p.balanceSymbol}</dd></div>
           <div><dt>your {p.ccSymbol}</dt><dd>{p.connected ? p.walletCc : "connect your wallet"}</dd></div>
         </dl>
       </div>

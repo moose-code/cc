@@ -134,6 +134,30 @@ contract Phase2ScriptsTest is Fixture {
         assertEq(readback.read(address(core), r.treasury, address(0)), "", "without the controller too");
     }
 
+    // promise: the readback samples executable payouts against the posted rate, names the binding constraint, and fails on a material shortfall unless the owner records approval
+    function test_readbackSamplesExecutablePayoutsAndGatesAShortfall() public {
+        Phase2Deploy.Result memory r = deployProbe.deploy(_inputs());
+        IPhase2BalanceTreasury t = IPhase2BalanceTreasury(r.treasury);
+        _fillEthPile(3);
+        _setBalanceModule(r.treasury);
+        token.open();
+        token.mint(r.treasury, 5_000 ether);
+        vm.prank(owner);
+        t.setSwitches(true, true, false);
+        _setSwitches(true, true);
+        assertGt(core.balanceBidOf(core.pilePage(0, 1)[0]), 0, "the posted rate is executable");
+        assertEq(readback.read(address(core), r.treasury, r.controllerV2), "", "no shortfall, the row passes");
+        // the floor closes the bid: a sampled payout of zero is a material shortfall
+        vm.prank(owner);
+        t.setMinimumWorkingBalance(5_000 ether);
+        assertEq(core.balanceBidOf(core.pilePage(0, 1)[0]), 0);
+        string memory failed = readback.read(address(core), r.treasury, r.controllerV2);
+        assertTrue(bytes(failed).length != 0, "the shortfall row fails the run");
+        vm.setEnv("ACCEPT_PAYOUT_SHORTFALL", "1");
+        assertEq(readback.read(address(core), r.treasury, r.controllerV2), "", "the owner's approval passes it");
+        vm.setEnv("ACCEPT_PAYOUT_SHORTFALL", "0");
+    }
+
     // promise: PLAN section 8 stage A the deploy preview refuses a balance token the treasury constructor would refuse, before any creation
     function test_deployRefusesAWrongBalanceToken() public {
         token.configure(makeAddr("phase2.otherStatements"), 18);

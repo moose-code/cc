@@ -204,6 +204,18 @@ def recommend(candidates, rows, budget, max_allocation, backing_target, basis, t
     return eligible, chosen, arbitrage
 
 
+def margin_recommendation(rows, eligible, decision_size_bps, target_margin_bps):
+    """The second report output (decision 246 as amended): the smallest eligible reserve whose row at the decision
+    size is supported and meets the target net margin, or None. It answers "would this motivate buying and redeeming at
+    the tested size", apart from the backing target, and never recommends above the budget"""
+    for c in sorted(eligible):
+        for row in rows:
+            if row["candidate"] == c and row["size_bps"] == decision_size_bps and row["status"] == "ok":
+                if row["margin_bps"] is not None and row["margin_bps"] >= target_margin_bps:
+                    return c
+    return None
+
+
 def arbitrage_sentence(arbitrage):
     if arbitrage is None:
         return "no budgeted reserve creates an immediate arbitrage; proportional claims remain useful"
@@ -339,7 +351,7 @@ def print_rows(rows):
 
 
 def print_backing(candidates, total, circulating, budget, minimum_working):
-    print("backing per CC: C (BALANCE) | on total supply | on circulating supply | working left after the floor")
+    print("backing per CC: C (BALANCE) | on total supply | on circulating supply (not redeemable) | working left after the floor")
     for c in sorted(candidates):
         on_total, on_circ = backing(c, total, circulating)
         left = working_after_floor(budget, c, minimum_working)
@@ -367,7 +379,10 @@ def main(argv=None):
     p.add_argument("--test-sizes-bps", default="10,50,100", help="sizes as bps of the CC total supply")
     p.add_argument("--target-margin-bps", type=int, default=200)
     p.add_argument("--backing-target", help="BALANCE per CC the owner wants (token units per CC)")
-    p.add_argument("--backing-basis", choices=["total", "circulating"], default="total")
+    p.add_argument("--backing-basis", choices=["total", "circulating"], default="total",
+                   help="the denominator of --backing-target; the redeemable share is always on the total supply")
+    p.add_argument("--decision-size-bps", type=int, default=50,
+                   help="the test size of the second recommendation, the reserve meeting --target-margin-bps there")
     p.add_argument("--gas-price-gwei", help="default: the node's gas price")
     p.add_argument("--gas-units", type=int, default=600_000, help="buy, approve, redeemCC and sell together")
     p.add_argument("--slippage-stress-bps", type=int, default=0, help="widens both legs by this much")
@@ -440,7 +455,13 @@ def main(argv=None):
         print(f"no eligible candidate meets the backing target {fmt(backing_target)} BALANCE per CC on the {a.backing_basis} supply")
     else:
         print(f"recommended C = {fmt(chosen)} BALANCE: the smallest eligible candidate meeting {fmt(backing_target)} BALANCE per CC on the {a.backing_basis} supply")
+    by_margin = margin_recommendation(rows, eligible, a.decision_size_bps, a.target_margin_bps)
+    if by_margin is None:
+        print(f"reserve needed for a {a.target_margin_bps} bps executable arbitrage margin at {a.decision_size_bps} bps of supply: none within budget (or the sale leg is unavailable)")
+    else:
+        print(f"reserve needed for a {a.target_margin_bps} bps executable arbitrage margin at {a.decision_size_bps} bps of supply: C = {fmt(by_margin)} BALANCE")
     print(arbitrage_sentence(arbitrage))
+    print("the redeemable share is always on the total supply; the circulating column is informational and not an entitlement")
     return 0
 
 

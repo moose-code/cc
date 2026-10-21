@@ -184,5 +184,20 @@ class Recommendation(unittest.TestCase):
         self.assertEqual(arbitrage, (10_000 * WEI, 50))
 
 
+
+
+class MarginRecommendation(unittest.TestCase):
+    def test_smallest_eligible_reserve_meeting_the_margin_at_the_decision_size(self):
+        rows = [
+            {"candidate": 1000, "size_bps": 50, "status": "ok", "margin_bps": 100},
+            {"candidate": 5000, "size_bps": 50, "status": "ok", "margin_bps": 250},
+            {"candidate": 5000, "size_bps": 10, "status": "ok", "margin_bps": 900},
+            {"candidate": 20000, "size_bps": 50, "status": "ok", "margin_bps": 900},
+        ]
+        self.assertEqual(cal.margin_recommendation(rows, [1000, 5000, 20000], 50, 200), 5000)
+        self.assertIsNone(cal.margin_recommendation(rows, [1000], 50, 200), "never above budget")
+        self.assertIsNone(cal.margin_recommendation(rows, [1000, 5000, 20000], 100, 200), "no row at that size")
+
+
 if __name__ == "__main__":
     unittest.main()
