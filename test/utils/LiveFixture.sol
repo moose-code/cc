@@ -257,13 +257,6 @@ abstract contract LiveFixture is Fixture {
         return spotOf(sp);
     }
 
-    /// @notice true when the suite runs the production stage B live state (LIVE_STAGE=B): ControllerV2 selected as the
-    /// controller, the treasury selected and the settings patch applied. a test whose subject exists only on
-    /// ControllerV1 (a function V2 dropped) guards its V1 only step or returns early with `if (_liveStageB()) return;`
-    function _liveStageB() internal view returns (bool) {
-        return keccak256(bytes(vm.envOr("LIVE_STAGE", string("")))) == keccak256(bytes("B"));
-    }
-
     // ------------------------------------------------------------------ live overrides of the pile and compose helpers
 
     /// @notice fills the eth pile against live state. the base helper sizes the pot at `ethRate * n`, which assumes a
