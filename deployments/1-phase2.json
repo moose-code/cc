@@ -1,0 +1,100 @@
+{
+  "chainId": 1,
+  "core": "0xcdb1889ae12074d750CD9B8531B692015465e0dD",
+  "balanceToken": "0x3620540c994433D7B4a628C46d2ED5F92572eA07",
+  "balanceTokenCodehash": "0x83c6085628758fb522e28b5abb7c24253b6d8667a8b2b23d2c3542deabc25de7",
+  "policy": "0x433f3627Cb96c3c87A401D8e274541045ff45c51",
+  "treasury": "0xB85CF439Ca57b4bfC28fA1Cb8a97Ee85555B0496",
+  "controllerV2": "0xCD64e368b3d7033B2E2B22Fa5F67f554aB807d36",
+  "split": {
+    "address": "0x0493299d3384518bFAb5b061384271ed771EDDE2",
+    "factory": "0x8E8eB0cC6AE34A38B67D5Cf91ACa38f60bc3Ecf4",
+    "recipients": [
+      "0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a",
+      "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
+    ],
+    "allocations": [
+      833333,
+      166667
+    ],
+    "totalAllocation": 1000000,
+    "distributionIncentive": 0,
+    "controller": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
+  },
+  "constructorArgs": {
+    "policy": {},
+    "treasury": {
+      "core": "0xcdb1889ae12074d750CD9B8531B692015465e0dD",
+      "balanceToken": "0x3620540c994433D7B4a628C46d2ED5F92572eA07",
+      "policy": "0x433f3627Cb96c3c87A401D8e274541045ff45c51",
+      "predecessor": "0x0000000000000000000000000000000000000000"
+    },
+    "controllerV2": {
+      "core": "0xcdb1889ae12074d750CD9B8531B692015465e0dD",
+      "credit": {
+        "saleOn": true,
+        "window": 14400,
+        "spreadBps": 1000,
+        "startBps": 15000
+      },
+      "quote": {
+        "referenceRateBpsPerHour": 0,
+        "referenceStepBps": 0,
+        "tolBps": 0,
+        "referenceMaxStale": 0,
+        "referenceMinSeconds": 0,
+        "minLiquidity": 0
+      },
+      "statementSaleMultiplierBps": 15000,
+      "statementRedeemDelaySeconds": 3600
+    }
+  },
+  "codeHashes": {
+    "policy": "0x5f6faabee10ccfb5ac36719d4cad193d7dc70ca4c56946cdf6dc6fa919ccf2ae",
+    "treasury": "0x8f40ca0bd12444280a5b5793669cc0b66b5b661d1ea2aec0af5092ce50dc3035",
+    "controllerV2": "0x1b53eb82b718984715964c7e143a950c218f9ff200ce7f0f0fb0a36bcceb65a5"
+  },
+  "buildHashes": {
+    "policy": "0x5f6faabee10ccfb5ac36719d4cad193d7dc70ca4c56946cdf6dc6fa919ccf2ae",
+    "treasury": "0xbf53bfbc3d964c1506556712022a4fe9e31ec523d65cef37b69f2d984fb4fe44",
+    "controllerV2": "0x711de842ffd952f36ffae03d261a92d339c1cf3efa0b7b0441bdd9c8a263644e"
+  },
+  "policyVersion": "pro-rata-v1",
+  "deployment": {
+    "commit": "51fc57c",
+    "planHash": "0xca546731fd63c61f91a69409abf1e40940d97aada95dcd7edd4b306da0b9239b",
+    "transactions": [
+      {
+        "what": "ProRataRedemptionPolicy",
+        "hash": "0xa9b3f2477f25acbd557d6ce61e54e3f674270f9b8b41fc3c7206380fcc6c6f3e",
+        "block": 26243688
+      },
+      {
+        "what": "Phase2BalanceTreasury",
+        "hash": "0x16f40f482e19f4d1c4aadf5ba8023b87e3bb8f5e3dda4852193c6377670b8cf5",
+        "block": 26243689
+      },
+      {
+        "what": "ControllerV2",
+        "hash": "0x3ef3ecec42ebb2051172981c7f45eba410aa10c81a988d73cb9a6d23ce22f6d5",
+        "block": 26243697
+      },
+      {
+        "what": "push split (factory createSplit)",
+        "hash": "0x37978dcea06232d7420ffec8c13e570b711166759049805e1ef6657963b9a34a",
+        "block": 26243698
+      }
+    ],
+    "readback": "Phase2Readback 48 of 48 at block 26243717; split accepted (recipients, allocations, controller)"
+  },
+  "activation": {
+    "balanceModuleSet": false,
+    "controllerSet": false,
+    "conversionEnabled": false,
+    "workingPaymentsEnabled": false,
+    "ccRedemptionEnabled": false,
+    "statementSalesEnabled": false,
+    "balancePoolKeySet": false,
+    "artistSet": false
+  }
+}
