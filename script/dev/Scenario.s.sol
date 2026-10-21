@@ -9,6 +9,7 @@ import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
+import {IControllerV2} from "../../src/interfaces/IControllerV2.sol";
 import {
     ICredits,
     IStatements,
@@ -367,18 +368,25 @@ contract Scenario is Script {
 
     /// the sale struct and the credit struct on the controller, the rate and the settings on the Core, and a `fund`
     function _settings() internal {
-        Sale memory sale = Sale({
-            markupBps: ctl.markupBps(),
-            startCapBps: ctl.startCapBps(),
-            decayHours: ctl.decayHours(),
-            anchorHalfLife: ctl.anchorHalfLife(),
-            anchorMinCost: ctl.anchorMinCost(),
-            anchorMoveBps: ctl.anchorMoveBps()
-        });
-        sale.markupBps = 16_000;
-        vm.broadcast(OWNER);
-        ctl.setSale(sale);
-        require(ctl.markupBps() == 16_000, "settings: markupBps not set");
+        if (_isV2(address(ctl))) {
+            // ControllerV2: the statement ask multiplier replaces the V1 sale start; `markupBps()` reads it clamped
+            vm.broadcast(OWNER);
+            IControllerV2(address(ctl)).setStatementSaleMultiplierBps(16_000);
+            require(ctl.markupBps() == 16_000, "settings: multiplier not set");
+        } else {
+            Sale memory sale = Sale({
+                markupBps: ctl.markupBps(),
+                startCapBps: ctl.startCapBps(),
+                decayHours: ctl.decayHours(),
+                anchorHalfLife: ctl.anchorHalfLife(),
+                anchorMinCost: ctl.anchorMinCost(),
+                anchorMoveBps: ctl.anchorMoveBps()
+            });
+            sale.markupBps = 16_000;
+            vm.broadcast(OWNER);
+            ctl.setSale(sale);
+            require(ctl.markupBps() == 16_000, "settings: markupBps not set");
+        }
 
         CreditSale memory cs = _credit();
         cs.window = 7_200;
@@ -491,6 +499,12 @@ contract Scenario is Script {
         }
         console.log("redeem: redeemed statement", sid);
         console.log("redeem: module holding", IBalanceModule(core.balanceModule()).available());
+    }
+
+    /// @dev a ControllerV2 answers `statementSaleMultiplierBps()`
+    function _isV2(address c) internal view returns (bool) {
+        (bool ok, bytes memory ret) = c.staticcall(abi.encodeWithSignature("statementSaleMultiplierBps()"));
+        return ok && ret.length >= 32;
     }
 
     /// @dev the module's `conversionToClaimBps()` when it has one (the phase 2 treasury), else 0
