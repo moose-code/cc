@@ -7,6 +7,7 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
 import {IProRataRedemptionPolicy} from "../src/interfaces/IProRataRedemptionPolicy.sol";
+import {IStandingBidPolicy} from "../src/interfaces/IStandingBidPolicy.sol";
 import {Settings, IBalanceModule, ICreditScore, ICredits, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {LaunchChecks} from "./Checks.sol";
 
@@ -18,12 +19,15 @@ import {LaunchChecks} from "./Checks.sol";
 abstract contract Phase2Checks is LaunchChecks {
     /// @dev the policy the treasury is deployed with (plan section 4.2)
     string internal constant POLICY_VERSION = "pro-rata-v1";
+    /// @dev the standing bid policy of stage D (decision 258)
+    string internal constant BID_POLICY_VERSION = "standing-bid-v1";
 
     /// @notice every phase 2 row. `controllerV2` zero skips the controller rows
     function phase2Readback(address core, address treasury, address controllerV2) internal {
         _phase2Pins();
         bool ok = _phase2Treasury(ICore(payable(core)), treasury);
         if (ok) _phase2Policy(IPhase2BalanceTreasury(treasury).redemptionPolicy());
+        if (ok) _phase2Bid(IPhase2BalanceTreasury(treasury));
         if (controllerV2 != address(0)) _phase2Controller(core, controllerV2);
         _phase2Core(ICore(payable(core)), treasury, controllerV2);
     }
@@ -33,6 +37,7 @@ abstract contract Phase2Checks is LaunchChecks {
         _pin("ControllerV2", BUILD_HASH_CONTROLLER_V2);
         _pin("Phase2BalanceTreasury", BUILD_HASH_PHASE2_TREASURY);
         _pin("ProRataRedemptionPolicy", BUILD_HASH_PRO_RATA_POLICY);
+        _pin("StandingBidPolicy", BUILD_HASH_STANDING_BID_POLICY);
     }
 
     function _pin(string memory name, bytes32 want) private {
@@ -105,14 +110,88 @@ abstract contract Phase2Checks is LaunchChecks {
         return string.concat(vm.toString(a), " / ", vm.toString(b), " / ", vm.toString(c));
     }
 
-    /// @dev the policy the treasury points at: the compiled ProRataRedemptionPolicy with the expected version
+    /// @dev the policy the treasury points at: the compiled ProRataRedemptionPolicy of stage A or the compiled
+    /// StandingBidPolicy of stage D, with its version
     function _phase2Policy(address at) private {
-        bool ok = runtimeMatchesArtifact(at, "ProRataRedemptionPolicy");
-        _check("policy: runtime code is the compiled ProRataRedemptionPolicy", ok, vm.toString(at));
-        if (!ok) return;
+        bool pro = runtimeMatchesArtifact(at, "ProRataRedemptionPolicy");
+        bool bid = !pro && runtimeMatchesArtifact(at, "StandingBidPolicy");
+        _check(
+            "policy: runtime code is the compiled ProRataRedemptionPolicy or StandingBidPolicy",
+            pro || bid,
+            vm.toString(at)
+        );
+        if (!pro && !bid) return;
         IProRataRedemptionPolicy p = IProRataRedemptionPolicy(at);
-        _eq("policy: VERSION", p.VERSION(), POLICY_VERSION);
+        _eq("policy: VERSION", p.VERSION(), pro ? POLICY_VERSION : BID_POLICY_VERSION);
         _check("policy: isRedemptionPolicy", p.isRedemptionPolicy(), "isRedemptionPolicy()");
+    }
+
+    /// @dev the standing bid rows (stage D): the budget, the policy version read tolerantly, and with a standing bid
+    /// its premium, reference, legs, bid and capacity. the hazard row names a bid on paper only (CC redemption on, the
+    /// bid usable, no budget) or the floor only (a budget, the bid unusable); every other row is information, so a
+    /// treasury without a budget passes
+    function _phase2Bid(IPhase2BalanceTreasury t) private {
+        (, uint256 perDay) = _word(address(t), abi.encodeCall(IPhase2BalanceTreasury.bidBudgetPerDay, ()));
+        (, uint256 max) = _word(address(t), abi.encodeCall(IPhase2BalanceTreasury.bidBudgetMax, ()));
+        (, uint256 budget) = _word(address(t), abi.encodeCall(IPhase2BalanceTreasury.bidBudgetAvailable, ()));
+        _info("bid: budget per day / max / available", _three(perDay, max, budget));
+        address policy = t.redemptionPolicy();
+        string memory version = _policyVersion(policy);
+        _info("bid: policy version", version);
+        if (keccak256(bytes(version)) != keccak256(bytes(BID_POLICY_VERSION))) return;
+        bool usable = _bidRows(IStandingBidPolicy(policy));
+        _bidHazard(t.ccRedemptionEnabled(), usable, budget);
+    }
+
+    /// @dev the standing bid's state rows. returns whether the bid is usable now
+    function _bidRows(IStandingBidPolicy p) private returns (bool usable) {
+        _info("bid: premiumBps", vm.toString(uint256(p.premiumBps())));
+        uint256 referenceTime = p.referenceTime();
+        _info(
+            "bid: reference price (wei per 1e18 CC) / age (seconds)",
+            string.concat(
+                vm.toString(p.referencePrice()),
+                " / ",
+                referenceTime == 0 ? "never seeded" : vm.toString(block.timestamp - referenceTime)
+            )
+        );
+        uint256 perCC;
+        (perCC, usable) = p.bidPerCC();
+        _info("bid: bidPerCC usable / value (base units per 1e18 CC)", _flagged(usable, perCC));
+        (uint256 cc, bool ccOk) = p.protectedCCPrice();
+        _info("bid: protectedCCPrice usable / wei per 1e18 CC", _flagged(ccOk, cc));
+        (uint256 bal, bool balOk) = p.protectedBalancePrice();
+        _info("bid: protectedBalancePrice usable / wei per 1e18 base units", _flagged(balOk, bal));
+        _info("bid: bidCapacity (CC the budget covers now)", vm.toString(p.bidCapacity()));
+    }
+
+    function _bidHazard(bool on, bool usable, uint256 budget) private {
+        bool paperOnly = on && usable && budget == 0;
+        bool floorOnly = on && !usable && budget != 0;
+        _check(
+            "hazard: CC redemption on with a usable bid and no budget (the bid is on paper only) or a budget and an unusable bid (the floor only)",
+            !paperOnly && !floorOnly,
+            string.concat(
+                "ccRedemptionEnabled ",
+                vm.toString(on),
+                " bid usable ",
+                vm.toString(usable),
+                " budget ",
+                vm.toString(budget)
+            )
+        );
+    }
+
+    function _flagged(bool ok, uint256 v) private pure returns (string memory) {
+        return string.concat(vm.toString(ok), " / ", vm.toString(v));
+    }
+
+    /// @dev `VERSION()` of a policy through a staticcall, "none" for a policy without it
+    function _policyVersion(address policy) private view returns (string memory) {
+        if (policy.code.length == 0) return "none";
+        (bool ok, bytes memory ret) = policy.staticcall(abi.encodeCall(IStandingBidPolicy.VERSION, ()));
+        if (!ok || ret.length < 64) return "none";
+        return abi.decode(ret, (string));
     }
 
     function _phase2Controller(address core, address at) private {
