@@ -151,13 +151,13 @@ export function claimQuote(market: ClaimMarket | undefined, ccIn: bigint, slippa
   const executable = live ? live.executable : market.ccRedemptionEnabled && market.selected && market.transfersReady && market.solvent && !market.migrated;
   const reason = market.migrated ? "This treasury has migrated. Redeem through its successor."
     : !market.selected ? "This treasury is no longer the engine's balance module."
-    : !market.ccRedemptionEnabled ? "CC redemption is not open yet."
+    : !market.ccRedemptionEnabled ? "$CC redemption is not open yet."
     : !market.transfersReady ? "BALANCE transfers are not open yet."
     : !market.solvent ? "The treasury does not cover its claim reserve. Redemption is closed."
-    : supply === 0n ? "No CC supply."
-    : ccIn === 0n ? "Enter an amount of CC to burn."
-    : walletCc !== undefined && ccIn > walletCc ? "More CC than this wallet holds."
-    : ccIn > supply ? "More CC than the supply."
+    : supply === 0n ? "No $CC supply."
+    : ccIn === 0n ? "Enter an amount of $CC to burn."
+    : walletCc !== undefined && ccIn > walletCc ? "More $CC than this wallet holds."
+    : ccIn > supply ? "More $CC than the supply."
     : !executable ? "Redemption is not executable now. Try again later."
     : out === 0n ? "The quote is zero for this amount."
     : undefined;
@@ -202,7 +202,7 @@ export async function redeemClaim(
 ) {
   const { ccIn, minOut, epoch, deadline, account, treasury, coin, chainId } = accepted;
   const checkConsent = () => { if (!consentIsCurrent()) throw new Error("Wallet or network changed. Review your quote again."); };
-  if (ccIn <= 0n || minOut <= 0n || treasury === zeroAddress || coin === zeroAddress) throw new Error("Enter an amount of CC with a valid BALANCE quote.");
+  if (ccIn <= 0n || minOut <= 0n || treasury === zeroAddress || coin === zeroAddress) throw new Error("Enter an amount of $CC with a valid BALANCE quote.");
   checkConsent();
   if (await client.getChainId() !== chainId) throw new Error("The RPC is on the wrong network.");
   checkConsent();

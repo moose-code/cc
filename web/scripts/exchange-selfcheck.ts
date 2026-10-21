@@ -243,8 +243,8 @@ await check("claim not executable disables", () => {
   assert.match(reason({ quote: { ccIn: x, balanceOut: 1n, reserve: C, supply: S, epoch: 4n, executable: false } }), /not executable/);
   assert.match(reason({ quote: { ccIn: x, balanceOut: 0n, reserve: C, supply: S, epoch: 4n, executable: true } }), /zero/);
   assert.match(reason({}, 0n), /Enter an amount/);
-  assert.match(reason({}, x, x - 1n), /More CC than this wallet/);
-  assert.match(reason({ quote: undefined }, S + 1n), /More CC than the supply/);
+  assert.match(reason({}, x, x - 1n), /More \$CC than this wallet/);
+  assert.match(reason({ quote: undefined }, S + 1n), /More \$CC than the supply/);
   assert.equal(claimQuote(claimMarket({ quote: undefined }), x, 50)!.executable, true);
   assert.equal(claimQuote(claimMarket({ quote: undefined, ccRedemptionEnabled: false }), x, 50)!.executable, false);
 });

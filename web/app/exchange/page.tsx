@@ -29,7 +29,7 @@ export default function ExchangePage() {
   );
 }
 
-// the second panel: burn CC for a proportional share of the phase 2 treasury's claim reserve
+// the second panel: burn $CC for a proportional share of the phase 2 treasury's claim reserve
 function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
   const client = usePublicClient();
   const config = useConfig();
@@ -67,12 +67,12 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
     : !engineDeployed ? "The exchange is not configured."
     : treasury.error ? "Unable to read the treasury. Please try again."
     : !info ? "Reading the treasury…"
-    : !account ? "Connect your wallet to burn CC."
-    : wrongChain ? `Switch your wallet to ${chain.name} to burn CC.`
+    : !account ? "Connect your wallet to burn $CC."
+    : wrongChain ? `Switch your wallet to ${chain.name} to burn $CC.`
     : amountBps > 0 && ccIn === 0n ? "This wallet balance is too small for that slider position."
     : quote?.reason ?? (ccIn > 0n && !liveQuote.data ? "Reading the quote…" : undefined);
   const blocked = !account || wrongChain || !info || !quote || !quoted || quote.minOut <= 0n || Boolean(treasury.error);
-  const label = pending ? "confirming burn…" : !info?.ccRedemptionEnabled ? "redemption not open yet" : ccIn === 0n ? "enter an amount to burn" : "burn CC for BALANCE";
+  const label = pending ? "confirming burn…" : !info?.ccRedemptionEnabled ? "redemption not open yet" : ccIn === 0n ? "enter an amount to burn" : "burn $CC for BALANCE";
 
   async function burn() {
     if (blocked || pending || !account || !client || !info || !market || !quote) return;
@@ -99,7 +99,7 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
   }
 
   const notice = !engineDeployed ? "The exchange is not configured."
-    : treasury.data === null ? "The engine's balance module is not a phase 2 treasury yet. CC burns open once the treasury is selected."
+    : treasury.data === null ? "The engine's balance module is not a phase 2 treasury yet. $CC burns open once the treasury is selected."
     : undefined;
   const pct = (bps: number) => `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
   return <ClaimPanel
@@ -113,7 +113,7 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
     claimReserve={bal(info?.claimReserve)}
     freeWorking={bal(info?.freeWorking)}
     ccSupply={cc(info?.ccSupply)}
-    ccSymbol={info?.coinSymbol ?? "CC"}
+    ccSymbol="$CC"
     contributionRate={info ? pct(info.conversionToClaimBps) : "—"}
     feeRate={info ? pct(info.redemptionFeeBps) : "—"}
     backingPerCc={bal(quote?.backingPerCc ?? (info ? (info.ccSupply > 0n ? (info.claimReserve * 10n ** 18n) / info.ccSupply : 0n) : undefined))}

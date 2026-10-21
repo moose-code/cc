@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-// The "Burn CC for BALANCE" panel of /exchange: presentation only. Every figure arrives formatted; the page owns the
+// The "Burn $CC for BALANCE" panel of /exchange: presentation only. Every figure arrives formatted; the page owns the
 // reads, the quote arithmetic (web/lib/exchange.ts claimQuote) and the consent flow (redeemClaim).
 
 export type ClaimReceipt = { burned: string; received: string; hash: string };
@@ -46,7 +46,7 @@ export function ClaimPanel(p: ClaimPanelProps) {
   if (p.notice) {
     return (
       <section className="claim-panel claim-panel-notice" aria-labelledby="claim-title">
-        <h2 id="claim-title">Burn CC for $BALANCE</h2>
+        <h2 id="claim-title">Burn $CC for $BALANCE</h2>
         <p role="status">{p.notice}</p>
       </section>
     );
@@ -54,9 +54,9 @@ export function ClaimPanel(p: ClaimPanelProps) {
   return (
     <section className="claim-panel" aria-labelledby="claim-title" aria-busy={p.busy}>
       <div className="claim-facts">
-        <h2 id="claim-title">Burn CC for $BALANCE</h2>
+        <h2 id="claim-title">Burn $CC for $BALANCE</h2>
         <p className="claim-lede">
-          A burn of CC pays a proportional share of the treasury&apos;s claim reserve, the backing the engine&apos;s owner manages.
+          A burn of $CC pays a proportional share of the treasury&apos;s claim reserve, the backing the engine&apos;s owner manages.
           It is not an automatic market purchase: the owner can add backing, move backing to working funds while redemption
           is paused, and replace the redemption policy, and each such change invalidates pending quotes. The 90 percent
           Credit payout above can be lowered by price protection; this burn pays the share quoted below or reverts.
