@@ -117,6 +117,9 @@ abstract contract LiveFixture is Fixture {
             assertEq(core.controller(), st.controllerV2, "stage B: ControllerV2 is the controller");
             assertEq(core.balanceModule(), st.treasury, "stage B: the treasury is the module");
             assertEq(core.artist(), st.split, "stage B: the split is the artist");
+            // the owner's Statement sales switch (a stage C step), so suites that sell Statements run in this state
+            vm.prank(owner);
+            IStatementSales(st.controllerV2).setStatementSales(true);
         }
     }
 
