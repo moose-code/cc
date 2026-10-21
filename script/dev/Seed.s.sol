@@ -62,9 +62,9 @@ interface IUpstreamStatements {
 /// PHASE=phase2 wires the phase 2 stack (decisions 245 to 252) for the local UI: the standin balance token
 /// (`test/standins/Phase2BalanceTokenStandin.sol`, every upstream gate open, mintable; the real auction token cannot
 /// open its transfer gate on a fork without its auction), `ProRataRedemptionPolicy`, `Phase2BalanceTreasury` and
-/// `ControllerV2` from the production sources. As owner it selects the treasury and ControllerV2, sets
-/// `creditCostToPotBps` 10,000 and the three buyback shares to 0, turns `redeemOn` on and, with no pool key set (so no
-/// hazard state), `balanceBidOn` on, funds the treasury with `PHASE2_WORKING` (default 50,000) BALANCE of working funds
+/// `ControllerV2` from the production sources. As owner it selects the treasury and ControllerV2, keeps
+/// `creditCostToPotBps` and the three buyback shares as deployed (decision 262), turns `redeemOn` on and, with no pool
+/// key set (so no hazard state), `balanceBidOn` on, funds the treasury with `PHASE2_WORKING` (default 50,000) BALANCE of working funds
 /// and allocates `PHASE2_CLAIMS` (default 10,000) to claims, turns every treasury switch and statement sales on. The
 /// dev wallet gets CC from the Scenario `dev-wallet` stage, so `/exchange` can sell Credits and burn CC locally.
 ///
@@ -175,12 +175,8 @@ contract Seed is Script {
 
         core.setBalanceModule(address(treasury));
         core.setController(address(v2));
-        core.setCreditCostToPotBps(10_000);
         Settings memory s = core.settings();
         s.redeemOn = true;
-        s.saleToBuybackBps = 0;
-        s.feeToRedeemBurnBps = 0;
-        s.redeemBurnBps = 0;
         // no pool key is set on ControllerV2, so the bid on with value mode off is not the hazard state; the local
         // exchange sells Credits at the posted 90 percent
         s.balanceBidOn = true;
