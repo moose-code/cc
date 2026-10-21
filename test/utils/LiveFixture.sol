@@ -337,6 +337,8 @@ abstract contract LiveFixture is Fixture {
     /// on the live Core. the brief allows a raw listing adapter a test approves as owner. `LiveFixture.setUp` does not
     /// set `rawAdapter` (the fresh `Fixture` did), so a suite that uses `_buyRaw` calls this in its own setUp
     function _approveRawAdapter() internal {
+        // setUp already installs it; a suite that also calls this keeps the approved one
+        if (rawAdapter != address(0)) return;
         rawAdapter = _user("rawAdapter");
         vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
         vm.prank(owner);
