@@ -10,6 +10,8 @@ import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {IControllerV2} from "../../src/interfaces/IControllerV2.sol";
+import {IPhase2BalanceTreasury} from "../../src/interfaces/IPhase2BalanceTreasury.sol";
+import {IStandingBidPolicy} from "../../src/interfaces/IStandingBidPolicy.sol";
 import {
     ICredits,
     IStatements,
@@ -43,6 +45,9 @@ interface IERC20R {
 ///
 /// PHASE=pre runs the stages up to `buyback`, then `fresh-fill`, `fresh-compose` and `report`. PHASE=post adds
 /// `fill-d`, `compose-d`, `redeem` and `balance-bid` before the fresh stages and needs the balance side from Seed.
+/// PHASE=phase2 with BID=1 adds `standing-bid` after `report`: it seeds the standing bid policy's CC reference on the
+/// coin pool (priced with active liquidity since stage `a`), refreshes ControllerV2's balance reference and burns CC
+/// at the bid.
 ///
 /// env: CORE, OWNER, A1 A2 A3 (credit holders), KEEPER (calls keeper doors), TRADER (trades the coin and holds the CC that
 /// `composeChosen` and `setHeldFormat` require), DEV_WALLET (stage `dev-wallet` only).
@@ -105,6 +110,7 @@ contract Scenario is Script {
         else if (stage == keccak256("fresh-fill")) _fill(A1, 80, "fresh-fill");
         else if (stage == keccak256("fresh-compose")) _freshCompose();
         else if (stage == keccak256("report")) _report();
+        else if (stage == keccak256("standing-bid")) _standingBid();
         else revert(string.concat("unknown STAGE ", vm.envString("STAGE")));
     }
 
@@ -608,6 +614,72 @@ contract Scenario is Script {
         require(ctl.pastWindow(oldest), "report: the oldest pile credit is not past its window");
         require(!ctl.pastWindow(newest), "report: the newest pile credit is not inside its window");
         console.log("report: pile holds credits past and inside their window");
+    }
+
+    // ------------------------------------------------------------------ standing-bid: a burn at the bid
+
+    /// the owner seeds the standing bid policy's CC reference from the live coin pool spot (the pool has had active
+    /// liquidity since stage `a`), the keeper refreshes ControllerV2's balance reference, which the warps since the
+    /// seed left stale, then the trader burns CC under the budget and is paid the bid, above the proportional share
+    function _standingBid() internal {
+        IPhase2BalanceTreasury t = IPhase2BalanceTreasury(core.balanceModule());
+        IStandingBidPolicy p = IStandingBidPolicy(t.redemptionPolicy());
+        _seedBidReferences(p);
+        (uint256 perCC, bool ok) = p.bidPerCC();
+        require(ok && perCC != 0, "standing-bid: the bid is unusable");
+        uint256 capacity = p.bidCapacity();
+        require(capacity != 0, "standing-bid: no capacity, the budget did not accrue since the seed");
+        // a burn the budget covers, from the trader's CC
+        uint256 x = capacity / 2;
+        if (x > IERC20R(coin).balanceOf(TRADER) / 10) x = IERC20R(coin).balanceOf(TRADER) / 10;
+        require(x != 0, "standing-bid: the trader holds no CC");
+        uint256 expected = _bidQuoteOf(t, p, x);
+        uint256 budget = t.bidBudgetAvailable();
+        _burnAtBid(t, x, expected);
+        // the treasury charges the whole payment at the bid to the budget, not only the part above the share
+        require(t.bidBudgetAvailable() == budget - expected, "standing-bid: the budget was not charged the payment");
+        console.log("standing-bid: bidPerCC", perCC);
+        console.log("standing-bid: bidCapacity before the burn", capacity);
+        console.log("standing-bid: burned CC", x);
+        console.log("standing-bid: paid at the bid", expected);
+        console.log("standing-bid: budget left", t.bidBudgetAvailable());
+    }
+
+    /// @dev seeds the policy's CC reference and refreshes ControllerV2's balance reference; both legs must then price
+    function _seedBidReferences(IStandingBidPolicy p) internal {
+        (uint256 live, bool priced) = p.ccSpot();
+        require(priced && live != 0, "standing-bid: the coin pool has no price");
+        vm.broadcast(OWNER);
+        p.seedReference(live);
+        vm.broadcast(KEEPER);
+        IControllerV2(address(ctl)).refreshReference();
+        (uint256 value, bool ok) = IControllerV2(address(ctl)).valuePerPoint(true);
+        require(ok && value != 0, "standing-bid: ControllerV2's balance leg is unusable after the refresh");
+    }
+
+    /// @dev the treasury's quote of a burn of `x` must be the bid less the fee, above the share and inside the budget
+    function _bidQuoteOf(IPhase2BalanceTreasury t, IStandingBidPolicy p, uint256 x) internal view returns (uint256) {
+        (uint256 share, uint256 budget,) = t.redemptionTerms(x);
+        (uint256 bid,) = p.bidFor(x);
+        uint256 expected = bid * (10_000 - t.redemptionFeeBps()) / 10_000;
+        require(expected > share, "standing-bid: the bid is not above the share");
+        require(expected <= budget, "standing-bid: the burn is over the budget");
+        (uint256 quoted,,,, bool executable) = t.quoteRedemption(x);
+        require(quoted == expected && executable, "standing-bid: the quote is not the bid");
+        console.log("standing-bid: the share of the same burn", share);
+        return expected;
+    }
+
+    /// @dev the trader burns `x` CC for exactly `expected` of the balance token
+    function _burnAtBid(IPhase2BalanceTreasury t, uint256 x, uint256 expected) internal {
+        IERC20R token = IERC20R(core.balanceToken());
+        uint256 paidBefore = token.balanceOf(TRADER);
+        uint64 epoch = t.configEpoch();
+        vm.broadcast(TRADER);
+        IERC20R(coin).approve(address(t), x);
+        vm.broadcast(TRADER);
+        t.redeemCC(x, TRADER, expected, _deadline(), epoch);
+        require(token.balanceOf(TRADER) == paidBefore + expected, "standing-bid: the burner was not paid the bid");
     }
 
     // ------------------------------------------------------------------ helpers

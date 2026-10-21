@@ -7,6 +7,8 @@
 #   PHASE=pre script/dev/local.sh  the engine before the balance token
 #   PHASE=phase2 script/dev/local.sh  the phase 2 stack on the standin balance token, every switch on (the web's
 #                                  /exchange sells Credits and burns CC locally)
+#   BID=1 PHASE=phase2 script/dev/local.sh  the phase 2 stack with the standing bid installed and budgeted (its own
+#                                  cache entry)
 #   FRESH=1 script/dev/local.sh    ignore the cache and rebuild
 #   script/dev/local.sh stop       stop the anvil this script started
 set -euo pipefail
@@ -15,6 +17,8 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 PHASE="${PHASE:-post}"
+BID="${BID:-0}"
+export BID
 PORT="${PORT:-8545}"
 RPC="http://127.0.0.1:$PORT"
 if [ "${STACK:-live}" = master ]; then DEFAULT_FORK_BLOCK=26158000; else DEFAULT_FORK_BLOCK=26208025; fi
@@ -46,12 +50,13 @@ if [ "${1:-}" = "stop" ]; then stop_anvil; exit 0; fi
 
 # content hash of every non ignored source the run depends on; commits and stashes leave it unchanged
 KEY="$({
-  echo "$PHASE $FORK_BLOCK"
+  echo "$PHASE $FORK_BLOCK $BID"
   git ls-files -co --exclude-standard src script test/standins test/utils foundry.toml remappings.txt \
     | grep -v '^script/dev/local.sh$' | sort | while read -r f; do [ -f "$f" ] && shasum "$f"; done
 } | shasum | cut -c1-12)"
-STATE="$CACHE_DIR/state-$PHASE-$KEY.hex"
-RECORD="$CACHE_DIR/record-$PHASE-$KEY.json"
+TAG="$PHASE"; [ "$BID" != 1 ] || TAG="$PHASE-bid"
+STATE="$CACHE_DIR/state-$TAG-$KEY.hex"
+RECORD="$CACHE_DIR/record-$TAG-$KEY.json"
 
 stop_anvil
 if lsof -ti "tcp:$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -68,18 +73,18 @@ for _ in $(seq 1 60); do cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break
 lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 > "$ANVIL_PID_FILE" || true
 
 if [ "${FRESH:-0}" != "1" ] && [ -f "$STATE" ] && [ -f "$RECORD" ]; then
-  echo "cache hit: phase $PHASE key $KEY"
+  echo "cache hit: phase $TAG key $KEY"
   printf '{"jsonrpc":"2.0","id":1,"method":"anvil_loadState","params":["%s"]}' "$(cat "$STATE")" \
     | curl -sf -X POST -H 'content-type: application/json' --data-binary @- "$RPC" >/dev/null
   mkdir -p deployments
   jq --arg u "$RPC" '.rpcUrl = $u' "$RECORD" > deployments/31337.json
 else
-  echo "cache miss: phase $PHASE key $KEY, running the end to end once"
-  NO_ANVIL=1 E2E_RPC_URL="$RPC" PHASE="$PHASE" script/dev/e2e.sh
+  echo "cache miss: phase $TAG key $KEY, running the end to end once"
+  NO_ANVIL=1 E2E_RPC_URL="$RPC" PHASE="$PHASE" BID="$BID" script/dev/e2e.sh
   cast rpc anvil_dumpState --rpc-url "$RPC" | tr -d '"' > "$STATE"
   cp deployments/31337.json "$RECORD"
   echo "saved $STATE"
 fi
 
-echo "anvil running on $RPC (pid $(cat "$PID_FILE")), phase $PHASE, record deployments/31337.json"
+echo "anvil running on $RPC (pid $(cat "$PID_FILE")), phase $TAG, record deployments/31337.json"
 echo "stop: script/dev/local.sh stop"

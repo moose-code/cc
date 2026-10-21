@@ -18,6 +18,9 @@ import {ControllerV2} from "../../src/ControllerV2.sol";
 import {Quote} from "../../src/interfaces/Interfaces.sol";
 import {CreditIds} from "../../test/utils/CreditIds.sol";
 import {Phase2BalanceTokenStandin} from "../../test/standins/Phase2BalanceTokenStandin.sol";
+import {StandingBidPolicy} from "../../src/adapters/StandingBidPolicy.sol";
+import {TestLiquidityHelper} from "../../test/utils/TestLiquidityHelper.sol";
+import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 
 /// the ConversionLineageWithdrawals surface the production balance wiring reads from the pinned artifact.
 interface IUpstreamToken {
@@ -68,8 +71,18 @@ interface IUpstreamStatements {
 /// and allocates `PHASE2_CLAIMS` (default 10,000) to claims, turns every treasury switch and statement sales on. The
 /// dev wallet gets CC from the Scenario `dev-wallet` stage, so `/exchange` can sell Credits and burn CC locally.
 ///
+/// PHASE=phase2 with BID=1 adds the standing bid (decision 258): a native eth / standin pool with full range liquidity
+/// priced so the bid per CC sits at `BID_SHARE_MULTIPLE` times the proportional share of the claim reserve, ControllerV2's
+/// pool key and quote on it, `StandingBidPolicy` installed on the treasury (the switches set again, since
+/// `setRedemptionPolicy` turns CC redemption off) with its own quote inside its bounds, and a bid budget of `BID_BUDGET_PER_DAY` and
+/// `BID_BUDGET_MAX` (default 10 and 30 BALANCE). the policy's CC reference cannot be seeded here: the coin pool has
+/// no active liquidity before its first buy, so the Scenario stage `standing-bid` seeds it after stage `a`. with the
+/// pool key set, `balanceBidOn` on and value mode off the node sits in the hazard state of docs/RUNBOOK.md (a balance
+/// token priced above the curve opens a round trip); that is a local dev state like ALLOW_MODE_OFF_BALANCE_BID.
+///
 /// env: A1 A2 A3, DEPLOYER (the owner), PHASE (pre, post or phase2, default post), and for post and phase2 CORE and
-/// TRADER. optional N1 N2 N3 (credits moved, default 330 10 10), LAUNCH_CONFIG (default script/config/anvil.json).
+/// TRADER. optional N1 N2 N3 (credits moved, default 330 10 10), LAUNCH_CONFIG (default script/config/anvil.json),
+/// BID (phase2 only, 1 adds the standing bid).
 contract Seed is Script {
     /// @dev credits the CreditStrategy lists for sale at the pin block, skipped when credits are moved
     uint256 internal constant LISTED_A = 35377;
@@ -198,6 +211,103 @@ contract Seed is Script {
         console.log("BALANCE_MODULE", address(treasury));
         console.log("CONTROLLER_V2", address(v2));
         console.log("POLICY", address(policy));
+        if (keccak256(bytes(vm.envOr("BID", string("0")))) == keccak256("1")) {
+            _seedStandingBid(owner, treasury, v2, token);
+        }
+    }
+
+    /// full range for tick spacing 60, a multiple of 60
+    int24 internal constant TICK_FULL = 887_220;
+    /// the bid per CC over the proportional share of the claim reserve at seed, so the local panel quotes the bid
+    uint256 internal constant BID_SHARE_MULTIPLE = 4;
+    /// the eth leg of the standin pool's full range position; the token leg follows from the price
+    uint256 internal constant BID_POOL_ETH = 1 ether;
+
+    /// @dev the standing bid on the standin: its pool, ControllerV2's reference on it, the policy and the budget
+    function _seedStandingBid(
+        address owner,
+        Phase2BalanceTreasury treasury,
+        ControllerV2 v2,
+        Phase2BalanceTokenStandin token
+    ) internal {
+        console.log("== STANDING BID (Seed phase2, BID=1): eth/standin pool, ControllerV2 reference, policy, budget ==");
+        uint256 perDay = vm.envOr("BID_BUDGET_PER_DAY", uint256(10 ether));
+        uint256 max = vm.envOr("BID_BUDGET_MAX", uint256(30 ether));
+        // ControllerV2's reference on the standin pool at the value mode settings the tests use; the policy's own
+        // bounds are tighter (tolBps at most 100, the rate at most 1,000 per hour), so it gets its own quote
+        Quote memory q = Quote({
+            referenceRateBpsPerHour: 1_000,
+            referenceStepBps: 500,
+            tolBps: 450,
+            referenceMaxStale: 1 days,
+            referenceMinSeconds: 0,
+            minLiquidity: 1
+        });
+        Quote memory bidQuote = Quote({
+            referenceRateBpsPerHour: 200,
+            referenceStepBps: 100,
+            tolBps: 0,
+            referenceMaxStale: 1 days,
+            referenceMinSeconds: 0,
+            minLiquidity: 1
+        });
+
+        vm.broadcast(owner);
+        StandingBidPolicy bid = new StandingBidPolicy(address(treasury));
+
+        // the standin's eth price from the two live reads: the coin pool spot (initialized at launch, priced before its
+        // first buy) and the share per CC, so `bidPerCC` lands at BID_SHARE_MULTIPLE times the share
+        (uint256 ccSpot, bool priced) = bid.ccSpot();
+        require(priced && ccSpot != 0, "bid: the coin pool has no price");
+        (uint256 sharePerCC,,) = treasury.redemptionTerms(1e18);
+        require(sharePerCC != 0, "bid: no share per CC");
+        uint256 balSpot = FullMath.mulDiv(
+            ccSpot * (10_000 + bid.premiumBps()), 1e18, 10_000 * sharePerCC * BID_SHARE_MULTIPLE
+        );
+        // sqrtPriceX96 = 2^96 * sqrt(1e18 / spot), the inverse of the spot read within its rounding
+        uint160 sqrt = uint160(FullMath.mulDiv(FixedPoint96.Q96, FixedPointMathLib.sqrt(1e36 / balSpot), 1e9));
+        uint256 spot = FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, sqrt), FixedPoint96.Q96, sqrt);
+        // full range liquidity with BID_POOL_ETH on the eth leg: amount0 is about liq * 2^96 / sqrt and amount1 about
+        // liq * sqrt / 2^96; the helper pulls the token leg and refunds the eth it does not need
+        uint128 liq = uint128(FullMath.mulDiv(BID_POOL_ETH, sqrt, FixedPoint96.Q96));
+        uint256 tokens = FullMath.mulDivRoundingUp(liq, sqrt, FixedPoint96.Q96) + 1;
+        PoolKey memory key = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(token)),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(0))
+        });
+
+        vm.startBroadcast(owner);
+        IPoolManager(Mainnet.POOL_MANAGER).initialize(key, sqrt);
+        TestLiquidityHelper lp = new TestLiquidityHelper();
+        token.mint(owner, tokens);
+        token.approve(address(lp), tokens);
+        lp.modify{value: BID_POOL_ETH * 105 / 100}(key, -TICK_FULL, TICK_FULL, int256(uint256(liq)));
+        v2.setBalancePoolKey(key, spot);
+        v2.setQuote(q);
+        // the policy quotes the floor until its reference is seeded, so the install probe passes at any pool price;
+        // installing turns CC redemption off, so the switches are set again
+        treasury.setRedemptionPolicy(address(bid));
+        treasury.setSwitches(true, true, true);
+        bid.setQuote(bidQuote);
+        treasury.setBidBudget(uint128(perDay), uint128(max));
+        vm.stopBroadcast();
+
+        require(v2.balancePoolKeySet(), "bid: ControllerV2 pool key not set");
+        require(treasury.redemptionPolicy() == address(bid), "bid: policy not installed");
+        require(treasury.ccRedemptionEnabled(), "bid: CC redemption off after the install");
+        require(treasury.bidBudgetMax() == max, "bid: budget not set");
+        (uint256 value, bool ok) = v2.valuePerPoint(true);
+        require(ok && value != 0, "bid: the balance leg is unusable");
+        (uint256 perCC, bool usable) = bid.bidPerCC();
+        console.log("STANDING_BID_POLICY", address(bid));
+        console.log("standin pool spot, wei per 1e18 BALANCE", spot);
+        console.log("standin pool liquidity", uint256(liq));
+        console.log("share per CC at seed", sharePerCC);
+        console.log("bidPerCC at seed (0 until stage standing-bid seeds the CC reference)", perCC, usable);
+        console.log("bidCapacity at seed", bid.bidCapacity());
     }
 
     /// @dev Jack's `ConversionLineageWithdrawals` from the pinned artifact, wired the way the production-module test does:

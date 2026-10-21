@@ -6,6 +6,9 @@
 #   PHASE=pre    the engine before the balance token: the module unset, balanceBidOn false, redeemOn as the config sets it (a redemption reverts NoBalanceModule).
 #   PHASE=phase2 Seed deploys the standin balance token, the phase 2 treasury, the pro rata policy and ControllerV2,
 #                selects them and turns every switch on (docs/RUNBOOK.md section 7, phase 2 locally)
+#   BID=1        with PHASE=phase2: Seed adds the standing bid (an eth/standin pool, ControllerV2's reference on it,
+#                StandingBidPolicy on the treasury and a bid budget); the record carries standingBidPolicy and the
+#                stage standing-bid runs last, followed by a cast read that asserts a burn quotes the bid
 #   PHASE=post   (default) Seed deploys the balance token, the best guess redeem module and an eth/balance pool and
 #                switches the balance side on; the stages add a redemption and a balance bid.
 #
@@ -23,7 +26,10 @@ PORT="${PORT:-8545}"
 E2E_RPC_URL="${E2E_RPC_URL:-http://127.0.0.1:$PORT}"
 PHASE="${PHASE:-post}"
 KEEP="${KEEP:-0}"
+BID="${BID:-0}"   # 1 adds the standing bid, phase2 only
+export BID
 case "$PHASE" in pre|post|phase2) ;; *) echo "PHASE must be pre, post or phase2, got $PHASE" >&2; exit 2 ;; esac
+[ "$BID" != 1 ] || [ "$PHASE" = phase2 ] || { echo "BID=1 needs PHASE=phase2" >&2; exit 2; }
 
 # the node is chain id 31337 for both stacks; the dev wallet owns the factory and the engine. STACK=master is exported
 # so script/deploy.sh and the forge scripts overlay the master stack record (the dev wallet is its fork owner too).
@@ -76,7 +82,7 @@ tmp="$(mktemp)"
 jq --arg phase "$PHASE" --arg a1 "$A1" --arg a2 "$A2" --arg a3 "$A3" --arg k "$KEEPER" --arg t "$TRADER" --arg o "$DEV_WALLET" \
   '.accounts = ({a1: $a1, a2: $a2, a3: $a3, keeper: $k, trader: $t} + (if $o == "" then {} else {owner: $o} end)) | .phase = $phase' $REC > "$tmp" && mv "$tmp" $REC
 if [ "$PHASE" = "phase2" ]; then
-  pick() { printf '%s\n' "$SEED" | grep -oE "$1 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
+  pick() { printf '%s\n' "$SEED" | grep -oEw "$1 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
   TOKEN="$(pick BALANCE_TOKEN)"; MODULE="$(pick BALANCE_MODULE)"; V2="$(pick CONTROLLER_V2)"; POLICY="$(pick POLICY)"
   [ -n "$TOKEN" ] && [ -n "$MODULE" ] && [ -n "$V2" ] || { echo "$SEED" | tail -40; echo "no phase 2 addresses from seed" >&2; exit 1; }
   # the Core now points at ControllerV2: the record and every later stage read it
@@ -84,9 +90,15 @@ if [ "$PHASE" = "phase2" ]; then
   jq --arg t "$TOKEN" --arg m "$MODULE" --arg c "$V2" --arg p "$POLICY" \
     '.controllerV1 = .controller | .controller = $c | .controllerV2 = $c | .balanceToken = $t | .balanceModule = $m | .redemptionPolicy = $p | .balancePool = null' $REC > "$tmp" && mv "$tmp" $REC
   echo "phase 2: balanceToken $TOKEN treasury $MODULE controllerV2 $V2 policy $POLICY"
+  if [ "$BID" = 1 ]; then
+    BID_POLICY="$(pick STANDING_BID_POLICY)"
+    [ -n "$BID_POLICY" ] || { echo "$SEED" | tail -40; echo "no standing bid policy from seed" >&2; exit 1; }
+    jq --arg b "$BID_POLICY" '.standingBidPolicy = $b | .redemptionPolicy = $b' $REC > "$tmp" && mv "$tmp" $REC
+    echo "standing bid: policy $BID_POLICY (the pro rata policy $POLICY is no longer installed)"
+  fi
 fi
 if [ "$PHASE" = "post" ]; then
-  pick() { printf '%s\n' "$SEED" | grep -oE "$1 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
+  pick() { printf '%s\n' "$SEED" | grep -oEw "$1 0x[0-9a-fA-F]{40}" | tail -1 | grep -oE '0x[0-9a-fA-F]{40}'; }
   TOKEN="$(pick BALANCE_TOKEN)"; MODULE="$(pick BALANCE_MODULE)"
   [ -n "$TOKEN" ] && [ -n "$MODULE" ] || { echo "$SEED" | tail -40; echo "no balance addresses from seed" >&2; exit 1; }
   TOPEN="$(printf '%s\n' "$SEED" | grep -oE 'OPENS_AT [0-9]+' | tail -1 | grep -oE '[0-9]+')"
@@ -192,5 +204,25 @@ stage fresh-fill
 past_window; stage fresh-compose
 stage report
 
-say "LOCAL END TO END PASSED (PHASE=$PHASE)"
+if [ "$BID" = 1 ]; then
+  stage standing-bid
+  say "the standing bid quotes above the share up to its capacity (decision 258)"
+  # bidPerCC and bidCapacity from the policy, then the treasury's quote of a burn inside the capacity: it is the bid
+  # for that burn less the redemption fee, above the proportional share of the claim reserve
+  BIDP="$(jq -r .standingBidPolicy $REC)"
+  PER="$(call "$BIDP" 'bidPerCC()(uint256,bool)' | sed -n 1p | awk '{print $1}')"
+  USABLE="$(call "$BIDP" 'bidPerCC()(uint256,bool)' | sed -n 2p | awk '{print $1}')"
+  CAP="$(call "$BIDP" 'bidCapacity()(uint256)' | awk '{print $1}')"
+  X="$(python3 -c "print($CAP // 4)")"
+  Q="$(call "$MODULE" 'quoteRedemption(uint256)(uint256,uint256,uint256,uint64,bool)' "$X" | sed -n 1p | awk '{print $1}')"
+  EXEC="$(call "$MODULE" 'quoteRedemption(uint256)(uint256,uint256,uint256,uint64,bool)' "$X" | sed -n 5p | awk '{print $1}')"
+  SHARE="$(call "$MODULE" 'redemptionTerms(uint256)(uint256,uint256,uint256)' "$X" | sed -n 1p | awk '{print $1}')"
+  FEE="$(call "$MODULE" 'redemptionFeeBps()(uint16)' | awk '{print $1}')"
+  WANT="$(python3 -c "print($X * $PER // 10**18 * (10000 - $FEE) // 10000)")"
+  echo "standing bid: bidPerCC $PER (usable $USABLE) bidCapacity $CAP; a burn of $X quotes $Q (bid $WANT, share $SHARE, executable $EXEC)"
+  [ "$USABLE" = true ] && [ "$EXEC" = true ] && [ "$Q" = "$WANT" ] && [ "$(python3 -c "print(int($Q > $SHARE))")" = 1 ] \
+    || { echo "CHECK FAILED: the treasury's quote is not the standing bid" >&2; exit 1; }
+fi
+
+say "LOCAL END TO END PASSED (PHASE=$PHASE$([ "$BID" = 1 ] && echo " BID=1"))"
 finish
