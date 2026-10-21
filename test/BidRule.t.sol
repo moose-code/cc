@@ -28,20 +28,25 @@ contract BidRuleTest is Fixture {
 
     /// Addendum 4: the bid rule is proven against the FULL live Core settings struct read at the pin, not the launch
     /// defaults. reading the live Core binds every field to its production value: besides the drop 29, climb 100 and
-    /// recovery climb 100 and rateCap 1.71e16, this also brings reserveWei 1e17 (which the pot clamp and climb limit
-    /// subtract), feeToRedeemBurnBps 1000 and keeperFee 2e14 / callerFee 0 (the pending-fee pot share and the keeper
-    /// payments). every expected number is recomputed from `core.settings()` and `core.reserve()`. buyToArtistBps is
-    /// held at 0 so the clamp room reads the pot alone (the royalty's share of the room is test/ArtistRoyalty.t.sol's;
-    /// the live value is 250, reported as a finding). the suite reads the live settings, so it must run on a fork at or
-    /// near the pin
+    /// recovery climb 100 and rateCap 1.71e16, this also brings reserveWei 1e17, buyToArtistBps 250 and
+    /// feeToRedeemBurnBps 1000. every expected number is recomputed from `core.settings()` and `core.reserve()`: the pot
+    /// clamp and climb limit read the eth bid room `(pot - reserve) * 10_000 / (10_000 + buyToArtistBps)` (`_room`), and
+    /// the booked pot share is net of the redeem burn. the suite reads the live settings, so it must run on a fork at or
+    /// near the pin (after stage B buyToArtistBps is 300, which the lead's stage B run covers; this handles today's 250)
     function _settings() internal view override returns (Settings memory s) {
         s = ICore(payable(LIVE_CORE)).settings();
-        s.buyToArtistBps = 0;
     }
 
     using stdStorage for StdStorage;
 
     uint256 internal constant START = OPEN_RATE;
+
+    /// @dev the eth bid room the live Core affords from `pot`: the pot less the live reserve, over 1 + buyToArtistBps /
+    /// 10_000 (so a shown bid is payable with its artist royalty on top). mirrors `CoreLib._roomAt`, the value the read
+    /// clamps to. for the test pot magnitudes the plain mul floors the same as the contract's mulDiv
+    function _room(uint256 pot) internal view returns (uint256) {
+        return (pot - core.reserve()) * 10_000 / (10_000 + core.settings().buyToArtistBps);
+    }
 
     /// @dev the price state after one 100-point credit bought at state `r`, from the live settings (ratio 1, so the fall
     /// is the full `dropPer100PointsBps`). recomputed through the shared `BidModel`, never a launch constant
@@ -149,23 +154,25 @@ contract BidRuleTest is Fixture {
     // promise: inv 19 the read is at most the price state and follows the pot
     /// the read does not fall as the pot grows and never exceeds the price state
     function test_readIsMonotoneInThePot() public {
-        // the bid room is the pot less the live reserve (reserveWei 1e17, pin 26242107), so the sweep rides above it
+        // the bid room is the pot less the live reserve over 1 + buyToArtistBps / 10_000, so the sweep rides above the
+        // reserve and the room the pot affords is `_room(pot)`
         uint256 res = core.reserve();
         uint256 last;
-        for (uint256 i; i <= 40; ++i) {
+        for (uint256 i; i <= 60; ++i) {
             _potTo(res + i * 0.05e15);
             uint256 read = core.ethRate();
             assertGe(read, last, "the read does not fall as the pot grows");
             assertLe(read, core.rateAtCheckpoint(), "the read is at most the price state");
             last = read;
         }
-        assertEq(last, START, "a pot of reserve + 2e15 wei reads the price state");
-        // one wei of pot on either side of the pot that reads the price state
-        uint256 full = START;
-        assertEq(core.ethPot(), res + 2e15);
-        stdstore.target(address(core)).sig("ethPot()").checked_write(res + full - 1);
-        vm.deal(address(core), res + full - 1);
-        assertEq(core.ethRate(), START - 1, "one wei under the pot that reads the price state");
+        assertEq(last, START, "a pot whose room exceeds the price state reads the price state");
+        // the smallest pot whose room funds the full price state, and one wei of pot under it: the room falls below
+        uint256 fundPot = res + uint256(START) * (10_000 + core.settings().buyToArtistBps) / 10_000;
+        stdstore.target(address(core)).sig("ethPot()").checked_write(fundPot - 1);
+        vm.deal(address(core), fundPot - 1);
+        uint256 room = _room(core.ethPot());
+        assertLt(room, START, "one wei under the funding pot the room is below the price state");
+        assertEq(core.ethRate(), room, "the read is the room the pot affords");
     }
 
     // ------------------------------------------------------------------ ceiling
@@ -255,17 +262,17 @@ contract BidRuleTest is Fixture {
     /// the rate never exceeds the price of one credit that the pot affords: the pot
     function test_clampHoldsAtThePotWhenItAffordsLessThanOneCredit() public {
         _with(_openCeiling);
-        // the clamp is the one-credit price the pot affords: the pot less the live reserve (buyToArtistBps 0 here)
+        // the clamp is the one-credit price the pot affords: the room `_room(pot)` (pot less reserve over the royalty)
         uint256 res = core.reserve();
         _potTo(res + START / 2);
         _warp(3 days);
-        uint256 clamp = core.ethPot() - res;
+        uint256 clamp = _room(core.ethPot());
         assertEq(core.ethRate(), clamp, "held at the clamp");
         _warp(30 days);
         assertEq(core.ethRate(), clamp);
         // more fees lift the clamp, the climb resumes from the stored rate
         _potTo(res + START * 3 / 4);
-        uint256 clamp2 = core.ethPot() - res;
+        uint256 clamp2 = _room(core.ethPot());
         assertGt(clamp2, clamp);
         _warp(1 days);
         assertEq(core.ethRate(), clamp2);
@@ -324,7 +331,7 @@ contract BidRuleTest is Fixture {
         assertEq(core.ethPot(), res + 1e15 + 1);
         assertEq(core.rateAtCheckpoint(), price, "the price state is not lowered by the small pot");
         _warp(10 hours);
-        assertEq(core.ethRate(), core.ethPot() - res, "the read is the clamp of the small pot");
+        assertEq(core.ethRate(), _room(core.ethPot()), "the read is the clamp of the small pot");
         _addToPot(1);
         assertEq(core.rateAtCheckpoint(), price, "and a starved pot does not raise the price state");
         _potTo(20 ether);
@@ -391,32 +398,47 @@ contract BidRuleTest is Fixture {
         Settings memory s = core.settings();
         s.reserveWei = 0.1 ether;
         s.buyToArtistBps = 250;
-        // the subject is the funding threshold (reserve + the 100-point bid + royalty); the booked fee split is
-        // test/Fees' subject, so the redeem burn share is off here and the whole booked deal becomes the pot
-        s.feeToRedeemBurnBps = 0;
         _setSettings(s);
         uint256 opening = 0.0049 ether;
         vm.prank(owner);
         core.setRate(opening);
         uint256 threshold = 0.1 ether + opening * 10_250 / 10_000;
         assertEq(threshold, 0.1050225 ether, "reserve plus the 100-point bid and 2.5 percent royalty");
+        // the live book splits income: the pot keeps income - income * feeToRedeemBurnBps / 10_000 (= income - floor of
+        // income/10 at the live 1000). booking `_bookTo(P)` lands the pot exactly at P despite that floor, so the
+        // funding boundary is still exercised one wei of pot at a time
+        uint256 burn = core.settings().feeToRedeemBurnBps;
+        assertEq(burn, 1_000, "the live redeem burn share, pin 26242107");
 
         _warp(6 hours);
         core.book();
         assertEq(core.ethRate(), 0, "an empty book does not start the clock");
-        vm.deal(address(core), threshold - 1);
-        core.book();
+        uint256 below = _bookTo(threshold - 1);
         assertEq(core.ethPot(), threshold - 1, "the first book remains below the funding threshold");
         _warp(1 hours);
         assertEq(core.ethPrice(), opening, "the price state did not age below the threshold");
 
-        vm.deal(address(core), threshold);
+        // one wei more of income raises the pot one wei (the burn floor takes nothing from a single wei) to the threshold
+        vm.deal(address(core), below + 1);
         core.book();
-        assertEq(core.ethRate(), opening, "one wei more exactly funds the 100-point bid");
-        vm.deal(address(core), threshold + 0.1 ether);
+        assertEq(core.ethPot(), threshold, "one wei more exactly funds the 100-point bid");
+        assertEq(core.ethRate(), opening, "the funded pot holds the opening rate");
+        vm.deal(address(core), address(core).balance + 0.1 ether);
         core.book();
         _warp(10 minutes);
         assertGt(core.ethRate(), opening, "only funded time raises the bid");
+    }
+
+    /// @dev sets the Core balance so a single `book` lands `ethPot` exactly at `pot` under the live redeem burn split
+    /// (`ethPot += income - income * feeToRedeemBurnBps / 10_000`, floored). returns the balance dealt. only valid from
+    /// an empty pot. the split is 10 percent at the live 1000, so for income = 10a + b (b < 10) the pot gains 9a + b;
+    /// choosing b = pot mod 9 and a = (pot - b) / 9 makes 9a + b == pot exactly
+    function _bookTo(uint256 pot) internal returns (uint256 income) {
+        uint256 b = pot % 9;
+        uint256 a = (pot - b) / 9;
+        income = 10 * a + b;
+        vm.deal(address(core), income);
+        core.book();
     }
 
     function _thresholdEdge(uint256 rate, uint16 artistBps) internal {
@@ -456,7 +478,7 @@ contract BidRuleTest is Fixture {
         _potTo(res + 2 * START - 1);
         _sellOne();
         uint256 afterFill = core.rateAtCheckpoint();
-        assertLt(core.ethPot() - res, core.floorRate(), "the first sale leaves the pot under its reference bid");
+        assertLt(_room(core.ethPot()), core.floorRate(), "the first sale leaves the pot under its reference bid");
         _warp(6 hours);
         assertEq(core.ethPrice(), afterFill, "the empty hours do not raise the price state");
 
