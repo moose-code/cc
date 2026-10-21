@@ -99,6 +99,15 @@ abstract contract LiveFixture is Fixture {
         launchTime = block.timestamp;
     }
 
+    // ------------------------------------------------------------------ two live states
+
+    /// @notice true when the suite runs the stage B live state (LIVE_STAGE=B): the production stage A and B path is
+    /// live at setUp (ControllerV2 selected as `ctl`, the treasury selected, the settings patch applied). a test whose
+    /// subject exists only on ControllerV1 skips itself in stage B with `if (_liveStageB()) return;` and a one line reason
+    function _liveStageB() internal view returns (bool) {
+        return keccak256(bytes(vm.envOr("LIVE_STAGE", string("")))) == keccak256("B");
+    }
+
     // ------------------------------------------------------------------ live BALANCE funding (the ink rule)
 
     /// @notice places `amount` of live BALANCE on `to` by impersonating a real holder, the only way to fund an account
@@ -154,7 +163,7 @@ abstract contract LiveFixture is Fixture {
     /// switches set to the launch state (conversions and working payments on, CC redemption off, decision 258), and the
     /// treasury funded a working balance. no balance pool key is set here, so the suites that assert the key-unset state
     /// still see it; a suite that needs the key calls `_setLiveBalancePool`
-    function _enterPhase2() internal override {
+    function _enterPhase2() internal virtual override {
         address policyAddr = vm.deployCode("ProRataRedemptionPolicy.sol:ProRataRedemptionPolicy");
         treasury = IPhase2BalanceTreasury(
             vm.deployCode(
