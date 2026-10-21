@@ -123,40 +123,52 @@ contract CreditSaleTest is LiveFixture {
         _creditBad(c, "creditWindow");
         c.window = type(uint32).max;
 
-        // the floor remains at 200 with zero tolerance; 100 tolerance needs 203 to close the loop
-        c.spreadBps = 0;
-        _creditBad(c, "creditSpreadBps");
-        c.spreadBps = 200;
-        _creditBad(c, "creditSpreadBps");
-        c.spreadBps = 203;
-        ctl.setCredit(c);
-        assertEq(ctl.floorMultBps(), 10_203, "100 tolerance requires a 203 bps spread");
-        Quote memory q = Mainnet.defaultQuote();
-        q.tolBps = 0;
-        ctl.setQuote(q);
-        c.spreadBps = 199;
-        _creditBad(c, "creditSpreadBps");
-        c.spreadBps = 200;
-        ctl.setCredit(c);
-        assertEq(ctl.floorMultBps(), 10_200, "the spread floor remains with zero tolerance");
-        q.tolBps = 100;
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
-        ctl.setQuote(q);
-        c.spreadBps = 203;
-        ctl.setCredit(c);
-        ctl.setQuote(q);
-        c.spreadBps = 1_000;
-        ctl.setCredit(c);
-        q.tolBps = 450;
-        ctl.setQuote(q);
-        c.spreadBps = 0;
-        _creditBad(c, "creditSpreadBps");
-        c.spreadBps = 1_000;
-        ctl.setCredit(c);
-        assertEq(ctl.floorMultBps(), 11_000, "spread 1,000 at the 10,000 cap is a 10 percent floor over the reference");
-        c.spreadBps = type(uint16).max;
-        ctl.setCredit(c);
-        assertEq(ctl.creditSpreadBps(), type(uint16).max);
+        // the credit spread floor's coupling to the value mode quote tolerance (the "close the loop" rule: 100 tolerance
+        // needs a 203 bps spread, and the floorMultBps it yields) is a ControllerV1 surface. ControllerV2 uses a
+        // different credit floor model and does not reject a spread against the quote tolerance, so this block runs only
+        // before stage B; the window, start and owner bounds hold on both controllers
+        if (!_liveStageB()) {
+            c.spreadBps = 0;
+            _creditBad(c, "creditSpreadBps");
+            c.spreadBps = 200;
+            _creditBad(c, "creditSpreadBps");
+            c.spreadBps = 203;
+            ctl.setCredit(c);
+            assertEq(ctl.floorMultBps(), 10_203, "100 tolerance requires a 203 bps spread");
+            Quote memory q = Mainnet.defaultQuote();
+            q.tolBps = 0;
+            ctl.setQuote(q);
+            c.spreadBps = 199;
+            _creditBad(c, "creditSpreadBps");
+            c.spreadBps = 200;
+            ctl.setCredit(c);
+            assertEq(ctl.floorMultBps(), 10_200, "the spread floor remains with zero tolerance");
+            q.tolBps = 100;
+            vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
+            ctl.setQuote(q);
+            c.spreadBps = 203;
+            ctl.setCredit(c);
+            ctl.setQuote(q);
+            c.spreadBps = 1_000;
+            ctl.setCredit(c);
+            q.tolBps = 450;
+            ctl.setQuote(q);
+            c.spreadBps = 0;
+            _creditBad(c, "creditSpreadBps");
+            c.spreadBps = 1_000;
+            ctl.setCredit(c);
+            assertEq(
+                ctl.floorMultBps(), 11_000, "spread 1,000 at the 10,000 cap is a 10 percent floor over the reference"
+            );
+            c.spreadBps = type(uint16).max;
+            ctl.setCredit(c);
+            assertEq(ctl.creditSpreadBps(), type(uint16).max);
+        } else {
+            // on ControllerV2 the spread is still owner set and read back; the floor model differs (checked elsewhere)
+            c.spreadBps = 1_000;
+            ctl.setCredit(c);
+            assertEq(ctl.creditSpreadBps(), 1_000, "the spread is set and read on ControllerV2");
+        }
 
         c.startBps = type(uint32).max;
         ctl.setCredit(c);
@@ -451,12 +463,24 @@ contract CreditSaleTest is LiveFixture {
 
     // ------------------------------------------------------------------ compose and the window
 
-    // promise: SPEC 1 credit sale window: composeChosen waits for the window (InWindow)
+    // promise: SPEC 1 credit sale window: compose waits for the window (nextPage not ready, NotReady on compose)
     function test_compose_waitsForTheWindowWhenSaleOn() public {
+        _on(); // the credit sale is on (its live value, the subject of the window gate)
+        // the live pile holds pre-launch credits long past their window, so the oldest page is already composable.
+        // drain the composable pages until under one page remains, so a freshly filled page's newest credit (the one
+        // nextPage reads, page[79]) is one just acquired and still inside its window
+        for (uint256 i; i < 50 && core.pileSize() >= 80; ++i) {
+            (bool r,,) = ctl.nextPage();
+            if (!r) break;
+            vm.fee(composeBasefee);
+            vm.prank(keeper);
+            core.compose();
+        }
+        require(core.pileSize() < 80, "could not drain the live pile under one page");
+
         _fillEthPile(80);
-        _on();
         (bool ready,,) = ctl.nextPage();
-        assertFalse(ready, "not ready while the newest credit is inside its window");
+        assertFalse(ready, "not ready while the newest credit in the page is inside its window");
         vm.fee(composeBasefee);
         vm.prank(keeper);
         vm.expectRevert(ICore.NotReady.selector);
