@@ -23,3 +23,4 @@ Record consequential owner decisions once in docs/DECISIONS.md; update affected 
 - the vocabulary is "balance", never "exit" (decision 102). comments state rules, invariants and caveats in plain technical voice; no em or en dashes.
 - a change that adds data to the web names its source in docs/INDEXER.md section 9.
 - toolchain, timings and the fork env: docs/STATUS.md section 5.
+- owner commands are written and run with the owner's foundry keystore and Tenderly's public gateway: `--account ripe0x --rpc-url https://gateway.tenderly.co/public/mainnet` (decision 257); `MAINNET_RPC_URL` is that URL.
