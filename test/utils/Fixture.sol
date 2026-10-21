@@ -51,8 +51,9 @@ abstract contract Fixture is Test, ProdDeployer {
     address internal constant STRATEGY = Mainnet.CREDIT_STRATEGY;
     address internal constant DEAD = Mainnet.DEAD;
 
-    /// @dev credits the CreditStrategy lists for sale at the pinned block. they are never handed out as plain credits
-    uint256 internal constant LISTED_A = 35377;
+    /// @dev credits the CreditStrategy lists for sale at the pinned block. they are never handed out as plain credits.
+    /// verified strategy listed at LIVE_FORK_BLOCK 26242107 (the former LISTED_A 35377 had left the strategy by the pin)
+    uint256 internal constant LISTED_A = 19727;
     uint256 internal constant LISTED_B = 28352;
     uint256 internal constant LISTED_C = 18683;
 
@@ -492,11 +493,27 @@ abstract contract Fixture is Test, ProdDeployer {
         }
         uint256 room = _unclampedPot();
         if (core.ethPot() < room) _fundPot(room);
+        // fund six credits of rate above the reserve: the available pot (`ethPot` less the reserve) must cover the per
+        // credit bids, which for a live score above 100 points exceed the rate. the fresh fixture ran reserveWei 0, so
+        // this reduces to the old `total * 6`; the live reserve is nonzero, so the reserve is added on top
         uint256 total = core.ethRate() * n;
-        if (core.ethPot() < total * 6) _fundPot(total * 6);
+        uint256 need = total * 6 + core.reserve();
+        if (core.ethPot() < need) _fundPot(need);
         for (uint256 i; i < n; ++i) {
             vm.prank(seller);
             core.sellForEth(_one(ids[i]));
+        }
+    }
+
+    /// @notice ages the pile until the controller's next page is eligible: on the live Core the credit sale window is
+    /// on, so the oldest page is not composable until `creditWindow` seconds past its credits' acquisition. warps whole
+    /// windows (bounded) until `nextPage` reports ready. a no-op when the page is already ready, so the fresh fixture
+    /// with the sale window off is unchanged
+    function _warpPageReady() internal {
+        for (uint256 i; i < 4; ++i) {
+            (bool ready,,) = ctl.nextPage();
+            if (ready) return;
+            vm.warp(block.timestamp + ctl.creditWindow() + 1);
         }
     }
 
@@ -508,6 +525,10 @@ abstract contract Fixture is Test, ProdDeployer {
         if (isComposed) return composed;
         uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
+        // the live Core runs with the credit sale window on, so a freshly filled page is not eligible until it ages
+        // past the window. age it to eligibility before composing; a no-op when the page is already eligible (the
+        // fresh fixture composes with the sale window off)
+        _warpPageReady();
 
         uint256[] memory page = core.pilePage(0, 80);
         for (uint256 i; i < 80; ++i) {

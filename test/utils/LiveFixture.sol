@@ -131,6 +131,13 @@ abstract contract LiveFixture is Fixture {
         revert("no eligible held Statement at the pin: re-pin LIVE_FORK_BLOCK");
     }
 
+    /// @notice true when the suite runs against the stage B live state (`LIVE_STAGE=B`): ControllerV2 is selected as
+    /// `ctl`, the treasury is selected and the settings patch is applied by the setUp path. a test whose subject is a
+    /// ControllerV1 only surface (e.g. `setSale`) returns early in stage B with a one line reason (brief addendum)
+    function _liveStageB() internal view returns (bool) {
+        return keccak256(bytes(vm.envOr("LIVE_STAGE", string("")))) == keccak256(bytes("B"));
+    }
+
     /// @notice deploys the test RawListingAdapter at a namespaced address and the owner approves it, so `_buyRaw` works
     /// on the live Core. the brief allows a raw listing adapter a test approves as owner. `LiveFixture.setUp` does not
     /// set `rawAdapter` (the fresh `Fixture` did), so a suite that uses `_buyRaw` calls this in its own setUp

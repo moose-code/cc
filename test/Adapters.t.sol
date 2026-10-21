@@ -248,5 +248,4 @@ contract AdaptersTest is SeaportBase {
             assertLt(g - gasleft(), 2_000_000 + 100_000, "the read is capped at QUOTE_GAS plus call overhead");
         }
     }
-
 }

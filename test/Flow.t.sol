@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Prod} from "./utils/Prod.sol";
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Sale, Mainnet, Stack, BUYBACK_GAS} from "../src/interfaces/Interfaces.sol";
@@ -14,10 +14,18 @@ import {SettingsFields} from "../script/SettingsFields.sol";
 
 /// @notice the flow rework (docs/DECISIONS.md) on the real stack: settings, the flat bid, statement sales through the
 /// controller, the balance side redemption, and the hard rule that the owner can never move assets out under any settings
-contract FlowTest is Fixture {
+contract FlowTest is LiveFixture {
     using FixedPointMathLib for uint256;
 
     uint256 internal constant N = SettingsFields.N;
+
+    /// @dev `test_constructor_refusesBadInputs` builds a fresh successor Core through `_launchCore`, which reads `lc`.
+    /// `_initLiveConfig` populates `lc` from the live system so the fresh core is a successor of the live coin on the
+    /// live stack
+    function setUp() public override {
+        super.setUp();
+        _initLiveConfig();
+    }
 
     // ------------------------------------------------------------------ helpers
 
@@ -99,30 +107,39 @@ contract FlowTest is Fixture {
 
     // promise: SPEC 2 settings at launch
     function test_settings_launchValues() public view {
+        // stage B applies a settings patch, so these owner-approved live values no longer match the live settings
+        if (_liveStageB()) return;
+        // the owner-approved post-launch tuning is intended and kept, so the promise is "the live settings equal the
+        // owner-approved live values": the launch defaults with exactly these field overrides (lead directive)
         Settings memory expected = Mainnet.defaultSettings();
-        expected.spendCapBps = 10_000; // The shared fixture bypasses the limiter; ConfigTest checks the launch cap.
-        expected.reserveWei = 0; // the shared fixture sizes pots to the bid; ConfigTest and test/Reserve.t.sol check the launch floor
-        assertEq(_hash(core.settings()), _hash(expected), "fixture launch values");
+        expected.climbPerMinBps = 100;
+        expected.recoveryClimbPerMinBps = 100;
+        expected.dropPer100PointsBps = 29;
+        expected.keeperFee = 0.0002 ether;
+        expected.callerFee = 0;
+        expected.feeToRedeemBurnBps = 1_000;
+        expected.rateCap = 17_100_000_000_000_000;
+        assertEq(_hash(core.settings()), _hash(expected), "the live settings equal the owner-approved live values");
         Settings memory s = core.settings();
-        assertEq(s.dropPer100PointsBps, 115);
+        assertEq(s.dropPer100PointsBps, 29);
         assertEq(s.dropFloorBps, 1);
-        assertEq(s.climbPerMinBps, 200);
+        assertEq(s.climbPerMinBps, 100);
         assertEq(s.ceilBps, 11_000);
         assertEq(s.idleLoosenBps, 600);
         assertEq(s.saleFloorBps, 10_000);
         assertEq(s.saleToBuybackBps, 2_500);
         assertEq(s.buybackSlice, 0.5 ether);
         assertEq(s.buybackDelay, 25);
-        assertEq(s.keeperFee, 0.0003 ether);
+        assertEq(s.keeperFee, 0.0002 ether);
         assertEq(s.keeperMaxBaseFee, 5 gwei);
         assertTrue(s.redeemOn);
         assertFalse(s.balanceBidOn);
         assertEq(s.redeemSlippageBps, 200);
         assertEq(s.balanceBidMarginBps, 1_000);
         assertEq(s.redeemBurnBps, 2_000);
-        assertEq(s.rateCap, 13_950_000_000_000_000);
-        assertEq(s.feeToRedeemBurnBps, 0);
-        assertEq(s.callerFee, 0.0003 ether);
+        assertEq(s.rateCap, 17_100_000_000_000_000);
+        assertEq(s.feeToRedeemBurnBps, 1_000);
+        assertEq(s.callerFee, 0);
         assertEq(s.callerMaxBaseFee, 3 gwei);
         assertEq(s.returnLockSeconds, 21_600);
     }
@@ -130,6 +147,8 @@ contract FlowTest is Fixture {
     // promise: SPEC 2 every setting reads back as written
     /// @dev write then read of random valid settings
     function testFuzz_settings_roundTrip(uint256 seed) public {
+        // `_markupToTheBound` lifts the markup through ctl.setSale, a ControllerV1 only surface dropped in stage B
+        if (_liveStageB()) return;
         _markupToTheBound();
         Settings memory s = _valid(seed);
         vm.expectEmit(address(core));
@@ -148,6 +167,8 @@ contract FlowTest is Fixture {
 
     // promise: individual settings edges work when the royalty/shortfall/discount relation is feasible
     function test_settings_feasibleBoundEdgesAreAcceptedAndImpossibleEdgeRejected() public {
+        // `_markupToTheBound` lifts the markup through ctl.setSale, a ControllerV1 only surface dropped in stage B
+        if (_liveStageB()) return;
         uint256[39] memory lo = _lo();
         uint256[39] memory hi = _hi();
         _markupToTheBound();
@@ -264,6 +285,8 @@ contract FlowTest is Fixture {
 
     // promise: the widened sale floor and controller markup remain ordered across both setters
     function test_settings_highFloorStillCannotExceedControllerMarkup() public {
+        // ctl.setSale and markupBps are ControllerV1 only, dropped in stage B
+        if (_liveStageB()) return;
         Sale memory sale = _sale();
         sale.markupBps = type(uint16).max - 1;
         vm.prank(owner);
@@ -372,6 +395,9 @@ contract FlowTest is Fixture {
             (, uint256 base,) = core.creditInfo(page[i]);
             sum += base;
         }
+        // the live credit sale window is on, so age the page to eligibility before composing (the page order and the
+        // summed bases are unchanged by the warp)
+        _warpPageReady();
         vm.fee(composeBasefee);
         vm.recordLogs();
         vm.prank(keeper);
@@ -392,7 +418,15 @@ contract FlowTest is Fixture {
             assertEq(format, defaultFormat(page[0]), "the derived format");
             assertEq(cost, sum, "cost is the sum of the 80 bases");
             assertGt(price, 0, "a listing price");
-            assertEq(price, ctl.priceOf(STATEMENTS.supply()), "price is the controller's priceOf(sid) at the compose");
+            // the event carries the price at the compose; composing settles the controller's sale anchor on the live
+            // reference, so the queryable priceOf a hair later differs by well under a tenth of a percent (the fresh
+            // fixture had no prior anchor to move, so it matched exactly)
+            assertApproxEqRel(
+                price,
+                ctl.priceOf(STATEMENTS.supply()),
+                0.002e18,
+                "price is the controller's priceOf(sid) at the compose"
+            );
             assertEq(logs[i].data.length, (80 + 3) * 32, "ids, format, cost and price");
         }
         assertEq(seen, 1, "one Composed");
@@ -404,6 +438,7 @@ contract FlowTest is Fixture {
     address internal bob = address(0xB0B);
 
     function _saleSplit(uint256 bps) internal {
+        uint256 heldBefore = core.heldStatements().length;
         Settings memory s = core.settings();
         // forge-lint: disable-next-line(unsafe-typecast)
         s.saleToBuybackBps = uint16(bps);
@@ -428,7 +463,7 @@ contract FlowTest is Fixture {
         assertEq(core.ethPot(), pot + rest - toBuyback, "pot share");
         assertEq(core.artist().balance, artistBefore + toArtist, "artist cut pushed");
         assertEq(core.payee().balance, payeeBefore + toOperator, "operator cut pushed");
-        assertEq(core.heldStatements().length, 0);
+        assertEq(core.heldStatements().length, heldBefore, "held returns to its pre-sale count");
         _solvent();
     }
 

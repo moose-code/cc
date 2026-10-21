@@ -90,7 +90,8 @@ contract RescueTest is LiveFixture {
         assertTrue(ok && out.length == 32, "setup: the collection answers on the fork");
         address holder = abi.decode(out, (address));
         vm.prank(holder);
-        (bool sent,) = FOREIGN.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", holder, address(core), 1));
+        (bool sent,) =
+            FOREIGN.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", holder, address(core), 1));
         assertTrue(sent, "setup: the token reached the core");
         _rescue(FOREIGN, 1, dest);
         (, out) = FOREIGN.staticcall(abi.encodeWithSignature("ownerOf(uint256)", uint256(1)));
@@ -127,5 +128,4 @@ contract RescueTest is LiveFixture {
         vm.prank(owner);
         core.rescueNft(address(CREDITS), ids[0], address(0));
     }
-
 }
