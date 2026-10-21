@@ -186,6 +186,12 @@ class Recommendation(unittest.TestCase):
 
 
 
+class SanitizedUrl(unittest.TestCase):
+    def test_only_scheme_and_host_are_printed(self):
+        self.assertEqual(cal.sanitize_url("https://user:FAKE_KEY@rpc.example.com/v1/FAKE_KEY?token=FAKE_KEY"), "https://rpc.example.com")
+        self.assertEqual(cal.sanitize_url("not a url"), "<rpc>")
+
+
 class MarginRecommendation(unittest.TestCase):
     def test_smallest_eligible_reserve_meeting_the_margin_at_the_decision_size(self):
         rows = [

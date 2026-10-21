@@ -90,8 +90,44 @@ contract Phase2ScriptsTest is Fixture {
             core: address(core),
             balanceToken: address(token),
             statementSaleMultiplierBps: 30_000,
-            statementRedeemDelaySeconds: 3_600
+            statementRedeemDelaySeconds: 3_600,
+            tokenCodehash: address(token).codehash,
+            allowUnpinnedToken: false
         });
+    }
+
+    // promise: the deploy preview refuses an unpinned balance token unless the pin is waived explicitly, and refuses a pinned hash that does not match the live runtime
+    function test_deployRequiresTheTokenRuntimePin() public {
+        Phase2Deploy.Inputs memory i = _inputs();
+        i.tokenCodehash = bytes32(0);
+        vm.expectRevert();
+        deployProbe.deploy(i);
+        i.allowUnpinnedToken = true;
+        deployProbe.deploy(i);
+        i = _inputs();
+        i.tokenCodehash = keccak256("another token");
+        vm.expectRevert();
+        deployProbe.deploy(i);
+    }
+
+    // promise: an environment integer above uint32 is refused instead of silently narrowed to other terms
+    function test_deployRefusesNarrowedInputs() public {
+        vm.setEnv("CORE", vm.toString(address(core)));
+        vm.setEnv("BALANCE_TOKEN", vm.toString(address(token)));
+        vm.setEnv("BALANCE_TOKEN_CODEHASH", vm.toString(address(token).codehash));
+        vm.setEnv("PHASE2_STATEMENT_MULTIPLIER_BPS", "4294977296");
+        vm.expectRevert(abi.encodeWithSelector(Phase2Deploy.ValueTooWide.selector, "PHASE2_STATEMENT_MULTIPLIER_BPS"));
+        deployProbe.run();
+        vm.setEnv("PHASE2_STATEMENT_MULTIPLIER_BPS", "30000");
+        vm.setEnv("PHASE2_STATEMENT_DELAY_SECONDS", "4294967297");
+        vm.expectRevert(abi.encodeWithSelector(Phase2Deploy.ValueTooWide.selector, "PHASE2_STATEMENT_DELAY_SECONDS"));
+        deployProbe.run();
+        vm.setEnv("PHASE2_STATEMENT_DELAY_SECONDS", "3600");
+        // a send needs the plan hash the preview printed
+        vm.setEnv("SEND", "1");
+        vm.expectRevert();
+        deployProbe.run();
+        vm.setEnv("SEND", "0");
     }
 
     // promise: PLAN section 8 stage A the deploy script creates the three contracts disabled, bound to the Core, with the live credit sale, and its readback passes

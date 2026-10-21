@@ -237,6 +237,8 @@ contract ControllerV2 is IController {
         bool anyRef = v.referenceRateBpsPerHour != 0 || v.referenceStepBps != 0 || v.referenceMaxStale != 0;
         bool allRef = v.referenceRateBpsPerHour != 0 && v.referenceStepBps != 0 && v.referenceMaxStale != 0;
         if (anyRef && !allRef) revert BadSetting("referenceTriple");
+        // a usable quote needs a positive liquidity threshold, or an emptied pool would still price
+        if (allRef && v.minLiquidity == 0) revert BadSetting("minLiquidity");
         _checkLoopClosure(v.tolBps, creditSpreadBps);
         // the reference band widened by the step stays inside value mode's shared instance margin. the Core read is
         // skipped while the Core has no code yet (constructor order)
@@ -344,7 +346,9 @@ contract ControllerV2 is IController {
             }
         }
         if (block.timestamp - t > q.referenceMaxStale) return (0, 0, 0, false);
-        if (lA < q.minLiquidity || lB < q.minLiquidity || liveLiq < q.minLiquidity) return (0, 0, 0, false);
+        if (liveLiq == 0 || lA < q.minLiquidity || lB < q.minLiquidity || liveLiq < q.minLiquidity) {
+            return (0, 0, 0, false);
+        }
         // the sampled spot is a prior block's: the previous one when the latest was taken this block
         uint256 sampled = aThisBlock ? sB : sA;
         address module = CORE.balanceModule();

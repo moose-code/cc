@@ -513,9 +513,11 @@ contract Phase2BalanceTreasury is IBalanceModule {
 
     /// moves custody less the recorded debt to `successor` and imports the claim reserve there. every switch must be off
     /// on both sides; the successor must bind the same coin and token and either the same Core or, once this Core has
-    /// retired, the Core's successor, name this treasury as its predecessor and not have migrated itself. the claim
-    /// reserve must be fully funded to move. this treasury then refuses every switch forever; `claim` keeps paying the
-    /// debt left behind, and later inflows leave through `withdrawWorking`
+    /// retired, the Core's successor, name this treasury as its predecessor, not have migrated itself, and already be
+    /// the selected module of its Core: a reserve never moves to a treasury the Core cannot or has not selected (a
+    /// locked module selection would strand every CC claim), so the order is select the successor, migrate, enable it.
+    /// the claim reserve must be fully funded to move. this treasury then refuses every switch forever; `claim` keeps
+    /// paying the debt left behind, and later inflows leave through `withdrawWorking`
     function migrateTo(address successor) external onlyOwner nonReentrant returns (uint256 moved) {
         if (migrated) revert Migrated();
         if (conversionEnabled || workingPaymentsEnabled || ccRedemptionEnabled) revert SwitchesOn();
@@ -528,6 +530,7 @@ contract Phase2BalanceTreasury is IBalanceModule {
             address heir = c.successor();
             if (!c.retired() || heir == address(0) || nextCore != heir) revert InvalidSuccessor();
         }
+        if (ITreasuryCore(nextCore).balanceModule() != successor) revert InvalidSuccessor();
         if (
             next.balanceToken() != balanceToken || next.ccToken() != ccToken || next.predecessor() != address(this)
                 || next.migrated() || next.conversionEnabled() || next.workingPaymentsEnabled()

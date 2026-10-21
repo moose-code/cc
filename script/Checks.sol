@@ -88,9 +88,9 @@ abstract contract LaunchChecks is PostflightChecks {
     /// @dev the phase 2 artifacts (ControllerV2, Phase2BalanceTreasury, ProRataRedemptionPolicy), pinned the same way.
     /// none of them is part of the launch deployment; the phase 2 deploy and readback scripts compare against them
     bytes32 internal constant BUILD_HASH_CONTROLLER_V2 =
-        0x27b071b4f5085a22820f4d560f148fb221b776c10098fa7e923a8e63d62fa7a6;
+        0x711de842ffd952f36ffae03d261a92d339c1cf3efa0b7b0441bdd9c8a263644e;
     bytes32 internal constant BUILD_HASH_PHASE2_TREASURY =
-        0x616083e211ce13329e9edcd5e4fa0f27aaf8b3c1907aa000d1edfae98378953f;
+        0xbf53bfbc3d964c1506556712022a4fe9e31ec523d65cef37b69f2d984fb4fe44;
     bytes32 internal constant BUILD_HASH_PRO_RATA_POLICY =
         0x5f6faabee10ccfb5ac36719d4cad193d7dc70ca4c56946cdf6dc6fa919ccf2ae;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =

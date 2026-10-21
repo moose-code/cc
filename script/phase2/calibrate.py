@@ -204,6 +204,16 @@ def recommend(candidates, rows, budget, max_allocation, backing_target, basis, t
     return eligible, chosen, arbitrage
 
 
+def sanitize_url(url):
+    """The scheme and host of an RPC URL, never its path, query or userinfo: endpoints carry keys there"""
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(url)
+        return f"{u.scheme}://{u.hostname}" if u.scheme and u.hostname else "<rpc>"
+    except ValueError:
+        return "<rpc>"
+
+
 def margin_recommendation(rows, eligible, decision_size_bps, target_margin_bps):
     """The second report output (decision 246 as amended): the smallest eligible reserve whose row at the decision
     size is supported and meets the target net margin, or None. It answers "would this motivate buying and redeeming at
@@ -401,7 +411,7 @@ def main(argv=None):
     minimum_working = parse_amount(a.minimum_working)
 
     chain = Chain(a.rpc_url, a.block)
-    print(f"block {chain.block}, rpc {a.rpc_url}")
+    print(f"block {chain.block}, rpc {sanitize_url(a.rpc_url)}")
     if not chain.has_code(V4_QUOTER):
         raise RpcError(f"the V4Quoter {V4_QUOTER} has no code at block {chain.block}; a quoter that does not run the hook is not substituted")
     if not chain.has_code(a.cc):

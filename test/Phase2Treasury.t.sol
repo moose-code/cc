@@ -820,6 +820,11 @@ contract Phase2TreasuryTest is Test {
         t.migrateTo(address(next));
         vm.startPrank(owner);
         t.setSwitches(false, false, false);
+        // the reserve never moves to a treasury the Core has not selected (audit finding): select first
+        vm.expectRevert(ITreasury.InvalidSuccessor.selector);
+        t.migrateTo(address(next));
+        balanceModule = address(next);
+        assertFalse(t.selectedForClaims(), "the source is closed for burns once deselected");
         vm.expectEmit(address(t));
         emit ITreasury.TreasuryMigrated(address(next), 133 ether, 40 ether, 2);
         assertEq(t.migrateTo(address(next)), 133 ether);
@@ -841,8 +846,7 @@ contract Phase2TreasuryTest is Test {
         assertEq(t.available(), 0);
         assertEq(t.claim(artist), 7 ether);
         assertEq(token.balanceOf(artist), 7 ether);
-        // the successor becomes the selected module and redeems against the imported reserve
-        balanceModule = address(next);
+        // the selected successor redeems against the imported reserve
         vm.prank(owner);
         next.setSwitches(true, true, true);
         _burnerWith(SUPPLY / 100);
@@ -882,6 +886,11 @@ contract Phase2TreasuryTest is Test {
         vm.prank(address(t));
         vm.expectRevert(ITreasury.Insolvent.selector);
         next.receiveMigration(1);
+        // an unselected successor is refused before anything else
+        vm.prank(owner);
+        vm.expectRevert(ITreasury.InvalidSuccessor.selector);
+        t.migrateTo(address(next));
+        balanceModule = address(next);
         // an unfunded claim reserve cannot move
         stdstore.target(address(t)).sig("claimReserve()").checked_write(uint256(50 ether));
         vm.prank(owner);
@@ -891,6 +900,7 @@ contract Phase2TreasuryTest is Test {
         vm.prank(owner);
         t.migrateTo(address(next));
         ITreasury third = _deploy(address(policy), address(next));
+        balanceModule = address(third);
         vm.prank(owner);
         next.setSwitches(true, false, false);
         vm.prank(owner);
@@ -932,10 +942,13 @@ contract Phase2TreasuryRetirementTest is Phase2TreasuryTest {
         t.migrateTo(address(next));
         retired = true;
         vm.prank(owner);
+        vm.expectRevert(ITreasury.InvalidSuccessor.selector);
+        t.migrateTo(address(next));
+        heir.select(address(next));
+        vm.prank(owner);
         t.migrateTo(address(next));
         assertEq(next.claimReserve(), 40 ether - share);
         assertTrue(t.migrated());
-        heir.select(address(next));
         vm.prank(owner);
         next.setSwitches(false, false, true);
         vm.prank(burner);
@@ -949,6 +962,7 @@ contract Phase2TreasuryRetirementTest is Phase2TreasuryTest {
     function test_migrationRefusesAnEnabledSuccessor() public {
         _live(10 ether, 4 ether);
         ITreasury next = _deploy(address(policy), address(t));
+        balanceModule = address(next);
         vm.startPrank(owner);
         t.setSwitches(false, false, false);
         next.setSwitches(false, true, false);

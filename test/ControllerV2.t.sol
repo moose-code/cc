@@ -220,7 +220,28 @@ contract ControllerV2Test is ValueBase {
         vm.prank(TRIPPER);
         c2.buyCredit{value: viewPrice * 2}(ids[0]);
         assertEq(viewPrice * 2 - TRIPPER.balance, viewPrice, "the door charged the view price");
-        assertEq(c2.creditPrice(ids[1]), viewPrice > 0 ? c2.creditPrice(ids[1]) : 0);
+        // the second credit in the same block, after the door's refresh: the view and the door still agree
+        uint256 second = c2.creditPrice(ids[1]);
+        vm.deal(TRIPPER, second);
+        vm.prank(TRIPPER);
+        c2.buyCredit{value: second}(ids[1]);
+        assertEq(TRIPPER.balance, 0, "the door charged the second view price exactly");
+    }
+
+    // promise: issue 113 a usable quote needs a positive liquidity threshold, and a pool with zero live liquidity never prices
+    function test_zeroMinLiquidityIsRefused() public {
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("BadSetting(bytes32)")), bytes32("minLiquidity")));
+        c2.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_000,
+                referenceStepBps: 500,
+                tolBps: 450,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 0,
+                minLiquidity: 0
+            })
+        );
     }
 
     // promise: SPEC phase 2 in value mode the statement ask is the persistent multiple of the protected reference and eligibility is the independent delay
