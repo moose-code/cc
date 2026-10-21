@@ -6,6 +6,12 @@ import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {CreditSale, Settings} from "../src/interfaces/Interfaces.sol";
 
+/// the ControllerV2 statement sale switch, opened by the owner in the stage B state (sales ship off there) so a buy can
+/// reach the Core's pause check. a no op in today's state, where ControllerV1 sells statements already
+interface ICtlStatementSales {
+    function setStatementSales(bool enabled) external;
+}
+
 /// the owner pause of the Core on the live fork: acquisition, composition and buybacks stop; statement age excludes
 /// paused seconds, while fee booking, funding and redemption remain available
 contract PauseTest is SaleShapeBase {
@@ -78,6 +84,12 @@ contract PauseTest is SaleShapeBase {
 
     // promise: INTEGRATION Paused
     function test_buy_revertsWhilePausedAndWorksAfterResume() public {
+        // in stage B ControllerV2 ships statement sales off; open the door by the owner so a buy reaches the pause check
+        // (today's ControllerV1 already sells). the Core pause check then precedes the payment on both controllers
+        if (_liveStageB()) {
+            vm.prank(owner);
+            ICtlStatementSales(address(ctl)).setStatementSales(true);
+        }
         uint256 sid = _composeOnce().sid;
         _setPaused(true);
         uint256 price = ctl.priceOf(sid);
@@ -121,6 +133,10 @@ contract PauseTest is SaleShapeBase {
     // promise: SPEC 1 the age a price falls with excludes every paused second
     /// a statement 2 hours into its 4 hour fall is at hour 2 of the fall after a pause of any length, and the fall goes on
     function testFuzz_priceIsFrozenAndResumesAtTheSameAge(uint32 length) public {
+        // the exact price at an age is asserted against the ControllerV1 launch curve (startBps straight line);
+        // ControllerV2 prices statements by a different model, so the launch-curve value does not apply in stage B. the
+        // core pause-age freeze itself is covered in both states by PauseClockTest (statementAge minus paused seconds)
+        if (_liveStageB()) return;
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         _age(sid, 2 * H);
@@ -139,6 +155,10 @@ contract PauseTest is SaleShapeBase {
 
     // promise: an owner pause stops composition without changing a held statement's age
     function test_compose_stopsWhilePausedAndResumesWithTheSameAge() public {
+        // this verifies the resumed statement price at an age through the ControllerV1 launch curve, which ControllerV2
+        // does not share; the compose-stops-while-paused behavior itself is covered in both states by
+        // test_allIntakeAndBuybackDoorsStopWhilePaused
+        if (_liveStageB()) return;
         uint256 first = _composeOnce().sid;
         _age(first, 3 * H);
         _setPaused(true);
@@ -164,6 +184,9 @@ contract PauseTest is SaleShapeBase {
     // promise: SPEC 1 the anchor decays with wall time in a pause
     /// the anchor keeps its time decay in a pause, and the price follows it with the age held
     function test_anchorDecaysWhilePaused() public {
+        // the sale anchor and its wall-time decay are ControllerV1 (setAnchorBps, a decaying anchorBps); ControllerV2
+        // prices by a fixed markup with no decaying anchor, so this promise does not apply in stage B
+        if (_liveStageB()) return;
         uint256 sid = _composeOnce().sid;
         uint256 cost = _cost(sid);
         _anchor(30_000);
@@ -315,7 +338,9 @@ contract PauseTest is SaleShapeBase {
         core.fund{value: 0.1 ether}();
         core.book();
         core.redeemStatement(sid);
-        assertEq(STATEMENTS.ownerOf(sid), address(mod));
+        // the live phase 2 entry selects the treasury on the live BALANCE token; a redemption routes the statement to
+        // that token (the treasury approves it and the token withdraws), so the token holds it, not a stand in module
+        assertEq(STATEMENTS.ownerOf(sid), liveBalanceToken);
     }
 }
 
@@ -343,7 +368,11 @@ contract PauseClockTest is SaleShapeBase {
         for (uint256 j; j < ns; ++j) {
             uint256 at = _composedAt(sids[j]);
             uint256 age = block.timestamp - at - _overlap(ws, we, nw, at, block.timestamp);
+            // the core pause clock is the subject and holds on both controllers
             assertEq(core.statementAge(sids[j]), age, "the age is wall time minus the paused seconds");
+            // the price-at-age check reads the ControllerV1 launch curve (startBps straight line), which ControllerV2
+            // does not share; skip it in stage B and keep the core age check above in both states
+            if (_liveStageB()) continue;
             // the curve prices on the statement reference, max(valueOf(rating), cost); valueOf tracks the bid floor
             // rate and can exceed the cost basis
             uint256 ref = ctl.referenceOf(sids[j]);

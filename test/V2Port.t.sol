@@ -350,6 +350,8 @@ contract V2PortRestrictionTest is FeeBase {
 
     function setUp() public override {
         super.setUp();
+        // the restricted-coin buyback tests fill the pot through a real statement sale; open the sale door in stage B
+        _openStatementSalesForStageB();
         _stock();
     }
 
