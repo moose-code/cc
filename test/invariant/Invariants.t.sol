@@ -852,6 +852,9 @@ abstract contract InvariantsBase is InvariantFixture {
         // buyCoinNoBook (a buy left unbooked, then a warp over the pending income, then a book) is exercised by the
         // random campaign, not the deterministic smoke
         if (a == 42) return false;
+        // moduleMode, replaceModule and changeUnit drive the mock module's fault and unit knobs, which the honest
+        // treasury of the stage B phase 1 build suites does not carry
+        if ((a == 16 || a == 22 || a == 35) && handler.treasuryModule()) return false;
         // changeUnit moves the module's unit, so it only lands in the balance side
         if (a == 35) return handler.phase2();
         // the sale and owner door actions run only in the suites that list them
@@ -937,9 +940,8 @@ abstract contract InvariantsBase is InvariantFixture {
     /// core takes the controller's sellCreditTo, then the sale is turned on and a page is refilled for the buyers.
     /// chosen composition is covered by its own test, which builds the page of 80 it needs
     function _creditSmoke() internal {
-        // the credit sale lives on ControllerV1 (`setCredit`, `creditSaleOn`). in the stage B live state the controller
-        // is ControllerV2, which has no credit sale, so this smoke has no subject there
-        if (_liveStageB()) return;
+        // the credit sale window exists on both ControllerV1 and ControllerV2 (`setCredit`, `creditSaleOn`,
+        // `buyCredit`), so this smoke runs in both live states; `_creditSale` reads only fields both carry
         if (core.controller() != address(ctl) && !core.controllerLocked()) {
             vm.prank(handler.owner());
             core.setController(address(ctl));
@@ -964,9 +966,9 @@ abstract contract InvariantsBase is InvariantFixture {
             vm.prank(handler.owner());
             core.setController(address(ctl));
         }
-        // turning the credit sale off keeps the compose window trivially satisfied. the sale is a ControllerV1 feature;
-        // the stage B controller (ControllerV2) has no sale to turn off, so the page is built straight away there
-        if (!_liveStageB() && ctl.creditSaleOn()) {
+        // turning the credit sale off keeps the compose window trivially satisfied. both controllers carry the sale, so
+        // this runs in both live states
+        if (ctl.creditSaleOn()) {
             CreditSale memory cs = _creditSale();
             cs.saleOn = false;
             vm.prank(handler.owner());
@@ -1039,6 +1041,7 @@ abstract contract InvariantsBase is InvariantFixture {
     }
 
     function _phase2Smoke() internal {
+        if (handler.treasuryModule()) return _phase2SmokeTreasury();
         // an eth lane statement is redeemable once its asking price falls to its cost; the long warp takes every held
         // statement there
         vm.warp(block.timestamp + 160 hours);
@@ -1053,6 +1056,29 @@ abstract contract InvariantsBase is InvariantFixture {
             handler.replaceModule(i * 7919 + 1, i);
         }
         assertTrue(_try(35, 20), "no unit change");
+    }
+
+    /// the stage B balance side runs on the honest Phase2BalanceTreasury (the live module), not the mock. activate it
+    /// the way the lifecycle does: turn conversion and working payments on, open the Core's redemptions and balance
+    /// bids, reach the token's transfers-open block, and fund a working balance. then drive the redemption and the
+    /// balance sale. the mock-only fault, replacement and unit actions have no subject here and are left out
+    function _phase2SmokeTreasury() internal {
+        vm.prank(handler.owner());
+        treasury.setSwitches(true, true, false);
+        Settings memory s = core.settings();
+        s.redeemOn = true;
+        s.balanceBidOn = true;
+        handler.setSettingsExact(s);
+        (bool ok, bytes memory out) = liveBalanceToken.staticcall(abi.encodeWithSignature("transfersOpenBlock()"));
+        if (ok && out.length == 32) {
+            uint256 open = abi.decode(out, (uint256));
+            if (block.number <= open) vm.roll(open + 1);
+        }
+        _fundTreasuryWorking(LIVE_WORKING_FUND);
+        vm.warp(block.timestamp + 160 hours);
+        assertTrue(_try(15, 80), "no redemption");
+        assertTrue(_try(14, 60), "no balance token sale");
+        _try(14, 60);
     }
 
     /*//////////////////////////////////////////////////////////////
