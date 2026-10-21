@@ -63,7 +63,7 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
   const cc = (value: bigint | undefined) => value === undefined ? "—" : exchangeAmount(value, ccDecimals);
   const wrongChain = Boolean(account && chainId !== chain.id);
   const quoted = Boolean(quote && !quote.reason && quote.executable && quote.out > 0n && (review || liveQuote.data?.ccIn === ccIn));
-  const status = pending ? "Your amount, minimum, deadline and terms epoch are held while you confirm in your wallet."
+  const status = pending ? "Your amount, minimum, deadline and redemption terms are held while you confirm in your wallet."
     : !engineDeployed ? "The exchange is not configured."
     : treasury.error ? "Unable to read the treasury. Please try again."
     : !info ? "Reading the treasury…"
@@ -124,7 +124,6 @@ function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
     onAmountChange={(value) => { setReceipt(undefined); setAmountBps(value); }}
     quoted={bal(quoted ? quote?.out : undefined)}
     minimum={bal(quoted ? quote?.minOut : undefined)}
-    epoch={quoted && quote ? quote.epoch.toString() : "—"}
     liveMismatch={quote?.liveMatchesLocal === false}
     slippageBps={tolerance}
     onSlippageChange={setSlippage}

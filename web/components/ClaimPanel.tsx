@@ -30,7 +30,6 @@ export type ClaimPanelProps = {
   onAmountChange: (value: number) => void;
   quoted: string;
   minimum: string;
-  epoch: string;
   liveMismatch: boolean;
   slippageBps: number;
   onSlippageChange: (bps: number) => void;
@@ -107,7 +106,6 @@ export function ClaimPanel(p: ClaimPanelProps) {
             <dl className="claim-quote">
               <div><dt>you receive</dt><dd>{p.quoted} {p.balanceSymbol}</dd></div>
               <div><dt>minimum you receive</dt><dd>{p.minimum} {p.balanceSymbol}</dd></div>
-              <div><dt>terms version (epoch)</dt><dd>{p.epoch}</dd></div>
             </dl>
             {p.liveMismatch && <p className="claim-note" role="status">The treasury&apos;s quote differs from the pro-rata arithmetic; the treasury&apos;s quote is shown and used.</p>}
             <div className="claim-slippage">
@@ -119,9 +117,8 @@ export function ClaimPanel(p: ClaimPanelProps) {
               </div>
             </div>
             <p className="claim-explanation">
-              The terms epoch is the treasury&apos;s version number for redemption settings, not a date or time period. Your quote pins
-              that version when you confirm, so the transaction reverts if the owner changes the terms. It also expires after 20 minutes
-              and reverts if the treasury pays under your minimum or redemption closes.
+              Your quote and minimum are locked when you confirm. The transaction expires after 20 minutes and reverts if the owner
+              changes the redemption terms, if the treasury pays under your minimum, or if redemption closes.
             </p>
             {p.status && <p className="claim-status" role="status">{p.status}</p>}
             {p.error && <p className="claim-error" role="alert">{p.error}</p>}
