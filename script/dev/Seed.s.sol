@@ -170,7 +170,7 @@ contract Seed is Script {
         ProRataRedemptionPolicy policy = new ProRataRedemptionPolicy();
         Phase2BalanceTreasury treasury =
             new Phase2BalanceTreasury(address(core), address(token), address(policy), address(0));
-        ControllerV2 v2 = new ControllerV2(address(core), credit, none, 30_000, 3_600);
+        ControllerV2 v2 = new ControllerV2(address(core), credit, none, 15_000, 3_600);
         token.mint(address(treasury), workingFunds + claims);
 
         core.setBalanceModule(address(treasury));

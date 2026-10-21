@@ -10,7 +10,9 @@ import {SettingsFields} from "./SettingsFields.sol";
 /// @notice the stage B settings change of docs/reviews/PHASE2-PLAN-fd85ba5-2026-10-20.md section 8: the live 39 field
 /// `Settings` with exactly `saleToBuybackBps` 0, `feeToRedeemBurnBps` 0, `redeemBurnBps` 0 and `balanceDiscountBps`
 /// `PHASE2_BALANCE_DISCOUNT_BPS` (default 2,000: the posted Credit to BALANCE payout is 80 percent of rating,
-/// decision 254), every other field unchanged, and `setCreditCostToPotBps(10000)`. the approach is script/SetSettings.s.sol's (live struct, patch,
+/// decision 254), and with `PHASE2_ARTIST=<split>` the split route of decision 255 (`setArtist(split)`,
+/// `buyToArtistBps` 300, `saleToArtistBps` 300, `saleToOperatorBps` 0), every other field unchanged, and
+/// `setCreditCostToPotBps(10000)`. the approach is script/SetSettings.s.sol's (live struct, patch,
 /// bounds, before and after table, calldata, a simulated owner call, nothing sent without SEND=1 and --broadcast as the
 /// owner) with the patch fixed in code: `SETTINGS_PATCH` and every `SET_<field>` variable are refused, and
 /// `balanceBidOn` and `valueModeOn` in particular are stage C and go through SetSettings with the hazard check of
@@ -35,7 +37,16 @@ contract Phase2Settings is Script {
     string internal constant TUPLE =
         "(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool,uint16,uint16)";
 
+    /// @dev the royalty fields of decision 255 were asked for without the split address that receives them: a 3 percent
+    /// royalty to the bare artist would overpay the artist and pay the operator nothing
+    error SplitAddressRequired();
+    /// @dev `PHASE2_ARTIST` has no code or is the current artist already with other fields unchanged
+    error BadSplit(address given);
+
     struct Preview {
+        /// the split that becomes the artist, zero for no change
+        address split;
+        bool artistChanged;
         Settings live;
         Settings next;
         bool settingsChanged;
@@ -68,6 +79,25 @@ contract Phase2Settings is Script {
         uint256 discount = vm.envOr("PHASE2_BALANCE_DISCOUNT_BPS", uint256(2_000));
         if (discount > 9_999) revert BadDiscount(discount);
         s.balanceDiscountBps = uint16(discount);
+        // the split route (decision 255): the artist address becomes a splits.org split paying 5/6 to the artist and 1/6
+        // to the operator, and every artist flow carries 3 percent, so the artist keeps 2.5 percent and the operator
+        // gets 0.5 percent on purchases as on sales; the separate sale operator cut folds into the split
+        if (_split() != address(0)) {
+            s.buyToArtistBps = uint16(vm.envOr("PHASE2_BUY_TO_ARTIST_BPS", uint256(300)));
+            s.saleToArtistBps = uint16(vm.envOr("PHASE2_SALE_TO_ARTIST_BPS", uint256(300)));
+            s.saleToOperatorBps = uint16(vm.envOr("PHASE2_SALE_TO_OPERATOR_BPS", uint256(0)));
+        } else if (
+            vm.envExists("PHASE2_BUY_TO_ARTIST_BPS") || vm.envExists("PHASE2_SALE_TO_ARTIST_BPS")
+                || vm.envExists("PHASE2_SALE_TO_OPERATOR_BPS")
+        ) {
+            revert SplitAddressRequired();
+        }
+    }
+
+    /// @dev the split that becomes the Core's artist (`PHASE2_ARTIST`), zero when the artist is left as it is. a test
+    /// overrides it
+    function _split() internal view virtual returns (address) {
+        return vm.envOr("PHASE2_ARTIST", address(0));
     }
 
     /// @notice reads the live struct, patches it, checks the bounds, prints the changed rows, the pots and the calldata,
@@ -75,6 +105,20 @@ contract Phase2Settings is Script {
     function preview(ICore core) internal returns (Preview memory p) {
         p.live = core.settings();
         p.next = phase2Patch(p.live);
+        p.split = _split();
+        if (p.split != address(0)) {
+            if (p.split.code.length == 0) revert BadSplit(p.split);
+            p.artistChanged = core.artist() != p.split;
+            console.log(
+                string.concat(
+                    "artist | ",
+                    vm.toString(core.artist()),
+                    " | ",
+                    vm.toString(p.split),
+                    p.artistChanged ? " | changes: setArtist(split), every artist flow pays the split" : " | unchanged"
+                )
+            );
+        }
         bytes32 bad = SettingsBounds.firstViolation(p.next);
         if (bad != 0) revert OutOfBounds(bad);
         p.settingsChanged = keccak256(abi.encode(p.live)) != keccak256(abi.encode(p.next));
@@ -95,8 +139,10 @@ contract Phase2Settings is Script {
         _simulate(core, p);
     }
 
-    /// @notice the two owner calls, in the stage B order: the credit cost share first, then the settings
+    /// @notice the owner calls, in the stage B order: the split as artist first (so no block pays 3 percent to the bare
+    /// artist), then the credit cost share, then the settings
     function applyPatch(ICore core, Preview memory p) internal {
+        if (p.artistChanged) core.setArtist(p.split);
         if (p.costChanged) core.setCreditCostToPotBps(CREDIT_COST_TO_POT_BPS);
         if (p.settingsChanged) core.setSettings(p.next);
     }

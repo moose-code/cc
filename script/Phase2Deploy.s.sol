@@ -23,7 +23,7 @@ interface IBalanceTokenPreview {
 /// default profile and the readback compares the created code against the pinned build.
 /// `CORE=0x... BALANCE_TOKEN=0x... forge script script/Phase2Deploy.s.sol --rpc-url $MAINNET_RPC_URL`
 /// simulates and prints "no send". add `SEND=1 --broadcast` with a signer (any account, the contracts read authority
-/// from the Core owner) to send. `PHASE2_STATEMENT_MULTIPLIER_BPS` (default 30000) and
+/// from the Core owner) to send. `PHASE2_STATEMENT_MULTIPLIER_BPS` (default 15000, decision 256) and
 /// `PHASE2_STATEMENT_DELAY_SECONDS` (default 3600) are the ControllerV2 statement policy. the preview refuses a balance
 /// token that does not answer the treasury constructor's checks before anything is created. the run ends with one
 /// `record: {json}` line for deployments/1-phase2.json
@@ -31,7 +31,7 @@ contract Phase2Deploy is Script, Phase2Checks {
     /// @dev a creation returned no code
     error CreateFailed(string name);
 
-    uint32 internal constant DEFAULT_STATEMENT_MULTIPLIER_BPS = 30_000;
+    uint32 internal constant DEFAULT_STATEMENT_MULTIPLIER_BPS = 15_000;
     uint32 internal constant DEFAULT_STATEMENT_DELAY_SECONDS = 3_600;
 
     struct Inputs {

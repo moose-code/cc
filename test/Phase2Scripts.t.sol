@@ -33,10 +33,19 @@ contract Phase2ReadbackProbe is Phase2Readback {
 /// @dev the settings script with its environment replaced by fields
 contract Phase2SettingsProbe is Phase2Settings {
     address internal core_;
+    address internal split_;
     string[] internal forced_;
 
     function configure(address core) external {
         core_ = core;
+    }
+
+    function setSplit(address split) external {
+        split_ = split;
+    }
+
+    function _split() internal view override returns (address) {
+        return split_;
     }
 
     function force(string memory name) external {
@@ -89,7 +98,7 @@ contract Phase2ScriptsTest is Fixture {
         return Phase2Deploy.Inputs({
             core: address(core),
             balanceToken: address(token),
-            statementSaleMultiplierBps: 30_000,
+            statementSaleMultiplierBps: 15_000,
             statementRedeemDelaySeconds: 3_600,
             tokenCodehash: address(token).codehash,
             allowUnpinnedToken: false
@@ -118,7 +127,7 @@ contract Phase2ScriptsTest is Fixture {
         vm.setEnv("PHASE2_STATEMENT_MULTIPLIER_BPS", "4294977296");
         vm.expectRevert(abi.encodeWithSelector(Phase2Deploy.ValueTooWide.selector, "PHASE2_STATEMENT_MULTIPLIER_BPS"));
         deployProbe.run();
-        vm.setEnv("PHASE2_STATEMENT_MULTIPLIER_BPS", "30000");
+        vm.setEnv("PHASE2_STATEMENT_MULTIPLIER_BPS", "15000");
         vm.setEnv("PHASE2_STATEMENT_DELAY_SECONDS", "4294967297");
         vm.expectRevert(abi.encodeWithSelector(Phase2Deploy.ValueTooWide.selector, "PHASE2_STATEMENT_DELAY_SECONDS"));
         deployProbe.run();
@@ -150,7 +159,7 @@ contract Phase2ScriptsTest is Fixture {
         IControllerV2 c = IControllerV2(r.controllerV2);
         assertEq(c.CORE(), address(core));
         assertFalse(c.statementSalesEnabled());
-        assertEq(c.statementSaleMultiplierBps(), 30_000);
+        assertEq(c.statementSaleMultiplierBps(), 15_000);
         assertEq(c.statementRedeemDelaySeconds(), 3_600);
         assertEq(c.creditSaleOn(), ctl.creditSaleOn());
         assertEq(c.creditWindow(), ctl.creditWindow());
@@ -260,5 +269,35 @@ contract Phase2ScriptsTest is Fixture {
         settings.force("balanceBidOn");
         vm.expectRevert(abi.encodeWithSelector(Phase2Settings.StageCField.selector, "balanceBidOn"));
         settings.refuse();
+    }
+
+    // promise: decision 255 with a split address the patch makes the split the artist and every artist flow 3 percent with the sale operator cut folded in, in the order split, cost share, settings
+    function test_settingsPatchWiresTheSplitAsArtist() public {
+        address split = address(new Phase2BalanceTokenStandin()); // any contract with code stands in for the split
+        settings.setSplit(split);
+        Phase2Settings.Preview memory p = settings.previewOn();
+        assertEq(p.split, split);
+        assertTrue(p.artistChanged);
+        assertEq(p.next.buyToArtistBps, 300);
+        assertEq(p.next.saleToArtistBps, 300);
+        assertEq(p.next.saleToOperatorBps, 0);
+        assertEq(p.next.balanceDiscountBps, 2_000);
+        assertEq(core.artist(), creator, "the preview sends nothing");
+        settings.applyAsOwner();
+        assertEq(core.artist(), split);
+        assertEq(core.settings().buyToArtistBps, 300);
+        assertEq(core.settings().saleToArtistBps, 300);
+        assertEq(core.settings().saleToOperatorBps, 0);
+        // the purchase royalty now reaches the split in both currencies: an eth purchase pushes it there
+        uint256[] memory ids = _credits(seller, 1);
+        _fundPot(5 ether);
+        uint256 before = split.balance;
+        vm.prank(seller);
+        core.sellForEth(ids);
+        assertGt(split.balance, before, "the eth royalty reached the split");
+        // a split with no code is refused
+        settings.setSplit(address(0xBAD));
+        vm.expectRevert(abi.encodeWithSelector(Phase2Settings.BadSplit.selector, address(0xBAD)));
+        settings.previewOn();
     }
 }
