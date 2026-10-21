@@ -17,6 +17,9 @@ import {V2Stack, IV2Reads} from "./utils/V2Stack.sol";
 import {V2_CONSTANTS_HASH} from "../script/LaunchConfig.sol";
 import {TestSwapRouter} from "./utils/TestSwapRouter.sol";
 
+/// this file is a deploy-mechanics test of a fresh system, not the live Core: it launches and trades a fresh restricted
+/// coin on the live v2 stack at a pre-launch fork, so it never reads or mutates the live Core.
+///
 /// bounty recipient with an empty receive: the hook's 2300 gas push succeeds
 contract EmptyRecipient {
     receive() external payable {}
@@ -44,9 +47,10 @@ contract V2StackTest is Test {
     TestSwapRouter internal swapper;
 
     function setUp() public {
-        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
-        if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
-        else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
+        // a deploy-mechanics test of a fresh system forks the pre-launch block Rehearsal uses by default; never the
+        // head, which the RPC cache cannot serve for free
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(26208025));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
         s = V2Stack.attach();
         owner = s.owner;
         creator = makeAddr("creator");

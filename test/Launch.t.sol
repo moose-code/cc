@@ -5,7 +5,9 @@ import {Fixture} from "./utils/Fixture.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {IArtCoinsHookV2, IArtCoinsMevSkimV2} from "../src/interfaces/ArtCoinsV2.sol";
 
-/// the launch of the coin through the v2 factory as its owner and everything it must read back as
+/// the launch of the coin through the v2 factory as its owner and everything it must read back as.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it launches a new coin and system, so it
+/// never reads or mutates the live Core.
 contract LaunchTest is Fixture {
     IArtCoinsHookV2 internal HOOK;
 

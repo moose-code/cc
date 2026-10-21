@@ -7,7 +7,9 @@ import {ScriptedController} from "../attackers/ScriptedController.sol";
 
 /// @notice audit finding A02: the constructor arguments postflight prints for etherscan verification are a function of
 /// the signed launch config and the deployer, never of live storage (`controller()`, `settings()`, `owner()`), which the
-/// owner can change
+/// owner can change.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it checks the constructor arguments the
+/// postflight prints for a freshly built system, so it never reads or mutates the live Core.
 contract PostflightInputsTest is Fixture {
     // the Core is the CREATE2 address of the config and the deployer, and stays so after the owner changed the settings,
     // the controller and the owner role
