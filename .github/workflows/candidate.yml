@@ -120,7 +120,7 @@ jobs:
         env:
           FORK_URL: ${{ secrets.FORK_URL || 'https://gateway.tenderly.co/public/mainnet' }}
         run: |
-          PORT=8619 PHASE=post FRESH=1 FORK_BLOCK=26208025 REQUIRE_UPSTREAM_BALANCE=true script/dev/local.sh
+          PORT=8619 MODE=deploy PHASE=post FRESH=1 FORK_BLOCK=26208025 REQUIRE_UPSTREAM_BALANCE=true script/dev/local.sh
           PORT=8619 script/dev/check-post.sh
           DATABASE_URL=postgresql://postgres@127.0.0.1:5432/postgres PORT=8619 script/dev/check-indexer.sh
           PORT=8619 script/dev/local.sh stop
