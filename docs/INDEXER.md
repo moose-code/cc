@@ -151,6 +151,14 @@ One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCos
 
 `anchor_move`: one row per `AnchorMoved`.
 
+### 6.7b `treasury_state` and `treasury_event` (phase 2, decisions 245 to 252)
+
+`treasury_state`, one row per balance module named by `BalanceModuleSet`, written from the treasury's own events only, never from a latest state read: `balanceToken`, `setBlock`, `active`, `claimReserve`, `totalOwed` (PaymentAccrued less OwedClaimed), `configEpoch`, `policy`, `conversionToClaimBps`, `redemptionFeeBps`, the three switches, `minimumWorkingBalance`, `migrated`, `successor`, and the running totals `convertedTotal`, `contributedTotal`, `conversions`, `redeemedCcTotal`, `paidBalanceTotal`, `redemptions` (public burns) kept apart from `ownerFundedTotal`, `ownerAllocatedTotal`, `ownerReturnedTotal`, `ownerWithdrawnTotal`, plus `accruedTotal`, `claimedTotal`, `lastEventBlock`. A value an event has not carried yet is null; a treasury's constructor events before its `BalanceModuleSet` are not indexed.
+
+`treasury_event`, one row per treasury event: `kind` (`statement_converted`, `cc_redeemed`, `claims_funded`, `claims_allocated`, `claims_returned`, `working_withdrawn`, `policy_set`, `fee_set`, `switches_set`, `contribution_set`, `floor_set`, `migrated`, `migration_received`, `payment_accrued`, `owed_claimed`), `ccIn`, `balanceOut`, `claimReserve`, `ccSupply`, `configEpoch`, `amount`, `bps`, `actor`, `recipient`, `policy`, `statementId`, `detail` json, block and tx fields. Public redemptions are the `cc_redeemed` rows; owner changes are the `claims_*` and `working_withdrawn` rows. Burns are never inferred from contribution events.
+
+The `controller` row gains nullable `statementSalesEnabled`, `statementSaleMultiplierBps`, `statementRedeemDelaySeconds` from the ControllerV2 setter events; a V2 controller leaves the V1 anchor columns null and `anchorBps` at its derived 10,000.
+
 ### 6.8 `activity` (the ledger)
 
 One row per user-visible event, newest first by (`blockNumber`, `logIndex`): `kind` (`credit_bought`, `credit_adopted`, `listing_bought`, `credit_swapped`, `composed`, `restyled`, `statement_sold`, `credit_sold`, `redeemed`, `buyback`, `fees_added`, `funded`, `escrow_collected`), `creditId`, `statementId`, `account`, `amount` (ETH wei), `amount2` (kind specific, documented per kind in the schema), block and tx fields. Index on (`kind`, `blockNumber`) and on `account`.
