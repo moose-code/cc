@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Script, console} from "forge-std/Script.sol";
+import {console} from "forge-std/Script.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
 import {CreditSale, Quote, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {Phase2Checks} from "./Phase2Readback.s.sol";
+import {PushSplitCreator} from "./PushSplit.sol";
 
 /// @notice the balance token reads the deploy preview checks (plan section 5 item 4, the treasury constructor)
 interface IBalanceTokenPreview {
@@ -25,9 +26,14 @@ interface IBalanceTokenPreview {
 /// simulates and prints "no send". add `SEND=1 --broadcast` with a signer (any account, the contracts read authority
 /// from the Core owner) to send. `PHASE2_STATEMENT_MULTIPLIER_BPS` (default 15000, decision 256) and
 /// `PHASE2_STATEMENT_DELAY_SECONDS` (default 3600) are the ControllerV2 statement policy. the preview refuses a balance
-/// token that does not answer the treasury constructor's checks before anything is created. the run ends with one
-/// `record: {json}` line for deployments/1-phase2.json
-contract Phase2Deploy is Script, Phase2Checks {
+/// token that does not answer the treasury constructor's checks before anything is created. the fourth creation is
+/// the decision 255 artist and operator split (script/PushSplit.sol: a Splits v2.2 push split, artist 5/6 and
+/// operator 1/6, the Core owner as controller) unless `PHASE2_SPLIT=0x...` names an existing split, which is accepted
+/// only with the same hash and controller and a push proven in simulation; `SPLIT_ARTIST`, `SPLIT_OPERATOR` and
+/// `SPLIT_CONTROLLER` override the Core's artist, payee and owner. the split becomes the Core's artist in stage B
+/// (`PHASE2_ARTIST` of script/Phase2Settings.s.sol). the run ends with one `record: {json}` line for
+/// deployments/1-phase2.json
+contract Phase2Deploy is PushSplitCreator, Phase2Checks {
     /// @dev a creation returned no code
     error CreateFailed(string name);
 
@@ -43,6 +49,11 @@ contract Phase2Deploy is Script, Phase2Checks {
         /// `ALLOW_UNPINNED_BALANCE_TOKEN=1`: three getters cannot authenticate a token, its verified runtime can
         bytes32 tokenCodehash;
         bool allowUnpinnedToken;
+        /// an existing push split to accept instead of creating one (`PHASE2_SPLIT`), zero to create
+        address split;
+        /// the split's artist, operator and controller (`SPLIT_ARTIST`, `SPLIT_OPERATOR`, `SPLIT_CONTROLLER`; the
+        /// Core's artist, payee and owner by default)
+        SplitPlan splitPlan;
     }
 
     /// @dev an environment integer that must fit a uint32; a silent narrowing would deploy other terms than entered
@@ -59,6 +70,8 @@ contract Phase2Deploy is Script, Phase2Checks {
         address policy;
         address treasury;
         address controllerV2;
+        /// the artist and operator split, created or accepted
+        address split;
         CreditSale credit;
     }
 
@@ -69,7 +82,9 @@ contract Phase2Deploy is Script, Phase2Checks {
             statementSaleMultiplierBps: _envUint32("PHASE2_STATEMENT_MULTIPLIER_BPS", DEFAULT_STATEMENT_MULTIPLIER_BPS),
             statementRedeemDelaySeconds: _envUint32("PHASE2_STATEMENT_DELAY_SECONDS", DEFAULT_STATEMENT_DELAY_SECONDS),
             tokenCodehash: vm.envOr("BALANCE_TOKEN_CODEHASH", bytes32(0)),
-            allowUnpinnedToken: vm.envOr("ALLOW_UNPINNED_BALANCE_TOKEN", uint256(0)) == 1
+            allowUnpinnedToken: vm.envOr("ALLOW_UNPINNED_BALANCE_TOKEN", uint256(0)) == 1,
+            split: vm.envOr("PHASE2_SPLIT", address(0)),
+            splitPlan: _splitPlan(vm.envAddress("CORE"))
         });
         bool send = vm.envOr("SEND", uint256(0)) == 1;
         // a send needs the plan hash the preview printed, so what is sent is what was reviewed (the CONFIG_HASH
@@ -93,7 +108,9 @@ contract Phase2Deploy is Script, Phase2Checks {
                 i.balanceToken.codehash,
                 i.statementSaleMultiplierBps,
                 i.statementRedeemDelaySeconds,
-                credit
+                credit,
+                i.split,
+                i.splitPlan
             )
         );
     }
@@ -108,7 +125,7 @@ contract Phase2Deploy is Script, Phase2Checks {
         _require();
         _reset();
         if (send) vm.startBroadcast();
-        else console.log("no send: SEND is not 1, the three creations are simulated only");
+        else console.log("no send: SEND is not 1, the creations are simulated only");
         r.policy = _create("ProRataRedemptionPolicy", "");
         r.treasury = _create("Phase2BalanceTreasury", abi.encode(i.core, i.balanceToken, r.policy, address(0)));
         Quote memory none;
@@ -116,12 +133,23 @@ contract Phase2Deploy is Script, Phase2Checks {
             "ControllerV2",
             abi.encode(i.core, r.credit, none, i.statementSaleMultiplierBps, i.statementRedeemDelaySeconds)
         );
+        r.split = i.split == address(0) ? createPushSplit(i.splitPlan, msg.sender) : i.split;
         if (send) vm.stopBroadcast();
+        acceptSplit(r.split, i.splitPlan);
         phase2Readback(i.core, r.treasury, r.controllerV2);
         _disabled(i, r);
         _print(send ? "phase 2 deploy readback" : "phase 2 deploy readback of the simulation");
         _require();
         _record(i, r);
+        printSplitLines(r.split, i.splitPlan);
+    }
+
+    /// @dev the split's artist, operator and controller: environment overrides, else the Core's artist, payee, owner
+    function _splitPlan(address core) internal view returns (SplitPlan memory p) {
+        ICore c = ICore(payable(core));
+        p.artist = vm.envOr("SPLIT_ARTIST", c.artist());
+        p.operator = vm.envOr("SPLIT_OPERATOR", c.payee());
+        p.controller = vm.envOr("SPLIT_CONTROLLER", c.owner());
     }
 
     /// @dev the credit sale the current controller runs, carried over unchanged (plan section 4.3)
@@ -157,6 +185,21 @@ contract Phase2Deploy is Script, Phase2Checks {
         _info(
             "deploy 3: ControllerV2(core, credit, quote, multiplierBps, delaySeconds)",
             string.concat(vm.toString(i.core), ", credit ", _creditText(credit), ", quote zero, ", _policyText(i))
+        );
+        requireSplitPlan(i.splitPlan);
+        checkSplitFactory();
+        _info(
+            i.split == address(0)
+                ? "deploy 4: push split (artist 5/6, operator 1/6, controller)"
+                : "accept: push split",
+            string.concat(
+                i.split == address(0) ? "" : string.concat(vm.toString(i.split), ": "),
+                vm.toString(i.splitPlan.artist),
+                ", ",
+                vm.toString(i.splitPlan.operator),
+                ", ",
+                vm.toString(i.splitPlan.controller)
+            )
         );
     }
 
@@ -271,6 +314,11 @@ contract Phase2Deploy is Script, Phase2Checks {
             ICore(payable(i.core)).controller() != r.controllerV2,
             "setController not called"
         );
+        _check(
+            "stage A: Core artist is not the split yet",
+            ICore(payable(i.core)).artist() != r.split,
+            "setArtist not called"
+        );
     }
 
     /// @dev one `record: {json}` line: addresses, constructor arguments, the live runtime code hashes and the masked
@@ -294,7 +342,8 @@ contract Phase2Deploy is Script, Phase2Checks {
             vm.toString(r.treasury),
             '","controllerV2":"',
             vm.toString(r.controllerV2),
-            '"'
+            '",',
+            splitRecord(r.split, i.splitPlan)
         );
         console.log(string.concat("record: ", head, _recordArgs(i, r), _recordHashes(r), _recordFlags()));
     }
@@ -353,7 +402,7 @@ contract Phase2Deploy is Script, Phase2Checks {
         return string.concat(
             ',"policyVersion":"',
             POLICY_VERSION,
-            '","activation":{"balanceModuleSet":false,"controllerSet":false,"conversionEnabled":false,"workingPaymentsEnabled":false,"ccRedemptionEnabled":false,"statementSalesEnabled":false,"balancePoolKeySet":false}}'
+            '","activation":{"balanceModuleSet":false,"controllerSet":false,"conversionEnabled":false,"workingPaymentsEnabled":false,"ccRedemptionEnabled":false,"statementSalesEnabled":false,"balancePoolKeySet":false,"artistSet":false}}'
         );
     }
 }

@@ -3,7 +3,8 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "solady/tokens/ERC20.sol";
-import {CreatePushSplit, SplitConfig, ISplitFactoryV2, ISplitWalletV2} from "../script/CreatePushSplit.s.sol";
+import {CreatePushSplit} from "../script/CreatePushSplit.s.sol";
+import {PushSplitCreator, SplitConfig, ISplitFactoryV2, ISplitWalletV2} from "../script/PushSplit.sol";
 
 contract SplitToken is ERC20 {
     function name() public pure override returns (string memory) {
@@ -37,17 +38,16 @@ contract CreatePushSplitTest is Test {
     // owner as controller and the hash the keeper restates, and its distribute pays both recipients directly in ETH
     // and in an ERC20 (the BALANCE leg), with the Core's 50,000 gas push accepted
     function test_createsPushSplitThatPaysRecipientsDirectly() public {
-        CreatePushSplit.Inputs memory i = s.inputs();
-        assertEq(i.artist, ARTIST);
-        assertEq(i.operator, OWNER);
-        assertEq(i.controller, OWNER);
+        PushSplitCreator.SplitPlan memory p = s.plan();
+        assertEq(p.artist, ARTIST);
+        assertEq(p.operator, OWNER);
+        assertEq(p.controller, OWNER);
         s.run();
         // the preview is simulation; create the same split here to inspect it
-        SplitConfig memory cfg = s.config(i.artist, i.operator);
-        address split = ISplitFactoryV2(s.PUSH_FACTORY()).createSplit(cfg, i.controller, address(this));
-        s.verify(split, cfg, i.controller);
-        assertEq(ISplitWalletV2(split).splitHash(), s.hashOf(cfg));
-        s.probePush(split, cfg);
+        SplitConfig memory cfg = s.splitConfig(p.artist, p.operator);
+        address split = ISplitFactoryV2(s.PUSH_FACTORY()).createSplit(cfg, p.controller, address(this));
+        s.acceptSplit(split, p);
+        assertEq(ISplitWalletV2(split).splitHash(), s.splitHashOf(cfg));
         SplitToken token = new SplitToken();
         token.mint(split, 1_000_000);
         ISplitWalletV2(split).distribute(cfg, address(token), address(this));
@@ -60,10 +60,10 @@ contract CreatePushSplitTest is Test {
     // promise: the split the splits.org form created is a pull split whose distribute credits the warehouse and pays
     // the recipients nothing, so the script's push probe refuses it and it must not become the Core's artist
     function test_formSplitIsPullAndFailsTheProbe() public {
-        SplitConfig memory cfg = s.config(ARTIST, OWNER);
-        assertEq(ISplitWalletV2(FORM_SPLIT).splitHash(), s.hashOf(cfg), "same shares as the form");
-        vm.expectRevert(abi.encodeWithSelector(CreatePushSplit.NotPush.selector, FORM_SPLIT));
-        s.probePush(FORM_SPLIT, cfg);
+        SplitConfig memory cfg = s.splitConfig(ARTIST, OWNER);
+        assertEq(ISplitWalletV2(FORM_SPLIT).splitHash(), s.splitHashOf(cfg), "same shares as the form");
+        vm.expectRevert(abi.encodeWithSelector(PushSplitCreator.NotPush.selector, FORM_SPLIT));
+        s.probeSplitPush(FORM_SPLIT, cfg);
     }
 
     receive() external payable {}

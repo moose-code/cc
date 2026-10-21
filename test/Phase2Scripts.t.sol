@@ -10,6 +10,7 @@ import {Settings} from "../src/interfaces/Interfaces.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {Report} from "../script/Report.sol";
 import {Phase2Deploy} from "../script/Phase2Deploy.s.sol";
+import {PushSplitCreator, ISplitFactoryV2, ISplitWalletV2, SplitConfig} from "../script/PushSplit.sol";
 import {Phase2Readback} from "../script/Phase2Readback.s.sol";
 import {Phase2Settings} from "../script/Phase2Settings.s.sol";
 import {Phase2BalanceTokenStandin} from "./standins/Phase2BalanceTokenStandin.sol";
@@ -81,6 +82,8 @@ contract Phase2SettingsProbe is Phase2Settings {
 /// balance token: the stage A deploy and its readback, the readback refusals and the stage B settings patch
 contract Phase2ScriptsTest is Fixture {
     Phase2BalanceTokenStandin internal token;
+    /// the Splits v2.2 pull factory, the one the splits.org form uses
+    address internal constant PULL_FACTORY = 0x6B9118074aB15142d7524E8c4ea8f62A3Bdb98f1;
     Phase2DeployProbe internal deployProbe;
     Phase2ReadbackProbe internal readback;
     Phase2SettingsProbe internal settings;
@@ -101,7 +104,9 @@ contract Phase2ScriptsTest is Fixture {
             statementSaleMultiplierBps: 15_000,
             statementRedeemDelaySeconds: 3_600,
             tokenCodehash: address(token).codehash,
-            allowUnpinnedToken: false
+            allowUnpinnedToken: false,
+            split: address(0),
+            splitPlan: PushSplitCreator.SplitPlan({artist: core.artist(), operator: core.payee(), controller: owner})
         });
     }
 
@@ -139,9 +144,16 @@ contract Phase2ScriptsTest is Fixture {
         vm.setEnv("SEND", "0");
     }
 
-    // promise: PLAN section 8 stage A the deploy script creates the three contracts disabled, bound to the Core, with the live credit sale, and its readback passes
+    // promise: PLAN section 8 stage A the deploy script creates the three contracts disabled, bound to the Core, with the live credit sale, and its readback passes; decision 255 the fourth creation is the push split with the Core's artist at 5/6, its payee at 1/6 and its owner as controller, not yet the Core's artist
     function test_deployCreatesTheDisabledStackAndReadbackPasses() public {
-        Phase2Deploy.Result memory r = deployProbe.deploy(_inputs());
+        Phase2Deploy.Inputs memory i = _inputs();
+        Phase2Deploy.Result memory r = deployProbe.deploy(i);
+        SplitConfig memory cfg = deployProbe.splitConfig(core.artist(), core.payee());
+        assertEq(ISplitWalletV2(r.split).splitHash(), deployProbe.splitHashOf(cfg), "the split of decision 255");
+        assertEq(ISplitWalletV2(r.split).owner(), owner, "the owner controls the split");
+        assertTrue(core.artist() != r.split, "the split is not the artist before stage B");
+        assertEq(i.splitPlan.artist, creator);
+        assertTrue(creator != core.payee());
         IPhase2BalanceTreasury t = IPhase2BalanceTreasury(r.treasury);
         assertEq(t.core(), address(core));
         assertEq(t.ccToken(), core.COIN());
@@ -179,6 +191,28 @@ contract Phase2ScriptsTest is Fixture {
         assertEq(readback.read(address(core), r.treasury, address(0)), "", "without the controller too");
     }
 
+    // promise: decision 255 an existing split is accepted by the deploy only with the plan's hash and controller and a proven push: a pull split from the splits.org form and a split under another controller are refused, a push split with the plan's hash is accepted without a creation
+    function test_deployAcceptsOnlyAMatchingPushSplit() public {
+        Phase2Deploy.Inputs memory i = _inputs();
+        SplitConfig memory cfg = deployProbe.splitConfig(core.artist(), core.payee());
+        address pull = ISplitFactoryV2(PULL_FACTORY).createSplit(cfg, owner, address(this));
+        i.split = pull;
+        vm.expectRevert(abi.encodeWithSelector(PushSplitCreator.NotPush.selector, pull));
+        deployProbe.deploy(i);
+        address foreign = ISplitFactoryV2(deployProbe.PUSH_FACTORY()).createSplit(cfg, address(this), address(this));
+        i.split = foreign;
+        vm.expectRevert(abi.encodeWithSelector(PushSplitCreator.SplitMismatch.selector, foreign));
+        deployProbe.deploy(i);
+        address push = ISplitFactoryV2(deployProbe.PUSH_FACTORY()).createSplit(cfg, owner, address(this));
+        i.split = push;
+        Phase2Deploy.Result memory r = deployProbe.deploy(i);
+        assertEq(r.split, push, "the given push split is the record's split");
+        i = _inputs();
+        i.splitPlan.operator = i.splitPlan.artist;
+        vm.expectRevert(abi.encodeWithSelector(PushSplitCreator.BadRecipient.selector, creator, creator, owner));
+        deployProbe.deploy(i);
+    }
+
     // promise: the readback samples executable payouts against the posted rate, names the binding constraint, and fails on a material shortfall unless the owner records approval
     function test_readbackSamplesExecutablePayoutsAndGatesAShortfall() public {
         Phase2Deploy.Result memory r = deployProbe.deploy(_inputs());
@@ -206,16 +240,19 @@ contract Phase2ScriptsTest is Fixture {
     // promise: PLAN section 8 stage A the deploy preview refuses a balance token the treasury constructor would refuse, before any creation
     function test_deployRefusesAWrongBalanceToken() public {
         token.configure(makeAddr("phase2.otherStatements"), 18);
+        // the inputs read the Core's artist and payee, so they are built before the expectation
+        Phase2Deploy.Inputs memory i = _inputs();
         vm.expectRevert(
             abi.encodeWithSelector(
                 Report.ChecksFailed.selector, "preview: balance token statements() is the Statements contract"
             )
         );
-        deployProbe.deploy(_inputs());
+        deployProbe.deploy(i);
         token = new Phase2BalanceTokenStandin();
         token.configure(token.statements(), 6);
+        i = _inputs();
         vm.expectRevert(abi.encodeWithSelector(Report.ChecksFailed.selector, "preview: balance token decimals() is 18"));
-        deployProbe.deploy(_inputs());
+        deployProbe.deploy(i);
     }
 
     // promise: PLAN section 8 the readback refuses a treasury bound to another Core and altered code, and names the hazard state
