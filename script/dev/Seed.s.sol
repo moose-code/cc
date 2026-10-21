@@ -261,9 +261,8 @@ contract Seed is Script {
         require(priced && ccSpot != 0, "bid: the coin pool has no price");
         (uint256 sharePerCC,,) = treasury.redemptionTerms(1e18);
         require(sharePerCC != 0, "bid: no share per CC");
-        uint256 balSpot = FullMath.mulDiv(
-            ccSpot * (10_000 + bid.premiumBps()), 1e18, 10_000 * sharePerCC * BID_SHARE_MULTIPLE
-        );
+        uint256 balSpot =
+            FullMath.mulDiv(ccSpot * (10_000 + bid.premiumBps()), 1e18, 10_000 * sharePerCC * BID_SHARE_MULTIPLE);
         // sqrtPriceX96 = 2^96 * sqrt(1e18 / spot), the inverse of the spot read within its rounding
         uint160 sqrt = uint160(FullMath.mulDiv(FixedPoint96.Q96, FixedPointMathLib.sqrt(1e36 / balSpot), 1e9));
         uint256 spot = FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, sqrt), FixedPoint96.Q96, sqrt);
