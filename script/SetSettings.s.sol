@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {Settings, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
+import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
 import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {SettingsFields} from "./SettingsFields.sol";
 
@@ -25,11 +26,14 @@ interface ICoreOwner {
 /// * `SET_<field>=<value>`, one variable per field of `Settings`, for example `SET_saleFloorBps=8000`
 /// * `SETTINGS_PATCH`, a json object as text or the path of a json file, for example `{"saleFloorBps":8000}`
 /// `SET_RATE=<wei per credit>` also prepares `setRate`.
-/// with `CONTROLLER=0x...` the same `SET_<field>` variables also change the controller: the fields of `Sale` (`markupBps`,
-/// `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`, `anchorMoveBps`) go to `setSale`
-/// and the fields of `CreditSale` (`saleOn`, `window`, `spreadBps`, `startBps`)
-/// to `setCredit`. each struct is read live, patched and checked by a simulated call as the owner, which reverts with
-/// the first field out of bounds.
+/// with `CONTROLLER=0x...` the same `SET_<field>` variables also change the controller. on ControllerV1 the fields of
+/// `Sale` (`markupBps`, `startCapBps`, `decayHours`, `anchorHalfLife`, `anchorMinCost`, `anchorMoveBps`) go to
+/// `setSale`; on ControllerV2 (detected by its `statementSaleMultiplierBps()`) the fields `statementSalesEnabled`,
+/// `statementSaleMultiplierBps` and `statementRedeemDelaySeconds` go to their setters, and a V1 only field is refused
+/// (`UnknownField`). on both, the fields of `CreditSale` (`saleOn`, `window`, `spreadBps`, `startBps`) go to
+/// `setCredit`. each struct is read live, patched and checked by a simulated call as the owner, which reverts with
+/// the first field out of bounds. the Core bounds `saleFloorBps` by the controller's `markupBps()`, which ControllerV2
+/// answers with its multiplier clamped to uint16, so a floor above that is refused here before anything is sent.
 /// the controller prices held statements live from the settings, so a setting change reaches every held statement at once.
 ///
 /// `CORE=0x... SET_saleFloorBps=8000 forge script script/SetSettings.s.sol --rpc-url $MAINNET_RPC_URL`
@@ -53,6 +57,28 @@ contract SetSettings is Script {
         bool saleChanged;
         bool creditChanged;
         bool saleFirst;
+        // ControllerV2: the statement policy fields instead of `Sale`
+        bool v2;
+        bool salesEnabled;
+        uint32 multiplierBps;
+        uint32 delaySeconds;
+        bool statementChanged;
+    }
+
+    /// @dev the V1 only fields a ControllerV2 refuses, and the V2 only fields a ControllerV1 refuses
+    function _v1OnlyFields() internal pure returns (string[6] memory) {
+        return ["markupBps", "startCapBps", "decayHours", "anchorHalfLife", "anchorMinCost", "anchorMoveBps"];
+    }
+
+    function _v2OnlyFields() internal pure returns (string[3] memory) {
+        return ["statementSalesEnabled", "statementSaleMultiplierBps", "statementRedeemDelaySeconds"];
+    }
+
+    /// @dev a ControllerV2 answers `statementSaleMultiplierBps()`; a ControllerV1 does not
+    function _isV2(address c) internal view returns (bool) {
+        if (c == address(0) || c.code.length == 0) return false;
+        (bool ok, bytes memory ret) = c.staticcall(abi.encodeCall(IControllerV2.statementSaleMultiplierBps, ()));
+        return ok && ret.length >= 32;
     }
 
     function run() external {
@@ -100,7 +126,7 @@ contract SetSettings is Script {
         console.log("sent. read it back with settings(), ethRate() and the SettingsSet event");
     }
 
-    /// @dev the live `Sale` and `CreditSale` of the controller with the `SET_<field>` variables applied, and whether each
+    /// @dev the live `Sale` and `CreditSale` of a ControllerV1 with the `SET_<field>` variables applied, and whether each
     /// differs from the live struct
     function _controllerChanges(IControllerV1 c)
         internal
@@ -115,12 +141,7 @@ contract SetSettings is Script {
             anchorMinCost: uint128(_field("anchorMinCost", c.anchorMinCost(), type(uint128).max)),
             anchorMoveBps: uint16(_field("anchorMoveBps", c.anchorMoveBps(), type(uint16).max))
         });
-        nk = CreditSale({
-            saleOn: _field("saleOn", c.creditSaleOn() ? 1 : 0, 1) == 1,
-            window: uint32(_field("window", c.creditWindow(), type(uint32).max)),
-            spreadBps: uint16(_field("spreadBps", c.creditSpreadBps(), type(uint16).max)),
-            startBps: uint32(_field("startBps", c.creditStartBps(), type(uint32).max))
-        });
+        (nk, creditChanged) = _creditChanges(address(c));
         saleChanged = keccak256(abi.encode(ns))
             != keccak256(
                 abi.encode(
@@ -134,10 +155,51 @@ contract SetSettings is Script {
                     )
                 )
             );
+    }
+
+    /// @dev the live `CreditSale` of either controller with the `SET_<field>` variables applied. the four getters have
+    /// the same names and types on ControllerV1 and ControllerV2
+    function _creditChanges(address at) internal view returns (CreditSale memory nk, bool creditChanged) {
+        IControllerV1 c = IControllerV1(at);
+        nk = CreditSale({
+            saleOn: _field("saleOn", c.creditSaleOn() ? 1 : 0, 1) == 1,
+            window: uint32(_field("window", c.creditWindow(), type(uint32).max)),
+            spreadBps: uint16(_field("spreadBps", c.creditSpreadBps(), type(uint16).max)),
+            startBps: uint32(_field("startBps", c.creditStartBps(), type(uint32).max))
+        });
         creditChanged = keccak256(abi.encode(nk))
             != keccak256(
                 abi.encode(CreditSale(c.creditSaleOn(), c.creditWindow(), c.creditSpreadBps(), c.creditStartBps()))
             );
+    }
+
+    /// @dev the statement policy of a ControllerV2 with the `SET_<field>` variables applied
+    function _v2Changes(IControllerV2 c, ControllerChanges memory p) internal view {
+        p.v2 = true;
+        bool liveSales = c.statementSalesEnabled();
+        uint32 liveMult = c.statementSaleMultiplierBps();
+        uint32 liveDelay = c.statementRedeemDelaySeconds();
+        p.salesEnabled = _field("statementSalesEnabled", liveSales ? 1 : 0, 1) == 1;
+        p.multiplierBps = uint32(_field("statementSaleMultiplierBps", liveMult, type(uint32).max));
+        p.delaySeconds = uint32(_field("statementRedeemDelaySeconds", liveDelay, type(uint32).max));
+        p.statementChanged = p.salesEnabled != liveSales || p.multiplierBps != liveMult || p.delaySeconds != liveDelay;
+    }
+
+    /// @dev a field of the other controller version named by a `SET_<field>` variable is a mistake, not a no-op
+    function _refuseForeignFields(bool v2) internal view {
+        if (v2) {
+            string[6] memory v1 = _v1OnlyFields();
+            for (uint256 i; i < v1.length; ++i) {
+                (bool has,) = _single(v1[i]);
+                if (has) revert UnknownField(v1[i]);
+            }
+        } else {
+            string[3] memory v2f = _v2OnlyFields();
+            for (uint256 i; i < v2f.length; ++i) {
+                (bool has,) = _single(v2f[i]);
+                if (has) revert UnknownField(v2f[i]);
+            }
+        }
     }
 
     /// @dev `SET_<name>` when set, else the live value. a value above `max` does not fit the field
@@ -155,11 +217,31 @@ contract SetSettings is Script {
         returns (ControllerChanges memory p)
     {
         if (address(c) == address(0)) return p;
+        bool v2 = _isV2(address(c));
+        _refuseForeignFields(v2);
+        if (v2) {
+            IControllerV2 v = IControllerV2(address(c));
+            (p.credit, p.creditChanged) = _creditChanges(address(c));
+            _v2Changes(v, p);
+            // the Core reads `markupBps()`, the multiplier clamped to uint16, to bound `saleFloorBps`; the statement
+            // setters run first so a raised floor reads the raised multiplier
+            uint256 markupAfter = p.multiplierBps > type(uint16).max ? type(uint16).max : p.multiplierBps;
+            if (next.saleFloorBps > markupAfter) revert OutOfBounds("saleFloorBps");
+            p.saleFirst = p.statementChanged;
+            return p;
+        }
         (p.sale, p.credit, p.saleChanged, p.creditChanged) = _controllerChanges(c);
         p.saleFirst = p.saleChanged && p.sale.markupBps >= oldFloor;
         if (next.saleFloorBps > (p.saleChanged ? p.sale.markupBps : c.markupBps())) {
             revert OutOfBounds("saleFloorBps");
         }
+    }
+
+    /// @dev the changed statement setters of a ControllerV2, each only when its value differs from the live one
+    function _applyV2(IControllerV2 c, ControllerChanges memory p) internal {
+        if (p.salesEnabled != c.statementSalesEnabled()) c.setStatementSales(p.salesEnabled);
+        if (p.multiplierBps != c.statementSaleMultiplierBps()) c.setStatementSaleMultiplierBps(p.multiplierBps);
+        if (p.delaySeconds != c.statementRedeemDelaySeconds()) c.setStatementRedeemDelaySeconds(p.delaySeconds);
     }
 
     function _applyBatch(
@@ -170,10 +252,11 @@ contract SetSettings is Script {
         IControllerV1 c,
         ControllerChanges memory p
     ) internal {
-        if (p.saleFirst) c.setSale(p.sale);
+        if (p.v2 && p.statementChanged) _applyV2(IControllerV2(address(c)), p);
+        if (p.saleFirst && !p.v2) c.setSale(p.sale);
         if (settingsChanged) core.setSettings(next);
         if (rate != 0) core.setRate(rate);
-        if (p.saleChanged && !p.saleFirst) c.setSale(p.sale);
+        if (p.saleChanged && !p.saleFirst && !p.v2) c.setSale(p.sale);
         if (p.creditChanged) c.setCredit(p.credit);
     }
 
@@ -191,9 +274,15 @@ contract SetSettings is Script {
         _applyBatch(core, next, settingsChanged, rate, c, p);
         vm.stopPrank();
         vm.revertToState(snap);
-        if (p.saleChanged) {
+        if (p.saleChanged && !p.v2) {
             console.log("setSale calldata");
             console.logBytes(abi.encodeCall(IControllerV1.setSale, (p.sale)));
+        }
+        if (p.v2 && p.statementChanged) {
+            console.log("ControllerV2 statement setters calldata (only the changed ones are sent)");
+            console.logBytes(abi.encodeCall(IControllerV2.setStatementSales, (p.salesEnabled)));
+            console.logBytes(abi.encodeCall(IControllerV2.setStatementSaleMultiplierBps, (p.multiplierBps)));
+            console.logBytes(abi.encodeCall(IControllerV2.setStatementRedeemDelaySeconds, (p.delaySeconds)));
         }
         if (p.creditChanged) {
             console.log("setCredit calldata");

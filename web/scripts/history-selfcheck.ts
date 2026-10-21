@@ -72,7 +72,7 @@ assert.equal(sales.stats.sold, 2);
 assert.equal(sales.stats.potSales, 1);
 assert.equal(sales.stats.ethToPot, 0.65);
 assert.equal(sales.statements[4].sold?.toPot, e(65n));
-assert.equal(sales.rows[0].detail, "· 0.6500 ETH to the pot · 0.2000 to buyback · bought by");
+assert.equal(sales.rows[0].detail, "· 0.65 ETH to the pot · 0.2 to buyback · bought by");
 
 // promise: each Buyback is a "$CC burned" ledger row with the ETH spent and the coin the Core burned in its own tx.
 const burns = processLogs({
@@ -81,6 +81,6 @@ const burns = processLogs({
 });
 assert.deepEqual(
   { kind: burns.rows[0].kind, title: burns.rows[0].title, detail: burns.rows[0].detail, eth: burns.rows[0].eth },
-  { kind: "burned", title: "8,214,330 $CC", detail: "bought with 0.8000 ETH", eth: "0.8000" },
+  { kind: "burned", title: "8,214,330 $CC", detail: "bought with 0.8 ETH", eth: "0.8" },
 );
 console.log("history selfcheck ok");

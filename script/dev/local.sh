@@ -5,6 +5,8 @@
 #
 #   script/dev/local.sh            PHASE=post (default): load or build, leave anvil running
 #   PHASE=pre script/dev/local.sh  the engine before the balance token
+#   PHASE=phase2 script/dev/local.sh  the phase 2 stack on the standin balance token, every switch on (the web's
+#                                  /exchange sells Credits and burns CC locally)
 #   FRESH=1 script/dev/local.sh    ignore the cache and rebuild
 #   script/dev/local.sh stop       stop the anvil this script started
 set -euo pipefail

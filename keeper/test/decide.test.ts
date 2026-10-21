@@ -73,6 +73,7 @@ function state(over: Partial<State> = {}): State {
     referenceRateBpsPerHour: 100n,
     referenceStepBps: 100n,
     spot: parseEther("0.49"),
+    balanceToken: zeroAddress,
     ...over,
   };
 }
@@ -360,6 +361,26 @@ test("redeem: skipped without simulation while no balance module is set; conside
   assert.deepEqual(live.calls[0].args, [3n]);
   const off = decide(state({ atFloor: [3n], balanceModule: "0x00000000000000000000000000000000000000b0", settings: { ...state().settings, redeemOn: false } }), [], gas("1"), policy(), new Map());
   assert.match(reason(off, "redeemStatement"), /RedeemOff/);
+});
+
+// promise: a phase 2 treasury whose conversionReady() is false reverts ConversionOff on redeemStatement, so the door
+// is skipped without a simulation until it reads true; a module without the view (undefined) keeps the existing path
+test("redeem: a treasury that is not conversion ready skips; a module without the view is ready", () => {
+  const module = "0x00000000000000000000000000000000000000b0" as Address;
+  const notReady = decide(state({ atFloor: [3n, 4n], balanceModule: module, conversionReady: false }), [], gas("1"), policy(), new Map());
+  assert.equal(notReady.calls.length, 0);
+  assert.equal(notReady.skips.filter((k) => k.door === "redeemStatement").length, 1);
+  assert.equal(reason(notReady, "redeemStatement"), "conversion not ready");
+  const ready = decide(state({ atFloor: [3n], balanceModule: module, conversionReady: true }), [], gas("1"), policy(), new Map());
+  assert.deepEqual(doorsOf(ready), ["redeemStatement"]);
+  const legacy = decide(state({ atFloor: [3n], balanceModule: module, conversionReady: undefined }), [], gas("1"), policy(), new Map());
+  assert.deepEqual(doorsOf(legacy), ["redeemStatement"]);
+  // the other guards keep their precedence: no module and RedeemOff are reported before the conversion gate
+  const off = decide(state({ atFloor: [3n], balanceModule: module, conversionReady: false, settings: { ...state().settings, redeemOn: false } }), [], gas("1"), policy(), new Map());
+  assert.match(reason(off, "redeemStatement"), /RedeemOff/);
+  // the delay read is informational: it never changes the decision
+  const delayed = decide(state({ atFloor: [3n], balanceModule: module, conversionReady: true, statementRedeemDelaySeconds: 3_600 }), [], gas("1"), policy(), new Map());
+  assert.deepEqual(doorsOf(delayed), ["redeemStatement"]);
 });
 
 // ------------------------------------------------------------------ book and escrow

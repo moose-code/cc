@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import { createConfig, factory } from "ponder";
 import { getAbiItem, zeroAddress } from "viem";
 
-import { controllerAbi } from "./abis/ControllerV1";
+import { controllerLogAbi } from "./abis/Controller";
 import { coreAbi } from "./abis/Core";
 import { creditsAbi, erc20Abi, statementsAbi, strategyAbi } from "./abis/external";
+import { treasuryAbi } from "./abis/Phase2BalanceTreasury";
 import { guardedHttp, type Endpoint } from "./src/lib/rpc";
 import { localRpc } from "./src/lib/rpc-selection";
 import { sanitizedRpc, temporaryFallbackTransport, withFastFallback } from "./rpc-config";
@@ -110,11 +111,20 @@ export default createConfig({
   },
   contracts: {
     Core: { abi: coreAbi, chain: "chain", address: CORE, startBlock: DEPLOY_BLOCK },
-    // Every controller named by ControllerSet, from the block of that event.
+    // Every controller named by ControllerSet, from the block of that event. The log ABI is the union of
+    // ControllerV1 and ControllerV2 (abis/Controller.ts), so either version's events decode.
     Controller: {
-      abi: controllerAbi,
+      abi: controllerLogAbi,
       chain: "chain",
       address: factory({ address: CORE, event: getAbiItem({ abi: coreAbi, name: "ControllerSet" }), parameter: "controller" }),
+      startBlock: DEPLOY_BLOCK,
+    },
+    // Every balance module named by BalanceModuleSet, from the block of that event, decoded with the phase 2
+    // treasury ABI. A StatementBalanceModule emits none of these events, so its registration is inert.
+    Treasury: {
+      abi: treasuryAbi,
+      chain: "chain",
+      address: factory({ address: CORE, event: getAbiItem({ abi: coreAbi, name: "BalanceModuleSet" }), parameter: "balanceModule" }),
       startBlock: DEPLOY_BLOCK,
     },
     Coin: { abi: erc20Abi, chain: "chain", address: COIN, startBlock: DEPLOY_BLOCK, filter: { event: "Transfer", args: { to: zeroAddress } } },

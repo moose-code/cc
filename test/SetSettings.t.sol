@@ -6,6 +6,8 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
 import {SetSettings, ICoreOwner} from "../script/SetSettings.s.sol";
+import {IControllerV2} from "../src/interfaces/IControllerV2.sol";
+import {Quote} from "../src/interfaces/Interfaces.sol";
 import {LibString} from "solady/utils/LibString.sol";
 
 /// @dev the script with its environment replaced by fields, so parallel tests never share an environment variable
@@ -218,5 +220,94 @@ contract SetSettingsTest is Fixture {
         probe.applyCombined(ctl, next);
         assertEq(core.settings().saleFloorBps, 10_000);
         assertEq(ctl.markupBps(), 12_000);
+    }
+}
+
+/// @notice `script/SetSettings.s.sol` after the owner selects a ControllerV2: ordinary Core settings and Credit settings
+/// still change, the statement policy fields replace the V1 `Sale` fields, a V1 only field is refused, and the Core's
+/// `markupBps()` bound on `saleFloorBps` is enforced against the clamped multiplier
+contract SetSettingsV2Test is Fixture {
+    SetSettingsProbe internal probe;
+    IControllerV2 internal c2;
+
+    function setUp() public override {
+        super.setUp();
+        CreditSale memory credit = CreditSale({
+            saleOn: ctl.creditSaleOn(),
+            window: ctl.creditWindow(),
+            spreadBps: ctl.creditSpreadBps(),
+            startBps: ctl.creditStartBps()
+        });
+        Quote memory none;
+        c2 = IControllerV2(
+            vm.deployCode(
+                "ControllerV2.sol:ControllerV2", abi.encode(address(core), credit, none, uint32(30_000), uint32(3_600))
+            )
+        );
+        _setController(address(c2));
+        probe = new SetSettingsProbe();
+        probe.configure(address(core), "");
+    }
+
+    // promise: an ordinary Core settings change applies after a ControllerV2 is selected, with no controller call
+    function test_coreSettingsChangeAfterV2() public {
+        Settings memory next = core.settings();
+        next.spendCapBps = 5_000;
+        probe.applyCombined(IControllerV1(address(c2)), next);
+        assertEq(core.settings().spendCapBps, 5_000);
+        assertEq(c2.statementSaleMultiplierBps(), 30_000, "the controller is untouched");
+    }
+
+    // promise: a Credit settings change reaches a ControllerV2 through setCredit
+    function test_creditSettingsChangeAfterV2() public {
+        probe.single("window", 7_200);
+        Settings memory next = core.settings();
+        probe.applyCombined(IControllerV1(address(c2)), next);
+        assertEq(c2.creditWindow(), 7_200);
+    }
+
+    // promise: the statement policy fields of a ControllerV2 are patched by name, the floor and the multiplier move together in both directions, and the preview restores state
+    function test_statementFieldsAndFloorBothDirections() public {
+        probe.single("statementSaleMultiplierBps", 40_000);
+        probe.single("statementRedeemDelaySeconds", 600);
+        probe.single("statementSalesEnabled", 1);
+        probe.previewController(IControllerV1(address(c2)), owner);
+        assertEq(c2.statementSaleMultiplierBps(), 30_000, "the preview restored the multiplier");
+        assertFalse(c2.statementSalesEnabled());
+        Settings memory next = core.settings();
+        next.saleFloorBps = 35_000;
+        probe.applyCombined(IControllerV1(address(c2)), next);
+        assertEq(core.settings().saleFloorBps, 35_000);
+        assertEq(c2.statementSaleMultiplierBps(), 40_000);
+        assertEq(c2.statementRedeemDelaySeconds(), 600);
+        assertTrue(c2.statementSalesEnabled());
+        probe = new SetSettingsProbe();
+        probe.configure(address(core), "");
+        probe.single("statementSaleMultiplierBps", 12_000);
+        next.saleFloorBps = 10_000;
+        probe.applyCombined(IControllerV1(address(c2)), next);
+        assertEq(core.settings().saleFloorBps, 10_000);
+        assertEq(c2.statementSaleMultiplierBps(), 12_000);
+    }
+
+    // promise: a V1 only field with a ControllerV2 is refused, and a floor above the clamped multiplier is refused before anything is sent
+    function test_refusesForeignFieldsAndAFloorAboveTheMarkup() public {
+        probe.single("anchorMoveBps", 1);
+        Settings memory next = core.settings();
+        vm.expectRevert(abi.encodeWithSelector(SetSettings.UnknownField.selector, "anchorMoveBps"));
+        probe.applyCombined(IControllerV1(address(c2)), next);
+        probe = new SetSettingsProbe();
+        probe.configure(address(core), "");
+        next.saleFloorBps = 30_001;
+        vm.expectRevert(abi.encodeWithSelector(SetSettings.OutOfBounds.selector, bytes32("saleFloorBps")));
+        probe.applyCombined(IControllerV1(address(c2)), next);
+        // a V2 only field with the V1 controller is refused too
+        _setController(address(ctl));
+        probe = new SetSettingsProbe();
+        probe.configure(address(core), "");
+        probe.single("statementRedeemDelaySeconds", 1);
+        next.saleFloorBps = 10_000;
+        vm.expectRevert(abi.encodeWithSelector(SetSettings.UnknownField.selector, "statementRedeemDelaySeconds"));
+        probe.applyCombined(ctl, next);
     }
 }

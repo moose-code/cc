@@ -151,6 +151,14 @@ One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCos
 
 `anchor_move`: one row per `AnchorMoved`.
 
+### 6.7b `treasury_state` and `treasury_event` (phase 2, decisions 245 to 252)
+
+`treasury_state`, one row per balance module named by `BalanceModuleSet`, written from the treasury's own events only, never from a latest state read: `balanceToken`, `setBlock`, `active`, `claimReserve`, `totalOwed` (PaymentAccrued less OwedClaimed), `configEpoch`, `policy`, `conversionToClaimBps`, `redemptionFeeBps`, the three switches, `minimumWorkingBalance`, `migrated`, `successor`, and the running totals `convertedTotal`, `contributedTotal`, `conversions`, `redeemedCcTotal`, `paidBalanceTotal`, `redemptions` (public burns) kept apart from `ownerFundedTotal`, `ownerAllocatedTotal`, `ownerReturnedTotal`, `ownerWithdrawnTotal`, plus `accruedTotal`, `claimedTotal`, `lastEventBlock`. A value an event has not carried yet is null; a treasury's constructor events before its `BalanceModuleSet` are not indexed.
+
+`treasury_event`, one row per treasury event: `kind` (`statement_converted`, `cc_redeemed`, `claims_funded`, `claims_allocated`, `claims_returned`, `working_withdrawn`, `policy_set`, `fee_set`, `switches_set`, `contribution_set`, `floor_set`, `migrated`, `migration_received`, `payment_accrued`, `owed_claimed`), `ccIn`, `balanceOut`, `claimReserve`, `ccSupply`, `configEpoch`, `amount`, `bps`, `actor`, `recipient`, `policy`, `statementId`, `detail` json, block and tx fields. Public redemptions are the `cc_redeemed` rows; owner changes are the `claims_*` and `working_withdrawn` rows. Burns are never inferred from contribution events.
+
+The `controller` row gains nullable `statementSalesEnabled`, `statementSaleMultiplierBps`, `statementRedeemDelaySeconds` from the ControllerV2 setter events; a V2 controller leaves the V1 anchor columns null and `anchorBps` at its derived 10,000.
+
 ### 6.8 `activity` (the ledger)
 
 One row per user-visible event, newest first by (`blockNumber`, `logIndex`): `kind` (`credit_bought`, `credit_adopted`, `listing_bought`, `credit_swapped`, `composed`, `restyled`, `statement_sold`, `credit_sold`, `redeemed`, `buyback`, `fees_added`, `funded`, `escrow_collected`), `creditId`, `statementId`, `account`, `amount` (ETH wei), `amount2` (kind specific, documented per kind in the schema), block and tx fields. Index on (`kind`, `blockNumber`) and on `account`.
@@ -340,9 +348,32 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 |---|---|---|
 | sell | wallet credits with scores (I `credit` by owner) | bids and quotes (`bidOf`, anchor slots; in value mode `balanceRate` and controller `valuePerPoint(false)`), approvals; per-credit batch fills D from the same quote reads (eth: `replayEthFills`; balance: `replayBalanceFills` over the L snapshot `balanceRate` and `balanceUnit`; value mode: `replayValueFills`); USD at the L Chainlink ETH/USD feed, the balance side through the L balance pool spot |
 | exchange (local development; public route disabled by default) | same wallet Credits and scores as sell through `useWalletCredits` | L snapshot module/token, posted rate/unit, available reserve, bid/pause/retirement, artist royalty and protected value. D existing `replayBalanceFills` gives the payout, protocol fee is gross less posted payout, price protection is posted less executable payout; reserve check includes per-Credit artist royalties on top. Before an executable quote, show selected point ratings/their sum and the configured fee percentage, with an explicit unavailable notice. Exact minimum uses 0/0.5/1-percent tolerance. Approval is followed by full-batch `sellForBalance(ids,minOut,expectedToken)` simulation; pending display and consent freeze and wallet/network changes stop further sends. No new indexer table. |
+| exchange claim panel "Burn CC for BALANCE" (phase 2, same gate) | history only, not read by the web yet: I `treasury_event` (one row per treasury event; public burns are kind `cc_redeemed`, the owner's reserve changes are `claims_funded`, `claims_allocated`, `claims_returned`, `working_withdrawn`) and I `treasury_state` (per treasury named by `BalanceModuleSet`: event-carried `claimReserve`, `totalOwed`, `configEpoch`, `policy`, `conversionToClaimBps`, `redemptionFeeBps`, the three switches, `migrated`, and the running totals `convertedTotal`, `contributedTotal`, `redeemedCcTotal`, `paidBalanceTotal`); I `controller.statementSalesEnabled`, `statementSaleMultiplierBps`, `statementRedeemDelaySeconds` for a ControllerV2 | every value shown is L through the Core's `balanceModule` read as a `Phase2BalanceTreasury` (`useTreasury`, `useClaimQuote` in `web/lib/live.ts`), see the table below |
 | compose | pile with order and window state (I) | `nextPage` readiness, CC balance |
 | balance | $BALANCE price history (phase 2) | pool, quotes, module available |
 | keeper | `engine.lastBuybackBlock` (I; chain mode: Core view), `stats` payouts | pots, artist, payee, head |
+
+### 9.6b exchange claim panel
+
+The claim panel's values, every one a live read (L) through `/api/rpc`, polled every 15 s. The panel hides behind a notice when the module does not answer `quoteRedemption` and `claimReserve` (no module, or the StatementBalanceModule).
+
+| value | source |
+|---|---|
+| BALANCE token address and symbol | L treasury `balanceToken()`; L erc20 `symbol()` and `decimals()` of that token (tolerant) |
+| redemption policy address and version | L treasury `redemptionPolicy()`; L policy `VERSION()` (tolerant; `pro-rata-v1` is the first policy, any other version is labelled) |
+| claim reserve | L treasury `claimReserve()` |
+| free working funds | L treasury `freeWorking()` |
+| CC total supply, symbol, decimals | L coin `totalSupply()`, `symbol()`, `decimals()` at the treasury's `ccToken()` |
+| contribution rate | L treasury `conversionToClaimBps()`; D `bps / 100` percent |
+| redemption fee | L treasury `redemptionFeeBps()`; D `bps / 100` percent |
+| backing per CC | D `claimReserve * 1e18 / ccSupply` from the quote's reserve and supply (`backingPerCc` in `web/lib/exchange.ts`) |
+| your CC | L coin `balanceOf(wallet)` |
+| quoted BALANCE out | L treasury `quoteRedemption(ccIn)` for the entered amount (`balanceOut`, `reserve`, `supply`, `epoch`, `executable`); D `proRataQuote` = `floor(ccIn * reserve / supply) * (10000 - fee) / 10000` stands in until the read answers and flags a mismatch (`claimQuote`) |
+| minimum you receive | D `balanceOut * (10000 - tolerance) / 10000` at the 0, 0.5 or 1 percent tolerance of `EXCHANGE_SLIPPAGE`, exact |
+| terms epoch | L `quoteRedemption(ccIn).epoch`, pinned at consent and passed as `expectedConfigEpoch`; a changed epoch stops the burn before any send (`redeemClaim`) |
+| disabled states | L treasury `ccRedemptionEnabled()`, `selectedForClaims()` (fallback `selected()`), `transfersReady()`, `solvent()`, `migrated()` and the quote's `executable`; wallet and chain from wagmi |
+| approval | L coin `allowance(wallet, treasury)`; an `approve(treasury, ccIn)` for exactly the amount only when short |
+| burn | L simulate then send treasury `redeemCC(ccIn, wallet, minOut, now + 20 minutes, epoch)`; the receipt's own `CCRedeemed` log gives the burned and received amounts shown after confirmation (`decodeRedemption`) |
 
 ### 9.6a listings page
 

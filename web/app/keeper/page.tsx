@@ -10,7 +10,7 @@ import { core, engineDeployed } from "@/lib/config";
 import { useBalanceToken, useHead, useSnapshot } from "@/lib/live";
 import { useStats } from "@/lib/data";
 import { useEngine, useIxMode } from "@/lib/indexer";
-import { BALANCE_SYMBOL, commas, eth, formatBalance, shortAddr } from "@/lib/format";
+import { BALANCE_SYMBOL, commas, decimalAmount, eth, formatBalance, shortAddr } from "@/lib/format";
 
 // The permissionless engine actions: the pots, the book and the next buyback (anyone may call them), and the push
 // payouts. The artist and the payee are paid by push on every sale and book, so there is no claim here.
@@ -95,9 +95,9 @@ export default function KeeperPage() {
             <p className="panel-note">the artist and the payee are paid by push on every sale and book, so there is no claim.</p>
             <div className="quote">
               {row("artist", shortAddr(s.artist))}
-              {row("artist received", stats ? `${stats.artistReceived.toFixed(4)} eth` : <Sk w="10ch" />)}
+              {row("artist received", stats ? `${decimalAmount(stats.artistReceived)} eth` : <Sk w="10ch" />)}
               {row("payee", shortAddr(s.payee))}
-              {row("payee received", stats ? `${stats.payeeReceived.toFixed(4)} eth` : <Sk w="10ch" />)}
+              {row("payee received", stats ? `${decimalAmount(stats.payeeReceived)} eth` : <Sk w="10ch" />)}
             </div>
           </section>
         </div>

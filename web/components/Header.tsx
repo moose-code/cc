@@ -14,7 +14,12 @@ import { engineDeployed } from "@/lib/config";
 const NAV = [
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
+  // the exchange link returns when the exchange opens (EXCHANGE_ENABLED); the page itself is gated already
+  // { href: "/exchange", label: "exchange" },
 ];
+
+// the cream/dark pages share the exchange header: the brand with the page's own sub line, the wallet and no nav
+const SPLIT_PAGES: Record<string, string> = { "/exchange": "credits → $BALANCE", "/claim": "$CC → $BALANCE" };
 
 export function Header() {
   const path = usePathname();
@@ -24,13 +29,14 @@ export function Header() {
   // close the mobile menu on navigation
   useEffect(() => setOpen(false), [path]);
 
-  if (path === "/exchange") {
+  const split = SPLIT_PAGES[path];
+  if (split) {
     return (
       <header className="header exchange-header">
         <Link href="/" className="brand">
           <CCLogo size={26} autoplay />
           <b>CC</b>
-          <span className="brand-sub">credits → $BALANCE</span>
+          <span className="brand-sub">{split}</span>
         </Link>
         <WalletButton exchange />
       </header>

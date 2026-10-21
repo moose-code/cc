@@ -5,7 +5,7 @@ import { useAccount, useConfig, usePublicClient } from "wagmi";
 import { getAccount } from "wagmi/actions";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
-import { ExchangeView } from "@/components/ExchangeView";
+import { ExchangeView, type ExchangeReceipt } from "@/components/ExchangeView";
 import { chain, core, credits, engineDeployed } from "@/lib/config";
 import { exchangeAmount, exchangeQuote, sellExchange } from "@/lib/exchange";
 import { rating, type BalanceTokenInfo } from "@/lib/format";
@@ -15,8 +15,9 @@ import "./exchange.css";
 
 export default function ExchangePage() {
   const { address, isConnected, chainId } = useAccount();
-  // A wallet or network change discards the old selection and its accepted quote.
-  return <Exchange key={`${address}:${chainId}`} account={isConnected ? address : undefined} chainId={chainId} />;
+  const account = isConnected ? address : undefined;
+  // A wallet or network change discards the old selection and its accepted quote. The CC burn lives on /claim.
+  return <Exchange key={`${address}:${chainId}`} account={account} chainId={chainId} />;
 }
 
 function Exchange({ account, chainId }: { account?: Address; chainId?: number }) {
@@ -30,6 +31,7 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
   const wallet = useWalletCredits(account);
   const [selected, setSelected] = useState(new Set<number>());
   const [slippage, setSlippage] = useState(50);
+  const [receipt, setReceipt] = useState<ExchangeReceipt>();
   const [review, setReview] = useState<{
     market: Snapshot; token: BalanceTokenInfo; wallet: typeof wallet.data; selected: Set<number>; slippage: number;
   }>();
@@ -42,8 +44,8 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
   const order = rows.filter((credit) => selection.has(credit.id));
   const quote = exchangeQuote(market, order.map((credit) => credit.score), tolerance);
   const decimals = token?.address === market?.balanceToken ? token?.decimals : undefined;
-  const amount = (value: bigint | undefined, precise = false) => value === undefined || decimals === undefined
-    ? "—" : exchangeAmount(value, decimals, precise ? decimals : 6);
+  const amount = (value: bigint | undefined) => value === undefined || decimals === undefined
+    ? "—" : exchangeAmount(value, decimals);
   const wrongChain = Boolean(account && chainId !== chain.id);
   const available = Boolean(engineDeployed && market?.balanceOn && market.settings.balanceBidOn && decimals !== undefined);
   const quoteAvailable = Boolean(available && quote && !quote.reason && !snapshot.error);
@@ -73,13 +75,15 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
       ids: order.map((credit) => BigInt(credit.id)),
       minOut: quote.minOut, token: market.balanceToken,
     };
+    setReceipt(undefined);
     setReview({ market, token, wallet: [...rows], selected: new Set(selection), slippage: tolerance });
     const consentIsCurrent = () => {
       const current = getAccount(config);
       return mounted.current && current.address === account && current.chainId === chain.id;
     };
     await run(async (write) => {
-      await sellExchange(client, write, accepted, consentIsCurrent);
+      const hash = await sellExchange(client, write, accepted, consentIsCurrent);
+      setReceipt({ count: accepted.ids.length, minimum: amount(accepted.minOut), hash });
       setSelected(new Set());
     }, [], consentIsCurrent);
     setReview(undefined);
@@ -99,7 +103,7 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     total={amount(quoteAvailable && order.length > 0 ? quote?.total : undefined)}
     fee={quoteAvailable && quote && order.length > 0 ? `−${amount(quote.fee)}` : market ? `${(10_000 - Number(market.balanceRate)) / 100}%` : "—"}
     adjustment={quoteAvailable && quote && order.length > 0 && quote.adjustment > 0n ? `−${amount(quote.adjustment)}` : undefined}
-    minimum={amount(quoteAvailable && order.length > 0 ? quote?.minOut : undefined, true)}
+    minimum={amount(quoteAvailable && order.length > 0 ? quote?.minOut : undefined)}
     rate={market ? `${Number(market.balanceRate) / 100}%` : "the posted rate"}
     slippageBps={tolerance}
     onSlippageChange={setSlippage}
@@ -113,6 +117,8 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     busy={pending}
     status={status ?? (order.length === 0 ? "Select Credits to see their payout." : undefined)}
     error={err ?? undefined}
+    receipt={receipt}
+    onReset={() => setReceipt(undefined)}
     action={!account
       ? <button type="button" onClick={openConnectModal}>connect wallet</button>
       : <button type="button" disabled={blocked || pending} onClick={sell}>{label}</button>}
