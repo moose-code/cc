@@ -32,6 +32,8 @@ interface IStandingBidPolicy {
     function HOOK() external view returns (address);
     function MANAGER() external view returns (address);
     function MAX_PREMIUM_BPS() external view returns (uint16);
+    function MAX_RATE_BPS_PER_HOUR() external view returns (uint32);
+    function MAX_TOL_BPS() external view returns (uint16);
     function POOL_FEE() external view returns (uint24);
     function TICK_SPACING() external view returns (int24);
     function TREASURY() external view returns (address);

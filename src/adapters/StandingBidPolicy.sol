@@ -23,8 +23,13 @@ interface IBidCore {
 interface IBidTreasury {
     function core() external view returns (address);
     function bidBudgetAvailable() external view returns (uint256);
+    function claimReserve() external view returns (uint256);
     function redemptionFeeBps() external view returns (uint16);
     function unitPerPoint() external view returns (uint256);
+}
+
+interface IBidCoin {
+    function totalSupply() external view returns (uint256);
 }
 
 interface IBidController {
@@ -46,6 +51,10 @@ contract StandingBidPolicy is IRedemptionPolicy {
     uint256 private constant BPS = 10_000;
     /// the most the premium may be set to, well under the coin pool's fee so a pool round trip cannot farm it
     uint16 public constant MAX_PREMIUM_BPS = 500;
+    /// the most the CC price may sit above the reference: the cross block protection is the band plus the rate, so
+    /// both are bounded here (a pump held across blocks lifts the bid by the band at once and by the rate per hour)
+    uint16 public constant MAX_TOL_BPS = 100;
+    uint32 public constant MAX_RATE_BPS_PER_HOUR = 1_000;
     uint256 private constant POOL_SEED_MAX_DEVIATION_BPS = 450;
     uint256 private constant CONTROLLER_GAS = 150_000;
     uint256 private constant BUDGET_GAS = 50_000;
@@ -159,7 +168,8 @@ contract StandingBidPolicy is IRedemptionPolicy {
     }
 
     /// the most CC the bid covers now at the current budget, after the treasury's fee as `quote` applies it. zero
-    /// while the bid is unusable or the fee takes everything
+    /// while the bid is unusable, the fee takes everything, or the proportional share per CC is at or above the bid
+    /// per CC (then `quote` pays the floor and the budget is not touched)
     function bidCapacity() external view returns (uint256 cc) {
         (uint256 perCC, bool ok) = bidPerCC();
         if (!ok) return 0;
@@ -167,6 +177,8 @@ contract StandingBidPolicy is IRedemptionPolicy {
         if (!read) return 0;
         uint256 fee = TREASURY.redemptionFeeBps();
         if (fee >= BPS) return 0;
+        uint256 supply = IBidCoin(COIN).totalSupply();
+        if (supply != 0 && FixedPointMathLib.fullMulDiv(TREASURY.claimReserve(), 1e18, supply) >= perCC) return 0;
         return FixedPointMathLib.fullMulDiv(budget * BPS, 1e18, perCC * (BPS - fee));
     }
 
@@ -279,11 +291,14 @@ contract StandingBidPolicy is IRedemptionPolicy {
         emit ReferenceSeeded(spot, spot);
     }
 
-    /// the reference settings, ControllerV2's rules: the rate, the step and the staleness all set or all zero, a
-    /// positive liquidity threshold with them, `referenceStepBps` 0 to 10,000, `tolBps` 0 to 9,999
+    /// the reference settings, ControllerV2's rules with tighter bounds: the rate, the step and the staleness all set
+    /// or all zero, a positive liquidity threshold with them, `referenceStepBps` 0 to 10,000, `tolBps` at most
+    /// `MAX_TOL_BPS`, `referenceRateBpsPerHour` at most `MAX_RATE_BPS_PER_HOUR`. a zero tolerance prices at the lower
+    /// of the sample, the live spot and the reference, so a pump only reaches the bid through the rate
     function setQuote(Quote calldata v) external onlyOwner {
         if (v.referenceStepBps > BPS) revert BadSetting("referenceStepBps");
-        if (v.tolBps >= BPS) revert BadSetting("tolBps");
+        if (v.tolBps > MAX_TOL_BPS) revert BadSetting("tolBps");
+        if (v.referenceRateBpsPerHour > MAX_RATE_BPS_PER_HOUR) revert BadSetting("referenceRateBpsPerHour");
         bool anyRef = v.referenceRateBpsPerHour != 0 || v.referenceStepBps != 0 || v.referenceMaxStale != 0;
         bool allRef = v.referenceRateBpsPerHour != 0 && v.referenceStepBps != 0 && v.referenceMaxStale != 0;
         if (anyRef && !allRef) revert BadSetting("referenceTriple");

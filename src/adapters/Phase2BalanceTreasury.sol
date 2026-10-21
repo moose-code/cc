@@ -527,6 +527,9 @@ contract Phase2BalanceTreasury is IBalanceModule {
         uint256 budget = bidBudgetAvailable();
         if (budget > limit) limit = budget;
         if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) > limit) revert BadPolicy();
+        // a second sample whose share dwarfs any bid or budget: a policy scaling the share up is caught here
+        (ok, ret) = policy.staticcall{gas: POLICY_GAS}(abi.encodeCall(IRedemptionPolicy.quote, (1e18, 1e36, 4e18, 0)));
+        if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) > 0.25e36) revert BadPolicy();
         redemptionPolicy = policy;
         _bumpEpoch();
         emit RedemptionPolicySet(policy, configEpoch);

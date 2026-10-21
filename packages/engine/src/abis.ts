@@ -288,6 +288,8 @@ export const standingBidAbi = parseAbi([
   "function owner() view returns (address)",
   "function premiumBps() view returns (uint16)",
   "function MAX_PREMIUM_BPS() view returns (uint16)",
+  "function MAX_TOL_BPS() view returns (uint16)",
+  "function MAX_RATE_BPS_PER_HOUR() view returns (uint32)",
   "function bidQuote() view returns (uint32 referenceRateBpsPerHour, uint16 referenceStepBps, uint16 tolBps, uint32 referenceMaxStale, uint32 referenceMinSeconds, uint128 minLiquidity)",
   "function referencePrice() view returns (uint256)",
   "function referenceTime() view returns (uint40)",

@@ -110,7 +110,7 @@ contract StandingBidPolicyTest is ValueBase {
         return Quote({
             referenceRateBpsPerHour: 1_000,
             referenceStepBps: 500,
-            tolBps: 450,
+            tolBps: 100,
             referenceMaxStale: 1 days,
             referenceMinSeconds: 0,
             minLiquidity: 1
@@ -211,7 +211,7 @@ contract StandingBidPolicyTest is ValueBase {
         assertTrue(ok);
         (uint256 value,) = c2.valuePerPoint(true);
         uint256 bal = FullMath.mulDiv(value, 1e18, POINT_UNIT * t.unitPerPoint());
-        uint256 ceiling = FullMath.mulDiv(ref * (BPS + 450) / BPS * (BPS + p.premiumBps()), 1e18, bal * BPS);
+        uint256 ceiling = FullMath.mulDiv(ref * (BPS + 100) / BPS * (BPS + p.premiumBps()), 1e18, bal * BPS);
         assertLe(banded, ceiling);
         assertLt(banded, FullMath.mulDiv(spotAfter * (BPS + p.premiumBps()), 1e18, bal * BPS), "under the live spot");
     }
@@ -248,7 +248,7 @@ contract StandingBidPolicyTest is ValueBase {
         assertEq(q, share);
     }
 
-    // promise: the owner bounds: the premium at most 500 bps, the reference triple all or none with a liquidity threshold, the seed within 4.5 percent of the live spot, and only the Core owner
+    // promise: the owner bounds: the premium at most 500 bps, the tolerance at most 100 bps, the rate at most 1,000 bps per hour, the reference triple all or none with a liquidity threshold, the seed within 4.5 percent of the live spot, and only the Core owner
     function test_ownerBounds() public {
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IStandingBidPolicy.BadSetting.selector, bytes32("premiumBps")));
@@ -265,6 +265,18 @@ contract StandingBidPolicyTest is ValueBase {
         q.minLiquidity = 0;
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(IStandingBidPolicy.BadSetting.selector, bytes32("minLiquidity")));
+        p.setQuote(q);
+        q = _quote();
+        q.tolBps = 101;
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(IStandingBidPolicy.BadSetting.selector, bytes32("tolBps")));
+        p.setQuote(q);
+        q = _quote();
+        q.referenceRateBpsPerHour = 1_001;
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(IStandingBidPolicy.BadSetting.selector, bytes32("referenceRateBpsPerHour"))
+        );
         p.setQuote(q);
         uint256 live = _liveCC();
         vm.prank(owner);
