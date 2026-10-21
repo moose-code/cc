@@ -192,8 +192,9 @@ export type ClaimAccepted = {
 // The consent flow of a burn, after the pattern of sellExchange: the amount, the minimum, the pinned epoch, the
 // deadline and the treasury are captured before any await and never change afterwards. A wallet or network change
 // stops the next request. The approval is for exactly ccIn and only when the allowance is short. A fresh
-// quoteRedemption after approval refuses a changed epoch, a closed treasury and a quote under the minimum before the
-// simulation, so no transaction that would revert StaleEpoch, RedemptionOff or Slippage is sent
+// quoteRedemption before the approval and again after it refuses a changed epoch, a closed treasury and a quote under
+// the minimum before the simulation, so no approval is paid for a known refusal and no transaction that would revert
+// StaleEpoch, RedemptionOff or Slippage is sent
 export async function redeemClaim(
   client: Pick<PublicClient, "readContract" | "simulateContract" | "getChainId">,
   write: Write,
@@ -206,15 +207,23 @@ export async function redeemClaim(
   checkConsent();
   if (await client.getChainId() !== chainId) throw new Error("The RPC is on the wrong network.");
   checkConsent();
+  // a fresh quote before any approval, so a known refusal (a changed epoch, a closed treasury, a quote under the
+  // minimum) never costs the user an approval; the same check runs again after the approval
+  const freshQuote = async () => {
+    const [balanceOut, , , liveEpoch, executable] = await client.readContract({ address: treasury, abi: treasuryAbi, functionName: "quoteRedemption", args: [ccIn] });
+    checkConsent();
+    if (BigInt(liveEpoch) !== epoch) throw new Error("The redemption terms changed since your quote. Review the quote again.");
+    if (!executable) throw new Error("Redemption is not executable now. Review the quote again.");
+    if (balanceOut < minOut) throw new Error("The live quote is under your minimum. Review the quote again.");
+  };
+  await freshQuote();
   const allowance = await client.readContract({ address: coin, abi: erc20Abi, functionName: "allowance", args: [account, treasury] });
   checkConsent();
-  if (allowance < ccIn) await write({ address: coin, abi: erc20Abi, functionName: "approve", args: [treasury, ccIn], account, chainId });
-  checkConsent();
-  const [balanceOut, , , liveEpoch, executable] = await client.readContract({ address: treasury, abi: treasuryAbi, functionName: "quoteRedemption", args: [ccIn] });
-  checkConsent();
-  if (BigInt(liveEpoch) !== epoch) throw new Error("The redemption terms changed since your quote. Review the quote again.");
-  if (!executable) throw new Error("Redemption is not executable now. Review the quote again.");
-  if (balanceOut < minOut) throw new Error("The live quote is under your minimum. Review the quote again.");
+  if (allowance < ccIn) {
+    await write({ address: coin, abi: erc20Abi, functionName: "approve", args: [treasury, ccIn], account, chainId });
+    checkConsent();
+    await freshQuote();
+  }
   const burn = { address: treasury, abi: treasuryAbi, functionName: "redeemCC", args: [ccIn, account, minOut, deadline, epoch], account } as const;
   // the simulation after approval checks the burn allowance, the epoch, the switches, solvency and the minimum together
   await client.simulateContract(burn);

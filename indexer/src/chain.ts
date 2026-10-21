@@ -1,6 +1,7 @@
 import type { Hex } from "viem";
 import { zeroAddress } from "viem";
 
+import { treasuryAbi } from "../abis/Phase2BalanceTreasury";
 import { controllerAbi } from "../abis/ControllerV1";
 import { controllerV2Abi } from "../abis/ControllerV2";
 import { coreAbi } from "../abis/Core";
@@ -250,6 +251,47 @@ export async function refreshStatementArt(ctx: Ctx, id: bigint) {
 }
 
 /** Reads a controller's parameters at the event block. */
+/** The phase 2 treasury's ledger at its BalanceModuleSet block, read at that block (the pattern of readController): a
+ * treasury is discovered by the factory at its selection, so its constructor and preselection events are not replayed;
+ * this read seeds the row they would have written. Every read is tolerant: a StatementBalanceModule answers none */
+export async function readTreasury(ctx: Ctx, address: Hex) {
+  const t = { address, abi: treasuryAbi } as const;
+  const r = await ctx.client.multicall({
+    ...mc,
+    allowFailure: true,
+    contracts: [
+      { ...t, functionName: "claimReserve" },
+      { ...t, functionName: "totalOwed" },
+      { ...t, functionName: "configEpoch" },
+      { ...t, functionName: "redemptionPolicy" },
+      { ...t, functionName: "conversionToClaimBps" },
+      { ...t, functionName: "redemptionFeeBps" },
+      { ...t, functionName: "conversionEnabled" },
+      { ...t, functionName: "workingPaymentsEnabled" },
+      { ...t, functionName: "ccRedemptionEnabled" },
+      { ...t, functionName: "minimumWorkingBalance" },
+      { ...t, functionName: "migrated" },
+    ],
+  });
+  const ok = <T,>(i: number): T | null => (r[i].status === "success" ? (r[i].result as T) : null);
+  const big = (i: number) => { const v = ok<bigint | number>(i); return v === null ? null : BigInt(v); };
+  const num = (i: number) => { const v = ok<bigint | number>(i); return v === null ? null : Number(v); };
+  if (r[0].status !== "success") return null;
+  return {
+    claimReserve: big(0),
+    totalOwed: big(1) ?? 0n,
+    configEpoch: big(2),
+    policy: ok<Hex>(3) ? (ok<Hex>(3)!.toLowerCase() as Hex) : null,
+    conversionToClaimBps: num(4),
+    redemptionFeeBps: num(5),
+    conversionEnabled: ok<boolean>(6),
+    workingPaymentsEnabled: ok<boolean>(7),
+    ccRedemptionEnabled: ok<boolean>(8),
+    minimumWorkingBalance: big(9),
+    migrated: ok<boolean>(10) ?? false,
+  };
+}
+
 export async function readController(ctx: Ctx, address: Hex) {
   const k = { address, abi: controllerAbi } as const;
   const v2 = { address, abi: controllerV2Abi } as const;

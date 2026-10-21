@@ -30,6 +30,8 @@ contract Phase2TreasuryHandler {
     uint256 public claimsPaidByBurns;
     uint256 public ccBurnedByTreasury;
     uint256 public successfulBurns;
+    /// burns paid above floor(x * C / S) of the pre burn snapshot: must stay zero
+    uint256 public capViolations;
     uint256 public successfulConversions;
     uint256 public successfulPays;
     uint256 public debtAccruals;
@@ -149,10 +151,13 @@ contract Phase2TreasuryHandler {
         coin.approve(address(current), ccIn);
         (uint256 q,,, uint64 epoch, bool exec) = current.quoteRedemption(ccIn);
         uint256 supplyBefore = coin.totalSupply();
+        uint256 reserveBefore = current.claimReserve();
         vm.prank(burner);
         try current.redeemCC(ccIn, burner, q, block.timestamp, epoch) returns (uint256 out) {
             require(exec && out == q, "a burn executed against a non executable or different quote");
             require(coin.totalSupply() == supplyBefore - ccIn, "supply");
+            if (out > ccIn * reserveBefore / supplyBefore) ++capViolations;
+            require(current.claimReserve() == reserveBefore - out, "the reserve fell by exactly the payout");
             claimsPaidByBurns += out;
             ccBurnedByTreasury += ccIn;
             ++successfulBurns;
@@ -236,15 +241,17 @@ contract Phase2TreasuryHandler {
         ITreasury next = _deployTreasury(address(current));
         _asOwner().setSwitches(false, false, false);
         uint256 claims = current.claimReserve();
+        // the Core selects the successor first; the reserve never moves to an unselected treasury
+        balanceModule = address(next);
         try _asOwner().migrateTo(address(next)) {
             require(next.claimReserve() == claims, "claims imported");
             require(current.claimReserve() == 0 && current.migrated(), "source closed");
             current = next;
-            balanceModule = address(next);
             migratedOnce = true;
             _asOwner().setSwitches(true, true, true);
             _refreshRateFloor();
         } catch {
+            balanceModule = address(current);
             _asOwner().setSwitches(true, true, true);
         }
     }
@@ -316,11 +323,12 @@ contract InvariantsPhase2TreasuryTest is Test {
         assertEq(reserve, h.claimsIn() - h.claimsReturned() - h.claimsPaidByBurns(), "claim ledger identity");
     }
 
-    // promise: SPEC phase 2 balance leaves the claim reserve only alongside a CC burn, and a burn never pays more than the share
+    // promise: SPEC phase 2 balance leaves the claim reserve only alongside a CC burn, and no burn ever pays more than floor(x * C / S) of the pre burn snapshot
     function invariant_burnsPayAtMostTheShare() public view {
         if (h.ccBurnedByTreasury() == 0) {
             assertEq(h.claimsPaidByBurns(), 0, "paid without a burn");
         }
+        assertEq(h.capViolations(), 0, "a burn paid above the proportional share");
     }
 
     // promise: SPEC phase 2 the backing per remaining token does not fall below the level after the last owner action that could lower it

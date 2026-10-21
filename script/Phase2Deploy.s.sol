@@ -23,7 +23,7 @@ interface IBalanceTokenPreview {
 /// default profile and the readback compares the created code against the pinned build.
 /// `CORE=0x... BALANCE_TOKEN=0x... forge script script/Phase2Deploy.s.sol --rpc-url $MAINNET_RPC_URL`
 /// simulates and prints "no send". add `SEND=1 --broadcast` with a signer (any account, the contracts read authority
-/// from the Core owner) to send. `PHASE2_STATEMENT_MULTIPLIER_BPS` (default 30000) and
+/// from the Core owner) to send. `PHASE2_STATEMENT_MULTIPLIER_BPS` (default 15000, decision 256) and
 /// `PHASE2_STATEMENT_DELAY_SECONDS` (default 3600) are the ControllerV2 statement policy. the preview refuses a balance
 /// token that does not answer the treasury constructor's checks before anything is created. the run ends with one
 /// `record: {json}` line for deployments/1-phase2.json
@@ -31,7 +31,7 @@ contract Phase2Deploy is Script, Phase2Checks {
     /// @dev a creation returned no code
     error CreateFailed(string name);
 
-    uint32 internal constant DEFAULT_STATEMENT_MULTIPLIER_BPS = 30_000;
+    uint32 internal constant DEFAULT_STATEMENT_MULTIPLIER_BPS = 15_000;
     uint32 internal constant DEFAULT_STATEMENT_DELAY_SECONDS = 3_600;
 
     struct Inputs {
@@ -39,7 +39,21 @@ contract Phase2Deploy is Script, Phase2Checks {
         address balanceToken;
         uint32 statementSaleMultiplierBps;
         uint32 statementRedeemDelaySeconds;
+        /// the expected runtime code hash of the balance token (`BALANCE_TOKEN_CODEHASH`), zero only with
+        /// `ALLOW_UNPINNED_BALANCE_TOKEN=1`: three getters cannot authenticate a token, its verified runtime can
+        bytes32 tokenCodehash;
+        bool allowUnpinnedToken;
     }
+
+    /// @dev an environment integer that must fit a uint32; a silent narrowing would deploy other terms than entered
+    function _envUint32(string memory key, uint256 dflt) private view returns (uint32) {
+        uint256 v = vm.envOr(key, dflt);
+        if (v > type(uint32).max) revert ValueTooWide(key);
+        return uint32(v);
+    }
+
+    error ValueTooWide(string key);
+    error PlanHashMismatch(bytes32 want, bytes32 given);
 
     struct Result {
         address policy;
@@ -52,14 +66,36 @@ contract Phase2Deploy is Script, Phase2Checks {
         Inputs memory i = Inputs({
             core: vm.envAddress("CORE"),
             balanceToken: vm.envAddress("BALANCE_TOKEN"),
-            statementSaleMultiplierBps: uint32(
-                vm.envOr("PHASE2_STATEMENT_MULTIPLIER_BPS", uint256(DEFAULT_STATEMENT_MULTIPLIER_BPS))
-            ),
-            statementRedeemDelaySeconds: uint32(
-                vm.envOr("PHASE2_STATEMENT_DELAY_SECONDS", uint256(DEFAULT_STATEMENT_DELAY_SECONDS))
-            )
+            statementSaleMultiplierBps: _envUint32("PHASE2_STATEMENT_MULTIPLIER_BPS", DEFAULT_STATEMENT_MULTIPLIER_BPS),
+            statementRedeemDelaySeconds: _envUint32("PHASE2_STATEMENT_DELAY_SECONDS", DEFAULT_STATEMENT_DELAY_SECONDS),
+            tokenCodehash: vm.envOr("BALANCE_TOKEN_CODEHASH", bytes32(0)),
+            allowUnpinnedToken: vm.envOr("ALLOW_UNPINNED_BALANCE_TOKEN", uint256(0)) == 1
         });
-        return deployPhase2(i, vm.envOr("SEND", uint256(0)) == 1);
+        bool send = vm.envOr("SEND", uint256(0)) == 1;
+        // a send needs the plan hash the preview printed, so what is sent is what was reviewed (the CONFIG_HASH
+        // pattern of script/Deploy.s.sol)
+        if (send) {
+            bytes32 want = planHash(i, _liveCredit(i.core));
+            bytes32 given = vm.envOr("PHASE2_PLAN_HASH", bytes32(0));
+            if (given != want) revert PlanHashMismatch(want, given);
+        }
+        return deployPhase2(i, send);
+    }
+
+    /// @notice the hash of everything the deployment depends on: the Core, the token and its runtime code, the policy
+    /// terms and the live credit sale settings. printed by the preview, required as `PHASE2_PLAN_HASH` by a send
+    function planHash(Inputs memory i, CreditSale memory credit) public view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                block.chainid,
+                i.core,
+                i.balanceToken,
+                i.balanceToken.codehash,
+                i.statementSaleMultiplierBps,
+                i.statementRedeemDelaySeconds,
+                credit
+            )
+        );
     }
 
     /// @notice the preview, the three creations (broadcast only with `send`), the readback and the record line. a test
@@ -67,6 +103,7 @@ contract Phase2Deploy is Script, Phase2Checks {
     function deployPhase2(Inputs memory i, bool send) internal returns (Result memory r) {
         r.credit = _liveCredit(i.core);
         _preview(i, r.credit);
+        _info("preview: plan hash (PHASE2_PLAN_HASH of a send)", vm.toString(planHash(i, r.credit)));
         _print("phase 2 deploy preview");
         _require();
         _reset();
@@ -106,6 +143,7 @@ contract Phase2Deploy is Script, Phase2Checks {
         _previewCoin(i.core);
         _code("preview: balance token has code", i.balanceToken);
         _previewToken(i.balanceToken);
+        _previewTokenIdentity(i);
         _check(
             "preview: statement multiplier at least 10000 bps and delay nonzero",
             i.statementSaleMultiplierBps >= 10_000 && i.statementRedeemDelaySeconds != 0,
@@ -125,6 +163,25 @@ contract Phase2Deploy is Script, Phase2Checks {
     function _previewCoin(address core) private {
         (bool ok, address coin) = _addr(core, abi.encodeCall(ICore.COIN, ()));
         _check("preview: Core coin has code", ok && coin.code.length != 0, vm.toString(coin));
+    }
+
+    /// @dev the balance token's runtime identity: three getters cannot authenticate it, its verified runtime code hash
+    /// can. the pin is required unless the operator waives it explicitly (a standin on a fork)
+    function _previewTokenIdentity(Inputs memory i) private {
+        bytes32 live = i.balanceToken.codehash;
+        if (i.tokenCodehash == bytes32(0)) {
+            _check(
+                "preview: balance token runtime pinned (BALANCE_TOKEN_CODEHASH) or the pin waived (ALLOW_UNPINNED_BALANCE_TOKEN=1)",
+                i.allowUnpinnedToken,
+                string.concat("live codehash ", vm.toString(live))
+            );
+            return;
+        }
+        _check(
+            "preview: balance token runtime code hash equals BALANCE_TOKEN_CODEHASH",
+            live == i.tokenCodehash,
+            string.concat("live ", vm.toString(live), " pinned ", vm.toString(i.tokenCodehash))
+        );
     }
 
     /// @dev the three answers the treasury constructor requires of the balance token

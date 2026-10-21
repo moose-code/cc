@@ -17,7 +17,7 @@ import {
   treasuryEvent,
   treasuryState,
 } from "../ponder.schema";
-import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, refreshStatementArt, settingsColumns, snapshot } from "./chain";
+import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, readTreasury, refreshStatementArt, settingsColumns, snapshot } from "./chain";
 import { composeModeOf } from "./lib/mode";
 import { CREDIT_TRANSFER_TOPIC, hydrateCreditPeers } from "./lib/credit-peers";
 import { creditSaleSplit, statementPot } from "./lib/split";
@@ -377,10 +377,14 @@ ponder.on("Core:BalanceModuleSet", async ({ event, context }) => {
   if (cur.balanceModule && cur.balanceModule !== addr) await context.db.update(treasuryState, { id: cur.balanceModule }).set({ active: false });
   // the treasury_state row of every module, written from events only; a StatementBalanceModule stays at its defaults
   if (addr !== zeroAddress) {
+    // the ledger at the selection block seeds the row: the factory discovers the treasury here, so its constructor and
+    // preselection events (a policy set, early funding, settings) are not replayed; a StatementBalanceModule answers
+    // none and keeps the defaults
+    const seeded = (await readTreasury(context, addr as Hex)) ?? {};
     await context.db
       .insert(treasuryState)
-      .values({ id: addr, balanceToken: lc(balanceToken), setBlock: event.block.number, active: true })
-      .onConflictDoUpdate({ active: true });
+      .values({ id: addr, balanceToken: lc(balanceToken), setBlock: event.block.number, active: true, ...seeded })
+      .onConflictDoUpdate({ active: true, ...seeded });
   }
   await setting(context, event, "BalanceModuleSet", { balanceModule: addr, balanceToken: lc(balanceToken) });
   await settingValue(context, event, "core", "BalanceModuleSet.unitPerPoint", null, { unitPerPoint });

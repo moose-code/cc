@@ -292,9 +292,12 @@ await check("claim epoch pinning rejects a changed epoch", async () => {
     [[proRataQuote(x, C, S, 25), C, S, 4n, false], /not executable/],
     [[acceptedClaim().minOut - 1n, C, S, 4n, true], /under your minimum/],
   ] as const) {
-    const sent: any[] = [];
-    await assert.rejects(redeemClaim(claimClient(x, quote, sent) as any, async (req: any) => { sent.push(req); return "0x123"; }, acceptedClaim(), () => true), message);
-    assert.equal(sent.length, 0);
+    // with a sufficient allowance and with none: a known refusal never costs an approval
+    for (const allowance of [x, 0n]) {
+      const sent: any[] = [];
+      await assert.rejects(redeemClaim(claimClient(allowance, quote, sent) as any, async (req: any) => { sent.push(req); return "0x123"; }, acceptedClaim(), () => true), message);
+      assert.equal(sent.length, 0, "no approval and no burn before a known refusal");
+    }
   }
   await assert.rejects(redeemClaim({ getChainId: async () => 31337 } as any, async () => { throw new Error("must not write"); }, acceptedClaim(), () => true), /wrong network/);
   let current = true;

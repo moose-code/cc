@@ -163,6 +163,7 @@ abstract contract Phase2Checks is LaunchChecks {
             string.concat(vm.toString(module), module == treasury ? " (the treasury)" : " (not the treasury)")
         );
         _info("core: balanceToken", vm.toString(core.balanceToken()));
+        _tokenPin(treasury);
         address ctl = core.controller();
         _info(
             "core: controller",
@@ -199,6 +200,15 @@ abstract contract Phase2Checks is LaunchChecks {
             )
         );
         _info("core: creditCostToPotBps", vm.toString(uint256(core.creditCostToPotBps())));
+        address artist = core.artist();
+        _info(
+            "core: artist (the split of decision 255 once wired) / its runtime code hash",
+            string.concat(vm.toString(artist), " / ", vm.toString(artist.codehash))
+        );
+        _info(
+            "core: settings buyToArtistBps / saleToArtistBps / saleToOperatorBps",
+            _three(s.buyToArtistBps, s.saleToArtistBps, s.saleToOperatorBps)
+        );
         _payouts(core, ctl, s);
         _info(
             "core: legacy pots ethToBuyback / ethRedeemBurn (wei)",
@@ -275,6 +285,26 @@ abstract contract Phase2Checks is LaunchChecks {
             ctl.staticcall(abi.encodeCall(IControllerV1.balanceClampFor, (score, posted)));
         if (!success || ret.length < 64) return (0, false);
         (paid, ok) = abi.decode(ret, (uint256, bool));
+    }
+
+    /// @dev the treasury's immutable balance token against the pinned runtime (`BALANCE_TOKEN_CODEHASH`); an info row
+    /// without a pin, because three getters never authenticate a token
+    function _tokenPin(address treasury) private {
+        if (treasury.code.length == 0) return;
+        address token = IPhase2BalanceTreasury(treasury).balanceToken();
+        bytes32 pinned = vm.envOr("BALANCE_TOKEN_CODEHASH", bytes32(0));
+        if (pinned == bytes32(0)) {
+            _info(
+                "treasury: balance token runtime code hash (unpinned, set BALANCE_TOKEN_CODEHASH to check)",
+                vm.toString(token.codehash)
+            );
+            return;
+        }
+        _check(
+            "treasury: balance token runtime code hash equals BALANCE_TOKEN_CODEHASH",
+            token.codehash == pinned,
+            string.concat("live ", vm.toString(token.codehash), " pinned ", vm.toString(pinned))
+        );
     }
 
     /// @dev the hazard state of docs/RUNBOOK.md (activation order): the balance bid on, value mode off and a balance pool
