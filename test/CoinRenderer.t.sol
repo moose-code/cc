@@ -5,6 +5,7 @@ import {console2} from "forge-std/Test.sol";
 import {Base64} from "solady/utils/Base64.sol";
 import {LibString} from "solady/utils/LibString.sol";
 import {LiveFixture} from "./utils/LiveFixture.sol";
+import {Fixture} from "./utils/Fixture.sol";
 import {CreditIds} from "./utils/CreditIds.sol";
 import {CoinRenderer} from "../src/CoinRenderer.sol";
 import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
@@ -99,17 +100,8 @@ contract CoinRendererTest is LiveFixture {
         assertEq(json, expected, "json");
     }
 
-    function test_aPileUnder80IsDrawnWholeInPileOrder() public {
-        // draw the live pile whole; fill it when the live Core starts empty so there is a page to draw
-        if (core.pileSize() == 0) _fillEthPile(30);
-        uint256 n = core.pileSize();
-        require(n > 0 && n <= 80, "live pile is not under a full page: re-pin LIVE_FORK_BLOCK");
-        string memory svg = r.image();
-        assertEq(_cells(svg), n, "cells");
-        assertEq(svg, _pageOf(core.pilePage(0, n), n), "pile order");
-        vm.prevrandao(bytes32(uint256(7)));
-        assertEq(r.image(), svg, "prevrandao changes nothing under 80");
-    }
+    // the whole-page draw under 80 is a controlled-pile promise: the live pile is full (over 80) at the pin, so it is
+    // proven on the fresh fixture with a sub-80 pile in CoinRendererUnder80Test below
 
     function test_aPileOver80IsSampledPerBlock() public {
         _fillEthPile(90);
@@ -145,5 +137,52 @@ contract CoinRendererTest is LiveFixture {
         g -= gasleft();
         console2.log("contractURI gas at 80 cells", g, "bytes", bytes(uri).length);
         assertLt(g, 40_000_000, "under a 50M eth_call cap with margin");
+    }
+}
+
+/// the whole-page draw under 80 cells is a controlled-pile promise: the live Core's pile is full (over 80) at the pin,
+/// so it is proven here on the fresh fixture with a sub-80 pile and a CoinRenderer bound to that Core
+contract CoinRendererUnder80Test is Fixture {
+    CoinRenderer private r;
+
+    function setUp() public override {
+        super.setUp();
+        r = new CoinRenderer(owner);
+        vm.prank(owner);
+        r.setCore(ICore(payable(address(core))));
+    }
+
+    function _cells(string memory svg) private pure returns (uint256 n) {
+        bytes memory needle = bytes('<svg x="');
+        bytes memory hay = bytes(svg);
+        for (uint256 i; i + needle.length <= hay.length; ++i) {
+            bool hit = true;
+            for (uint256 k; k < needle.length && hit; ++k) {
+                hit = hay[i + k] == needle[k];
+            }
+            if (hit) ++n;
+        }
+    }
+
+    function _pageOf(uint256[] memory ids, uint256 n) private view returns (string memory) {
+        bytes21[80] memory seeds;
+        uint64[80] memory paidAt;
+        for (uint256 i; i < n; ++i) {
+            seeds[i] = CREDITS.seedOf(ids[i]);
+            paidAt[i] = CREDITS.timestampOf(ids[i]);
+        }
+        return r.page(seeds, paidAt, n);
+    }
+
+    // promise: a pile under 80 is drawn whole in pile order, unchanged by prevrandao (decision 127)
+    function test_aPileUnder80IsDrawnWholeInPileOrder() public {
+        _fillEthPile(30);
+        uint256 n = core.pileSize();
+        assertEq(n, 30, "a sub-80 pile on the fresh fixture");
+        string memory svg = r.image();
+        assertEq(_cells(svg), n, "cells");
+        assertEq(svg, _pageOf(core.pilePage(0, n), n), "pile order");
+        vm.prevrandao(bytes32(uint256(7)));
+        assertEq(r.image(), svg, "prevrandao changes nothing under 80");
     }
 }

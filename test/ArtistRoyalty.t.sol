@@ -154,8 +154,10 @@ contract ArtistRoyaltyTest is LiveFixture {
         if (core.ethPot() < 1 ether) _fundPot(1 ether);
         _book();
         _liftRateCap();
+        // read RATE_START before the prank: as a call argument it would consume the prank, leaving setRate unpranked
+        uint256 openingRate = core.RATE_START();
         vm.prank(owner);
-        core.setRate(core.RATE_START());
+        core.setRate(openingRate);
         uint256 targetRoom = 1e14;
         // reserveWei is a uint64, so the carved reserve can be at most type(uint64).max wei; a live pot above that
         // cannot be clamped this way (re-pin to a block with a smaller pot, or move this case to the fresh Fixture)
