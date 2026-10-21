@@ -21,6 +21,13 @@ import {IArtCoinsMevSkimV2, IArtCoinsFactoryV2, IArtCoinsFeeEscrowV2} from "../s
 import {SwapMidListing} from "./attackers/SwapMidCall.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
 
+/// the ControllerV2 statement sale switch, used only to open the sale door in the stage B state. stage B wires
+/// ControllerV2 with statement sales off (the owner enables them at go live); a buyback test fills its pot through a
+/// real statement sale, so it opens the door by the owner the way the owner will at go live
+interface ICtlStatementSales {
+    function setStatementSales(bool enabled) external;
+}
+
 /// shared helpers for the fee, buyback, auction and tax suites, with NO setUp so the two family bases (one live, one
 /// fresh deploy) each supply the only setUp in their linearization. every swap goes through the real pool
 abstract contract FeeHelpers is Fixture {
@@ -192,6 +199,15 @@ abstract contract FeeBase is FeeHelpers, LiveFixture {
     /// must resolve it. the fee suites never call it; super reaches LiveFixture's live phase 2 entry
     function _enterPhase2() internal override(Fixture, LiveFixture) {
         super._enterPhase2();
+    }
+
+    /// in the stage B state ControllerV2 ships with statement sales off (the owner enables them at go live). a buyback
+    /// test fills its pot through a real statement sale, so open the door by the owner here, the owner's real setter.
+    /// a no op in today's state, where the live ControllerV1 sells statements already
+    function _openStatementSalesForStageB() internal {
+        if (!_liveStageB()) return;
+        vm.prank(owner);
+        ICtlStatementSales(address(ctl)).setStatementSales(true);
     }
 }
 
@@ -532,6 +548,8 @@ contract BuybackTest is FeeBase {
 
     function setUp() public override {
         super.setUp();
+        // the buyback pot is filled through a real statement sale; open the sale door in the stage B state (no op today)
+        _openStatementSalesForStageB();
         // a single live statement sale builds a buyback pot of a few ETH, above the live 0.5 ETH slice. raise the slice
         // well above it by the owner setter so one buyback still consumes the whole pot, which these tests assert
         Settings memory s = core.settings();
