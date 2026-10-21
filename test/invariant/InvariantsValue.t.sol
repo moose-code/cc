@@ -6,7 +6,7 @@ import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {ICredits, ICreditScore, Mainnet, Settings, POINT_UNIT} from "../../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "../standins/MockBalanceToken.sol";
-import {ValueBase} from "../ValueMode.t.sol";
+import {ValueFixtureBase} from "../ValueMode.t.sol";
 
 /// @notice the actors of the value mode suite: they sell credits into the eth and the balance bid, buy pile credits and
 /// statements from the controller, move the pool spot, call `refreshReference()` and let time pass. every action records what
@@ -254,8 +254,15 @@ contract ValueHandler is Test {
 /// @notice value mode invariants for an ETH bid priced off the shared balance instance times the protected value, and the
 /// round trip closed by the spread at one quote in either currency. the run starts in value mode at the switch values
 /// with a usable quote, a composed statement held, the return lock at 0 to exercise short round trips, and four actors
-/// holding real credits
-contract InvariantsValue is ValueBase {
+/// holding real credits.
+///
+/// this suite stays on `ValueFixtureBase` (a fresh fixture Core under the live settings, `_useLiveSettings`), not the
+/// live `ValueBase`. its `ValueHandler` fundamentally needs a mintable balance token (it mints the balance bid and the
+/// seller funds) and a pool whose spot it moves at will (`moveSpot`, and liquidity it removes to make the reference
+/// unusable). the live BALANCE token cannot be minted (the ink rule reverts `deal`), and the live deep eth/BALANCE
+/// pool cannot be moved to the controlled spots the value model checks, so the invariant model needs the fresh pool
+/// and the mock token. only the input and the pool are controlled; the tuning is the live one.
+contract InvariantsValue is ValueFixtureBase {
     ValueHandler internal h;
 
     function setUp() public override {

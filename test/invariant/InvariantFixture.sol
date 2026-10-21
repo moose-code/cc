@@ -125,25 +125,12 @@ abstract contract InvariantFixture is LiveFixture {
         handler.resnapWatched();
     }
 
-    /// @dev the base setUp of the suites. the default binds the live system (`LiveFixture`) and adds the raw listing
-    /// adapter the hostile target is reached through, placed with `etch` at a namespaced address and approved by the
-    /// owner through the live Core's real `addAdapter`, a pure test helper. the sniper window suite overrides this to
-    /// deploy a fresh system, since the elevated anti sniper skim of a fresh launch is a state a post launch fork cannot
-    /// reach
+    /// @dev the base setUp of the suites. the default binds the live system (`LiveFixture`), which also places the raw
+    /// listing adapter the hostile target is reached through (etched at a namespaced address and approved by the owner).
+    /// the sniper window suite overrides this to deploy a fresh system, since the elevated anti sniper skim of a fresh
+    /// launch is a state a post launch fork cannot reach
     function _setUpBase() internal virtual {
         LiveFixture.setUp();
-        rawAdapter = _user("rawAdapter");
-        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
-        vm.prank(owner);
-        core.addAdapter(rawAdapter);
-    }
-
-    /// @dev true when the suite runs against the production stage B live state (ControllerV2 selected, the treasury
-    /// selected, the settings patch applied), driven by the lead through `LIVE_STAGE=B`. a smoke whose subject only
-    /// exists on ControllerV1 (the credit sale) returns early in stage B. the invariant functions themselves read the
-    /// controller, settings and module from the live Core, so they hold under either controller
-    function _liveStageB() internal view returns (bool) {
-        return keccak256(bytes(vm.envOr("LIVE_STAGE", string("")))) == keccak256("B");
     }
 
     /// the controller that sells for the owner and the heirs of the handover chain, handed to the handler. the selling
