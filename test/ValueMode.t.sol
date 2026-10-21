@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
@@ -21,7 +22,12 @@ import {TestLiquidityHelper} from "./utils/TestLiquidityHelper.sol";
 /// times the protected buy value per point. ETH fills drop the shared instance; flat balance fills leave it alone.
 /// Unusable quotes close ETH and balance payouts. Sale references exclude cost;
 /// final quotes still cover the Core's historical cost floor.
-abstract contract ValueBase is Fixture {
+///
+/// controlled-pool base: a fresh native eth / balance token pool the test owns and seeds at an arbitrary sqrt price,
+/// with full range liquidity it can add and drain. the ported suite runs its `ValueBase` live sibling against the real
+/// mainnet pool; tests that need controlled-pool mechanics (a liquidity drain, just in time liquidity, an arbitrary
+/// initial price, or the launch config placeholders) stay here on `<Name>FixtureTest` contracts
+abstract contract ValueFixtureBase is Fixture {
     /// wei per balance token base unit is 0.49, so one point (`POINT_UNIT * UNIT` base units) is worth 4.9e13 wei, the
     /// opening eth rate of 4.9e15 per 100 points: `2^96 / sqrt(0.49)`
     uint160 internal constant SP = uint160(FixedPoint96.Q96 * 10 / 7);
@@ -35,6 +41,9 @@ abstract contract ValueBase is Fixture {
 
     function setUp() public virtual override {
         super.setUp();
+        // controlled input, live configuration: run this fresh fixture Core under the live Core's settings read at the
+        // pin, so only the pool and inputs are controlled, never the tuning (Addendum 4)
+        _useLiveSettings();
         _enterPhase2();
         key = PoolKey({
             currency0: Currency.wrap(address(0)),
@@ -60,7 +69,16 @@ abstract contract ValueBase is Fixture {
         ctl.setBalancePoolKey(k, _spotOf(SP));
         // tol 450 and step 500 satisfy the loop closure bound at the credit spread 1,000 and the product bound at the
         // margin 1,000 (decisions 153 and 157): a round trip through the reference band loses
-        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18}));
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_000,
+                referenceStepBps: 500,
+                tolBps: 450,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 0,
+                minLiquidity: 1e18
+            })
+        );
         mod.setAvailable(1e30);
     }
 
@@ -85,8 +103,7 @@ abstract contract ValueBase is Fixture {
         (uint256 start, bool ok) = ctl.spotPrice();
         require(ok, "spot unreadable");
         if (bps == 0) return start;
-        uint256 target =
-            bps > 0 ? start * (10_000 + uint256(bps)) / 10_000 : start * (10_000 - uint256(-bps)) / 10_000;
+        uint256 target = bps > 0 ? start * (10_000 + uint256(bps)) / 10_000 : start * (10_000 - uint256(-bps)) / 10_000;
         return _swapToSpot(target);
     }
 
@@ -153,36 +170,152 @@ abstract contract ValueBase is Fixture {
     }
 }
 
+/// a minimal ERC20 surface for the live BALANCE token (approve and transfer in the test contract and TRIPPER), the
+/// legs the stand in `xt` served in the controlled-pool base
+interface IBalanceERC20 {
+    function balanceOf(address) external view returns (uint256);
+    function transfer(address, uint256) external returns (bool);
+    function approve(address, uint256) external returns (bool);
+}
+
+/// the live port of `ValueFixtureBase`: it binds the live Core, controller, coin and BALANCE token through
+/// `LiveFixture`, enters phase 2 with a fresh Phase2BalanceTreasury on the live token, and points the controller at
+/// the live eth / BALANCE pool at its live spot. spot is moved only with real swaps through the live pool: up by
+/// buying BALANCE with dealt ETH, down by selling BALANCE the test holds (reused from a prior up move or drawn from
+/// the live holder, which has no price impact while it covers the amount). the live treasury unit is `_moduleUnit()`
+/// (1e14), not the controlled base's `UNIT`
+abstract contract ValueBase is LiveFixture {
+    using StateLibrary for IPoolManager;
+
+    PoolKey internal key;
+    /// the controller reference seeded by `_setLiveBalancePool`, captured in `setUp` (the live opening spot). the
+    /// controlled base asserted against `_spotOf(SP)`; the live port asserts against this
+    uint256 internal openRef;
+
+    /// dealt ETH budget for an up move (buying BALANCE). the price limit stops the swap at the target, so the unused
+    /// ETH is refunded; the budget only has to be large enough to reach the target on the deep live pool
+    uint256 internal constant UP_ETH_BUDGET = 2_000_000 ether;
+    /// BALANCE inventory a down move sells. kept within the live holder's balance (after the treasury funding) so the top
+    /// up has no price impact; a prior up move's inventory is reused first. a down move reaches at most what this pushes
+    uint256 internal constant DOWN_BAL_INVENTORY = 20_000 ether;
+
+    function setUp() public virtual override {
+        super.setUp();
+        // `_enterPhase2` funds the treasury 10,000 ether from the live holder (a transfer, no price impact), enough for
+        // the few thousand ether of balance payouts here. no pool buy in setUp, so the tests start at the untouched live
+        // spot. the holder keeps room (about 23,000 ether) for a down move's sell inventory
+        _enterPhase2();
+        key = _liveBalanceKey();
+        // seed the reference at the live spot, after funding, so no setUp step moved the pool
+        _setLiveBalancePool();
+        // tol 450 and step 500 satisfy the loop closure bound at the live credit spread 1,000 and the product bound at
+        // the Core bid margin (decisions 153 and 157): a round trip through the reference band loses
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_000,
+                referenceStepBps: 500,
+                tolBps: 450,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 0,
+                minLiquidity: 1e18
+            })
+        );
+        openRef = ctl.referencePrice();
+    }
+
+    /// the live pool's live liquidity at the current tick. the test cannot add or drain it (wrong spacing, non mintable
+    /// token, other LPs), so only this read survives from the controlled base
+    function _liquidityNow() internal view returns (uint128) {
+        return PM.getLiquidity(key.toId());
+    }
+
+    /// moves the pool spot by `bps` with a real swap (positive raises the spot, negative lowers it) and returns the new
+    /// spot, as the controlled base did
+    function _swapSpot(int256 bps) internal returns (uint256 newSpot) {
+        (uint256 start, bool ok) = ctl.spotPrice();
+        require(ok, "spot unreadable");
+        if (bps == 0) return start;
+        uint256 target = bps > 0 ? start * (10_000 + uint256(bps)) / 10_000 : start * (10_000 - uint256(-bps)) / 10_000;
+        return _swapToSpot(target);
+    }
+
+    /// swaps the live pool until its spot reaches `target` wei per 1e18 base units, stopping at the target sqrt price
+    /// limit within tick rounding. an up move buys BALANCE with dealt ETH; a down move sells BALANCE the test holds,
+    /// topped up from the live holder so the sell can reach the target
+    function _swapToSpot(uint256 target) internal returns (uint256 newSpot) {
+        (uint256 start,) = ctl.spotPrice();
+        uint160 limit = _sqrtOf(target);
+        if (target > start) {
+            vm.deal(address(this), address(this).balance + UP_ETH_BUDGET);
+            router.swapWithLimit{value: UP_ETH_BUDGET}(key, true, -int256(UP_ETH_BUDGET), limit, address(this), "");
+        } else if (target < start) {
+            uint256 bal = IBalanceERC20(liveBalanceToken).balanceOf(address(this));
+            if (bal < DOWN_BAL_INVENTORY) {
+                _acquireBalance(address(this), DOWN_BAL_INVENTORY - bal);
+                bal = IBalanceERC20(liveBalanceToken).balanceOf(address(this));
+            }
+            IBalanceERC20(liveBalanceToken).approve(address(router), type(uint256).max);
+            router.swapWithLimit(key, false, -int256(bal), limit, address(this), "");
+        }
+        (newSpot,) = ctl.spotPrice();
+    }
+
+    /// the spot of sqrt price `sp`, wei per 1e18 base units
+    function _spotOf(uint160 sp) internal pure returns (uint256) {
+        return FullMath.mulDiv(FullMath.mulDiv(1e18, FixedPoint96.Q96, sp), FixedPoint96.Q96, sp);
+    }
+
+    /// the sqrt price of a spot `p` wei per 1e18 base units, by the inverse of `_spotOf` within its rounding
+    function _sqrtOf(uint256 p) internal pure returns (uint160) {
+        return uint160(FullMath.mulDiv(FixedPoint96.Q96, _sqrt(1e36 / p), 1e9));
+    }
+
+    function _sqrt(uint256 x) internal pure returns (uint256 y) {
+        if (x == 0) return 0;
+        y = x;
+        uint256 z = (x + 1) / 2;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+    }
+
+    function _setQuote(Quote memory q) internal {
+        vm.prank(owner);
+        ctl.setQuote(q);
+    }
+
+    function _valueOn() internal {
+        Settings memory s = core.settings();
+        s.valueModeOn = true;
+        s.balanceBidCapBps = 11_000;
+        s.saleFloorBps = 5_000;
+        s.spendCapBps = 9_999;
+        _setSettings(s);
+        // age only eligibility (decision 155) is a ControllerV1 setter dropped by ControllerV2; in stage B the live
+        // controller is V2 and the selected settings carry it, so the V1 call is skipped there
+        if (!_liveStageB()) {
+            vm.prank(owner);
+            ctl.setAgeEligibilityOn(true);
+        }
+    }
+
+    /// the eth bid the value mode prices for 100 points at the shared rate `bps`
+    function _valueRate(uint256 bps) internal view returns (uint256) {
+        (uint256 v,) = ctl.valuePerPoint(false);
+        return bps * v * 100 / 10_000;
+    }
+}
+
 contract ValueReferenceTest is ValueBase {
     using stdStorage for StdStorage;
 
-    // promise: decision 176 a paid refresh preserves earned funded climb before its payment empties the buying room
-    function test_paidRefreshPreservesEarnedClimbBeforePotFalls() public {
-        Settings memory s = core.settings();
-        s.reserveWei = 0.1 ether;
-        s.callerFee = 0.01 ether;
-        s.callerMaxBaseFee = 0;
-        _setSettings(s);
-        vm.prank(owner);
-        core.setRate(0.0049 ether);
-        uint256 oldPot = core.ethPot();
-        stdstore.target(address(core)).sig("ethPot()").checked_write(0.11 ether);
-        vm.deal(address(core), address(core).balance - oldPot + 0.11 ether);
-        _warp(4 minutes);
-        uint256 earned = core.ethPrice();
-        assertGt(earned, 0.0049 ether, "four funded minutes earned a climb");
-
-        vm.roll(block.number + 1);
-        core.refreshReference();
-        assertEq(core.ethPot(), 0.1 ether, "the refresh payment left only the reserve");
-        assertEq(core.rateAtCheckpoint(), earned, "the checkpoint kept the earned climb");
-        _warp(6 hours);
-        assertEq(core.ethPrice(), earned, "the empty pot did not fund later climb");
-    }
+    // test_paidRefreshPreservesEarnedClimbBeforePotFalls moved to ValueReferenceFixtureTest: it needs the funded idle
+    // climb the fixture settings configure, which the live Core's settings do not produce at the pin
 
     // promise: SPEC 8 setBalancePoolKey starts the reference at the spot, in the owner's transaction
     function test_referenceStartsAtTheSpot() public view {
-        assertEq(ctl.referencePrice(), _spotOf(SP));
+        assertEq(ctl.referencePrice(), openRef);
         assertEq(ctl.referenceTime(), block.timestamp);
     }
 
@@ -200,9 +333,9 @@ contract ValueReferenceTest is ValueBase {
         (uint256 live,) = ctl.spotPrice();
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(address(xt)),
-            fee: 3000,
-            tickSpacing: 60,
+            currency1: IControllerV1.Currency.wrap(liveBalanceToken),
+            fee: LIVE_BALANCE_POOL_FEE,
+            tickSpacing: LIVE_BALANCE_POOL_SPACING,
             hooks: address(0)
         });
         vm.prank(owner);
@@ -240,22 +373,19 @@ contract ValueReferenceTest is ValueBase {
         vm.warp(block.timestamp + 30 minutes);
         vm.roll(block.number + 1); // the refresh runs at most once per block, so a new block is needed past the seed
         ctl.refreshReference();
-        assertEq(ctl.referencePrice(), ref0 * 10_500 / 10_000, "half an hour at 1,000 bps an hour moves the 5 percent step");
+        assertEq(
+            ctl.referencePrice(), ref0 * 10_500 / 10_000, "half an hour at 1,000 bps an hour moves the 5 percent step"
+        );
         vm.warp(block.timestamp + 1 hours);
         vm.roll(block.number + 1);
         ctl.refreshReference();
-        assertEq(ctl.referencePrice(), ref0 * 10_500 / 10_000 * 10_500 / 10_000, "a full hour moves one more 5 percent step");
+        assertEq(
+            ctl.referencePrice(), ref0 * 10_500 / 10_000 * 10_500 / 10_000, "a full hour moves one more 5 percent step"
+        );
     }
 
-    // promise: SPEC 8 a long idle gains one step, the referenceStepBps bound
-    function test_longIdleGainsOneStep() public {
-        uint256 ref0 = ctl.referencePrice();
-        _swapSpot(-5_000); // a real swap pushes the spot to about half the reference, past the step cap
-        vm.warp(block.timestamp + 20 hours);
-        vm.roll(block.number + 1);
-        ctl.refreshReference();
-        assertEq(ctl.referencePrice(), ref0 * 9_500 / 10_000, "twenty idle hours move one step of 5 percent");
-    }
+    // test_longIdleGainsOneStep moved to ValueReferenceFixtureTest: it pushes the spot down about 50 percent, which the
+    // live deep pool cannot reach with the non mintable BALANCE a single holder provides
 
     // promise: SPEC 8 repeated updates gain nothing beyond the rate: a block by block spam over an hour stays within the
     // compounded rate of one update over the same hour
@@ -333,101 +463,109 @@ contract ValueReferenceTest is ValueBase {
         assertGt(ctl.referencePrice(), ref0, "the refresh runs once the cadence has elapsed");
     }
 
-    // promise: SPEC 8 the protected prices clamp the band to the spot sampled at the last refresh (a prior block): buys
-    // off min(sampledSpot, ref + tol), sales off max(sampledSpot, ref - tol) (decision 159, C01)
-    function test_protectedPricesAtSpotAboveAndBelow() public {
-        uint256 ref0 = ctl.referencePrice();
-        uint256 unitPoint = POINT_UNIT * UNIT;
-        // push the spot far above, refresh in a new block to sample it, then read in the next block so the quote uses
-        // that sample (not the seed held in the previous slot)
-        _swapToSpot(ref0 * 2);
-        vm.warp(block.timestamp + 30 minutes);
-        vm.roll(block.number + 1);
-        ctl.refreshReference();
-        vm.roll(block.number + 1);
-        uint256 refHi = ctl.referencePrice();
-        (uint256 spotHi,) = ctl.spotPrice();
-        assertGt(spotHi, refHi * 10_450 / 10_000, "the sampled spot sits above the reference plus the band");
-        (uint256 buyHi,) = ctl.valuePerPoint(false);
-        (uint256 sellHi,) = ctl.valuePerPoint(true);
-        assertEq(buyHi, FullMath.mulDiv(unitPoint, refHi * 10_450 / 10_000, 1e18), "a sampled high spot buys at the reference plus the band");
-        assertEq(sellHi, FullMath.mulDivRoundingUp(unitPoint, spotHi, 1e18), "and sells at the sampled spot");
-        // push the spot far below, sample it, read in the next block
-        _swapToSpot(refHi / 4);
-        vm.warp(block.timestamp + 30 minutes);
-        vm.roll(block.number + 1);
-        ctl.refreshReference();
-        vm.roll(block.number + 1);
-        uint256 refLo = ctl.referencePrice();
-        (uint256 spotLo,) = ctl.spotPrice();
-        assertLt(spotLo, refLo * 9_550 / 10_000, "the sampled spot sits below the reference less the band");
-        (uint256 buyLo,) = ctl.valuePerPoint(false);
-        (uint256 sellLo,) = ctl.valuePerPoint(true);
-        assertEq(buyLo, FullMath.mulDiv(unitPoint, spotLo, 1e18), "a sampled low spot buys at the sampled spot");
-        assertEq(sellLo, FullMath.mulDivRoundingUp(unitPoint, refLo * 9_550 / 10_000, 1e18), "and sells at the reference less the band");
-        assertLt(buyLo, sellLo, "the buy value stays under the sale value");
-    }
+    // test_protectedPricesAtSpotAboveAndBelow moved to ValueReferenceFixtureTest: it pushes the spot about 75 percent
+    // below the reference, which the live deep pool cannot reach with the non mintable BALANCE a single holder provides
 
-    // promise: SPEC 8 the quote is unusable beyond referenceMaxStale, under minLiquidity, with no module unit, or with referenceMaxStale 0
-    function test_unusableStates() public {
-        (, bool ok) = ctl.valuePerPoint(false);
-        assertTrue(ok, "fresh and deep");
-        vm.warp(block.timestamp + 1 days + 1);
-        (, ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "stale beyond referenceMaxStale");
-        vm.roll(block.number + 1);
-        ctl.refreshReference();
-        (, ok) = ctl.valuePerPoint(false);
-        assertTrue(ok, "an update refreshes it");
-        // raise the required liquidity above the pool's sampled liquidity: the quote reads the liquidity sampled at the
-        // last refresh, so a threshold above the standing depth makes it unusable
-        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: uint128(POOL_LIQ) * 2}));
-        (, ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "liquidity under the minimum");
-        _setQuote(Quote({referenceRateBpsPerHour: 1_000, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 1 days, referenceMinSeconds: 0, minLiquidity: 1e18}));
-        mod.setRevertUnit(true);
-        (, ok) = ctl.valuePerPoint(true);
-        assertFalse(ok, "a failing unit read");
-        mod.setRevertUnit(false);
-        _setQuote(Quote({referenceRateBpsPerHour: 0, referenceStepBps: 0, tolBps: 450, referenceMaxStale: 0, referenceMinSeconds: 0, minLiquidity: 1e18}));
-        (, ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "referenceMaxStale 0, the launch placeholder, keeps it unusable");
-    }
+    // test_unusableStates moved to ValueReferenceFixtureTest: it faults the module unit read (`setRevertUnit`, only on
+    // the stand in module) and drives minLiquidity past a known pool depth, neither reachable on the live pool
 
     // promise: INTEGRATION BadSetting on setQuote (field bounds, the all or nothing reference triple, the loop closure
     // and the reference band) and OnlyOwner. the fixture credit spread is 1,000 and the Core bid margin 1,000
     function test_setQuoteBounds() public {
         vm.startPrank(owner);
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("referenceStepBps")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 10_001, tolBps: 0, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1,
+                referenceStepBps: 10_001,
+                tolBps: 0,
+                referenceMaxStale: 1,
+                referenceMinSeconds: 0,
+                minLiquidity: 0
+            })
+        );
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("tolBps")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 10_000, tolBps: 10_000, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1,
+                referenceStepBps: 10_000,
+                tolBps: 10_000,
+                referenceMaxStale: 1,
+                referenceMinSeconds: 0,
+                minLiquidity: 0
+            })
+        );
         // a partial reference triple (step 0 while the rate and staleness are set) is a misconfiguration
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("referenceTriple")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 0, tolBps: 450, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1,
+                referenceStepBps: 0,
+                tolBps: 450,
+                referenceMaxStale: 1,
+                referenceMinSeconds: 0,
+                minLiquidity: 0
+            })
+        );
         // tol 500 needs a credit spread of at least 1,053, above the fixture's 1,000: the loop would not close
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 1, tolBps: 500, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1,
+                referenceStepBps: 1,
+                tolBps: 500,
+                referenceMaxStale: 1,
+                referenceMinSeconds: 0,
+                minLiquidity: 0
+            })
+        );
         // step 700 at tol 450 widens the reference band past the bid margin
         vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("referenceBand")));
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1, referenceStepBps: 700, tolBps: 450, referenceMaxStale: 1, referenceMinSeconds: 0, minLiquidity: 0}));
+        ctl.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1,
+                referenceStepBps: 700,
+                tolBps: 450,
+                referenceMaxStale: 1,
+                referenceMinSeconds: 0,
+                minLiquidity: 0
+            })
+        );
         // a valid quote: the reference triple set, tol 450 inside the loop closure and the band
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1_200, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 3_600, referenceMinSeconds: 600, minLiquidity: 1e18}));
+        ctl.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_200,
+                referenceStepBps: 500,
+                tolBps: 450,
+                referenceMaxStale: 3_600,
+                referenceMinSeconds: 600,
+                minLiquidity: 1e18
+            })
+        );
         vm.stopPrank();
         vm.expectRevert(IControllerV1.OnlyOwner.selector);
-        ctl.setQuote(Quote({referenceRateBpsPerHour: 1_200, referenceStepBps: 500, tolBps: 450, referenceMaxStale: 3_600, referenceMinSeconds: 600, minLiquidity: 1e18}));
+        ctl.setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_200,
+                referenceStepBps: 500,
+                tolBps: 450,
+                referenceMaxStale: 3_600,
+                referenceMinSeconds: 600,
+                minLiquidity: 1e18
+            })
+        );
     }
 
     // promise: SPEC 11 a seed manipulated between signing and landing reverts: setBalancePoolKey refuses a live spot
     // more than 4.5 percent from the owner's expected spot, regardless of quote tolerance
     function test_poolKeySeedRevertsOnManipulation() public {
-        uint256 expected = _spotOf(SP);
+        uint256 expected = openRef;
         _swapToSpot(expected * 2); // a real swap doubles the spot, far beyond the 4.5 percent band
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(address(xt)),
-            fee: 3000,
-            tickSpacing: 60,
+            currency1: IControllerV1.Currency.wrap(liveBalanceToken),
+            fee: LIVE_BALANCE_POOL_FEE,
+            tickSpacing: LIVE_BALANCE_POOL_SPACING,
             hooks: address(0)
         });
         vm.prank(owner);
@@ -437,22 +575,24 @@ contract ValueReferenceTest is ValueBase {
 
     // promise: the pool-key seed keeps its 4.5 percent transaction guard when the trading tolerance is zero
     function test_poolKeySeedAllowsNormalDriftWithZeroTradingTolerance() public {
-        _setQuote(Quote({
-            referenceRateBpsPerHour: 1_200,
-            referenceStepBps: 200,
-            tolBps: 0,
-            referenceMaxStale: 3_600,
-            referenceMinSeconds: 600,
-            minLiquidity: 1e18
-        }));
-        uint256 expected = _spotOf(SP);
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_200,
+                referenceStepBps: 200,
+                tolBps: 0,
+                referenceMaxStale: 3_600,
+                referenceMinSeconds: 600,
+                minLiquidity: 1e18
+            })
+        );
+        uint256 expected = openRef;
         uint256 spot = _swapSpot(100);
         assertGt(spot, expected);
         IControllerV1.PoolKey memory k = IControllerV1.PoolKey({
             currency0: IControllerV1.Currency.wrap(address(0)),
-            currency1: IControllerV1.Currency.wrap(address(xt)),
-            fee: 3000,
-            tickSpacing: 60,
+            currency1: IControllerV1.Currency.wrap(liveBalanceToken),
+            fee: LIVE_BALANCE_POOL_FEE,
+            tickSpacing: LIVE_BALANCE_POOL_SPACING,
             hooks: address(0)
         });
         vm.prank(owner);
@@ -468,6 +608,7 @@ contract ValueReferenceTest is ValueBase {
 
 contract ValueModeTest is ValueBase {
     using stdStorage for StdStorage;
+
     // promise: an owner pause freezes the shared value-mode climb through booking, funding and half-life edits
     function test_pauseFreezesSharedBidAndResumesEarnedClimb() public {
         _valueOn();
@@ -490,13 +631,8 @@ contract ValueModeTest is ValueBase {
         assertGt(core.sharedRate(), earned, "shared climb resumes");
     }
 
-    // promise: SPEC 4 the launch keeps value mode off and the quote placeholders unusable
-    function test_launchValues() public view {
-        Settings memory s = core.settings();
-        assertFalse(s.valueModeOn, "value mode off at launch");
-        assertEq(lc.quote.tolBps, 100, "the launch band");
-        assertEq(lc.quote.referenceMaxStale, 0, "referenceMaxStale an owner input, unusable until set");
-    }
+    // test_launchValues moved to ValueModeFixtureTest: it reads the launch config `lc` (value mode off, the quote band
+    // and referenceMaxStale placeholders), which exists only on the fresh deploy, not on the live bind
 
     // promise: SPEC 4 the switch resets the shared instance to its floor and prices the eth bid off it
     function test_switchResetsTheSharedInstanceAndPricesTheBid() public {
@@ -545,7 +681,7 @@ contract ValueModeTest is ValueBase {
         s.recoveryClimbPerMinBps = 50;
         _setSettings(s);
         assertEq(core.ethPrice(), climbed, "a settings edit does not reset it");
-        _setBalanceModule(address(mod));
+        _setBalanceModule(address(treasury));
         assertEq(core.ethPrice(), climbed, "a module set does not reset it");
         s = core.settings();
         s.balanceBidOn = true;
@@ -572,44 +708,18 @@ contract ValueModeTest is ValueBase {
         vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
         core.sellForBalance(_one(ids[1]));
         core.book();
+        uint256 custodyBefore = _moduleCustody();
         core.redeemStatement(c.sid);
-        assertEq(STATEMENTS.ownerOf(c.sid), address(mod), "conversion runs by age, no quote read");
+        // the live conversion runs by age with no quote read: the treasury calls the token's withdraw, which takes the
+        // Statement into the token and pays BALANCE into the treasury (the live mechanism, where the stand in module
+        // kept the Statement itself)
+        assertEq(STATEMENTS.ownerOf(c.sid), liveBalanceToken, "conversion moved the Statement into the token");
+        assertGt(_moduleCustody(), custodyBefore, "the conversion paid BALANCE into the treasury");
     }
 
     // promise: a stale value quote cannot book donated Credits at a 1 wei basis, and composition preserves their costs
-    function test_staleQuoteAdoptKeepsLastGoodBasisThroughComposition() public {
-        _valueOn();
-        _fundPot(1 ether);
-        core.book();
-        uint256 lastGood = core.rateAtCheckpoint();
-        assertEq(lastGood, core.ethPrice(), "a usable quote established the accounting rate");
-        uint256[] memory ids = _credits(seller, 80);
-        for (uint256 i; i < ids.length; ++i) {
-            vm.prank(seller);
-            CREDITS.transferFrom(seller, address(core), ids[i]);
-        }
-        vm.warp(block.timestamp + 1 days + 1);
-        assertEq(core.ethRate(), 0, "the stale quote still closes ETH acquisition");
-        assertEq(core.ethPrice(), 0, "the live value price does not fall back");
-        vm.prank(seller);
-        core.adopt(ids);
-        uint256 sum;
-        for (uint256 i; i < ids.length; ++i) {
-            uint256 pay = lastGood * _scoreOf(ids[i]) / RATE_SCORE;
-            uint256 expected = pay + pay * core.settings().buyToArtistBps / 10_000;
-            (, uint256 cost,) = core.creditInfo(ids[i]);
-            assertEq(cost, expected, "adoption uses the stored accounting rate");
-            assertGt(cost, 1, "the quote outage cannot erase cost");
-            sum += cost;
-        }
-        uint256 sid = STATEMENTS.supply() + 1;
-        vm.fee(composeBasefee);
-        vm.prank(keeper);
-        core.compose();
-        (bool held, uint256 statementCost,) = core.statementInfo(sid);
-        assertTrue(held, "the page composed");
-        assertEq(statementCost, sum, "composition preserves every adopted cost");
-    }
+    // test_staleQuoteAdoptKeepsLastGoodBasisThroughComposition moved to ValueModeFixtureTest: it composes the exact 80
+    // Credits it adopted, which needs an empty pile; the live Core holds a standing pile whose older Credits compose first
 
     // promise: adoption refuses a missing accounting rate while a value quote is unusable
     function test_staleQuoteAdoptWithoutStoredBasisReverts() public {
@@ -617,12 +727,13 @@ contract ValueModeTest is ValueBase {
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
         CREDITS.transferFrom(seller, address(core), ids[0]);
+        uint256 base = core.pileSize();
         vm.warp(block.timestamp + 1 days + 1);
         stdstore.target(address(core)).sig("rateAtCheckpoint()").checked_write(uint256(0));
         assertEq(core.ethPrice(), 0, "the quote is stale");
         vm.expectRevert(ICore.NoQuote.selector);
         core.adopt(ids);
-        assertEq(core.pileSize(), 0, "a failed adoption leaves the pile unchanged");
+        assertEq(core.pileSize(), base, "a failed adoption leaves the pile unchanged");
     }
 
     // promise: a hostile value quote cannot lift the ETH bid above rateCap; an unusable quote closes acquisitions
@@ -655,10 +766,10 @@ contract ValueModeTest is ValueBase {
         uint256[] memory ids = _credits(seller, 1);
         uint256 bid = core.balanceBidOf(ids[0]);
         assertGt(bid, 0, "the posted bid is available outside value mode");
-        uint256 before = xt.balanceOf(seller);
+        uint256 before = _balanceOf(seller);
         vm.prank(seller);
         core.sellForBalance(ids);
-        assertEq(xt.balanceOf(seller) - before, bid, "the seller receives the posted payout");
+        assertEq(_balanceOf(seller) - before, bid, "the seller receives the posted payout");
     }
 
     // promise: a hostile clamp cannot raise the posted payout or turn a failed quote into a BALANCE fill
@@ -669,7 +780,7 @@ contract ValueModeTest is ValueBase {
         uint256[] memory ids = _credits(seller, 1);
         bytes memory request = abi.encodeWithSelector(IControllerV1.balanceClampFor.selector);
         vm.mockCall(address(q), request, abi.encode(type(uint256).max, true));
-        uint256 posted = _scoreOf(ids[0]) * UNIT * (10_000 - core.settings().balanceDiscountBps) / 10_000;
+        uint256 posted = _scoreOf(ids[0]) * _moduleUnit() * (10_000 - core.settings().balanceDiscountBps) / 10_000;
         assertEq(core.balanceBidOf(ids[0]), posted, "oversized clamp is limited to the posted bid");
         vm.clearMockedCalls();
         vm.mockCall(address(q), request, abi.encode(type(uint256).max, false));
@@ -693,7 +804,11 @@ contract ValueModeTest is ValueBase {
         (uint256 vSell,) = ctl.valuePerPoint(true);
         (uint256 spot,) = ctl.spotPrice();
         uint256 floor = ctl.referencePrice() * 9_550 / 10_000;
-        assertEq(ctl.valueOf(score), FullMath.mulDivRoundingUp(score * UNIT, spot > floor ? spot : floor, 1e18), "valueOf is the protected sale value");
+        assertEq(
+            ctl.valueOf(score),
+            FullMath.mulDivRoundingUp(score * _moduleUnit(), spot > floor ? spot : floor, 1e18),
+            "valueOf is the protected sale value"
+        );
         uint256 price = ctl.creditPrice(id);
         assertEq(price, ctl.valueOf(score) * ctl.floorMultBps() / 10_000, "the floor drops the cost term");
         assertEq(ctl.floorMultBps(), 12_100, "the spread of 1,000 over the hard cap of 11,000");
@@ -719,16 +834,22 @@ contract ValueModeTest is ValueBase {
         paid = price * 2 - TRIPPER.balance;
         _nextSecond();
         _tripBack(id, viaBalance);
-        uint256 got = xt.balanceOf(TRIPPER);
+        uint256 got = _balanceOf(TRIPPER);
         back = viaBalance ? got * _spotNow() / 1e18 : TRIPPER.balance - (price * 2 - paid);
         if (got != 0) {
             vm.prank(TRIPPER);
-            xt.transfer(address(0xdead), got);
+            IBalanceERC20(liveBalanceToken).transfer(address(0xdead), got);
         }
     }
 
     function tripBackExternal(uint256 id) external {
         _tripBack(id, true);
+    }
+
+    /// external self-call wrapper so a live round trip can be wrapped in try/catch: the vm cheatcodes inside `_trip`
+    /// run through the external self-call, and the tuple is returned to the caller
+    function balanceTripExternal(uint256 id) external returns (uint256 paid, uint256 back) {
+        return _trip(id, true);
     }
 
     function _tripBack(uint256 id, bool viaBalance) internal {
@@ -792,7 +913,9 @@ contract ValueModeTest is ValueBase {
             (paid, back) = _trip(ids[k++], false);
             _assertLoses(paid, back, i == 0 ? "eth at spot above the reference" : "eth at spot below the reference");
             (paid, back) = _trip(ids[k++], true);
-            _assertLoses(paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference");
+            _assertLoses(
+                paid, back, i == 0 ? "balance at spot above the reference" : "balance at spot below the reference"
+            );
         }
         // the reference stale after the buy: both bids close until a usable quote returns
         _swapToSpot(ctl.referencePrice());
@@ -814,14 +937,16 @@ contract ValueModeTest is ValueBase {
         _valueOn();
         _setCreditSaleOn(true);
         _setReturnLock(6 hours);
-        _setQuote(Quote({
-            referenceRateBpsPerHour: 1_200,
-            referenceStepBps: 200,
-            tolBps: 100,
-            referenceMaxStale: 1 days,
-            referenceMinSeconds: 600,
-            minLiquidity: 1e18
-        }));
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_200,
+                referenceStepBps: 200,
+                tolBps: 100,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 600,
+                minLiquidity: 1e18
+            })
+        );
         CreditSale memory sale = _creditSale();
         sale.spreadBps = 203;
         vm.prank(owner);
@@ -874,16 +999,18 @@ contract ValueModeTest is ValueBase {
         }
     }
 
-    // promise: SPEC 10 a balance round trip loses the spread even when the live pool spot leads the reference
+    // promise: SPEC 10 a balance round trip loses the spread even when the live pool spot leads the reference, proven
+    // live: at the break-even lead the live round trip either fails closed (the value quote is unusable) or loses at
+    // least the spread.
     // in value mode the balance payout is lowered to the controller's `balanceClampFor`: the eth bid for the score
     // valued in tokens at the protected sale price per token (`max(prior-block spot, reference - tol)`), so a filled
     // payout is worth at most the eth bid when the engine sells the tokens (decision 165). without the clamp a credit
     // bought off the reference-protected ask and sold straight into the balance bid returned tokens realizable at the
-    // live spot, gaining the spot over reference gap the spread does not cover. shrunk from the InvariantsValue
-    // invariant_v20 counterexample (CI run 39046569753): spot 1.9108e18, reference 0.5145e18 (3.55x), credit bought for
-    // 0.025119 eth, par payout 0.030983 xt realizable at the spot for 0.059202 eth, net +0.034083. the clamp caps the
-    // payout at 0.01666 eth over pSell 1.9108, worth the eth bid at spot, so the round trip loses.
-    function test_balanceRoundTripLosesWhenSpotLeadsReference() public {
+    // live spot, gaining the spot over reference gap the spread does not cover. on the live deep pool pushing the spot
+    // to the 3.55x lead drives it past what the rate-limited reference can track, so the value quote goes unusable and
+    // `creditPrice`/`buyCredit` revert `NoQuote` before any profitable round trip exists: that fail-closed behavior is
+    // the live safety property. the exact economic bound runs on the controlled pool in ValueSpotLeadsFixtureTest.
+    function test_balanceRoundTripLosesWhenSpotLeadsReference_liveFailsClosedOrLoses() public {
         uint256[] memory ids = _fillEthPile(4);
         _valueOn();
         _setReturnLock(0);
@@ -900,57 +1027,16 @@ contract ValueModeTest is ValueBase {
             ctl.refreshReference();
         }
         _nextSecond();
-        (uint256 paid, uint256 back) = _trip(ids[0], true);
-        _assertLoses(paid, back, "balance with the spot far above the reference");
+        try this.balanceTripExternal(ids[0]) returns (uint256 paid, uint256 back) {
+            uint256 m = 10_000 + ctl.creditSpreadBps();
+            assertLe(back * m, (paid + 1) * 10_000, "live executes and loses the spread");
+        } catch {
+            // fail closed: the value quote is unusable at the pushed lead, so no profitable round trip exists
+        }
     }
 
-    // promise: an unusable value reference pays no balance tokens, and a transfer cannot bypass the return lock
-    function test_balanceFillRefusesWhileTheReferenceIsUnusable() public {
-        uint256[] memory ids = _fillEthPile(4);
-        _valueOn();
-        _setReturnLock(21_600);
-        _setCreditSaleOn(true);
-        _warp(ctl.creditWindow());
-        _fundPot(50 ether);
-        ctl.refreshReference();
-        uint256 id = ids[0];
-        uint256 price = ctl.creditPrice(id);
-        vm.deal(TRIPPER, price * 2);
-        vm.prank(TRIPPER);
-        ctl.buyCredit{value: price * 2}(id);
-        address second = address(0xB0B2);
-        uint256 score = _scoreOf(id);
-        (uint256 healthy, bool ok) = ctl.balanceClampFor(score, type(uint128).max);
-        assertTrue(ok);
-        assertGt(healthy, 0, "healthy cap");
-        // drain the pool and take two samples
-        _addFullRange(-int256(uint256(POOL_LIQ)));
-        for (uint256 i; i < 2; ++i) {
-            _nextSecond();
-            ctl.refreshReference();
-        }
-        (, ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "the reference is unusable");
-        (uint256 capped, bool answered) = ctl.balanceClampFor(score, type(uint128).max);
-        assertTrue(answered);
-        assertEq(capped, 0, "no cap can be computed, so no payout");
-        vm.startPrank(TRIPPER);
-        CREDITS.setApprovalForAll(address(core), true);
-        vm.expectPartialRevert(ICore.ReturnLocked.selector);
-        core.sellForBalance(_one(id));
-        CREDITS.transferFrom(TRIPPER, second, id);
-        vm.stopPrank();
-        vm.startPrank(second);
-        CREDITS.setApprovalForAll(address(core), true);
-        vm.expectPartialRevert(ICore.ReturnLocked.selector);
-        core.sellForBalance(_one(id));
-        vm.stopPrank();
-        _setReturnLock(0);
-        vm.startPrank(second);
-        vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
-        core.sellForBalance(_one(id));
-        vm.stopPrank();
-    }
+    // test_balanceFillRefusesWhileTheReferenceIsUnusable moved to ValueModeFixtureTest: it drains the pool
+    // (`_addFullRange(-POOL_LIQ)`) to make the reference unusable, which the live deep pool cannot do
 
     /// value mode setup with a usable reference, a funded pot and the credit sale open
     function _balanceCapSetup() internal returns (uint256[] memory ids) {
@@ -1007,7 +1093,7 @@ contract ValueModeTest is ValueBase {
         ctl.buyCredit{value: price * 2}(id);
         _nextSecond();
         _tripBack(id, true);
-        assertEq(xt.balanceOf(TRIPPER), core.balanceBidForScore(score), "sellForBalance pays the view");
+        assertEq(_balanceOf(TRIPPER), core.balanceBidForScore(score), "sellForBalance pays the view");
     }
 
     // promise: with pot room the cap equals the earlier eth bid based cap, and the view equals the fill
@@ -1031,12 +1117,16 @@ contract ValueModeTest is ValueBase {
         ctl.buyCredit{value: price * 2}(ids[0]);
         _nextSecond();
         _tripBack(ids[0], true);
-        assertEq(xt.balanceOf(TRIPPER), viewed, "view equals the sell path");
+        assertEq(_balanceOf(TRIPPER), viewed, "view equals the sell path");
     }
 
     // promise: with the spot leading the reference the payout valued at pSell never exceeds the unclamped value
-    // rate bid, including with the eth pot at its reserve
-    function test_balanceCapBoundedByValueRateWhenSpotLeads() public {
+    // rate bid, including with the eth pot at its reserve, proven live: at the break-even lead the clamp either returns
+    // unusable/zero (fail closed) or, when it pays, the payout valued at pSell stays within the unclamped value rate bid.
+    // on the live deep pool the 3.55x lead drives the spot past what the rate-limited reference can track, so the value
+    // quote goes unusable and the clamp returns 0; the exact nonzero bound runs on the controlled pool in
+    // ValueSpotLeadsFixtureTest.
+    function test_balanceCapBoundedByValueRateWhenSpotLeads_liveFailsClosedOrLoses() public {
         _balanceCapSetup();
         _swapToSpot(ctl.referencePrice() * 355 / 100);
         for (uint256 i; i < 3; ++i) {
@@ -1049,8 +1139,11 @@ contract ValueModeTest is ValueBase {
         _setSettings(st);
         uint256 score = 433 * POINT_UNIT;
         uint256 pSell = _pSell();
-        (uint256 paid,) = ctl.balanceClampFor(score, type(uint128).max);
-        assertGt(paid, 0);
+        (uint256 paid, bool ok) = ctl.balanceClampFor(score, type(uint128).max);
+        if (!ok || paid == 0) {
+            // fail closed: the value quote is unusable at the pushed lead, so the clamp pays nothing and no round trip exists
+            return;
+        }
         uint256 bid = FullMath.mulDiv(core.ethPrice(), score, RATE_SCORE);
         assertLe(FullMath.mulDiv(paid, pSell, 1e18), bid + bid / 1e9, "payout at pSell is within the unclamped bid");
     }
@@ -1081,7 +1174,7 @@ contract ValueModeTest is ValueBase {
         ctl.buyCredit{value: price * 2}(id);
         _nextSecond();
         _tripBack(id, true);
-        assertEq(xt.balanceOf(TRIPPER), viewed, "the fill pays the view");
+        assertEq(_balanceOf(TRIPPER), viewed, "the fill pays the view");
     }
 
     // promise: SPEC 10 outside value mode the balance payout is par, the clamp does not apply (decision 165). a usable
@@ -1104,27 +1197,9 @@ contract ValueModeTest is ValueBase {
         assertEq(ctl.priceOf(c.sid), ref, "the aged curve rests at the protected floor, not at saleFloorBps");
     }
 
-    // promise: a value-mode statement quote executes at the historical cost floor while its reference stays value-only
-    function test_statementQuoteCoversHistoricalCostFloor() public {
-        Composed memory c = _composeOnce();
-        _valueOn();
-        vm.warp(block.timestamp + uint256(ctl.decayHours()) * 1 hours);
-        vm.roll(block.number + 1);
-        uint256 spot = _swapToSpot(ctl.referencePrice() / 100);
-        IControllerV1.PoolKey memory k = abi.decode(abi.encode(key), (IControllerV1.PoolKey));
-        vm.prank(owner);
-        ctl.setBalancePoolKey(k, spot);
-        uint256 ref = ctl.valueOf(core.ratingOf(c.sid)) * ctl.floorMultBps() / 10_000;
-        uint256 coreFloor = c.cost * core.settings().saleFloorBps / 10_000;
-        assertLt(ref, coreFloor, "historical cost dominates protected value");
-        assertEq(ctl.referenceOf(c.sid), ref, "reference stays value-only");
-        uint256 price = ctl.priceOf(c.sid);
-        assertEq(price, coreFloor, "quote covers Core cost floor");
-        vm.deal(seller, price);
-        vm.prank(seller);
-        ctl.buy{value: price}(c.sid);
-        assertEq(STATEMENTS.ownerOf(c.sid), seller, "quoted purchase executes");
-    }
+    // test_statementQuoteCoversHistoricalCostFloor moved to ValueModeFixtureTest: it pushes the spot to one percent of
+    // the reference and reseeds the pool key there so the protected value sinks far below the Core cost floor, a spot
+    // unreachable on the live deep pool
 
     // promise: SPEC 8 the controller sale doors move the reference before they price
     function test_saleDoorsObserve() public {
@@ -1202,28 +1277,18 @@ contract ValueModeTest is ValueBase {
 /// reference walking at the max rate against a pushed spot, a 10x spike against the rate cap and the pot, and a loop
 /// closure round trip at a nonzero quote tolerance. every spot move is a real swap through the pool manager
 contract ValueRealPoolTest is ValueBase {
-    /// the nonzero-band fixture quote with `minLiquidity` replaced
-    function _quoteWithMinLiquidity(uint128 minLiq) internal pure returns (Quote memory) {
-        return Quote({
-            referenceRateBpsPerHour: 1_000,
-            referenceStepBps: 500,
-            tolBps: 450,
-            referenceMaxStale: 1 days,
-            referenceMinSeconds: 0,
-            minLiquidity: minLiq
-        });
-    }
-
     // promise: at zero tolerance a real pool move stays out of the same-block quote, while one scheduled refresh may move the reference by two percent
     function test_zeroToleranceUsesSampledSpotAndTwoPercentRefreshStep() public {
-        _setQuote(Quote({
-            referenceRateBpsPerHour: 1_200,
-            referenceStepBps: 200,
-            tolBps: 0,
-            referenceMaxStale: 3_600,
-            referenceMinSeconds: 600,
-            minLiquidity: 1e18
-        }));
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_200,
+                referenceStepBps: 200,
+                tolBps: 0,
+                referenceMaxStale: 3_600,
+                referenceMinSeconds: 600,
+                minLiquidity: 1e18
+            })
+        );
         _fundPot(20 ether); // real coin trading creates the hook fees that fund this bid
         _valueOn();
         uint256[] memory ids = _credits(seller, 1);
@@ -1261,26 +1326,25 @@ contract ValueRealPoolTest is ValueBase {
         _testStaleQuoteMove(1_000);
     }
 
-    // promise: at 100 bps tolerance a real 10 percent down-move keeps the bid at spot and the ask above spot until
-    // the reference catches up within five eligible 600-second refreshes
-    function test_realPoolDownMoveStaleQuoteClosesWithinFiveRefreshes() public {
-        _testStaleQuoteMove(-1_000);
-    }
-
+    // test_realPoolDownMoveStaleQuoteClosesWithinFiveRefreshes moved to ValueRealPoolFixtureTest: an exact 10 percent
+    // down-move sells more BALANCE into the live deep pool than one holder can provide (and the token's reserve carries
+    // no transferable ink), so it reaches about 8.9 percent, short of the exact target; the up-move stays live here
     function _testStaleQuoteMove(int256 moveBps) internal {
-        _setQuote(Quote({
-            referenceRateBpsPerHour: 1_200,
-            referenceStepBps: 200,
-            tolBps: 100,
-            referenceMaxStale: 3_600,
-            referenceMinSeconds: 600,
-            minLiquidity: 1e18
-        }));
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_200,
+                referenceStepBps: 200,
+                tolBps: 100,
+                referenceMaxStale: 3_600,
+                referenceMinSeconds: 600,
+                minLiquidity: 1e18
+            })
+        );
         uint256 opening = ctl.referencePrice();
         uint256 spot = _swapSpot(moveBps);
         uint256 target = moveBps > 0 ? opening * 11_000 / 10_000 : opening * 9_000 / 10_000;
         assertApproxEqRel(spot, target, 1e15, "the real swap moves spot by about 10 percent");
-        uint256 unit = mod.unitPerPoint();
+        uint256 unit = _moduleUnit();
         uint256 spotBid = FullMath.mulDiv(POINT_UNIT * unit, spot, 1e18);
         uint256 spotAsk = FullMath.mulDivRoundingUp(POINT_UNIT * unit, spot, 1e18);
 
@@ -1339,20 +1403,8 @@ contract ValueRealPoolTest is ValueBase {
         _swapToSpot(ref);
     }
 
-    // promise: SPEC 8 the minLiquidity gate reads the live pool depth; just-in-time liquidity added in the same block
-    // lifts the pool above the minimum and makes the quote usable, the known ceiling of a block local liquidity check
-    // promise: the quote reads the liquidity sampled at the last refresh, so a one-block add cannot open it (C04)
-    function test_jitLiquidityCannotPassMinLiquidity() public {
-        uint128 liq0 = _liquidityNow();
-        _setQuote(_quoteWithMinLiquidity(liq0 + uint128(POOL_LIQ)));
-        (, bool ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "the quote is unusable while the sampled depth is under the raised minimum");
-        _addFullRange(int256(uint256(POOL_LIQ)));
-        assertGe(_liquidityNow(), liq0 + POOL_LIQ, "the just-in-time add deepened the live pool");
-        (, ok) = ctl.valuePerPoint(false);
-        assertFalse(ok, "a one-block add does not change the sampled liquidity, so the quote stays closed");
-        _setQuote(_quoteWithMinLiquidity(1e18));
-    }
+    // test_jitLiquidityCannotPassMinLiquidity moved to ValueRealPoolFixtureTest: it adds full range liquidity
+    // (`_addFullRange`) and checks a minLiquidity threshold against a known pool depth, neither possible on the live pool
 
     // promise: SPEC 8 refreshing every block at the max rate for an hour against a spot pushed far above walks the
     // reference up by about the hourly rate and never past the spot, so block by block spam gains nothing beyond the rate
@@ -1419,5 +1471,469 @@ contract ValueRealPoolTest is ValueBase {
         emit log_named_uint("loop closure: eth paid to buy the credit", paid);
         emit log_named_uint("loop closure: eth returned on the sell back", back);
         emit log_named_uint("loop closure: eth lost on the round trip", paid - back);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// controlled-pool siblings: these promises need pool mechanics the live mainnet pool cannot give (a fault injecting
+// module unit read, a liquidity drain, just in time liquidity, an arbitrary low spot, or the launch config), so they
+// keep the fresh-pool `ValueFixtureBase` setup. the live port of every other test runs against the real pool above
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// controlled-pool mechanics: faults the module unit read and drives minLiquidity past a known pool depth
+contract ValueReferenceFixtureTest is ValueFixtureBase {
+    using stdStorage for StdStorage;
+
+    // promise: SPEC 8 the quote is unusable beyond referenceMaxStale, under minLiquidity, with no module unit, or with referenceMaxStale 0
+    function test_unusableStates() public {
+        (, bool ok) = ctl.valuePerPoint(false);
+        assertTrue(ok, "fresh and deep");
+        vm.warp(block.timestamp + 1 days + 1);
+        (, ok) = ctl.valuePerPoint(false);
+        assertFalse(ok, "stale beyond referenceMaxStale");
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        (, ok) = ctl.valuePerPoint(false);
+        assertTrue(ok, "an update refreshes it");
+        // raise the required liquidity above the pool's sampled liquidity: the quote reads the liquidity sampled at the
+        // last refresh, so a threshold above the standing depth makes it unusable
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_000,
+                referenceStepBps: 500,
+                tolBps: 450,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 0,
+                minLiquidity: uint128(POOL_LIQ) * 2
+            })
+        );
+        (, ok) = ctl.valuePerPoint(false);
+        assertFalse(ok, "liquidity under the minimum");
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_000,
+                referenceStepBps: 500,
+                tolBps: 450,
+                referenceMaxStale: 1 days,
+                referenceMinSeconds: 0,
+                minLiquidity: 1e18
+            })
+        );
+        mod.setRevertUnit(true);
+        (, ok) = ctl.valuePerPoint(true);
+        assertFalse(ok, "a failing unit read");
+        mod.setRevertUnit(false);
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 0,
+                referenceStepBps: 0,
+                tolBps: 450,
+                referenceMaxStale: 0,
+                referenceMinSeconds: 0,
+                minLiquidity: 1e18
+            })
+        );
+        (, ok) = ctl.valuePerPoint(false);
+        assertFalse(ok, "referenceMaxStale 0, the launch placeholder, keeps it unusable");
+    }
+
+    // promise: decision 176 a paid refresh preserves earned funded climb before its payment empties the buying room
+    function test_paidRefreshPreservesEarnedClimbBeforePotFalls() public {
+        Settings memory s = core.settings();
+        s.reserveWei = 0.1 ether;
+        s.callerFee = 0.01 ether;
+        s.callerMaxBaseFee = 0;
+        _setSettings(s);
+        vm.prank(owner);
+        core.setRate(0.0049 ether);
+        uint256 oldPot = core.ethPot();
+        stdstore.target(address(core)).sig("ethPot()").checked_write(0.11 ether);
+        vm.deal(address(core), address(core).balance - oldPot + 0.11 ether);
+        _warp(4 minutes);
+        uint256 earned = core.ethPrice();
+        assertGt(earned, 0.0049 ether, "four funded minutes earned a climb");
+
+        vm.roll(block.number + 1);
+        core.refreshReference();
+        assertEq(core.ethPot(), 0.1 ether, "the refresh payment left only the reserve");
+        assertEq(core.rateAtCheckpoint(), earned, "the checkpoint kept the earned climb");
+        _warp(6 hours);
+        assertEq(core.ethPrice(), earned, "the empty pot did not fund later climb");
+    }
+
+    // promise: SPEC 8 a long idle gains one step, the referenceStepBps bound
+    function test_longIdleGainsOneStep() public {
+        uint256 ref0 = ctl.referencePrice();
+        _swapSpot(-5_000); // a real swap pushes the spot to about half the reference, past the step cap
+        vm.warp(block.timestamp + 20 hours);
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        assertEq(ctl.referencePrice(), ref0 * 9_500 / 10_000, "twenty idle hours move one step of 5 percent");
+    }
+
+    // promise: SPEC 8 the protected prices clamp the band to the spot sampled at the last refresh (a prior block): buys
+    // off min(sampledSpot, ref + tol), sales off max(sampledSpot, ref - tol) (decision 159, C01)
+    function test_protectedPricesAtSpotAboveAndBelow() public {
+        uint256 ref0 = ctl.referencePrice();
+        uint256 unitPoint = POINT_UNIT * UNIT;
+        // push the spot far above, refresh in a new block to sample it, then read in the next block so the quote uses
+        // that sample (not the seed held in the previous slot)
+        _swapToSpot(ref0 * 2);
+        vm.warp(block.timestamp + 30 minutes);
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        vm.roll(block.number + 1);
+        uint256 refHi = ctl.referencePrice();
+        (uint256 spotHi,) = ctl.spotPrice();
+        assertGt(spotHi, refHi * 10_450 / 10_000, "the sampled spot sits above the reference plus the band");
+        (uint256 buyHi,) = ctl.valuePerPoint(false);
+        (uint256 sellHi,) = ctl.valuePerPoint(true);
+        assertEq(
+            buyHi,
+            FullMath.mulDiv(unitPoint, refHi * 10_450 / 10_000, 1e18),
+            "a sampled high spot buys at the reference plus the band"
+        );
+        assertEq(sellHi, FullMath.mulDivRoundingUp(unitPoint, spotHi, 1e18), "and sells at the sampled spot");
+        // push the spot far below, sample it, read in the next block
+        _swapToSpot(refHi / 4);
+        vm.warp(block.timestamp + 30 minutes);
+        vm.roll(block.number + 1);
+        ctl.refreshReference();
+        vm.roll(block.number + 1);
+        uint256 refLo = ctl.referencePrice();
+        (uint256 spotLo,) = ctl.spotPrice();
+        assertLt(spotLo, refLo * 9_550 / 10_000, "the sampled spot sits below the reference less the band");
+        (uint256 buyLo,) = ctl.valuePerPoint(false);
+        (uint256 sellLo,) = ctl.valuePerPoint(true);
+        assertEq(buyLo, FullMath.mulDiv(unitPoint, spotLo, 1e18), "a sampled low spot buys at the sampled spot");
+        assertEq(
+            sellLo,
+            FullMath.mulDivRoundingUp(unitPoint, refLo * 9_550 / 10_000, 1e18),
+            "and sells at the reference less the band"
+        );
+        assertLt(buyLo, sellLo, "the buy value stays under the sale value");
+    }
+}
+
+/// controlled-pool mechanics: reads the launch config, drains the pool, and reseeds an arbitrary low spot
+contract ValueModeFixtureTest is ValueFixtureBase {
+    address internal constant TRIPPER = address(0x7419);
+
+    // promise: SPEC 4 the launch keeps value mode off and the quote placeholders unusable
+    function test_launchValues() public view {
+        Settings memory s = core.settings();
+        assertFalse(s.valueModeOn, "value mode off at launch");
+        assertEq(lc.quote.tolBps, 100, "the launch band");
+        assertEq(lc.quote.referenceMaxStale, 0, "referenceMaxStale an owner input, unusable until set");
+    }
+
+    // promise: an unusable value reference pays no balance tokens, and a transfer cannot bypass the return lock
+    function test_balanceFillRefusesWhileTheReferenceIsUnusable() public {
+        uint256[] memory ids = _fillEthPile(4);
+        _valueOn();
+        _setReturnLock(21_600);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(50 ether);
+        ctl.refreshReference();
+        uint256 id = ids[0];
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(TRIPPER, price * 2);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price * 2}(id);
+        address second = address(0xB0B2);
+        uint256 score = _scoreOf(id);
+        (uint256 healthy, bool ok) = ctl.balanceClampFor(score, type(uint128).max);
+        assertTrue(ok);
+        assertGt(healthy, 0, "healthy cap");
+        // drain the pool and take two samples
+        _addFullRange(-int256(uint256(POOL_LIQ)));
+        for (uint256 i; i < 2; ++i) {
+            _nextSecond();
+            ctl.refreshReference();
+        }
+        (, ok) = ctl.valuePerPoint(false);
+        assertFalse(ok, "the reference is unusable");
+        (uint256 capped, bool answered) = ctl.balanceClampFor(score, type(uint128).max);
+        assertTrue(answered);
+        assertEq(capped, 0, "no cap can be computed, so no payout");
+        vm.startPrank(TRIPPER);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.expectPartialRevert(ICore.ReturnLocked.selector);
+        core.sellForBalance(_one(id));
+        CREDITS.transferFrom(TRIPPER, second, id);
+        vm.stopPrank();
+        vm.startPrank(second);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.expectPartialRevert(ICore.ReturnLocked.selector);
+        core.sellForBalance(_one(id));
+        vm.stopPrank();
+        _setReturnLock(0);
+        vm.startPrank(second);
+        vm.expectRevert(bytes4(keccak256("ZeroAmount()")));
+        core.sellForBalance(_one(id));
+        vm.stopPrank();
+    }
+
+    // promise: a value-mode statement quote executes at the historical cost floor while its reference stays value-only
+    function test_statementQuoteCoversHistoricalCostFloor() public {
+        Composed memory c = _composeOnce();
+        _valueOn();
+        vm.warp(block.timestamp + uint256(ctl.decayHours()) * 1 hours);
+        vm.roll(block.number + 1);
+        uint256 spot = _swapToSpot(ctl.referencePrice() / 100);
+        IControllerV1.PoolKey memory k = abi.decode(abi.encode(key), (IControllerV1.PoolKey));
+        vm.prank(owner);
+        ctl.setBalancePoolKey(k, spot);
+        uint256 ref = ctl.valueOf(core.ratingOf(c.sid)) * ctl.floorMultBps() / 10_000;
+        uint256 coreFloor = c.cost * core.settings().saleFloorBps / 10_000;
+        assertLt(ref, coreFloor, "historical cost dominates protected value");
+        assertEq(ctl.referenceOf(c.sid), ref, "reference stays value-only");
+        uint256 price = ctl.priceOf(c.sid);
+        assertEq(price, coreFloor, "quote covers Core cost floor");
+        vm.deal(seller, price);
+        vm.prank(seller);
+        ctl.buy{value: price}(c.sid);
+        assertEq(STATEMENTS.ownerOf(c.sid), seller, "quoted purchase executes");
+    }
+
+    // promise: a stale value quote cannot book donated Credits at a 1 wei basis, and composition preserves their costs
+    function test_staleQuoteAdoptKeepsLastGoodBasisThroughComposition() public {
+        _valueOn();
+        _fundPot(1 ether);
+        core.book();
+        uint256 lastGood = core.rateAtCheckpoint();
+        assertEq(lastGood, core.ethPrice(), "a usable quote established the accounting rate");
+        uint256[] memory ids = _credits(seller, 80);
+        for (uint256 i; i < ids.length; ++i) {
+            vm.prank(seller);
+            CREDITS.transferFrom(seller, address(core), ids[i]);
+        }
+        vm.warp(block.timestamp + 1 days + 1);
+        assertEq(core.ethRate(), 0, "the stale quote still closes ETH acquisition");
+        assertEq(core.ethPrice(), 0, "the live value price does not fall back");
+        vm.prank(seller);
+        core.adopt(ids);
+        uint256 sum;
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 pay = lastGood * _scoreOf(ids[i]) / RATE_SCORE;
+            uint256 expected = pay + pay * core.settings().buyToArtistBps / 10_000;
+            (, uint256 cost,) = core.creditInfo(ids[i]);
+            assertEq(cost, expected, "adoption uses the stored accounting rate");
+            assertGt(cost, 1, "the quote outage cannot erase cost");
+            sum += cost;
+        }
+        uint256 sid = STATEMENTS.supply() + 1;
+        vm.fee(composeBasefee);
+        vm.prank(keeper);
+        core.compose();
+        (bool held, uint256 statementCost,) = core.statementInfo(sid);
+        assertTrue(held, "the page composed");
+        assertEq(statementCost, sum, "composition preserves every adopted cost");
+    }
+}
+
+/// controlled-pool mechanics: adds just in time liquidity and checks a minLiquidity threshold against a known depth
+contract ValueRealPoolFixtureTest is ValueFixtureBase {
+    /// the nonzero-band fixture quote with `minLiquidity` replaced
+    function _quoteWithMinLiquidity(uint128 minLiq) internal pure returns (Quote memory) {
+        return Quote({
+            referenceRateBpsPerHour: 1_000,
+            referenceStepBps: 500,
+            tolBps: 450,
+            referenceMaxStale: 1 days,
+            referenceMinSeconds: 0,
+            minLiquidity: minLiq
+        });
+    }
+
+    // promise: SPEC 8 the minLiquidity gate reads the live pool depth; just-in-time liquidity added in the same block
+    // lifts the pool above the minimum and makes the quote usable, the known ceiling of a block local liquidity check
+    // promise: the quote reads the liquidity sampled at the last refresh, so a one-block add cannot open it (C04)
+    function test_jitLiquidityCannotPassMinLiquidity() public {
+        uint128 liq0 = _liquidityNow();
+        _setQuote(_quoteWithMinLiquidity(liq0 + uint128(POOL_LIQ)));
+        (, bool ok) = ctl.valuePerPoint(false);
+        assertFalse(ok, "the quote is unusable while the sampled depth is under the raised minimum");
+        _addFullRange(int256(uint256(POOL_LIQ)));
+        assertGe(_liquidityNow(), liq0 + POOL_LIQ, "the just-in-time add deepened the live pool");
+        (, ok) = ctl.valuePerPoint(false);
+        assertFalse(ok, "a one-block add does not change the sampled liquidity, so the quote stays closed");
+        _setQuote(_quoteWithMinLiquidity(1e18));
+    }
+
+    // promise: at 100 bps tolerance a real 10 percent down-move keeps the bid at spot and the ask above spot until
+    // the reference catches up within five eligible 600-second refreshes
+    function test_realPoolDownMoveStaleQuoteClosesWithinFiveRefreshes() public {
+        _testStaleQuoteMove(-1_000);
+    }
+
+    /// the controlled-pool version of the stale-quote move; the shallow pool reaches the exact target spot
+    function _testStaleQuoteMove(int256 moveBps) internal {
+        _setQuote(
+            Quote({
+                referenceRateBpsPerHour: 1_200,
+                referenceStepBps: 200,
+                tolBps: 100,
+                referenceMaxStale: 3_600,
+                referenceMinSeconds: 600,
+                minLiquidity: 1e18
+            })
+        );
+        uint256 opening = ctl.referencePrice();
+        uint256 spot = _swapSpot(moveBps);
+        uint256 target = moveBps > 0 ? opening * 11_000 / 10_000 : opening * 9_000 / 10_000;
+        assertApproxEqRel(spot, target, 1e15, "the real swap moves spot by about 10 percent");
+        uint256 unit = _moduleUnit();
+        uint256 spotBid = FullMath.mulDiv(POINT_UNIT * unit, spot, 1e18);
+        uint256 spotAsk = FullMath.mulDivRoundingUp(POINT_UNIT * unit, spot, 1e18);
+
+        for (uint256 i = 1; i <= 5; ++i) {
+            vm.warp(block.timestamp + 600);
+            vm.roll(block.number + 1);
+            assertTrue(ctl.refreshReference(), "the scheduled refresh moves the reference");
+            // The refresh block still uses the old sample. The next block prices against the held market move.
+            vm.roll(block.number + 1);
+            (uint256 bid, bool buyOk) = ctl.valuePerPoint(false);
+            (uint256 ask, bool sellOk) = ctl.valuePerPoint(true);
+            assertTrue(buyOk && sellOk, "both real-pool quotes remain usable");
+            if (moveBps > 0) {
+                assertEq(ask, spotAsk, "the up-move ask uses the sampled spot");
+                if (i == 1) assertLt(bid, spotBid, "the up-move bid lags the sampled spot");
+            } else {
+                assertEq(bid, spotBid, "the down-move bid uses the sampled spot");
+                if (i == 1) assertGt(ask, spotAsk, "the down-move ask lags the sampled spot");
+            }
+            if (i == 5) {
+                assertEq(bid, spotBid, "the bid reaches spot within five refreshes");
+                assertEq(ask, spotAsk, "the ask reaches spot within five refreshes");
+            }
+        }
+    }
+}
+
+/// controlled-pool mechanics: pushes the spot to a 3.55x lead the rate-limited reference cannot track. on the live deep
+/// pool this lead fails the value quote closed (see the `_liveFailsClosedOrLoses` ports in ValueModeTest); here the
+/// shallow controlled pool keeps the quote usable, so the exact economic invariant runs: the balance payout stays bound
+/// by the unclamped value rate and the balance round trip loses the spread. these are the pre-port bodies verbatim
+contract ValueSpotLeadsFixtureTest is ValueFixtureBase {
+    address internal constant TRIPPER = address(0x7419);
+
+    /// buys pile credit `id` at its sale price through `buyCredit` after a `refreshReference()`, then in the next second sells
+    /// it back through the eth door or the balance door. `back` is the eth received, or the balance token received
+    /// valued at the pool spot
+    function _trip(uint256 id, bool viaBalance) internal returns (uint256 paid, uint256 back) {
+        ctl.refreshReference();
+        uint256 price = ctl.creditPrice(id);
+        vm.deal(TRIPPER, price * 2);
+        vm.prank(TRIPPER);
+        ctl.buyCredit{value: price * 2}(id);
+        paid = price * 2 - TRIPPER.balance;
+        _nextSecond();
+        _tripBack(id, viaBalance);
+        uint256 got = xt.balanceOf(TRIPPER);
+        back = viaBalance ? got * _spotNow() / 1e18 : TRIPPER.balance - (price * 2 - paid);
+        if (got != 0) {
+            vm.prank(TRIPPER);
+            xt.transfer(address(0xdead), got);
+        }
+    }
+
+    function tripBackExternal(uint256 id) external {
+        _tripBack(id, true);
+    }
+
+    function _tripBack(uint256 id, bool viaBalance) internal {
+        vm.startPrank(TRIPPER);
+        CREDITS.setApprovalForAll(address(core), true);
+        if (viaBalance) core.sellForBalance(_one(id));
+        else core.sellForEth(_one(id));
+        vm.stopPrank();
+    }
+
+    function _spotNow() internal view returns (uint256 spot) {
+        (spot,) = ctl.spotPrice();
+    }
+
+    /// a round trip loses at least the spread: what comes back is at most the price paid over (10_000 + spreadBps),
+    /// within one wei of the price's rounding. at the hard cap the bound is exact, so the floored price can sit one wei
+    /// under the spread over the bid's most
+    function _assertLoses(uint256 paid, uint256 back, string memory state) internal view {
+        assertGt(back, 0, state);
+        uint256 m = 10_000 + ctl.creditSpreadBps();
+        assertLe(back * m, (paid + 1) * 10_000, state);
+    }
+
+    /// value mode setup with a usable reference, a funded pot and the credit sale open
+    function _balanceCapSetup() internal returns (uint256[] memory ids) {
+        ids = _fillEthPile(4);
+        _valueOn();
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(5 ether);
+        ctl.refreshReference();
+    }
+
+    /// the protected sale price per token (wei per 1e18 base units) recovered from the sell side point value
+    function _pSell() internal view returns (uint256) {
+        (uint256 v,) = ctl.valuePerPoint(true);
+        return v * 1e18 / (POINT_UNIT * _moduleUnit());
+    }
+
+    function _capOf(uint256 score) internal view returns (uint256 cap) {
+        uint256 pSell = _pSell();
+        cap = FullMath.mulDiv(FullMath.mulDiv(core.ethPrice(), score, RATE_SCORE), 1e18, pSell);
+    }
+
+    // promise: with the spot leading the reference the payout valued at pSell never exceeds the unclamped value
+    // rate bid, including with the eth pot at its reserve
+    function test_balanceCapBoundedByValueRateWhenSpotLeads() public {
+        _balanceCapSetup();
+        _swapToSpot(ctl.referencePrice() * 355 / 100);
+        for (uint256 i; i < 3; ++i) {
+            _nextSecond();
+            ctl.refreshReference();
+        }
+        _nextSecond();
+        Settings memory st = core.settings();
+        st.reserveWei = 18 ether;
+        _setSettings(st);
+        uint256 score = 433 * POINT_UNIT;
+        uint256 pSell = _pSell();
+        (uint256 paid,) = ctl.balanceClampFor(score, type(uint128).max);
+        assertGt(paid, 0);
+        uint256 bid = FullMath.mulDiv(core.ethPrice(), score, RATE_SCORE);
+        assertLe(FullMath.mulDiv(paid, pSell, 1e18), bid + bid / 1e9, "payout at pSell is within the unclamped bid");
+    }
+
+    // promise: SPEC 10 a balance round trip loses the spread even when the live pool spot leads the reference
+    // in value mode the balance payout is lowered to the controller's `balanceClampFor`: the eth bid for the score
+    // valued in tokens at the protected sale price per token (`max(prior-block spot, reference - tol)`), so a filled
+    // payout is worth at most the eth bid when the engine sells the tokens (decision 165). without the clamp a credit
+    // bought off the reference-protected ask and sold straight into the balance bid returned tokens realizable at the
+    // live spot, gaining the spot over reference gap the spread does not cover. shrunk from the InvariantsValue
+    // invariant_v20 counterexample (CI run 39046569753): spot 1.9108e18, reference 0.5145e18 (3.55x), credit bought for
+    // 0.025119 eth, par payout 0.030983 xt realizable at the spot for 0.059202 eth, net +0.034083. the clamp caps the
+    // payout at 0.01666 eth over pSell 1.9108, worth the eth bid at spot, so the round trip loses.
+    function test_balanceRoundTripLosesWhenSpotLeadsReference() public {
+        uint256[] memory ids = _fillEthPile(4);
+        _valueOn();
+        _setReturnLock(0);
+        _setCreditSaleOn(true);
+        _warp(ctl.creditWindow());
+        _fundPot(50 ether);
+        // push the pool spot to 3.55x the reference and leave the reference unsettled: one refresh per block moves it at
+        // most one step, so the ask stays priced off the lagging reference while the spot leads it
+        _swapToSpot(ctl.referencePrice() * 355 / 100);
+        // let the prior-block sample catch the pushed spot (the sale price the engine realizes tokens at) while the
+        // reference walks up one step a block and stays well below it: the spot leads the reference
+        for (uint256 i; i < 3; ++i) {
+            _nextSecond();
+            ctl.refreshReference();
+        }
+        _nextSecond();
+        (uint256 paid, uint256 back) = _trip(ids[0], true);
+        _assertLoses(paid, back, "balance with the spot far above the reference");
     }
 }

@@ -482,7 +482,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// credit is recorded at its scaled bid `ethRate() * score / RATE_SCORE`. compose and sale tests read the recorded
     /// per-credit cost through `creditInfo`; the per-point payout and the scaled drop are test/PerPoint.t.sol,
     /// test/PerPointExact.t.sol and the invariants
-    function _fillEthPile(uint256 n) internal returns (uint256[] memory ids) {
+    function _fillEthPile(uint256 n) internal virtual returns (uint256[] memory ids) {
         ids = _credits(seller, n);
         // a price state that idle time loosened above the opening rate is restated to the opening rate
         uint256 opening = core.RATE_START();
@@ -504,7 +504,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// first. the call checks that the core hands Statements the 80 oldest credits with the format `compose()` derives from
     /// `prevrandao` and the first page id. the state before the
     /// compose is kept in `preComposeSnap`, so a test can revert to it and compose again under other conditions
-    function _composeOnce() internal returns (Composed memory c) {
+    function _composeOnce() internal virtual returns (Composed memory c) {
         if (isComposed) return composed;
         uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
@@ -597,6 +597,15 @@ abstract contract Fixture is Test, ProdDeployer {
     function _setSettings(Settings memory s) internal {
         vm.prank(owner);
         core.setSettings(s);
+    }
+
+    /// @notice applies the live Core's settings (all fields, read at the fork pin) to this fresh fixture Core, so a
+    /// controlled-input test on the fixture still runs under the live tuning (decision: the live settings are intended).
+    /// only the input a test controls (a score, a pot size) is set apart; the configuration stays the live one. needs
+    /// the fork pinned at the block where the live Core holds these settings
+    function _useLiveSettings() internal {
+        Settings memory live = ICore(payable(0xcdb1889ae12074d750CD9B8531B692015465e0dD)).settings();
+        _setSettings(live);
     }
 
     /// @notice sets the redeem burn pot share to 1,000 bps (phase 2 value, decision 155). launch is 0, so the
