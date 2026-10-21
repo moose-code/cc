@@ -23,6 +23,8 @@ contract AdaptersTest is SeaportBase {
     function setUp() public override {
         super.setUp();
         sea = ISeaportBasicAdapter(seaportAdapter);
+        // the Core door tests buy through the test raw adapter; `LiveFixture` does not set `rawAdapter` in setUp
+        _approveRawAdapter();
     }
 
     function _order(uint256 id) internal returns (BasicOrderParameters memory p) {

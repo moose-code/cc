@@ -20,6 +20,11 @@ import {OrderComponents} from "./utils/SeaportTypes.sol";
 ///
 /// The funded climb waits for fee income to be booked. Unbooked hook income can support the opening bid, but cannot
 /// start a climb clock whose fee arrival time the Core does not know.
+///
+/// this suite is a named deploy-mechanics suite: its whole subject is the launch day (the empty pot, the zero live bid,
+/// the opening rate, the open sniper window, the payee latch at the window end, fresh inventory), a state the live post
+/// launch system cannot reach. it therefore deploys a fresh system through `Fixture.setUp()` below even though its
+/// `SeaportBase` base is now `LiveFixture`; `LiveFixture` only adds helpers and its setUp is not invoked here
 abstract contract LaunchDayBase is SeaportBase {
     using FixedPointMathLib for uint256;
 

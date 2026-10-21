@@ -38,6 +38,9 @@ contract GasCapTest is SeaportBase {
         bidder2 = _user("gas bidder two");
         taker = _user("gas taker");
         stranger = _user("gas stranger");
+        // populate `lc` from the live stack so `_cool` cools the live AMM accounts (the fresh fixture read them from its
+        // deployed v2 stack, which `LiveFixture` leaves unset)
+        _initLiveConfig();
         vm.fee(composeBasefee);
     }
 
@@ -95,12 +98,12 @@ contract GasCapTest is SeaportBase {
             STRATEGY,
             Mainnet.SEAPORT,
             address(PM),
-            v2.hook,
+            lc.stack.hook,
             address(coin),
-            v2.locker,
-            v2.escrow,
-            v2.factory,
-            v2.mev,
+            lc.stack.locker,
+            lc.stack.escrow,
+            lc.stack.factory,
+            lc.mevModule,
             address(mod),
             address(xt)
         ];
@@ -270,7 +273,7 @@ contract GasCapTest is SeaportBase {
     function _seaportBuy(string memory name, uint256 mode) internal {
         _fundPot(10 ether);
         uint256 id = _list();
-        uint256 price = core.ethRate() * 9 / 10;
+        uint256 price = core.bidOf(id) * 9 / 10;
         OrderComponents memory c = mode == 1 ? _open(id, price - price / 100, price / 100) : _open(id, price, 0);
         bytes memory order = _basicData(c);
         bytes memory data = abi.encodeCall(core.buyListing, (seaportAdapter, id, order));
@@ -306,11 +309,11 @@ contract GasCapTest is SeaportBase {
     function test_gas_swapCredit() public {
         uint256[] memory two = _credits(taker, 2);
         (uint256 outId, uint256 inId) = _scoreOf(two[0]) <= _scoreOf(two[1]) ? (two[0], two[1]) : (two[1], two[0]);
-        // the outgoing credit goes into the pile through a full rate sell
+        // the outgoing credit goes into the pile through a sell at its live scaled bid (the live CreditScore is read,
+        // never mocked); swapCredit's gas does not depend on the exact sell price
         _liftRateCap();
         _fundPot(5 ether);
         _warp(1 hours + 1);
-        _unitScore(outId);
         vm.prank(taker);
         core.sellForEth(_one(outId));
         // a representative nonzero fee the caller burns, and the coin and approval for it

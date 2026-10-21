@@ -9,6 +9,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {TestSwapRouter} from "./TestSwapRouter.sol";
+import {V2Stack} from "./V2Stack.sol";
 
 /// @notice the owner rule of the phase 2 live fork work: a contract that exists on mainnet is bound at its live
 /// address with its live code and state, never redeployed. this fixture forks mainnet at a recent pinned block and
@@ -125,6 +126,44 @@ abstract contract LiveFixture is Fixture {
             if (ctl.atFloor(held[i])) return held[i];
         }
         revert("no eligible held Statement at the pin: re-pin LIVE_FORK_BLOCK");
+    }
+
+    /// @notice deploys the test RawListingAdapter at a namespaced address and the owner approves it, so `_buyRaw` works
+    /// on the live Core. the brief allows a raw listing adapter a test approves as owner. `LiveFixture.setUp` does not
+    /// set `rawAdapter` (the fresh `Fixture` did), so a suite that uses `_buyRaw` calls this in its own setUp
+    function _approveRawAdapter() internal {
+        rawAdapter = _user("rawAdapter");
+        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
+        vm.prank(owner);
+        core.addAdapter(rawAdapter);
+    }
+
+    // ------------------------------------------------------------------ fresh successor config (brief: a migration successor is not yet deployed)
+
+    /// @notice populates `lc` from the live system so the inherited fresh core helpers (`_successorCore`, `_launchCore`,
+    /// `buildConfig`) build a successor of the live coin on the live stack. the source Core stays the live one; only the
+    /// not yet deployed successor is fresh. call once in a suite's setUp before a fresh core helper. the salt is distinct
+    /// from the live launch so a fresh coin prediction does not collide
+    function _initLiveConfig() internal {
+        V2Stack.Stack memory st = V2Stack.attach();
+        require(st.hook == core.HOOK(), "v2 record hook does not match the live coin hook: wrong STACK record");
+        lc = defaultConfig();
+        lc.owner = owner;
+        lc.creator = creator;
+        lc.artist = creator;
+        lc.payee = _user("payee");
+        lc.name = "Successor Coin";
+        lc.symbol = "SUCC";
+        lc.salt = keccak256("credits-engine live successor");
+        lc.rateStart = core.RATE_START();
+        lc.settings = core.settings();
+        lc.stack.hook = core.HOOK();
+        lc.stack.factory = st.factory;
+        lc.stack.locker = st.locker;
+        lc.stack.escrow = st.escrow;
+        lc.stack.tickSpacing = core.TICK_SPACING();
+        lc.stack.poolFee = core.POOL_FEE();
+        lc.mevModule = st.mev;
     }
 }
 

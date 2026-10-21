@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 
-/// `rescueNft` of the Core: an ERC721 token leaves only when the Core's books do not hold it. real Credits, Statements
-/// and a real ERC721 of the fork
-contract RescueTest is Fixture {
+/// `rescueNft` of the Core: an ERC721 token leaves only when the Core's books do not hold it. the live Core, Credits,
+/// Statements and a real ERC721 of the fork. the successor of the migration case is a fresh Core (not yet deployed);
+/// the source Core is the live one (brief owner rule)
+contract RescueTest is LiveFixture {
     /// a live ERC721 collection on the fork (BAYC)
     address internal constant FOREIGN = 0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D;
     address internal dest = address(0xD357);
     address internal stranger = address(0x5757);
 
     event NftRescued(address indexed token, uint256 indexed id, address indexed to);
+
+    function setUp() public override {
+        super.setUp();
+        // the migration case builds a fresh successor of the live coin through the inherited helper, which reads `lc`
+        _initLiveConfig();
+    }
 
     function _rescue(address token, uint256 id, address to) internal {
         vm.prank(owner);
@@ -28,11 +35,13 @@ contract RescueTest is Fixture {
     // promise: INTEGRATION NoCreditRescue on rescueNft
     function test_REVERT_aCreditInAPileStays() public {
         uint256[] memory ids = _fillEthPile(3);
+        uint256 pileBefore = core.pileSize();
         (bool inPile,,) = core.creditInfo(ids[1]);
         assertTrue(inPile, "setup: the credit is in the pile");
         _expectRescueRevert(address(CREDITS), ids[1], ICore.NoCreditRescue.selector);
         assertEq(CREDITS.ownerOf(ids[1]), address(core), "the credit moved");
-        assertEq(core.pileSize(), 3, "the pile changed");
+        // the live pile may already hold credits; the failed rescue leaves the pile unchanged, whatever its size
+        assertEq(core.pileSize(), pileBefore, "the pile changed");
     }
 
     // promise: SPEC 11 credits leave the Core at the owner's call only through migrate
@@ -54,7 +63,9 @@ contract RescueTest is Fixture {
         vm.startPrank(owner);
         core.setSuccessor(address(next));
         core.lockSuccessor();
-        core.migrate(3);
+        // the live pile may hold credits older than the three just added, so migrate the whole pile to guarantee the
+        // test's credit reaches the successor
+        core.migrate(core.pileSize());
         vm.stopPrank();
         (bool inPile,,) = next.creditInfo(ids[0]);
         assertFalse(inPile, "setup: the migrated credit is untracked on the successor");
