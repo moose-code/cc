@@ -395,13 +395,6 @@ contract SpendCapTest is LiveFixture {
 contract SpendCapControlledTest is Fixture {
     uint256 private constant SPEND_SLOT = 39;
 
-    function setUp() public override {
-        // the live batch runner sets only MAINNET_RPC_URL; the fresh-deploy path needs a pinned block for its recorded
-        // strategy credits, so pin it here (the CI block). LiveFixture ignores FORK_BLOCK, so the live suite is unaffected
-        vm.setEnv("FORK_BLOCK", "26208025");
-        super.setUp();
-    }
-
     function _settings() internal view override returns (Settings memory s) {
         s = Mainnet.defaultSettings();
         // the budget suites price wei sized pots; the reserve floor is test/Reserve.t.sol's
