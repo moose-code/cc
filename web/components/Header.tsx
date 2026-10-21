@@ -14,7 +14,8 @@ import { engineDeployed } from "@/lib/config";
 const NAV = [
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
-  { href: "/exchange", label: "exchange" },
+  // the exchange link returns when the exchange opens (EXCHANGE_ENABLED); the page itself is gated already
+  // { href: "/exchange", label: "exchange" },
 ];
 
 // the cream/dark pages share the exchange header: the brand with the page's own sub line, the wallet and no nav
