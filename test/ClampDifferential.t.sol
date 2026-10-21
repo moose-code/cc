@@ -2,12 +2,13 @@
 pragma solidity ^0.8.28;
 
 import {console} from "forge-std/console.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {Settings, RATE_SCORE} from "../src/interfaces/Interfaces.sol";
 
 /// The price state climbs only against booked ETH above reserve. Pending fee income widens the executable bid clamp,
-/// but has no known arrival time and cannot raise the funded climb limit before a book.
-contract ClampDifferentialTest is Fixture {
+/// but has no known arrival time and cannot raise the funded climb limit before a book. Run against the live Core, so
+/// the pot, reserve and rate state are the live values, not a fresh deploy's.
+contract ClampDifferentialTest is LiveFixture {
     /// the booked pot the test funds, wei
     uint256 internal constant POT = 0.3 ether;
     /// the unbooked fee income the test adds, wei
@@ -28,8 +29,8 @@ contract ClampDifferentialTest is Fixture {
     // promise: the ETH floor and adopted cost basis use the booked funded climb limit, while the pending fee share
     // widens only the live bid's executable room until a book
     function test_bookedClimbAndPendingReadLimitsStaySeparate() public {
-        // payeePpm 0 at launch, so the pot share of pending income is pending less the redeem-burn share only
-        assertEq(core.settings().payeePpm, 0, "launch payeePpm is 0");
+        // payeePpm 0 live, so the pot share of pending income is pending less the redeem-burn share only
+        assertEq(core.settings().payeePpm, 0, "live payeePpm is 0");
 
         vm.deal(address(this), address(this).balance + POT);
         core.fund{value: POT}(); // books any prior unbooked balance, then adds POT to ethPot
@@ -39,7 +40,7 @@ contract ClampDifferentialTest is Fixture {
         uint256 feeBps = core.settings().feeToRedeemBurnBps;
         uint256 pendingShare = PENDING - PENDING * feeBps / 10_000;
         uint256 pagesPot = pot + pendingShare; // _ethPagesPot with payeePpm 0
-        uint256 reserve = core.reserve(); // reserveWei, the pile is empty
+        uint256 reserve = core.reserve(); // reserveWei at the pin: the live pile of 82 keeps the queued reserve below it
         // both limits include the purchase royalty; only the read can use pending fees before a book
         uint256 bookedClamp = (pot - reserve) * 10_000 / (10_000 + core.settings().buyToArtistBps);
         uint256 readClamp = (pagesPot - reserve) * 10_000 / (10_000 + core.settings().buyToArtistBps);
@@ -50,10 +51,14 @@ contract ClampDifferentialTest is Fixture {
         assertLt(bookedClamp, readClamp, "pending income widens the read room only");
         assertLt(core.floorRate(), bookedClamp, "the price state starts below the booked clamp");
 
+        // a posted price strictly between the two live limits: payable while pending ETH sits unbooked, clamped to the
+        // booked room once it is removed. the fresh fixture could hardcode this; on live it is read from the two limits
+        uint256 probe = (bookedClamp + readClamp) / 2;
+
         uint256 snap = vm.snapshotState();
         vm.prank(owner);
-        core.setRate(0.25 ether);
-        assertEq(core.ethRate(), 0.25 ether, "pending ETH makes the posted price payable before booking");
+        core.setRate(probe);
+        assertEq(core.ethRate(), probe, "pending ETH makes the posted price payable before booking");
         vm.deal(address(core), address(core).balance - PENDING);
         assertEq(core.ethRate(), bookedClamp, "without pending ETH the same price is clamped to booked room");
         vm.revertToState(snap);
@@ -66,14 +71,17 @@ contract ClampDifferentialTest is Fixture {
         assertEq(core.floorRate(), bookedClamp, "the eth floor uses booked ETH above reserve");
         assertEq(core.ethRate(), bookedClamp, "the live bid has room for the booked price and royalty");
 
-        // adopt books pending income before recording the cost, but does not credit its prior unbooked time
+        // adopt books pending income before recording the cost, but does not credit its prior unbooked time. the adopt
+        // basis is the funded price scaled by the credit's real score, plus the royalty (the live CreditScore is never
+        // mocked)
         uint256[] memory ids = _credits(address(core), 1);
-        _mockScore(ids[0], RATE_SCORE);
+        uint256 score = _scoreOf(ids[0]);
         core.adopt(ids);
         (, uint256 cost,) = core.creditInfo(ids[0]);
+        uint256 pay = bookedClamp * score / RATE_SCORE;
         assertEq(
             cost,
-            bookedClamp + bookedClamp * core.settings().buyToArtistBps / 10_000,
+            pay + pay * core.settings().buyToArtistBps / 10_000,
             "the adopted basis is the funded price plus the royalty"
         );
 
