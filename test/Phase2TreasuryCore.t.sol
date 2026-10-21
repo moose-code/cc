@@ -213,6 +213,53 @@ contract Phase2TreasuryCoreTest is Fixture {
         assertEq(coin.totalSupply(), supply - x);
     }
 
+    // promise: SPEC phase 2 artist debt survives a module replacement through the real Core, and the Core pause stops the balance bid but not a conversion through the treasury
+    function test_debtSurvivesReplacementAndPauseDoesNotBlockConversion() public {
+        _select();
+        token.open();
+        token.mint(address(t), 1_040 ether);
+        vm.startPrank(owner);
+        t.setSwitches(true, true, false);
+        t.allocateToClaims(40 ether);
+        vm.stopPrank();
+        _setSwitches(true, true);
+        // the artist royalty transfer fails: the Core's bounded call records debt in the treasury
+        token.setBanned(creator);
+        uint256[] memory ids = _credits(seller, 1);
+        vm.prank(seller);
+        core.sellForBalance(ids);
+        uint256 debt = t.owed(creator);
+        assertGt(debt, 0, "the royalty became debt");
+        token.setBanned(address(0));
+        // a replacement treasury takes over the Core; the old one keeps paying its debt
+        ITreasury next = ITreasury(
+            vm.deployCode(
+                "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
+                abi.encode(address(core), address(token), policyAddr, address(0))
+            )
+        );
+        _setBalanceModule(address(next));
+        assertFalse(t.selected());
+        assertEq(t.available(), 0);
+        assertEq(t.claim(creator), debt);
+        assertEq(token.balanceOf(creator), debt);
+        // the Core pause: the balance bid stops, a conversion through the new treasury does not
+        vm.prank(owner);
+        next.setSwitches(true, false, false);
+        uint256 sid = _eligibleStatement();
+        uint256 rating = core.ratingOf(sid);
+        vm.prank(owner);
+        core.setPaused(true);
+        uint256[] memory more = _credits(seller, 1);
+        vm.prank(seller);
+        vm.expectRevert(ICore.Paused.selector);
+        core.sellForBalance(more);
+        vm.prank(keeper);
+        core.redeemStatement(sid);
+        assertEq(next.custody(), rating * 1e14, "converted while paused");
+        assertFalse(_isHeld(sid));
+    }
+
     // promise: SPEC phase 2 ControllerV2 replaces the live controller with held inventory: the Core's probes answer, eligibility is age only and the ask is the persistent multiple
     function test_controllerV2SelectsWithHeldInventory() public {
         _select();

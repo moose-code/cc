@@ -31,7 +31,7 @@ contract BuildIdentityTest is Fixture {
     uint256 internal constant RENDERER_RUNTIME = 4_464;
     /// the phase 2 artifacts, deployed by the phase 2 scripts and never by the launch
     uint256 internal constant CONTROLLER_V2_RUNTIME = 14_201;
-    uint256 internal constant TREASURY_RUNTIME = 11_821;
+    uint256 internal constant TREASURY_RUNTIME = 12_316;
     uint256 internal constant POLICY_RUNTIME = 656;
 
     function _json(string memory name) internal view returns (string memory) {

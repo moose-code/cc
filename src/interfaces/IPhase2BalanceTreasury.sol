@@ -104,6 +104,7 @@ interface IPhase2BalanceTreasury {
     function retirementFinalized() external view returns (bool);
     function returnClaimsToWorking(uint256 amount) external;
     function selected() external view returns (bool);
+    function selectedForClaims() external view returns (bool);
     function setConversionToClaimBps(uint16 v) external;
     function setMinimumWorkingBalance(uint256 v) external;
     function setRedemptionFeeBps(uint16 v) external;

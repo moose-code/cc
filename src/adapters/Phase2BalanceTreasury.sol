@@ -34,6 +34,7 @@ interface ITreasuryCore {
     function owner() external view returns (address);
     function COIN() external view returns (address);
     function retired() external view returns (bool);
+    function successor() external view returns (address);
     function balanceModule() external view returns (address);
 }
 
@@ -49,6 +50,9 @@ interface IPhase2Successor {
     function ccToken() external view returns (address);
     function predecessor() external view returns (address);
     function migrated() external view returns (bool);
+    function conversionEnabled() external view returns (bool);
+    function workingPaymentsEnabled() external view returns (bool);
+    function ccRedemptionEnabled() external view returns (bool);
     function receiveMigration(uint256 claimAmount) external;
 }
 
@@ -240,10 +244,17 @@ contract Phase2BalanceTreasury is IBalanceModule {
         return custody() >= claimReserve + totalOwed;
     }
 
-    /// this treasury is the bound Core's selected module, the Core has not retired and this treasury has not migrated
+    /// this treasury is the bound Core's selected module, the Core has not retired and this treasury has not migrated:
+    /// the gate of conversions and working payments, which need the Core
     function selected() public view returns (bool) {
-        ITreasuryCore c = ITreasuryCore(core);
-        return !migrated && c.balanceModule() == address(this) && !c.retired();
+        return selectedForClaims() && !ITreasuryCore(core).retired();
+    }
+
+    /// this treasury is the bound Core's selected module and has not migrated: the gate of CC burns, which need no
+    /// Core interaction, so a retired Core does not strand the claim reserve. a module replacement still closes it, so
+    /// two publicly active claim pools cannot exist by accident
+    function selectedForClaims() public view returns (bool) {
+        return !migrated && ITreasuryCore(core).balanceModule() == address(this);
     }
 
     /// the upstream launch retirement is finalized
@@ -289,7 +300,7 @@ contract Phase2BalanceTreasury is IBalanceModule {
             return (0, reserve, supply, epoch, false);
         }
         balanceOut = out;
-        executable = ccRedemptionEnabled && selected() && transfersReady() && solvent();
+        executable = ccRedemptionEnabled && selectedForClaims() && transfersReady() && solvent();
     }
 
     // ------------------------------------------------------------------ the Core's module calls
@@ -364,7 +375,7 @@ contract Phase2BalanceTreasury is IBalanceModule {
     ) external nonReentrant returns (uint256 balanceOut) {
         if (block.timestamp > deadline) revert Expired();
         if (expectedConfigEpoch != configEpoch) revert StaleEpoch();
-        if (!ccRedemptionEnabled || !selected() || !transfersReady()) revert RedemptionOff();
+        if (!ccRedemptionEnabled || !selectedForClaims() || !transfersReady()) revert RedemptionOff();
         if (recipient == address(0) || recipient == address(this)) revert InvalidRecipient();
         uint256 supply = ITreasuryCoin(ccToken).totalSupply();
         if (ccIn == 0 || ccIn > supply) revert InvalidAmount();
@@ -500,18 +511,27 @@ contract Phase2BalanceTreasury is IBalanceModule {
 
     // ------------------------------------------------------------------ migration
 
-    /// moves custody less the recorded debt to `successor` and imports the claim reserve there. every switch must be off,
-    /// the successor must bind the same Core, coin and token, name this treasury as its predecessor and not have
-    /// migrated itself. the claim reserve must be fully funded to move. this treasury then refuses every switch forever;
-    /// `claim` keeps paying the debt left behind, and later inflows leave through `withdrawWorking`
+    /// moves custody less the recorded debt to `successor` and imports the claim reserve there. every switch must be off
+    /// on both sides; the successor must bind the same coin and token and either the same Core or, once this Core has
+    /// retired, the Core's successor, name this treasury as its predecessor and not have migrated itself. the claim
+    /// reserve must be fully funded to move. this treasury then refuses every switch forever; `claim` keeps paying the
+    /// debt left behind, and later inflows leave through `withdrawWorking`
     function migrateTo(address successor) external onlyOwner nonReentrant returns (uint256 moved) {
         if (migrated) revert Migrated();
         if (conversionEnabled || workingPaymentsEnabled || ccRedemptionEnabled) revert SwitchesOn();
         if (successor == address(this) || successor.code.length == 0) revert InvalidSuccessor();
         IPhase2Successor next = IPhase2Successor(successor);
+        address nextCore = next.core();
+        bool sameCore = nextCore == core;
+        if (!sameCore) {
+            ITreasuryCore c = ITreasuryCore(core);
+            address heir = c.successor();
+            if (!c.retired() || heir == address(0) || nextCore != heir) revert InvalidSuccessor();
+        }
         if (
-            next.core() != core || next.balanceToken() != balanceToken || next.ccToken() != ccToken
-                || next.predecessor() != address(this) || next.migrated()
+            next.balanceToken() != balanceToken || next.ccToken() != ccToken || next.predecessor() != address(this)
+                || next.migrated() || next.conversionEnabled() || next.workingPaymentsEnabled()
+                || next.ccRedemptionEnabled()
         ) revert InvalidSuccessor();
         uint256 bal = custody();
         uint256 debt = totalOwed;

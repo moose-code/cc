@@ -64,6 +64,7 @@ interface ITreasury is IBalanceModule {
     function freeWorking() external view returns (uint256);
     function solvent() external view returns (bool);
     function selected() external view returns (bool);
+    function selectedForClaims() external view returns (bool);
     function conversionReady() external view returns (bool);
     function transfersReady() external view returns (bool);
     function claimReserve() external view returns (uint256);
@@ -187,6 +188,24 @@ contract RoguePolicy is IRedemptionPolicy {
     }
 }
 
+/// a successor Core double: owner, coin, retirement, successor and the selected module
+contract CoreDouble {
+    address public owner;
+    address public COIN;
+    bool public retired;
+    address public successor;
+    address public balanceModule;
+
+    constructor(address owner_, address coin_) {
+        owner = owner_;
+        COIN = coin_;
+    }
+
+    function select(address m) external {
+        balanceModule = m;
+    }
+}
+
 /// calls back into the treasury from inside a balance transfer
 contract Reenterer {
     ITreasury public t;
@@ -217,6 +236,8 @@ contract Phase2TreasuryTest is Test {
     address public owner = address(0xA11CE);
     address public balanceModule;
     bool public retired;
+    /// the Core double's successor Core, zero until a test sets one
+    address public successor;
     address internal seller = address(0xBEEF);
     address internal artist = address(0xA27);
     address internal burner = address(0xB0B);
@@ -875,6 +896,87 @@ contract Phase2TreasuryTest is Test {
         vm.prank(owner);
         vm.expectRevert(ITreasury.SwitchesOn.selector);
         next.migrateTo(address(third));
+    }
+}
+
+contract Phase2TreasuryRetirementTest is Phase2TreasuryTest {
+    // promise: SPEC phase 2 a retired Core closes conversions and working payments but not CC burns, and the reserve can migrate to a treasury of the Core's successor
+    function test_retiredCoreKeepsBurnsOpenAndMigratesToTheSuccessorCore() public {
+        _live(100 ether, 40 ether);
+        _burnerWith(SUPPLY / 100);
+        retired = true;
+        assertFalse(t.selected());
+        assertTrue(t.selectedForClaims());
+        assertEq(t.available(), 0, "no working payments after retirement");
+        assertFalse(t.conversionReady());
+        uint256 x = SUPPLY / 1000;
+        uint256 share = x * 40 ether / coin.totalSupply();
+        assertEq(_redeem(x, share), share, "a burn still pays after retirement");
+        // a successor treasury bound to the successor Core is accepted only once this Core has retired and names it
+        CoreDouble heir = new CoreDouble(owner, address(coin));
+        ITreasury next = ITreasury(
+            vm.deployCode(
+                "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
+                abi.encode(address(heir), address(token), address(policy), address(t))
+            )
+        );
+        vm.prank(owner);
+        t.setSwitches(false, false, false);
+        vm.prank(owner);
+        vm.expectRevert(ITreasury.InvalidSuccessor.selector);
+        t.migrateTo(address(next));
+        successor = address(heir);
+        retired = false;
+        vm.prank(owner);
+        vm.expectRevert(ITreasury.InvalidSuccessor.selector);
+        t.migrateTo(address(next));
+        retired = true;
+        vm.prank(owner);
+        t.migrateTo(address(next));
+        assertEq(next.claimReserve(), 40 ether - share);
+        assertTrue(t.migrated());
+        heir.select(address(next));
+        vm.prank(owner);
+        next.setSwitches(false, false, true);
+        vm.prank(burner);
+        coin.approve(address(next), type(uint256).max);
+        uint64 epoch = next.configEpoch();
+        vm.prank(burner);
+        assertGt(next.redeemCC(x, burner, 0, block.timestamp, epoch), 0, "burns continue on the successor");
+    }
+
+    // promise: SPEC phase 2 a successor with a switch on is refused
+    function test_migrationRefusesAnEnabledSuccessor() public {
+        _live(10 ether, 4 ether);
+        ITreasury next = _deploy(address(policy), address(t));
+        vm.startPrank(owner);
+        t.setSwitches(false, false, false);
+        next.setSwitches(false, true, false);
+        vm.expectRevert(ITreasury.InvalidSuccessor.selector);
+        t.migrateTo(address(next));
+        next.setSwitches(false, false, false);
+        t.migrateTo(address(next));
+        vm.stopPrank();
+        assertEq(next.claimReserve(), 4 ether);
+    }
+
+    // promise: SPEC phase 2 the quote follows actual contributions and independent burns
+    function test_quoteFollowsContributionsAndIndependentBurns() public {
+        _live(100 ether, 40 ether);
+        uint256 x = SUPPLY / 1000;
+        (uint256 q0,,,,) = t.quoteRedemption(x);
+        statements.set(7, address(t), 2_000_000);
+        t.redeem(7);
+        (uint256 q1, uint256 c1,,,) = t.quoteRedemption(x);
+        assertEq(c1, 40 ether + 6e18);
+        assertGt(q1, q0, "a conversion's earmark raises the quote");
+        vm.startPrank(address(0xD00D));
+        coin.approve(address(0xD00D), SUPPLY / 2);
+        coin.burnFrom(address(0xD00D), SUPPLY / 2);
+        vm.stopPrank();
+        (uint256 q2,, uint256 s2,,) = t.quoteRedemption(x);
+        assertEq(s2, SUPPLY / 2);
+        assertEq(q2, q1 * 2, "an independent burn doubles the share of every token");
     }
 }
 

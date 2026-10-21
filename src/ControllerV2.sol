@@ -124,7 +124,7 @@ contract ControllerV2 is IController {
         _setCredit(credit);
         _setQuote(quote_);
         _setStatementSaleMultiplier(statementSaleMultiplierBps_);
-        statementRedeemDelaySeconds = statementRedeemDelaySeconds_;
+        _setStatementRedeemDelay(statementRedeemDelaySeconds_);
     }
 
     modifier onlyOwner() {
@@ -153,6 +153,10 @@ contract ControllerV2 is IController {
 
     /// 0 to uint32.max seconds. applies to every held statement at once, against its already recorded age
     function setStatementRedeemDelaySeconds(uint32 v) external onlyOwner {
+        _setStatementRedeemDelay(v);
+    }
+
+    function _setStatementRedeemDelay(uint32 v) private {
         statementRedeemDelaySeconds = v;
         emit StatementRedeemDelaySet(v);
     }
