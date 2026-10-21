@@ -184,11 +184,8 @@ abstract contract FeeBase is FeeHelpers, LiveFixture {
         ESCROW = IArtCoinsFeeEscrowV2(v2.escrow);
         assertEq(v2.hook, core.HOOK(), "the live coin runs on the v2-mainnet stack");
 
-        // the test listing adapter the raw buy path needs; LiveFixture does not add it. etched at a namespaced address
-        rawAdapter = _user("rawAdapter");
-        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
-        vm.prank(owner);
-        core.addAdapter(rawAdapter);
+        // the test listing adapter the raw buy path needs (installed once by LiveFixture.setUp)
+        _approveRawAdapter();
     }
 
     /// the diamond inherits `_enterPhase2` from both Fixture (virtual) and LiveFixture (virtual override), so FeeBase

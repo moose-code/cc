@@ -205,11 +205,8 @@ contract ReserveTest is LiveFixture {
 
     // promise: SPEC 6 buyListing refuses a quote above the pot less the reserve and caps the payment at the room
     function test_buyListingRespectsTheRoom() public {
-        // LiveFixture does not stand up the raw test adapter; etch it here and let the owner approve it (a test adapter
-        // the owner approves is allowed by the owner rule)
-        rawAdapter = _user("rawAdapter");
-        vm.etch(rawAdapter, vm.getDeployedCode("RawListingAdapter.sol:RawListingAdapter"));
-        _approveAdapter(rawAdapter);
+        // the owner approved raw test adapter (installed once by LiveFixture.setUp)
+        _approveRawAdapter();
         uint256 id = _heldCredit(0);
         ListingTarget t = new ListingTarget();
         vm.prank(STRATEGY);
