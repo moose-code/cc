@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
+import {IControllerV2} from "../../src/interfaces/IControllerV2.sol";
 import {Sale, CreditSale, RATE_SCORE} from "../../src/interfaces/Interfaces.sol";
 import {HandlerBase} from "./HandlerBase.sol";
 import {HandlerOwner} from "./HandlerOwner.sol";
@@ -167,6 +168,10 @@ abstract contract HandlerSale is HandlerOwner {
     /// the refusal of `ControllerV1.buy` in the order of its checks: the record `priceOf` reads, the payment, the
     /// controller in force (the core takes `sellTo` from the controller only), then what `sellTo` checks, the pause first
     function _buyRefusal(uint256 sid, SalePre memory p, bool short_) internal view returns (bytes4) {
+        // ControllerV2 refuses `StatementSalesOff` before any other check, the owner's stage C sales switch
+        if (_liveStageB() && !IControllerV2(v1).statementSalesEnabled()) {
+            return IControllerV2.StatementSalesOff.selector;
+        }
         (bool held,,) = core.statementInfo(sid);
         if (!held) return IControllerV1.NotForSale.selector;
         if (short_) return IControllerV1.Underpaid.selector;
@@ -230,29 +235,35 @@ abstract contract HandlerSale is HandlerOwner {
         vm.deal(who, who.balance + value);
         p.payerBal = who.balance;
         RS memory rs = _rs();
-        _anchor0 = IControllerV1(v1).anchorBps();
-        _stored0 = IControllerV1(v1).storedAnchorBps();
-        _anchorTime0 = IControllerV1(v1).anchorTime();
-        (, _cost0,) = core.statementInfo(sid);
-        // referenceOf reverts for a statement the core no longer holds, so the reference is modelled here and matches
-        // the controller's for a held statement
-        _ref0 = _modelRef(sid, _cost0);
+        // ControllerV2 (stage B) has no moving anchor: it prices the statement off the reference and the multiplier, so
+        // the anchor snapshot reads (storedAnchorBps/anchorTime are V1 only) and the post-buy anchor checks are skipped
+        if (!_liveStageB()) {
+            _anchor0 = IControllerV1(v1).anchorBps();
+            _stored0 = IControllerV1(v1).storedAnchorBps();
+            _anchorTime0 = IControllerV1(v1).anchorTime();
+            (, _cost0,) = core.statementInfo(sid);
+            // referenceOf reverts for a statement the core no longer holds, so the reference is modelled here and matches
+            // the controller's for a held statement
+            _ref0 = _modelRef(sid, _cost0);
+        }
         _att(a);
         vm.prank(who);
         try IControllerV1(v1).buy{value: value}(sid) {
             _ok(a);
-            if (IControllerV1(v1).anchorBps() != _anchorAfter(_anchor0, price, _cost0, _ref0)) {
-                _flag(V_SALE_PATH, "a buy did not move the anchor halfway to the sale price");
-            }
-            if (
-                ((price * 10_000 + _ref0 - 1) / _ref0 <= _anchor0 || _cost0 < IControllerV1(v1).anchorMinCost())
-                    && (IControllerV1(v1).storedAnchorBps() != _stored0
-                        || IControllerV1(v1).anchorTime() != _anchorTime0)
-            ) {
-                _flag(
-                    V_SALE_PATH,
-                    "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor"
-                );
+            if (!_liveStageB()) {
+                if (IControllerV1(v1).anchorBps() != _anchorAfter(_anchor0, price, _cost0, _ref0)) {
+                    _flag(V_SALE_PATH, "a buy did not move the anchor halfway to the sale price");
+                }
+                if (
+                    ((price * 10_000 + _ref0 - 1) / _ref0 <= _anchor0 || _cost0 < IControllerV1(v1).anchorMinCost())
+                        && (IControllerV1(v1).storedAnchorBps() != _stored0
+                            || IControllerV1(v1).anchorTime() != _anchorTime0)
+                ) {
+                    _flag(
+                        V_SALE_PATH,
+                        "a buy at or below the anchor, or of a statement under the minimum cost, stored the anchor"
+                    );
+                }
             }
             if (p.payerBal - who.balance != price) {
                 _flag(V_SALE_PATH, "the buyer did not pay exactly the ask, or the excess was not refunded");
@@ -606,9 +617,16 @@ abstract contract HandlerSale is HandlerOwner {
     function _modelAsk(uint256 sid) internal returns (uint256) {
         (, uint256 cost, uint64 at) = core.statementInfo(sid);
         uint256 ref = _modelRef(sid, cost);
+        uint256 hard = cost * core.settings().saleFloorBps / 10_000;
+        if (_liveStageB()) {
+            // ControllerV2: ask = max(hard floor, ceilDiv(reference * statementSaleMultiplierBps, 10_000)). no decay,
+            // no anchor (src/ControllerV2.sol priceOf)
+            uint256 mult = IControllerV2(v1).statementSaleMultiplierBps();
+            uint256 ask = (ref * mult + 9_999) / 10_000;
+            return ask < hard ? hard : ask;
+        }
         uint256 n = _modelUnits(_modelAge(at));
         uint256 ask = ref * n / 10_000;
-        uint256 hard = cost * core.settings().saleFloorBps / 10_000;
         return ask < hard ? hard : ask;
     }
 
@@ -785,6 +803,7 @@ abstract contract HandlerSale is HandlerOwner {
     /// BadSetting with the field. a stranger: OnlyOwner. no asset or pot moves
     function saleSettings(uint256 seed, uint256 mode) external checked {
         uint8 a = A_SALE_SETTINGS;
+        if (_liveStageB()) return _saleSettingsB(seed, mode, a);
         IControllerV1 c = IControllerV1(v1);
         uint256 which = mode % 7;
         bool stranger = (mode >> 8) % 6 == 0;
@@ -811,6 +830,60 @@ abstract contract HandlerSale is HandlerOwner {
         }
         _opost(pre, "saleSettings");
         _ok(a);
+    }
+
+    /// the owner sets one of ControllerV2's three statement-sale numbers inside or outside the bounds, or a stranger
+    /// tries. inside: it goes through and reads back. an out of range multiplier (< 10_000 BPS): BadSetting. a stranger:
+    /// OnlyOwner. ControllerV2 has no moving anchor, markup, start cap or decay, so those V1 cases are absent. no asset
+    /// or pot moves
+    function _saleSettingsB(uint256 seed, uint256 mode, uint8 a) internal {
+        IControllerV2 c = IControllerV2(v1);
+        uint256 which = mode % 3;
+        bool stranger = (mode >> 8) % 6 == 0;
+        bool bad = (mode >> 12) % 4 == 0;
+        bytes memory data;
+        bool valid = true;
+        uint256 v;
+        uint256 cur;
+        if (which == 0) {
+            cur = c.statementSaleMultiplierBps();
+            v = bad ? (seed % 10_000) : _f(seed, 10_000, 40_000, cur);
+            valid = v >= 10_000;
+            data = abi.encodeCall(IControllerV2.setStatementSaleMultiplierBps, (uint32(v)));
+        } else if (which == 1) {
+            cur = c.statementRedeemDelaySeconds();
+            v = _f(seed, 0, 30 days, cur);
+            data = abi.encodeCall(IControllerV2.setStatementRedeemDelaySeconds, (uint32(v)));
+        } else {
+            cur = c.statementSalesEnabled() ? 1 : 0;
+            bool bv = seed % 2 == 0;
+            v = bv ? 1 : 0;
+            data = abi.encodeCall(IControllerV2.setStatementSales, (bv));
+        }
+        address caller = stranger ? address(uint160(uint256(keccak256(abi.encode("stranger", seed))))) : owner;
+        OPre memory pre = _opre();
+        _att(a);
+        vm.prank(caller);
+        (bool ok, bytes memory out) = address(c).call(data);
+        bytes4 want =
+            stranger ? IControllerV1.OnlyOwner.selector : (valid ? bytes4(0) : IControllerV1.BadSetting.selector);
+        if (ok) {
+            if (want != 0) _flag(V_OWNER, "a sale setting the model refuses was accepted");
+            if (_saleGotB(c, which) != v) _flag(V_OWNER, "a sale setting did not read back");
+            gOwnerCalls++;
+        } else {
+            if (want == 0 || bytes4(out) != want) _unexpected(a, out);
+            if (_saleGotB(c, which) != cur) _flag(V_OWNER, "a refused sale setting changed a value");
+            gOwnerRefused++;
+        }
+        _opost(pre, "saleSettings");
+        _ok(a);
+    }
+
+    function _saleGotB(IControllerV2 c, uint256 which) internal view returns (uint256) {
+        if (which == 0) return c.statementSaleMultiplierBps();
+        if (which == 1) return c.statementRedeemDelaySeconds();
+        return c.statementSalesEnabled() ? 1 : 0;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1041,9 +1114,18 @@ abstract contract HandlerSale is HandlerOwner {
         vm.prank(old);
         (ok,) = address(core).call(abi.encodeCall(ICore.removeAdapter, (target)));
         if (ok) _flag(V_LOCK, "the old owner kept a power after the handover");
-        // the argument is read before the prank: a call in the argument list would use it up
-        bytes memory same = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).decayHours());
-        bytes memory changed = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).decayHours() == 24 ? 25 : 24);
+        // the argument is read before the prank: a call in the argument list would use it up. ControllerV2 has no
+        // `setSale`; its statement redeem delay is the owner-only setter whose read-back proves the say follows the owner
+        bytes memory same;
+        bytes memory changed;
+        if (_liveStageB()) {
+            uint32 d = IControllerV2(v1).statementRedeemDelaySeconds();
+            same = abi.encodeCall(IControllerV2.setStatementRedeemDelaySeconds, (d));
+            changed = abi.encodeCall(IControllerV2.setStatementRedeemDelaySeconds, (d == 3600 ? 3601 : 3600));
+        } else {
+            same = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).decayHours());
+            changed = _saleCall(IControllerV1(v1), 2, IControllerV1(v1).decayHours() == 24 ? 25 : 24);
+        }
         vm.prank(old);
         (ok,) = address(v1).call(changed);
         if (ok) _flag(V_LOCK, "the old owner kept the sale settings");
@@ -1064,7 +1146,11 @@ abstract contract HandlerSale is HandlerOwner {
             (ok,) = address(core).call(abi.encodeCall(ICore.transferOwnership, (formerOwners[i])));
             if (ok) _flag(V_LOCK, "a former owner started a handover");
             vm.prank(formerOwners[i]);
-            (ok,) = address(v1).call(_saleCall(IControllerV1(v1), 2, 200));
+            if (_liveStageB()) {
+                (ok,) = address(v1).call(abi.encodeCall(IControllerV2.setStatementRedeemDelaySeconds, (uint32(3600))));
+            } else {
+                (ok,) = address(v1).call(_saleCall(IControllerV1(v1), 2, 200));
+            }
             if (ok) _flag(V_LOCK, "a former owner set a sale setting");
         }
         if (core.owner() != owner) _flag(V_LOCK, "the core owner is not the handler's owner");

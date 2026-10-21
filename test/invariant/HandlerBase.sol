@@ -12,6 +12,8 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {ICore} from "../../src/interfaces/ICore.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
+import {IControllerV2} from "../../src/interfaces/IControllerV2.sol";
+import {IPhase2BalanceTreasury} from "../../src/interfaces/IPhase2BalanceTreasury.sol";
 import {
     ICredits,
     ICreditScore,
@@ -390,6 +392,39 @@ abstract contract HandlerBase is Test {
     /// true once the balance module is set in the core
     function phase2() public view returns (bool) {
         return core.balanceModule() != address(0);
+    }
+
+    /// true when this fixture runs the stage B live state: `v1` is a ControllerV2, detected by a surface only
+    /// ControllerV2 carries (`statementSalesEnabled()`). detecting the controller type, not the LIVE_STAGE env, keeps
+    /// the fresh V1 window suite (which keeps the env set but deploys a ControllerV1) on the V1 path
+    function _liveStageB() internal view returns (bool ok) {
+        (ok,) = v1.staticcall(abi.encodeWithSignature("statementSalesEnabled()"));
+    }
+
+    /// true when the balance module is the honest Phase2BalanceTreasury (stage B) rather than the MockBalanceModule.
+    /// in the stage B phase 1 build suites `module` is unset while the Core's module is the live treasury
+    function _treasuryModule() internal view returns (bool) {
+        return _liveStageB() && address(module) == address(0) && core.balanceModule() != address(0);
+    }
+
+    /// the balance treasury the Core currently points at (stage B phase 1 build suites)
+    function _treasury() internal view returns (IPhase2BalanceTreasury) {
+        return IPhase2BalanceTreasury(core.balanceModule());
+    }
+
+    /// public view of `_treasuryModule`, so the suites gate the mock only balance actions off in stage B
+    function treasuryModule() external view returns (bool) {
+        return _treasuryModule();
+    }
+
+    /// the balance token the bid may pay out now, from whichever module the Core points at
+    function _balanceAvail() internal view returns (uint256) {
+        return _treasuryModule() ? _treasury().available() : module.available();
+    }
+
+    /// the balance holding of the module the Core points at, the pot a payout comes out of
+    function _modulePot() internal view returns (uint256) {
+        return _xBal(core.balanceModule());
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -2730,7 +2765,7 @@ abstract contract HandlerBase is Test {
     /// @dev the balance bid clamp now, available as bps of par for a 100 point credit, read from the module
     function _availBps(uint256 unit) internal view returns (uint256) {
         uint256 denom = RATE_SCORE * unit;
-        uint256 avail = module.available();
+        uint256 avail = _balanceAvail();
         uint256 cap = core.settings().balanceBidCapBps;
         if (denom == 0) return cap;
         return FullMath.mulDiv(avail, 10_000, denom).min(cap);
@@ -2739,7 +2774,7 @@ abstract contract HandlerBase is Test {
     /// @dev available as bps of par for a 100 point credit, uncapped: the pages pot of the balance instance
     function _availBpsRaw(uint256 unit) internal view returns (uint256) {
         uint256 denom = RATE_SCORE * unit;
-        return denom == 0 ? 0 : module.available() * 10_000 / denom;
+        return denom == 0 ? 0 : _balanceAvail() * 10_000 / denom;
     }
 
     /// @dev the balance instance price state as a BidModel.Bid, the clamp set to `availBps`, the pages pot to the
@@ -2776,12 +2811,15 @@ abstract contract HandlerBase is Test {
         returns (uint256[] memory ids, uint256 n)
     {
         ids = new uint256[](want);
-        uint256 avail = module.available();
+        uint256 avail = _balanceAvail();
         uint256 used;
         Settings memory st = core.settings();
         uint256 rate = 10_000 - st.balanceDiscountBps;
         for (uint256 k; k < len && k < want * 3 + 4 && n < want; ++k) {
             uint256 id = inventory[who][(pick % len + k) % len];
+            // only offer a credit the seller still holds: the Core pulls it with `transferFrom` and reverts NotOwner
+            // otherwise. the tracked inventory can lag a credit that left the seller by another path
+            if (!_holds(who, id)) continue;
             uint256 price = _scoreOf(id) * unit * rate / 10_000;
             uint256 royalty = price * st.buyToArtistBps / 10_000;
             if (price != 0 && used + price + royalty <= avail) {
@@ -2791,14 +2829,23 @@ abstract contract HandlerBase is Test {
         }
     }
 
+    /// whether `who` currently holds credit `id` (a burned or moved id reads as not held, never reverting the picker)
+    function _holds(address who, uint256 id) internal view returns (bool) {
+        (bool ok, bytes memory out) = address(CREDITS).staticcall(abi.encodeWithSignature("ownerOf(uint256)", id));
+        return ok && out.length == 32 && abi.decode(out, (address)) == who;
+    }
+
     /// sells credits into the balance token bid. ids are picked so the prices fit the pot. the recorded eth cost basis is
     /// the score-scaled floor rate backstop uses the fixed 100 point basis, so the bid does not call the
     /// controller
     function sellForBalance(uint256 aSeed, uint256 nSeed, uint256 pick) external checked {
         uint8 a = A_SELL_FOR_BALANCE;
-        if (!phase2() || !core.settings().balanceBidOn) return _skip(a);
+        if (!phase2()) return _skip(a);
         address who = _actor(aSeed);
+        // a retired or paused Core refuses this door before the balance bid settings matter, so the refusal is recorded
+        // even where the bid is off (the stage B phase 1 build suites run with the treasury as the module)
         if (_closedDoorRefusal(a, who, abi.encodeWithSignature("sellForBalance(uint256[])", _firstOf(who)))) return;
+        if (!core.settings().balanceBidOn) return _skip(a);
         uint256 len = inventory[who].length;
         if (len == 0) return _skip(a);
         // the bid pays by the module's live unit (`_unitOf`), nonzero here. a module set to fail its unit read
@@ -2813,7 +2860,7 @@ abstract contract HandlerBase is Test {
         }
         XPre memory p;
         p.xbal = _xBal(address(core));
-        p.balancePotPre = _xBal(address(module));
+        p.balancePotPre = _modulePot();
         p.unit = unit;
         p.actorX = _xBal(who);
         p.artistX = _xBal(core.artist());
@@ -2823,15 +2870,18 @@ abstract contract HandlerBase is Test {
         uint256 rate0 = core.ethRate();
         RS memory rs = _rs();
         vm.recordLogs();
+        // the honest treasury never fails its unit read, so the mock unit-fault sub-checks are V1 only. computed before
+        // the prank: `_treasuryModule` reads the controller type, and a call there would consume the prank
+        bool unitFails = !_treasuryModule() && module.revertUnit();
         _att(a);
         vm.prank(who);
         try core.sellForBalance(ids) {
-            if (module.revertUnit()) _flag(V_MODEL, "the bid went through with a failing live unit read");
+            if (unitFails) _flag(V_MODEL, "the bid went through with a failing live unit read");
             _ok(a);
             _afterSellBalance(who, p, bound_, b0);
         } catch (bytes memory why) {
             _failed(b0, pot0, rate0, "sellForBalance");
-            if (module.revertUnit()) _ok(a);
+            if (unitFails) _ok(a);
             else _unexpected(a, why);
         }
         _rsCheck(rs, 0);
@@ -2862,7 +2912,7 @@ abstract contract HandlerBase is Test {
         if (_xBal(core.artist()) - p.artistX != royalties) _flag(V_MODEL, "the artist did not receive the royalties");
         // the module paid the seller and the artist: its holding fell by both, the core holds no balance token
         if (_xBal(address(core)) != p.xbal) _flag(V_POT, "sellForBalance moved the core's balance token");
-        if (p.balancePotPre - _xBal(address(module)) != paid + royalties) {
+        if (p.balancePotPre - _modulePot() != paid + royalties) {
             _flag(V_POT, "the module holding did not fall by the payouts and the royalties");
         }
         _eth(b0, 0, 0, "sellForBalance");
@@ -2871,6 +2921,8 @@ abstract contract HandlerBase is Test {
     /// the unit the core reads from the module in `redeemStatement` and `sellForBalance`: the module's `unitPerPoint()`
     /// now, 0 while the module fails the read
     function _unitOf() internal view returns (uint256 u) {
+        // the honest treasury has no mock unit knobs; it never fails the read
+        if (_treasuryModule()) return _treasury().unitPerPoint();
         return module.revertUnit() ? 0 : module.currentUnit();
     }
 
@@ -2924,7 +2976,7 @@ abstract contract HandlerBase is Test {
         // an ineligible statement is only tried now and then, to see the refusal
         if (!p.ripe && aSeed % 6 != 0) return _skip(a);
         p.xbal = _xBal(address(core));
-        p.balancePotPre = _xBal(address(module));
+        p.balancePotPre = _modulePot();
         p.b0 = address(core).balance;
         p.pot0 = core.ethPot();
         p.rate0 = core.ethRate();
@@ -2944,12 +2996,12 @@ abstract contract HandlerBase is Test {
             _afterRedeem(sid, p);
         } catch (bytes memory why) {
             _failed(p.b0, p.pot0, p.rate0, "redeemStatement");
-            if (_ownerOf(sid) == address(0) || _ownerOf(sid) == address(module)) {
+            if (_ownerOf(sid) == address(0) || _ownerOf(sid) == core.balanceModule()) {
                 _flag(V_DEPART, "a redemption reverted but the statement left the core");
             }
             if (p.refusal != 0 && bytes4(why) != p.refusal) {
                 _unexpected(a, why);
-            } else if (p.refusal == 0 && module.payBps() >= 10_000) {
+            } else if (p.refusal == 0 && _modulePaysFull()) {
                 // the module overpays or pays exactly, so the required amount arrives: the redemption must not revert
                 _unexpected(a, why);
             }
@@ -2957,10 +3009,15 @@ abstract contract HandlerBase is Test {
         _rsCheck(rs, 0);
     }
 
+    /// the module pays the redemption in full: the honest treasury always does, the mock when its payBps is at par
+    function _modulePaysFull() internal view returns (bool) {
+        return _treasuryModule() ? true : module.payBps() >= 10_000;
+    }
+
     function _afterRedeem(uint256 sid, EPre memory p) internal {
         if (!p.ripe) _flag(V_DEPART, "an ineligible statement redeemed");
         // the proceeds stay in the module: its holding rises by at least the required amount, the core holds no balance token
-        uint256 received = _xBal(address(module)) - p.balancePotPre;
+        uint256 received = _modulePot() - p.balancePotPre;
         if (received < p.required) {
             _flag(V_REDEEM_SHORT, "redemption returned less than rating * unitPerPoint less slippage");
         }
@@ -2975,18 +3032,28 @@ abstract contract HandlerBase is Test {
             _flag(V_POT, "the released reserve did not reach the coin buyback");
         }
         _callerPayment(V_REDEEM_SHORT, p.st, REDEEM_GAS, p.pot0, p.b0, p.callerBal, "redeemStatement");
-        if (_ownerOf(sid) != address(module)) _flag(V_DEPART, "redeemed statement is not with the module");
+        // the mock module keeps the statement, so it ends up with the module. the treasury converts it through the
+        // balance token (`withdraw`), so it leaves to the token or is burned; record the destination and require only
+        // that it left the core (invariant 4 then matches the recorded owner)
+        address dest = core.balanceModule();
+        if (_treasuryModule()) {
+            dest = _ownerOf(sid);
+            if (dest == address(core)) _flag(V_DEPART, "a conversion left the statement with the core");
+        } else if (_ownerOf(sid) != dest) {
+            _flag(V_DEPART, "redeemed statement is not with the module");
+        }
         SG storage g = _sg[sid];
         g.status = S_REDEEMED;
         g.required = p.required;
         g.received = received;
-        g.module = address(module);
+        g.module = dest;
     }
 
     /// sets the module to underpay, to fail unit reads, to change its unit, or back to normal.
     function moduleMode(uint256 s) external checked {
         uint8 a = A_MODULE_MODE;
-        if (!phase2()) return _skip(a);
+        // the honest treasury has no underpay / unit-fault knobs (stage B), so there is no mode to set
+        if (!phase2() || _treasuryModule()) return _skip(a);
         _att(a);
         uint256 m = s % 8;
         if (m < 4) {
