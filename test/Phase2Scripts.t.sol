@@ -235,7 +235,7 @@ contract Phase2ScriptsTest is Fixture {
     }
 
     // promise: PLAN section 8 stage B the settings script changes exactly saleToBuybackBps, feeToRedeemBurnBps and redeemBurnBps to 0 and creditCostToPotBps to 10000, and refuses the stage C switches
-    function test_settingsPatchChangesExactlyTheThreeSharesAndTheCreditCost() public {
+    function test_settingsPatchChangesExactlyTheFourFieldsAndTheCreditCost() public {
         // the fixture launches with feeToRedeemBurnBps 0; mainnet carries the RUNBOOK's 1,000, so set it first
         Settings memory live = core.settings();
         live.feeToRedeemBurnBps = 1_000;
@@ -247,10 +247,11 @@ contract Phase2ScriptsTest is Fixture {
         for (uint256 i; i < SettingsFields.N; ++i) {
             if (SettingsFields.get(p.live, i) != SettingsFields.get(p.next, i)) ++changed;
         }
-        assertEq(changed, 3, "three fields change");
+        assertEq(changed, 4, "four fields change");
         assertEq(p.next.saleToBuybackBps, 0);
         assertEq(p.next.feeToRedeemBurnBps, 0);
         assertEq(p.next.redeemBurnBps, 0);
+        assertEq(p.next.balanceDiscountBps, 2_000, "the posted payout is 80 percent of rating");
         assertEq(keccak256(abi.encode(p.live)), keccak256(abi.encode(live)), "the live struct is read as is");
         assertEq(keccak256(abi.encode(core.settings())), keccak256(abi.encode(live)), "the preview sends nothing");
         settings.applyAsOwner();

@@ -8,8 +8,9 @@ import {SettingsBounds} from "../src/lib/SettingsBounds.sol";
 import {SettingsFields} from "./SettingsFields.sol";
 
 /// @notice the stage B settings change of docs/reviews/PHASE2-PLAN-fd85ba5-2026-10-20.md section 8: the live 39 field
-/// `Settings` with exactly `saleToBuybackBps` 0, `feeToRedeemBurnBps` 0 and `redeemBurnBps` 0, every other field
-/// unchanged, and `setCreditCostToPotBps(10000)`. the approach is script/SetSettings.s.sol's (live struct, patch,
+/// `Settings` with exactly `saleToBuybackBps` 0, `feeToRedeemBurnBps` 0, `redeemBurnBps` 0 and `balanceDiscountBps`
+/// `PHASE2_BALANCE_DISCOUNT_BPS` (default 2,000: the posted Credit to BALANCE payout is 80 percent of rating,
+/// decision 254), every other field unchanged, and `setCreditCostToPotBps(10000)`. the approach is script/SetSettings.s.sol's (live struct, patch,
 /// bounds, before and after table, calldata, a simulated owner call, nothing sent without SEND=1 and --broadcast as the
 /// owner) with the patch fixed in code: `SETTINGS_PATCH` and every `SET_<field>` variable are refused, and
 /// `balanceBidOn` and `valueModeOn` in particular are stage C and go through SetSettings with the hazard check of
@@ -24,6 +25,8 @@ contract Phase2Settings is Script {
     error NotOwner(address owner, address signer);
     /// @dev `balanceBidOn` or `valueModeOn` was named: those are stage C, through SetSettings
     error StageCField(string name);
+    /// @dev `PHASE2_BALANCE_DISCOUNT_BPS` above the Core's 9,999 bound
+    error BadDiscount(uint256 given);
     /// @dev a `SET_<field>` or `SETTINGS_PATCH` override was given: this script applies exactly the phase 2 patch
     error UnexpectedOverride(string name);
 
@@ -56,12 +59,15 @@ contract Phase2Settings is Script {
         console.log("sent. read it back with Phase2Readback (settings rows and creditCostToPotBps)");
     }
 
-    /// @notice the phase 2 patch: a copy of `live` with the three buyback and burn shares at zero
-    function phase2Patch(Settings memory live) internal pure returns (Settings memory s) {
+    /// @notice the phase 2 patch: a copy of `live` with the three buyback and burn shares at zero and the 80 percent payout
+    function phase2Patch(Settings memory live) internal view returns (Settings memory s) {
         s = abi.decode(abi.encode(live), (Settings));
         s.saleToBuybackBps = 0;
         s.feeToRedeemBurnBps = 0;
         s.redeemBurnBps = 0;
+        uint256 discount = vm.envOr("PHASE2_BALANCE_DISCOUNT_BPS", uint256(2_000));
+        if (discount > 9_999) revert BadDiscount(discount);
+        s.balanceDiscountBps = uint16(discount);
     }
 
     /// @notice reads the live struct, patches it, checks the bounds, prints the changed rows, the pots and the calldata,
