@@ -9,8 +9,12 @@ export interface BalanceTokenInfo {
 }
 
 // A balance token amount without its symbol, to `dp` decimals at most; undefined until the token is read.
-export function balanceAmount(v: bigint, info?: BalanceTokenInfo, dp = 6): string | undefined {
-  return info ? Number(formatUnits(v, info.decimals)).toLocaleString("en-US", { maximumFractionDigits: dp }) : undefined;
+export function balanceAmount(v: bigint, info?: BalanceTokenInfo, dp = 2): string | undefined {
+  if (!info) return undefined;
+  const [whole, fraction = ""] = formatUnits(v, info.decimals).split(".");
+  const tail = fraction.slice(0, Math.min(dp, 2)).replace(/0+$/, "");
+  if (v > 0n && whole === "0" && !tail) return "<0.01";
+  return BigInt(whole).toLocaleString("en-US") + (tail ? `.${tail}` : "");
 }
 
 // A balance token amount with its symbol; raw units until the token is read.
@@ -33,23 +37,21 @@ export function signedPct(n: number): string {
 }
 
 export function commas(n: number | bigint, max = 0): string {
-  return typeof n === "bigint" ? n.toLocaleString("en-US") : n.toLocaleString("en-US", { maximumFractionDigits: max });
+  return typeof n === "bigint" ? n.toLocaleString("en-US") : n.toLocaleString("en-US", { maximumFractionDigits: Math.min(max, 2) });
 }
 
-// eth amount from wei, trimmed to `dp` and left padded with zeros for the feed
-// column look (0.0071, 0.0345).
-export function eth(wei: bigint, dp = 4): string {
-  const v = Number(formatUnits(wei, 18));
-  return v.toLocaleString("en-US", {
-    minimumFractionDigits: dp,
-    maximumFractionDigits: dp,
-  });
+export function decimalAmount(n: number): string {
+  if (n > 0 && n < 0.01) return "<0.01";
+  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
-export function ethShort(wei: bigint, dp = 2): string {
-  return Number(formatUnits(wei, 18)).toLocaleString("en-US", {
-    maximumFractionDigits: dp,
-  });
+// ETH amounts follow the global two-decimal display rule; small nonzero values remain distinguishable from zero.
+export function eth(wei: bigint, _dp = 2): string {
+  return decimalAmount(Number(formatUnits(wei, 18)));
+}
+
+export function ethShort(wei: bigint, _dp = 2): string {
+  return decimalAmount(Number(formatUnits(wei, 18)));
 }
 
 export function tokens(wei: bigint, decimals = 18): string {
@@ -70,6 +72,14 @@ export function usd(n: number): string {
 // Token price in USD: subscript-zero notation under $0.001 ($0.0₃151), copied
 // from the artcoins site's PriceStats. "—" for a non-positive or non-finite value.
 const SUBSCRIPT_DIGITS = ["₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉"];
+// A sub-cent price split for display: "$0.0", the count of further zeros, then three significant digits ($0.0₄983 is
+// 0.0000983). zeros is undefined at a cent and above, where `text` is the whole price.
+export function usdPriceParts(value: number): { text: string; zeros?: number; sig?: string } {
+  if (!isFinite(value) || value <= 0 || value >= 0.001) return { text: usdPrice(value) };
+  const [mantissa, exp] = value.toExponential().split("e");
+  return { text: "$0.0", zeros: -parseInt(exp, 10) - 1, sig: mantissa.replace(".", "").slice(0, 3) };
+}
+
 export function usdPrice(value: number): string {
   if (!isFinite(value) || value <= 0) return "—";
   if (value < 0.001) {

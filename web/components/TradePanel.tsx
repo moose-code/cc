@@ -8,10 +8,32 @@ import { engineDeployed, chain } from "@/lib/config";
 import { useCcMarket, potShareBps, useHookFeeBps, useMarketStats, useQuote, useTokensPerEth, type Market } from "@/lib/market";
 import { erc20Abi, permit2Abi, transferEventAbi, universalRouterAbi } from "@/lib/abis";
 import { V4, buildBuy, buildSell, minOut } from "@/lib/v4";
-import { commas, eth, evmNowAddress, evmNowTx, leftLabel, tokens, usd, usdCompact, usdPrice } from "@/lib/format";
+import { commas, decimalAmount, eth, evmNowAddress, evmNowTx, leftLabel, shortAddr, tokens, usd, usdCompact, usdPrice, usdPriceParts } from "@/lib/format";
+
+// The token's DexScreener page (chart, pool and market data) on Ethereum.
+const dexScreener = (token: string) => `https://dexscreener.com/ethereum/${token.toLowerCase()}`;
+// A price change in percent with its sign and two decimals: "+3.87%", "−0.80%".
+export const pctChange = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)}%`;
+
+// The price, with a sub-cent price's zero count set as a small raised digit beside the zero ($0.0⁴983), so the
+// significant digits stay the size of the price.
+export function PriceText({ usd: v }: { usd: number }) {
+  const p = usdPriceParts(v);
+  if (p.zeros == null) return <>{p.text}</>;
+  return (
+    <span aria-label={usdPrice(v)}>
+      {p.text}
+      <span className="tp-zeros" aria-hidden>
+        {p.zeros}
+      </span>
+      {p.sig}
+    </span>
+  );
+}
 import { lsGet, lsSet } from "@/lib/cache";
 import { useCoinLive, useNow, useSnapshot } from "@/lib/live";
 import { CANCELLED, useTx, type Plan, type Write } from "@/lib/tx";
+import { Sk } from "./Skeleton";
 
 const HOOK_FEE_BPS = 1000; // fallback when the hook reads fail
 const SLIPPAGE_PRESETS = [50, 100, 200, 500]; // bps
@@ -24,15 +46,12 @@ const PERMIT2_EXP = Number((1n << 48n) - 1n); // uint48 max, viem types as numbe
 // Router; `market` defaults to the coin. A sell first grants the token
 // allowance to Permit2 and the Permit2 allowance to the router when they are short.
 
-export function TradePanel({ market }: { market?: Market }) {
+// `pick`: a side chosen outside the panel (the mobile trade dock); each new object selects its side once.
+export function TradePanel({ market, pick }: { market?: Market; pick?: { side: "buy" | "sell" } }) {
   const live = useCoinLive();
-  if (!market && live === false) return <p className="muted">$CC is not live yet</p>;
-  return <TradeBody market={market} />;
-}
-
-function TradeBody({ market }: { market?: Market }) {
+  const prelaunch = !market && (!engineDeployed || live === false);
   const { market: cc, error: ccPoolError } = useCcMarket();
-  const m = market ?? cc;
+  const m = market ?? (engineDeployed && live === true ? cc : undefined);
   const { data: perEth } = useTokensPerEth(m);
   const { address, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
@@ -41,14 +60,19 @@ function TradeBody({ market }: { market?: Market }) {
   const snap = useSnapshot().data;
   const { run, pending, err, steps, reset } = useTx();
 
-  const tag = m ? `$${m.symbol.replace(/^\$/, "").toUpperCase()}` : "";
+  const tag = `$${(m?.symbol ?? "cc").replace(/^\$/, "").toUpperCase()}`;
   const dec = m?.decimals ?? 18;
   const hooked = m != null && m.key.hooks !== zeroAddress;
   const hookFee = useHookFeeBps(m).data;
   const now = useNow();
   const feeBps = hooked ? hookFee?.bps ?? HOOK_FEE_BPS : (m?.key.fee ?? 0) / 100; // LP fee is in hundredths of a bip
 
-  const { priceUsd: tokenUsd, ethUsd, marketCap } = useMarketStats(m);
+  const { priceUsd: tokenUsd, ethUsd, marketCap, change, changeSince, loading: statsLoading, capLoading, changeLoading } = useMarketStats(m);
+  // price and cap: a skeleton while a pool is known but its reads are out; the dash before launch or after a failed read
+  const statsWait = !prelaunch && (m == null ? live !== false : statsLoading);
+  const capWait = !prelaunch && (m == null ? live !== false : capLoading);
+  // the price change: spot now against the spot a day ago, or against the opening price for a pool younger than that
+  const changeWait = !prelaunch && (m == null ? live !== false : changeLoading);
 
   // slippage tolerance in bps, kept in localStorage; a custom percent is applied once it is within 0.1 to 50
   const [slipBps, setSlipBps] = useState(100);
@@ -69,6 +93,9 @@ function TradeBody({ market }: { market?: Market }) {
   };
 
   const [side, setSide] = useState<"buy" | "sell">("buy");
+  useEffect(() => {
+    if (pick && !pending) edit(() => setSide(pick.side));
+  }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pay, setPay] = useState(""); // empty reads as 0
   type Result = { kind: "bought" | "sold"; amount: string; usd?: string; paid: string; paidLabel: string; potWei?: bigint; hash: `0x${string}` };
   const [result, setResult] = useState<Result | null>(null);
@@ -170,8 +197,10 @@ function TradeBody({ market }: { market?: Market }) {
   const wrongChain = address != null && chainId !== chain.id;
   const needApprove = side === "sell" && (!plan[0].done || !plan[1].done);
   const approveLabel = !plan[0].done ? `approve ${tag}` : "approve Permit2";
-  const gate = !market && ccPoolError
-    ? { label: "pool configuration error", off: true }
+  const gate = !market && (prelaunch || live === undefined)
+    ? { label: prelaunch ? "trading opens soon" : "loading pool", off: true }
+    : !market && ccPoolError
+      ? { label: "pool configuration error", off: true }
     : !m
       ? { label: "loading pool", off: true }
       : !address
@@ -200,7 +229,7 @@ function TradeBody({ market }: { market?: Market }) {
   const inWallet = busy && active?.status === "wallet";
   const swapPending = busy && active?.status === "pending" && active.label === side ? active : undefined;
   const swapIng = side === "buy" ? "buying" : "selling";
-  const label = busy
+  const label = prelaunch ? gate.label : busy
     ? inWallet || !active
       ? "waiting for wallet…"
       : swapPending
@@ -241,8 +270,8 @@ function TradeBody({ market }: { market?: Market }) {
 
   const inUnit = side === "buy" ? "ETH" : tag;
   const outUnit = side === "buy" ? tag : "ETH";
-  const bal = payBal != null ? (side === "buy" ? Number(formatUnits(payBal, 18)).toFixed(4) : tokens(payBal, dec)) : null;
-  const outText = amountIn === 0n ? "0.00" : side === "buy" ? commas(Math.floor(receive)) : receive.toFixed(5);
+  const bal = payBal != null ? (side === "buy" ? eth(payBal) : tokens(payBal, dec)) : null;
+  const outText = amountIn === 0n ? "0" : side === "buy" ? commas(Math.floor(receive)) : decimalAmount(receive);
   const hasAmount = amountIn > 0n;
   const minText =
     quoteOut == null
@@ -266,7 +295,7 @@ function TradeBody({ market }: { market?: Market }) {
     if (cur < 0) cur = 2;
     return names.map((name, i) => ({ name, hash: st[i].hash, state: st[i].status === "done" ? "done" : i === cur ? "cur" : "todo" }));
   })();
-  const showSteps = side === "sell" && !result && hasAmount && !over && (withApprovals ? steps.length === 3 : needApprove);
+  const showSteps = m != null && side === "sell" && !result && hasAmount && !over && (withApprovals ? steps.length === 3 : needApprove);
 
   const notice =
     result && result.potWei != null && snap && snap.ethRate > 0n
@@ -282,17 +311,41 @@ function TradeBody({ market }: { market?: Market }) {
       <div className="tp-price">
         <div>
           <div className="label">{tag} price</div>
-          <div className="tp-big">{tokenUsd != null ? usdPrice(tokenUsd) : "—"}</div>
+          <div className="tp-big">
+            {tokenUsd != null ? (
+              <span className="fx-in">
+                <PriceText usd={tokenUsd} />
+              </span>
+            ) : statsWait ? (
+              <Sk w="6ch" />
+            ) : (
+              "—"
+            )}
+            {change != null ? (
+              <span
+                className={`tp-chg fx-in ${change >= 0 ? "up" : "down"}`}
+                title={changeSince === "launch" ? "change since the pool opened" : "change over 24 hours"}
+              >
+                {pctChange(change)}
+              </span>
+            ) : (
+              changeWait && (
+                <span className="tp-chg">
+                  <Sk w="6ch" />
+                </span>
+              )
+            )}
+          </div>
         </div>
         <div className="tp-cap">
           {m ? (
-            <a className="label" href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
+            <a className="label" href={dexScreener(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} chart on DexScreener`}>
               mkt cap ↗
             </a>
           ) : (
             <div className="label">mkt cap</div>
           )}
-          <div className="tp-big sm">{marketCap != null ? usdCompact(marketCap) : "—"}</div>
+          <div className="tp-big sm">{marketCap != null ? <span className="fx-in">{usdCompact(marketCap)}</span> : capWait ? <Sk w="6ch" /> : "—"}</div>
         </div>
       </div>
 
@@ -487,7 +540,16 @@ function TradeBody({ market }: { market?: Market }) {
       )}
 
       {m && !hookFee?.active && (
-        <p className="tp-fee caption">trading fee {parseFloat((feeBps / 100).toFixed(2))}%</p>
+        <p className="tp-fee caption">
+          trading fee {parseFloat((feeBps / 100).toFixed(2))}%{!market && " · a share funds credit acquisitions"}
+        </p>
+      )}
+      {m && (
+        <p className="tp-addr caption">
+          <a href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
+            {tag} {shortAddr(m.token)} ↗
+          </a>
+        </p>
       )}
       {!market && ccPoolError && <p className="panel-note tp-note" role="alert">{ccPoolError}</p>}
       {!engineDeployed && <p className="panel-note tp-note">engine not deployed.</p>}

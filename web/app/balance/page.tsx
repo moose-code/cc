@@ -2,6 +2,7 @@
 
 import { TradePanel } from "@/components/TradePanel";
 import { NotDeployed } from "@/components/NotDeployed";
+import { Sk } from "@/components/Skeleton";
 import { engineDeployed } from "@/lib/config";
 import { BALANCE_SYMBOL, eth, formatBalance } from "@/lib/format";
 import { useBalanceMarket } from "@/lib/market";
@@ -38,7 +39,17 @@ export default function BalancePage() {
           {snap.value.on ? (snap.value.usable ? " · value mode on, quote usable" : " · value mode on, quote unavailable: eth sales wait") : " · value mode off"}
         </p>
       )}
-      {loading ? null : market ? <TradePanel market={market} /> : <p className="muted">{BALANCE_SYMBOL} is not live yet</p>}
+      {loading || !snap ? (
+        <p className="muted" aria-busy="true">
+          <Sk w="26ch" />
+        </p>
+      ) : market ? (
+        <div className="fx-in">
+          <TradePanel market={market} />
+        </div>
+      ) : (
+        <p className="muted fx-in">{BALANCE_SYMBOL} is not live yet</p>
+      )}
     </main>
   );
 }

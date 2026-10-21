@@ -4,8 +4,8 @@
 // transaction can land at, `min(baseFee * 9 / 8, door maxBaseFee)`: the gas refund of a paid door tracks the base fee
 // up to its setting's ceiling, so the worst case is the highest base fee.
 
-import type { Address, Hex } from "viem";
-import type { Door, DoorPolicy } from "./config.ts";
+import { zeroAddress, type Address, type Hex } from "viem";
+import type { Door, DoorPolicy, SplitConfig } from "./config.ts";
 
 // the private gas constants of the Core (src/Core.sol 224 to 236), restated
 export const COMPOSE_GAS = 13_700_000n;
@@ -24,6 +24,9 @@ export const GAS_GUESS: { [d in Door]: bigint } = {
   book: 100_000n,
   redeemStatement: 1_500_000n,
   refreshReference: 60_000n,
+  // a Splits v2 push distribute to two recipients: the hash check, the incentive and two transfers (ETH or ERC20),
+  // each with a warehouse deposit fallback. a guess until the simulation measures it
+  distributeSplit: 150_000n,
 };
 
 export interface Settings {
@@ -71,6 +74,14 @@ export interface State {
   escrowBalance: bigint;
   pageReady: boolean;
   balanceModule: Address;
+  // the phase 2 treasury's conversionReady() (IPhase2BalanceTreasury.sol): the conversion switch, the selection,
+  // the finalized upstream retirement and the registered renderer, all of which Core.redeemStatement needs before the
+  // module's redeem can succeed. undefined when the module has no such view (StatementBalanceModule), which reads
+  // as ready so that path is unchanged
+  conversionReady?: boolean;
+  // ControllerV2.statementRedeemDelaySeconds(): the age a statement needs before atFloor(sid) is true. logged only;
+  // atFloor stays the decision. undefined on a controller without the view (V1)
+  statementRedeemDelaySeconds?: number;
   // the held statements with controller.atFloor(sid) true
   atFloor: bigint[];
   // the value switch: the controller, the Core's valueModeOn, whether the protected value quote is unusable now,
@@ -87,6 +98,12 @@ export interface State {
   referenceRateBpsPerHour: bigint;
   referenceStepBps: bigint;
   spot: bigint;
+  // Core.balanceToken() at the block: the token of the split's BALANCE leg, zero while no module is bound
+  balanceToken: Address;
+  // the split's ETH and balance token holdings at the block, read only while the distributeSplit door is configured;
+  // undefined when not read or when the read failed, which skips the leg with a reason
+  splitEth?: bigint;
+  splitBalance?: bigint;
 }
 
 export interface Listing {
@@ -109,9 +126,10 @@ export interface Gas {
 
 export interface Intended {
   door: Door;
-  functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference";
-  // the contract the call goes to: the Core (every door, including the refreshReference door that forwards to the controller)
-  target?: "controller";
+  functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "distribute";
+  // the contract the call goes to: the Core by default (every Core door, including the refreshReference door that
+  // forwards to the controller); "split" is the artist and operator split of the distributeSplit door
+  target?: "controller" | "split";
   args: readonly unknown[];
   // the gas the decision assumed; the executor replaces it with the simulation's measure and calls `recheck`
   gas: bigint;
@@ -136,6 +154,12 @@ export interface Policy {
   // a latched Core is booked when the pending income exceeds bookMinWei and the keeper's last book is older than bookMinSec
   bookMinWei: bigint;
   bookMinSec: number;
+  // the distributeSplit door's split and the distributor the call names (the keeper address); undefined leaves the door off
+  split?: SplitPolicy;
+}
+
+export interface SplitPolicy extends SplitConfig {
+  distributor: Address;
 }
 
 const min = (...v: bigint[]) => v.reduce((a, b) => (b < a ? b : a));
@@ -244,8 +268,26 @@ export function refreshReferenceDue(s: State): { ok: boolean; reason: string } {
   return { ok: true, reason: "referenceMinSeconds since the last sample" };
 }
 
+// the legs of the artist and operator split that are due: ETH when the split holds at least minEth, the balance token
+// when the BALANCE leg is on (minBalance set), the Core has a balance token and the split holds at least minBalance.
+// a leg whose balance was not read is skipped with its reason rather than guessed
+export function splitLegs(s: State, split: SplitConfig): { due: { token: Address; amount: bigint; leg: "eth" | "balance" }[]; skips: string[] } {
+  const due: { token: Address; amount: bigint; leg: "eth" | "balance" }[] = [];
+  const skips: string[] = [];
+  if (s.splitEth === undefined) skips.push("split ETH balance not read");
+  else if (s.splitEth < split.minEth) skips.push(`split ETH ${s.splitEth} under SPLIT_MIN_ETH ${split.minEth}`);
+  else due.push({ token: zeroAddress, amount: s.splitEth, leg: "eth" });
+  if (split.minBalance !== undefined) {
+    if (s.balanceToken === zeroAddress) skips.push("no balance token bound, the BALANCE leg waits");
+    else if (s.splitBalance === undefined) skips.push("split BALANCE balance not read");
+    else if (s.splitBalance < split.minBalance) skips.push(`split BALANCE ${s.splitBalance} under SPLIT_MIN_BALANCE ${split.minBalance}`);
+    else due.push({ token: s.balanceToken, amount: s.splitBalance, leg: "balance" });
+  }
+  return { due, skips };
+}
+
 // every call the keeper would make at this state, in priority order: buyListing (best gap first), buyback, compose,
-// collectEscrow, book, redeemStatement, refreshReference. returns the updated listing observation map
+// collectEscrow, book, redeemStatement, refreshReference, distributeSplit. returns the updated listing observation map
 export function decide(
   s: State,
   listings: Listing[],
@@ -367,11 +409,14 @@ export function decide(
     }
   }
 
-  // 6. redeemStatement: reverts NoBalanceModule until a module is set, so it is skipped (one log per tick, no simulation) until then
+  // 6. redeemStatement: reverts NoBalanceModule until a module is set, so it is skipped (one log per tick, no simulation)
+  // until then. A phase 2 treasury whose conversionReady() is false reverts ConversionOff (or the upstream token refuses
+  // the withdrawal), so the door is skipped until the treasury reports ready; a module without the view is treated as ready
   if (on("redeemStatement") && s.atFloor.length > 0) {
     const pol = p.doors.redeemStatement;
     if (/^0x0{40}$/i.test(s.balanceModule)) skips.push({ door: "redeemStatement", reason: "no balance module bound" });
     else if (!s.settings.redeemOn) skips.push({ door: "redeemStatement", reason: "RedeemOff" });
+    else if (s.conversionReady === false) skips.push({ door: "redeemStatement", reason: "conversion not ready" });
     else if (ceiling("redeemStatement")) {
       for (const sid of s.atFloor) {
         const payment = callerPayment(s, GAS_GUESS.redeemStatement, REDEEM_GAS, worstBaseFee(gas, pol));
@@ -399,6 +444,35 @@ export function decide(
         skips.push({ door: "refreshReference", reason: `unprofitable: payment ${payment} under cost ${cost} plus margin` });
       } else {
         calls.push({ door: "refreshReference", functionName: "refreshReference", args: [], gas: GAS_GUESS.refreshReference, payment, cost, key: "refreshReference", note: { referenceTime: s.referenceTime, referenceMinSeconds: s.referenceMinSeconds } });
+      }
+    }
+  }
+
+  // 8. distributeSplit: the owner's own money (the artist and operator cut) moving from the split to its recipients, so
+  // it is not profit gated: the split's distribution incentive, if any, pays the keeper as distributor, otherwise the
+  // keeper pays the gas. gated on the balance thresholds and the door's base fee ceiling; the cost is logged
+  if (on("distributeSplit")) {
+    if (!p.split) skips.push({ door: "distributeSplit", reason: "no split configured" });
+    else {
+      const legs = splitLegs(s, p.split);
+      for (const reason of legs.skips) skips.push({ door: "distributeSplit", reason });
+      if (legs.due.length > 0 && ceiling("distributeSplit")) {
+        const split = p.split;
+        const cost = ownCost(GAS_GUESS.distributeSplit, gas, p.doors.distributeSplit);
+        const config = { recipients: split.recipients, allocations: split.allocations, totalAllocation: split.totalAllocation, distributionIncentive: split.distributionIncentive };
+        for (const leg of legs.due) {
+          calls.push({
+            door: "distributeSplit",
+            functionName: "distribute",
+            target: "split",
+            args: [config, leg.token, split.distributor],
+            gas: GAS_GUESS.distributeSplit,
+            payment: 0n,
+            cost,
+            key: `distributeSplit:${leg.leg}`,
+            note: { split: split.address, token: leg.token, amount: leg.amount, distributor: split.distributor, incentive: split.distributionIncentive },
+          });
+        }
       }
     }
   }
@@ -434,6 +508,9 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
     case "collectEscrow":
       return { ok: s.escrowBalance >= cost, payment, cost };
     case "book":
+      return { ok: true, payment, cost };
+    case "distributeSplit":
+      // the owner's own money moving; the measured cost is logged, never a gate
       return { ok: true, payment, cost };
   }
   // compose and refreshReference are paid through the caller fee: they go only when the Core pays at least the cost

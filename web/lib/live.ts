@@ -8,20 +8,51 @@ import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useReadContract, usePublicClient } from "wagmi";
 import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, numberToHex, zeroAddress, type Address } from "viem";
-import { atBlock, creditScores, mc, MULTICALL3, pendingIncome, readSnapshot, type Snapshot } from "@cc/engine/snapshot";
+import { atBlock, mc as engineMc, MULTICALL3, pendingIncome, readSnapshot, type Snapshot } from "@cc/engine/snapshot";
 import { CREDIT_SCORE } from "@cc/engine/addresses";
 import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, statements } from "./config";
-import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
+import { controllerAbi, coreAbi, creditsAbi, erc20Abi, redemptionPolicyAbi, statementsAbi, treasuryAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { ETH_ANCHOR_SLOT, ethAnchorWords, replayBalanceFills, replayEthFills, replayValueFills } from "./sell";
 import { useCreditRow, useCreditTraitsIx, useHeldCredits, useIxMode, useStatementDetailIx, useWalletCreditsIx } from "./indexer";
 import type { AcquiredHow } from "./indexer-schema";
 import type { BalanceTokenInfo } from "./format";
+import type { ClaimQuoteRead } from "./exchange";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
-export { MULTICALL3, creditScores, readSnapshot } from "@cc/engine/snapshot";
+export { MULTICALL3, readSnapshot } from "@cc/engine/snapshot";
+
+// The website's RPC API takes a request body of at most 128 KiB (lib/rpc-handler.ts). viem's multicall batchSize
+// counts only the calls' own calldata, while the Multicall3 encoding adds about 188 bytes a call, so the shared 16 KB
+// chunk of 36 byte per-id calls (455 of them) encodes to about 200 KB and is refused, failing every call of the chunk.
+// 4 KB of calldata per request (wagmi's batching merges concurrent multicalls up to the same size) is at most 113
+// per-id calls, about 51 KB of hex. Every per-credit multicall of the website uses this.
+export const RPC_BATCH_BYTES = 4_096;
+export const mc = { ...engineMc, batchSize: RPC_BATCH_BYTES } as const;
+
+// CreditScore.scoreOf(seedOf, timestampOf) per id, in input order: the engine helper's reads with the website's
+// batch size. wagmi batches multicalls, merging concurrent ones of the same batch size up to that size, so a read
+// at the engine's 16 KB size merges into requests the RPC API refuses (200 credits' seed reads are about 180 KB).
+export async function creditScores(client: Client, ids: bigint[], blockNumber?: bigint): Promise<bigint[]> {
+  if (ids.length === 0) return [];
+  const seeds = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: false,
+    contracts: ids.flatMap((id) => [
+      { address: credits, abi: seedAbi, functionName: "seedOf", args: [id] },
+      { address: credits, abi: seedAbi, functionName: "timestampOf", args: [id] },
+    ] as const),
+  });
+  return client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: false,
+    contracts: ids.map((_, i) => ({ address: CREDIT_SCORE, abi: scoreAbi, functionName: "scoreOf", args: [seeds[2 * i] as `0x${string}`, seeds[2 * i + 1] as bigint] }) as const),
+  });
+}
 export type { Snapshot } from "@cc/engine/snapshot";
 const PILE_PAGE = 200n; // ponytail: first 200 pile credits only, page with pilePage(startAfter) if the pile grows past it
 
@@ -136,7 +167,7 @@ async function readCredits(client: Client, s: Snapshot, ids: bigint[]): Promise<
 // The credits the engine holds, oldest first (the compose order). Indexer mode: the list, costs, acquisition times and
 // scores come from the indexer (no 200 credit cap), the price is read live (creditPrice falls every second) and `past`
 // follows chain time. Chain mode: the first PILE_PAGE credits of Core.pilePage, read with creditInfo, pastWindow and
-// creditPrice.
+// creditPrice. `loading` is true until the source answers.
 export function usePile() {
   const client = usePublicClient();
   const { data: s } = useSnapshot();
@@ -170,7 +201,7 @@ export function usePile() {
     },
   });
   const ixData: PileCredit[] = useMemo(() => {
-    if (mode !== "ix" || !s || !base || (saleOn && base.length > 0 && !prices.data)) return [];
+    if (mode !== "ix" || !s || !base) return [];
     return base.map((c) => ({
       ...c,
       inPile: true,
@@ -178,7 +209,15 @@ export function usePile() {
       past: !saleOn || c.acquiredAt + s.creditWindow <= now,
     }));
   }, [mode, s, base, saleOn, prices.data, now]);
-  return { data: mode === "ix" ? ixData : chain.data ?? [] };
+  // loading: the source has not answered yet, so an empty list is not an empty pile. pricing: the list is known but the
+  // live prices are still being read (indexer mode reads them after the list, in chunks), so a price of 0 is unread
+  const loading =
+    engineDeployed &&
+    (!s ||
+    mode === "checking" ||
+    (mode === "ix" ? base === undefined && !held.isError : chain.data === undefined && !chain.isError));
+  const pricing = mode === "ix" && saleOn && (base?.length ?? 0) > 0 && !prices.data && !prices.isError;
+  return { data: mode === "ix" ? ixData : chain.data ?? [], loading, pricing };
 }
 
 // One credit, in the pile or not (chain mode) or only in the pile (indexer mode). undefined until loaded.
@@ -450,6 +489,7 @@ export function useScores(ids: bigint[]) {
     queryKey: ["scores-of", key],
     enabled: engineDeployed && Boolean(client) && ids.length > 0 && mode === "chain",
     staleTime: Infinity,
+    placeholderData: keepPreviousData, // a new id keeps the others' scores on screen while the list is read again
     queryFn: async () => {
       const scores = await creditScores(client!, ids);
       const m: Record<string, bigint> = {};
@@ -459,7 +499,36 @@ export function useScores(ids: bigint[]) {
   });
   const ixq = useCreditTraitsIx(mode === "ix" ? ids.map(Number) : []);
   const ixScores = useMemo(() => (ixq.data ? Object.fromEntries(Object.entries(ixq.data).map(([id, r]) => [id, r.score])) : undefined), [ixq.data]);
-  return { data: mode === "ix" ? ixScores : chain.data };
+  return { data: mode === "ix" ? ixScores : chain.data, loading: readsPending(ids.length, mode, ixq, chain) };
+}
+
+// A per-credit read (scores, traits) whose ids are not all in hand yet: the indexer check, or the source's query (its
+// previous answer kept while it reads a changed list) has not answered. A failed read is not pending.
+type Q = { isPending: boolean; isPlaceholderData: boolean; isError: boolean };
+const readsPending = (n: number, mode: string, ixq: Q, chain: Q): boolean =>
+  engineDeployed && n > 0 && (mode === "checking" || (() => {
+    const q = mode === "ix" ? ixq : chain;
+    return (q.isPending || q.isPlaceholderData) && !q.isError;
+  })());
+
+// Points held by the engine: the scores of the credits in the pile plus the current totals of the statements it holds
+// (ratingOf, which an overprint can change). A composed credit leaves the pile, so nothing counts twice. Scores are in
+// 1/10,000 point. undefined until every part is read: the whole pile (chain mode lists only its first PILE_PAGE), each
+// pile credit's score and the held statements.
+export function usePointsHeld(): bigint | undefined {
+  const { data: s } = useSnapshot();
+  const { data: pile, loading } = usePile();
+  const { data: scores } = useScores(pile.map((c) => BigInt(c.id)));
+  const held = useStatements();
+  if (!s || loading || pile.length !== Number(s.pileSize) || !held.isSuccess || held.data.length !== s.held.length) return undefined;
+  let total = 0n;
+  for (const c of pile) {
+    const v = c.score ?? scores?.[String(c.id)];
+    if (v == null) return undefined;
+    total += v;
+  }
+  for (const st of held.data) total += st.rating;
+  return total;
 }
 
 // Credit price floor input: controller valueOf(score) per id, id to wei. Credit floor price =
@@ -506,6 +575,7 @@ export function useCreditTraits(ids: bigint[]) {
     queryKey: ["traits-of", key],
     enabled: engineDeployed && Boolean(client) && ids.length > 0 && mode === "chain",
     staleTime: Infinity,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const seeds = await client!.multicall({
         ...mc,
@@ -533,7 +603,7 @@ export function useCreditTraits(ids: bigint[]) {
     () => (ixq.data ? (Object.fromEntries(Object.entries(ixq.data).map(([id, r]) => [id, { mask: r.mask, active: r.active, occupied: r.occupied, eights: r.eights, band: r.band }])) as Record<string, CreditTraits>) : undefined),
     [ixq.data]
   );
-  return { data: mode === "ix" ? ixTraits : chain.data };
+  return { data: mode === "ix" ? ixTraits : chain.data, loading: readsPending(ids.length, mode, ixq, chain) };
 }
 
 // Credits owned by a wallet with their scores, lowest id first. Indexer mode: the credit table's owner column. Chain
@@ -553,7 +623,7 @@ export function useWalletCredits(address?: Address) {
   });
   const data = mode === "ix" ? ixq.data : chain.data;
   const scores = useMemo(() => Object.fromEntries((data ?? []).map((c) => [c.id.toString(), c.score])) as Record<string, bigint>, [data]);
-  return { data: data ?? [], scores, ready: data !== undefined };
+  return { data: data ?? [], scores, ready: data !== undefined, error: mode === "ix" ? ixq.error : chain.error };
 }
 
 // The balance token and its decimals, undefined while the Core has no module.
@@ -624,4 +694,147 @@ export function countdown(s: number): string {
 // Short message from a viem error: shortMessage, else the first line.
 export function errMsg(e: any): string {
   return e?.shortMessage || String(e?.message || "transaction failed").split("\n")[0];
+}
+
+// ---- phase 2 treasury (the claim panel of /claim) ----------------------------------------------------------------
+
+export interface TreasuryInfo {
+  treasury: Address;
+  balanceToken: Address;
+  balanceSymbol?: string;
+  balanceDecimals?: number;
+  coin: Address;
+  coinSymbol?: string;
+  coinDecimals?: number;
+  ccSupply: bigint;
+  walletCc?: bigint;
+  policy: Address;
+  policyVersion?: string;
+  claimReserve: bigint;
+  freeWorking: bigint;
+  // working() and available(): custody less the reserve and the debt, and what the Core's bid may pay now; undefined
+  // for a treasury without the views (the local anvil seed, older deployments)
+  working?: bigint;
+  available?: bigint;
+  conversionToClaimBps: number;
+  redemptionFeeBps: number;
+  configEpoch: bigint;
+  ccRedemptionEnabled: boolean;
+  // selectedForClaims(): the Core's module and not migrated, the gate of CC burns
+  selected: boolean;
+  transfersReady: boolean;
+  solvent: boolean;
+  migrated: boolean;
+}
+
+const TREASURY_POLL_MS = 15000;
+
+// The Core's balance module read as a phase 2 treasury (IPhase2BalanceTreasury.sol), every 15 s. `data` is null when
+// the module does not answer quoteRedemption and claimReserve (no module, or the StatementBalanceModule), so the panel
+// can say so instead of showing figures. Every other read is tolerant: a missing symbol or policy version leaves its
+// field undefined. Live reads only; the indexer's treasury tables are history (docs/INDEXER.md section 9.6)
+export function useTreasury(account?: Address) {
+  const client = usePublicClient();
+  const { data: snap } = useSnapshot();
+  const module = snap?.balanceModule && snap.balanceModule !== zeroAddress ? snap.balanceModule : undefined;
+  const q = useQuery<TreasuryInfo | null>({
+    queryKey: ["treasury", module, account],
+    enabled: engineDeployed && Boolean(client && module),
+    refetchInterval: TREASURY_POLL_MS,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const t = { address: module!, abi: treasuryAbi } as const;
+      const r = await client!.multicall({
+        ...mc,
+        allowFailure: true,
+        contracts: [
+          { ...t, functionName: "quoteRedemption", args: [1n] },
+          { ...t, functionName: "claimReserve" },
+          { ...t, functionName: "freeWorking" },
+          { ...t, functionName: "conversionToClaimBps" },
+          { ...t, functionName: "redemptionFeeBps" },
+          { ...t, functionName: "configEpoch" },
+          { ...t, functionName: "redemptionPolicy" },
+          { ...t, functionName: "ccRedemptionEnabled" },
+          { ...t, functionName: "selected" },
+          { ...t, functionName: "transfersReady" },
+          { ...t, functionName: "solvent" },
+          { ...t, functionName: "migrated" },
+          { ...t, functionName: "balanceToken" },
+          { ...t, functionName: "ccToken" },
+          { ...t, functionName: "selectedForClaims" },
+          { ...t, functionName: "working" },
+          { ...t, functionName: "available" },
+        ] as const,
+      });
+      const probe = r[0];
+      if (probe.status !== "success" || r[1].status !== "success") return null;
+      const v = <T,>(i: number, d: T): T => val(r[i], d);
+      const balanceToken = v<Address>(12, zeroAddress);
+      const coin = v<Address>(13, snap?.coin ?? zeroAddress);
+      const policy = v<Address>(6, zeroAddress);
+      const e = { abi: erc20Abi } as const;
+      const x = await client!.multicall({
+        ...mc,
+        allowFailure: true,
+        contracts: [
+          { ...e, address: coin, functionName: "symbol" },
+          { ...e, address: coin, functionName: "decimals" },
+          { ...e, address: coin, functionName: "totalSupply" },
+          { ...e, address: coin, functionName: "balanceOf", args: [account ?? zeroAddress] },
+          { ...e, address: balanceToken, functionName: "symbol" },
+          { ...e, address: balanceToken, functionName: "decimals" },
+          { address: policy, abi: redemptionPolicyAbi, functionName: "VERSION" },
+        ] as const,
+      });
+      const opt = <T,>(i: number): T | undefined => (x[i].status === "success" ? (x[i].result as T) : undefined);
+      return {
+        treasury: module!,
+        balanceToken,
+        balanceSymbol: opt<string>(4),
+        balanceDecimals: opt<number>(5),
+        coin,
+        coinSymbol: opt<string>(0),
+        coinDecimals: opt<number>(1),
+        // the supply quoteRedemption divides by; the probe's answer and totalSupply agree at one block
+        ccSupply: opt<bigint>(2) ?? (probe.result as readonly [bigint, bigint, bigint, bigint, boolean])[2],
+        walletCc: account ? opt<bigint>(3) : undefined,
+        policy,
+        policyVersion: opt<string>(6),
+        claimReserve: r[1].result as bigint,
+        freeWorking: v<bigint>(2, 0n),
+        working: v<bigint | undefined>(15, undefined),
+        available: v<bigint | undefined>(16, undefined),
+        conversionToClaimBps: Number(v<number>(3, 0)),
+        redemptionFeeBps: Number(v<number>(4, 0)),
+        configEpoch: BigInt(v<bigint>(5, 0n)),
+        ccRedemptionEnabled: v<boolean>(7, false),
+        // the burn gate is selectedForClaims (selected and not migrated, whatever the Core's retirement); a treasury
+        // built before that view answers selected()
+        selected: v<boolean>(14, v<boolean>(8, false)),
+        transfersReady: v<boolean>(9, false),
+        solvent: v<boolean>(10, false),
+        migrated: v<boolean>(11, false),
+      };
+    },
+  });
+  // no module: known absent; the hook reports ready with null so the page can say the balance side is not set
+  return { data: module ? q.data : engineDeployed && snap ? null : undefined, error: q.error, ready: module ? q.data !== undefined : Boolean(snap) };
+}
+
+// quoteRedemption(ccIn) of the treasury for the entered amount, every 15 s; the previous answer stays while the
+// next loads for the same amount only. undefined while ccIn is 0
+export function useClaimQuote(treasury: Address | undefined, ccIn: bigint) {
+  const client = usePublicClient();
+  const key = ccIn.toString();
+  return useQuery<ClaimQuoteRead | undefined>({
+    queryKey: ["claim-quote", treasury, key],
+    enabled: engineDeployed && Boolean(client && treasury) && ccIn > 0n,
+    refetchInterval: TREASURY_POLL_MS,
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === key ? prev : undefined),
+    queryFn: async () => {
+      const [balanceOut, reserve, supply, epoch, executable] = await client!.readContract({ address: treasury!, abi: treasuryAbi, functionName: "quoteRedemption", args: [ccIn] });
+      return { ccIn, balanceOut, reserve, supply, epoch: BigInt(epoch), executable };
+    },
+  });
 }

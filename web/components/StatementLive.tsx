@@ -8,10 +8,12 @@ import { StatementTile, CreditTile } from "./Tiles";
 import { Act } from "./Act";
 import { Addr } from "./Addr";
 import { Breadcrumb } from "./Shell";
-import { Fact, HeroArt, HistLine, type Ink } from "./Detail";
+import { Fact, HeroArt, HistLine, SkFacts, SkHistory, type Ink } from "./Detail";
+import { Sk, SkSideSec } from "./Skeleton";
 import { NotDeployed } from "./NotDeployed";
 import { useStatementRating } from "./Cards";
-import { core, engineDeployed, statements } from "@/lib/config";
+import { FormingStatement } from "./StatementForming";
+import { core, engineDeployed, statements, STATEMENT_SIZE } from "@/lib/config";
 import { useHistoryDown, useStatementIndex, useStatementView } from "@/lib/data";
 import type { StatementRecord } from "@/lib/events";
 import { useBlockTs } from "@/lib/engine";
@@ -34,7 +36,7 @@ export function LiveStatement({ id }: { id: number }) {
   const { data: held, dataUpdatedAt } = useStatements();
   const { rec, owner, isPending } = useStatementView(id);
   const { data: index } = useStatementIndex();
-  const { data: meta } = useTokenMeta("statement", id);
+  const { data: meta, isPending: metaPending } = useTokenMeta("statement", id);
   const now = useNow();
   const s = held.find((x) => x.sid === id);
   const composed = rec?.composed;
@@ -52,12 +54,20 @@ export function LiveStatement({ id }: { id: number }) {
   const format = rec?.format ?? composed?.format;
   const creditCount = composed?.ids.length ?? (meta?.attrs.Credits != null ? Number(meta.attrs.Credits) : undefined);
 
-  // prev and next among the known statements, newest first
-  const ids = [...new Set([...held.map((x) => x.sid), ...index.map((r) => r.id)])].sort((a, b) => b - a);
+  // prev and next among the known and forming statements, newest first. Every pile page with a credit is forming:
+  // ids nextStatementId to nextStatementId + ceil(pileSize / 80) - 1.
+  const nextSid = snap?.nextStatementId;
+  const formingIds = snap && nextSid != null ? Array.from({ length: Math.ceil(Number(snap.pileSize) / STATEMENT_SIZE) }, (_, k) => nextSid + k) : [];
+  const ids = [...new Set([...formingIds, ...held.map((x) => x.sid), ...index.map((r) => r.id)])].sort((a, b) => b - a);
   const at = ids.indexOf(id);
   const prevHref = at > 0 ? `/statements/${ids[at - 1]}` : undefined;
   const nextHref = at >= 0 && at < ids.length - 1 ? `/statements/${ids[at + 1]}` : undefined;
 
+  // an id the Core has not minted yet: the page of the pile forming toward it
+  if (snap && nextSid != null && id >= nextSid && !known) return <FormingStatement id={id} snap={snap} prevHref={prevHref} nextHref={nextHref} />;
+
+  // the record is not known yet: facts, history and the rail are skeletons of their usual shape
+  const loading = !known && (isPending || !snap);
   const ink: Ink = s ? "y" : redeemed ? "c" : "k";
   const holder: ReactNode = s ? (
     "engine"
@@ -80,15 +90,17 @@ export function LiveStatement({ id }: { id: number }) {
       <div className="detail-split">
         <div className="detail-col">
           <div className="detail-body">
-            <HeroArt tile={<StatementTile id={id} />} image={meta?.image} file={`statement-${id}.svg`} address={statements} />
+            <HeroArt tile={<StatementTile id={id} />} image={meta?.image} file={`statement-${id}.svg`} address={statements} loading={metaPending} />
 
             <div className="detail-right">
               <div className="label">statement</div>
               <h1 className="detail-id">{id}</h1>
 
-              {!known && !historyDown && !isPending && <p className="side-copy">no record of this statement on the engine.</p>}
+              {!known && !historyDown && !loading && <p className="side-copy fx-in">no record of this statement on the engine.</p>}
+              {loading && <SkFacts keys={["credit rating", "format", "engine cost", "credits", "composed", "holder"]} />}
+              {loading && <SkHistory n={2} />}
               {known && (
-                <dl className="dfacts">
+                <dl className="dfacts fx-in">
                   <Fact k="credit rating" v={ratingText || "—"} />
                   <Fact
                     k="format"
@@ -137,10 +149,16 @@ export function LiveStatement({ id }: { id: number }) {
         </div>
 
         <aside className={`side ink-${ink}`}>
-          {!snap ? (
-            <section className="side-sec">
-              <p className="side-copy">loading…</p>
-            </section>
+          {loading || !snap ? (
+            <>
+              <section className="side-sec" aria-busy="true">
+                <div className="label">status</div>
+                <div className="status-line">
+                  <Sk w="10ch" />
+                </div>
+              </section>
+              <SkSideSec label="price" lines={0} kv={2} action />
+            </>
           ) : s ? (
             <>
               <PriceSection s={s} snap={snap} updatedAt={dataUpdatedAt} />

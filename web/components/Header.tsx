@@ -5,14 +5,21 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useEns } from "@/lib/ens";
-import { commas, shortAddr } from "@/lib/format";
-import { usePotPage } from "./EngineFeed";
+import { shortAddr } from "@/lib/format";
+import { useBid } from "./EngineFeed";
 import { CCLogo } from "./CCLogo";
+import { Val } from "./Skeleton";
+import { engineDeployed } from "@/lib/config";
 
 const NAV = [
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
+  // the exchange link returns when the exchange opens (EXCHANGE_ENABLED); the page itself is gated already
+  // { href: "/exchange", label: "exchange" },
 ];
+
+// the cream/dark pages share the exchange header: the brand with the page's own sub line, the wallet and no nav
+const SPLIT_PAGES: Record<string, string> = { "/exchange": "credits → $BALANCE", "/claim": "$CC → $BALANCE" };
 
 export function Header() {
   const path = usePathname();
@@ -22,6 +29,20 @@ export function Header() {
   // close the mobile menu on navigation
   useEffect(() => setOpen(false), [path]);
 
+  const split = SPLIT_PAGES[path];
+  if (split) {
+    return (
+      <header className="header exchange-header">
+        <Link href="/" className="brand">
+          <CCLogo size={26} autoplay />
+          <b>CC</b>
+          <span className="brand-sub">{split}</span>
+        </Link>
+        <WalletButton exchange />
+      </header>
+    );
+  }
+
   return (
     <header className="header">
       <Link href="/" className="brand">
@@ -29,6 +50,9 @@ export function Header() {
         <b>CC</b>
         <span className={path === "/" ? "brand-sub on" : "brand-sub"}>engine</span>
       </Link>
+
+      {/* mobile: the bid sits in the header bar, left of the menu button */}
+      <Bid narrow />
 
       <button
         className="nav-toggle"
@@ -41,7 +65,7 @@ export function Header() {
         </svg>
       </button>
 
-      {/* nav, pot figures and the wallet; collapse into the hamburger menu on mobile */}
+      {/* nav, the bid and the wallet; collapse into the hamburger menu on mobile */}
       <div className={`menu${open ? " open" : ""}`}>
         <nav className="nav">
           {NAV.map((n) => (
@@ -54,7 +78,7 @@ export function Header() {
             </Link>
           ))}
         </nav>
-        <PotPage />
+        <Bid />
         <WalletButton />
       </div>
     </header>
@@ -63,7 +87,7 @@ export function Header() {
 
 // Disconnected: filled "connect wallet". Connected: outlined button with the
 // account's ENS name or short address; opens the account modal.
-function WalletButton() {
+function WalletButton({ exchange = false }: { exchange?: boolean }) {
   return (
     <ConnectButton.Custom>
       {({ account, chain, mounted, openAccountModal, openChainModal, openConnectModal }) => {
@@ -81,10 +105,13 @@ function WalletButton() {
                 wrong network
               </button>
             ) : (
-              <button className="btn-outline" onClick={openAccountModal}>
-                <i className="sq" />
-                <AccountName address={account.address} />
-              </button>
+              <>
+                {exchange && <span className="exchange-account"><AccountName address={account.address} /></span>}
+                <button className="btn-outline" onClick={openAccountModal}>
+                  <i className="sq" />
+                  {exchange ? "connected" : <AccountName address={account.address} />}
+                </button>
+              </>
             )}
           </div>
         );
@@ -98,15 +125,17 @@ function AccountName({ address }: { address: string }) {
   return <>{useEns(address) ?? shortAddr(address)}</>;
 }
 
-// The points the pot covers and the current bid, beside the wallet on every page.
-function PotPage() {
-  const { pts, per1 } = usePotPage();
+// The current bid per point, beside the wallet on every page; `narrow` is the stacked copy in the mobile header bar.
+// Until the snapshot answers the figure is a skeleton of its usual width, so the row does not grow leftward.
+function Bid({ narrow }: { narrow?: boolean }) {
+  const per1 = useBid();
   return (
-    <div className="hdr-next">
-      <span className="hdr-next-label">pot covers</span>
-      <b>{pts == null ? "—" : `${commas(pts)} pts`}</b>
-      {per1 && <span className="hdr-next-bid">· current bid {per1} ETH / 1 pt</span>}
+    <div className={narrow ? "hdr-next hdr-bid-m" : "hdr-next"}>
+      <span className="hdr-next-label">current bid</span>
+      <span>
+        <b>{engineDeployed ? <Val ready={per1 != null} w="9ch">{per1}</Val> : "—"} ETH</b>
+        <span className="hdr-next-label"> / pt</span>
+      </span>
     </div>
   );
 }
-

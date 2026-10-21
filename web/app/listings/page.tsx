@@ -4,10 +4,12 @@ import { useMemo, useState } from "react";
 import { ListingsTable } from "@/components/ListingsTable";
 import { ListingsStatus } from "@/components/ListingsStatus";
 import { PageHead } from "@/components/Shell";
+import { Sk, SkLines } from "@/components/Skeleton";
 import { NotDeployed } from "@/components/NotDeployed";
 import { engineDeployed, SCORE_PER_100_POINTS } from "@/lib/config";
 import { countdown, useHead, useNow, useSnapshot } from "@/lib/live";
 import { useAcquireTx } from "@/lib/useAcquire";
+import { cheapestOpenSeaEligible } from "@/lib/acquire";
 import { useListings, type ListingsData } from "@/lib/useListings";
 import { nextRise } from "@/lib/climb";
 import { BALANCE_SYMBOL, eth, evmNowTx } from "@/lib/format";
@@ -50,11 +52,15 @@ export default function ListingsPage() {
   const { data, error, isFetching, refetch, dataUpdatedAt } = useListings();
   const { data: snap } = useSnapshot();
   const { data: head } = useHead();
-  const { buy, available, pending, err, done } = useAcquireTx(head?.n);
+  const { buy, buyMany, available, pending, activeId, err, done } = useAcquireTx(head?.n);
   const [shown, setShown] = useState(PAGE);
+  const [bulkCount, setBulkCount] = useState(1);
   const { data: fills } = useFillsTodayIx(head?.ts);
 
   const rows = data?.rows ?? [];
+  const eligible = cheapestOpenSeaEligible(available(rows));
+  const bulkMax = eligible.length;
+  const selected = Math.min(bulkCount, bulkMax);
   const counts = useMemo(() => {
     const n = BUCKETS.map(() => 0);
     for (const r of rows) n[BUCKETS.findIndex((b) => r.gap <= b.max)]++;
@@ -68,9 +74,7 @@ export default function ListingsPage() {
   const meta = data
     ? `${rows.length} listed · ${atBid} at bid · ${within(0.1)} within 10% · ${within(0.25)} within 25%` +
       (data.covers > 0 ? ` · pot covers ${data.covers}${data.capped ? `, this ${data.bucketSeconds === 60 ? "minute" : "bucket"} ${data.fits}` : ""}` : "")
-    : error
-      ? "listings unavailable: the chain read failed"
-      : "reading listings…";
+    : undefined;
   // the bid range of the listed credits: the rate at the lowest and the highest listed score
   const scores = rows.map((r) => r.score).filter((s) => s > 0n);
   const lo = scores.length ? scores.reduce((a, b) => (b < a ? b : a)) : undefined;
@@ -99,20 +103,42 @@ export default function ListingsPage() {
 
   return (
     <div>
-      <PageHead title="listings" ink="m" meta={metaFull}>
-        {done ? (
-          <a className="hdr-acq-done" href={evmNowTx(done.hash)} target="_blank" rel="noreferrer">
-            acquired #{done.id.toString()} ↗
-          </a>
-        ) : (
-          err && <span className="hdr-acq-err">{err}</span>
-        )}
+      <PageHead title="listings" ink="m" meta={data ? metaFull : <SkLines n={3} w="46ch" />}>
+        {done && <a className="hdr-acq-done" href={evmNowTx(done.hash)} target="_blank" rel="noreferrer">
+          {done.target > 1 ? `acquired ${done.count}/${done.target} · latest #${done.id.toString()}` : `acquired #${done.id.toString()}`} ↗
+        </a>}
+        {err && <span className="hdr-acq-err">{err}</span>}
       </PageHead>
 
       <div className="split-pad">
         <ListingsStatus market={data?.market} strategy={data?.strategyStatus} readAt={dataUpdatedAt || undefined} error={error} fetching={isFetching} retry={() => void refetch()} />
+        <div className="lbulk">
+          <label htmlFor="bulk-count">
+            cheapest OpenSea by ETH · {data ? `${selected} of ${eligible.length}` : <Sk w="6ch" />} eligible
+          </label>
+          <input id="bulk-count" type="range" min="1" max={Math.max(1, bulkMax)} value={Math.max(1, selected)}
+            onChange={(e) => setBulkCount(Number(e.target.value))} disabled={pending || bulkMax === 0} />
+          <button className="hdr-acq" disabled={pending || bulkMax === 0}
+            onClick={() => buyMany(eligible.slice(0, selected))}>
+            {pending ? "acquiring…" : `acquire cheapest ${selected} on OpenSea`}
+          </button>
+          <span className="caption">{!data ? <Sk w="30ch" /> : bulkMax === 0 ? "no eligible OpenSea listings" : "one wallet approval per NFT · engine pot pays asks; wallet pays gas"}</span>
+        </div>
+        {!data && (
+          <div className="lhist lhist-sk pulse" aria-hidden>
+            {BUCKETS.map((b, i) => (
+              <div key={b.label} className="lhist-col">
+                <div className="lhist-bar">
+                  <i style={{ height: `${[30, 55, 80, 60, 40, 20][i]}%` }} />
+                </div>
+                <Sk w="2ch" />
+                <span className="caption">{b.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {rows.length > 0 && (
-          <div className="lhist" aria-label="listings by price over bid">
+          <div className="lhist fx-in" aria-label="listings by price over bid">
             {BUCKETS.map((b, i) => (
               <div key={b.label} className="lhist-col">
                 <div className="lhist-bar">
@@ -125,10 +151,10 @@ export default function ListingsPage() {
           </div>
         )}
 
-        <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending }} />
+        <ListingsTable rows={rows.slice(0, shown)} acquire={{ buy, available, pending, activeId }} showGap loading={!data && !error} />
         {data && rows.length === 0 && <p className="caption">no listings in the current view.</p>}
 
-        <div className="more-row">
+        {rows.length > 0 && <div className="more-row">
           <span className="muted">
             showing {Math.min(shown, rows.length)} of {rows.length}
           </span>
@@ -137,7 +163,7 @@ export default function ListingsPage() {
               load more
             </button>
           )}
-        </div>
+        </div>}
         <p className="caption lnote">
           gap is price over bid. bids marked ~ are estimated from the current rate and the rating; the closest 100 rows are
           read from the chain, OpenSea order status included.

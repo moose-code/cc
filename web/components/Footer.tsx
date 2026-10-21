@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useHead } from "@/lib/live";
 import { lsGet, lsSet } from "@/lib/cache";
 import { commas } from "@/lib/format";
+import { Val } from "./Skeleton";
 
 const THEME_KEY = "cc:theme"; // read before first paint by the script in app/layout.tsx
 const THEMES = ["auto", "light", "dark"] as const;
@@ -58,7 +59,10 @@ export function Footer() {
   return (
     <footer className="footer">
       <span>independent tool · not affiliated with Credits</span>
-      <span>{block ? `block ${commas(Number(block))}` : "block —"}</span>
+      <span>
+        block <Val ready={block != null} w="10ch">{block != null && commas(Number(block))}</Val>
+      </span>
+      <Link href="/faq">faq</Link>
       <Link href="/docs">docs</Link>
       <span>
         by{" "}

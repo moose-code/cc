@@ -118,6 +118,16 @@ Errors use magenta: a `--m` 1px border on the input and `--m` text for the faili
 
 ---
 
+### Loading and motion
+The app is one surface: the header and footer never move, and data arriving never pushes what is already on screen. `components/Skeleton.tsx` holds the pieces; `app/globals.css` "loading and motion" holds the styles.
+
+- **Loading is not empty, and not zero.** A value whose source has not answered is a skeleton, never `0`, `—` or an empty list. `—` means answered with nothing; an empty state ("no statements for sale right now.") shows only after the source answered. Hooks say which: `usePile().loading`, `useFeed().loading`, `useStatementIndex().loading`, `useStatementView().isPending`, `useCreditDetail().loading`, `useMarketStats().loading`, `useScan().ready`.
+- **Skeletons hold the final box.** A skeleton is a flat block in the text colour at 9%, square like the print grid, pulsing as one (1.6 s). It takes the width of the text it stands for (`Sk w="11ch"`), the shape of the card, row or rail section it replaces (`SkCard`, `SkSideSec`, `SkFacts`, `SkHistory`, the ledger and listings rows), and the real labels stay real. Rows and lines that arrive later are reserved from the start: the flywheel split line, the stats sub lines, the page head meta line (`PageHead metaW`, and on a phone `metaLines`), the sell royalty note. Counts known early size the skeleton (held statements from the snapshot).
+- **Art loads on white.** A tile still loading pulses in its own box, tinted from `--art-wait` on `--art` in both themes; art that arrives after the first render fades in over 260 ms, art already cached shows at once.
+- **Arrival.** Content replacing a skeleton fades in once over 220 ms (`.fx-in`); later updates of a shown value do not fade (eth figures tween as before).
+- **Navigation.** `app/template.tsx` fades each route's content in over 180 ms between the fixed header and footer, and makes it fill the space between them, so the footer sits at the bottom while a page loads. The detail routes have `loading.tsx` (`components/DetailLoading.tsx`): a click shows the detail layout with the real id at once while the server resolves the metadata. Data is cached across navigation, so a revisit renders at once.
+- **Reduced motion** keeps the skeletons still and drops the fades.
+
 ## Screens
 
 ### 01 Engine home (desktop `Engine desktop`, mobile `Engine mobile`, `Trade mobile`)
@@ -142,13 +152,17 @@ Order from top: header, **explainer band**, stats row, then the 2-column body (l
 - Statement row: on `--surface` with `--structure` top and bottom rules. It has a 56px thumbnail, `statement 180`, and the meta line `format 4 · 80 credits · cost 0.5378 ETH`.
 
 ### 02 Credits index (`Credits grid`, `Credits table`)
-One list of **all credits held by the engine**, newest first, paginated (`showing 24 of 96 · load more`). No grouping, no filters, no plate letters.
+One list of **all credits held by the engine**, best value first, paginated (`showing 24 of 96 · load more`). No plate letters.
+- **Head:** the title with a short meta on its line, `304 held by engine · next statement composes in ~2m`; the view toggle and sort on the right. The bid lives in the site header and what credits trade for in the market report, so neither repeats here.
+- **Market report** (`components/MarketReport.tsx`, `web/lib/market-report.ts`), above the grid: a bordered row of cells on `--surface`. The intro cell, `MARKET · 7D` and `median the engine paid, and the lowest asks now: the engine's and the market's. pick a band to filter.`, then one cell per rating band: `under 500`, `500–599`, `600–649`, `650–699`, `700+` (sized to where credits trade; most rate 600 to 650). A band cell: `rating 600–649`, the median the engine paid at its bid or from a listing over the last 7 days (`0.0381 ETH`, 20/600), the change against the 7 days before and how many it bought (`+4.2% · 507 bought`, the change only with 5 or more prior sales), then under a dashed rule the lowest asks now as two key and value rows: `engine 0.0444` (the cheapest held credit in the band) and `market 0.0410` (the cheapest OpenSea or CreditStrategy ask of the keeper's view; `—` without one). A band cell is a filter for the grid: the picked one carries the 3px `--m` edge, picking it again clears it, and an empty pick reads `no credits listed in this band right now.` In chain mode the report reads the newest 200 purchases and says `MARKET · LATEST 200`. Below 1300px the intro takes its own row; below 860px the bands go two to a row.
 - **Grid:** 6 columns, 12px gap. Card on `--surface`, 1px `--hairline` border (`--ink` when selected, with a ✓ box top-left on the art). Under the art, from top:
   1. **price** `0.0121` 16/600 + `ETH` 11 `--muted` (the price leads the card);
   2. `#14727` on the left and `rating 61` on the right (12 `--muted`; always the full word "rating");
-  3. a dashed rule, then `composes` on the left (11 `--quiet`) and the estimate on the right (`~25h`, `--ink`).
+  3. while the credit sale is on, a dashed rule, then `vs median` and the price against its band's 7-day median paid (`+51%`);
+  4. `floor in` on the left (11 `--quiet`) and the time on the right (`--ink`).
   - No "for sale" label and no arrows on cards.
-- **Table:** columns `checkbox · art 28 · credit · rating · price ETH · paid ETH · got by · bought · composes`. The unit lives in the header, so cells show bare numbers.
+- **Table:** columns `checkbox · art 28 · credit · rating · price ETH · vs median · paid ETH · got by · bought · floor in`. The rating, price, vs median, paid, bought and floor in heads sort: a click sorts by that column, a second flips it, the active head is `--ink` with `↑` or `↓`. A phone keeps rating, price, vs median and floor in.
+- **Sort** (`web/lib/credit-sort.ts`): `best value` (default: the price lowest against its band's median first), `price`, `price / pt`, `rating`, `newest`, `composing soon` (the queue, which is also the floor order) and `paid`. A value not known yet sorts last. The choice is kept in this browser. The unit lives in the header, so cells show bare numbers.
 - **Rail:**
   - **Buy credits** (shown while `creditSaleOn`): a short explainer, the selected list (thumbnail, `credit #id`, `rating n`, price `ETH`, ×), selected count and total, the `buy 2 credits` button, and `prices keep falling while in window · excess refunded`.
   - Under it, **how compose timing works**: three numbered lines, then `sell your credits to the engine →`.
@@ -193,14 +207,24 @@ Same layout as credit detail.
   2. **Restyle.** `current: 3`, the copy, and an 8-segment format picker 0–7. The button stays disabled until the user picks a different format **and** holds `minCcToChoose`; it reads `restyle to format n`.
   3. **Redeem.** Always visible while held and `balanceOn`. Disabled until `atFloor && redeemOn`, with the right-side caption `opens at floor · ~5h`; when enabled it reads `redeem for $BALANCE`.
 
+### 05a Forming statement (`components/StatementForming.tsx`)
+A statement id the Core has not minted yet: `id >= nextStatementId` (Statements supply plus one). Default compose takes the 80 oldest pile credits and ids are sequential, so page `k = id - nextStatementId` of the pile, credits `k*80` to `k*80+79` oldest first, is that statement while it forms. The `/statements` **forming** cards are its thumbnails and link here; the index and this page share one page split (`web/lib/forming.ts`).
+
+- **States.** `in progress`: the page has fewer than 80 credits (only the last page). `upcoming`: 80 credits, waiting for the newest to clear the sale window, or for an earlier page to compose first. `ready to compose`: page 0, full and past the window (`snapshot.page.ready`). `engine paused` replaces the time while the Core is paused. An id past the last page with credits reads `not forming yet`; a page the chain-mode pile read did not reach (the 200 credit cap) reads `unavailable until the full pile loads`.
+- **Main column.** The hero is the thumbnail's art at hero size: the page's actual Credit tiles in the 8×10 sheet grid, empty slots blank, on white with crop marks. Facts: state, credits `52 / 80`, engine cost (`… ETH so far`, the sum of the page's credit costs), credit rating (`… so far`, the sum of their scores, which is the rating the statement will carry; indexer mode only, else `—`), format `set at compose`. History: `now` forming line, newest credit bought, first credit bought, each linking its credit.
+- **Full-width band.** The page's credits as the 16-column grid, linking each credit, captioned `gathering in the order the engine bought them`.
+- **Rail** (ink Y, hollow status mark). Status and a copy line for the state. Then the compose box: `composes in` a countdown (full page) or `~25h` estimate (filling page, buy rate plus window), the 8×10 mini map of filled slots, and for `k > 0` the caption `after statement N`. Page 0 when ready shows `compose statement` (`Core.compose()`, random format; the compose page keeps the format choice). While the credit sale is on, a caption says the membership is provisional: a credit bought out of the pile leaves the page and the next oldest moves in, and `composeChosen` (off at launch) can take credits out of order.
+- **Navigation.** Prev and next run across forming and composed ids, newest first. When the statement composes, the same URL turns into the composed detail on the next refresh.
+
 ### 06 Swap states (`TradePanel.tsx`)
 The panel, top to bottom:
-1. `$CC price` and `mkt cap ↗`;
+1. `$CC price`: the price 24/700, a sub-cent price with its zero count as a small digit set low (`$0.0₄956`), then on its baseline the change at 0.62em, two decimals, `--up` green or `--down` red (`+56.48%`; the only coloured text besides ink marks). The change is spot now against the spot 7,200 blocks earlier, or for a younger pool against the opening price of its PoolManager `Initialize` event; the period is in its tooltip, and `mkt cap ↗`, linking to the token's DexScreener page;
 2. the buy|sell toggle (36px);
 3. the input box on `--surface` with a 1px `--divider` border and two crop marks: a **you pay** field and a **you receive** field;
 4. detail rows;
 5. an optional notice;
-6. the button.
+6. the button;
+7. the `trading fee` caption, then the token contract (`$CC 0x28ef…c789 ↗`) linking to evm.now.
 **The price impact row is removed.**
 
 **Field details:**

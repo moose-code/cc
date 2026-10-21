@@ -151,6 +151,14 @@ One row per setter event (`SettingsSet`, `RateSet`, `BalanceRateSet`, `CreditCos
 
 `anchor_move`: one row per `AnchorMoved`.
 
+### 6.7b `treasury_state` and `treasury_event` (phase 2, decisions 245 to 252)
+
+`treasury_state`, one row per balance module named by `BalanceModuleSet`, written from the treasury's own events only, never from a latest state read: `balanceToken`, `setBlock`, `active`, `claimReserve`, `totalOwed` (PaymentAccrued less OwedClaimed), `configEpoch`, `policy`, `conversionToClaimBps`, `redemptionFeeBps`, the three switches, `minimumWorkingBalance`, `migrated`, `successor`, and the running totals `convertedTotal`, `contributedTotal`, `conversions`, `redeemedCcTotal`, `paidBalanceTotal`, `redemptions` (public burns) kept apart from `ownerFundedTotal`, `ownerAllocatedTotal`, `ownerReturnedTotal`, `ownerWithdrawnTotal`, plus `accruedTotal`, `claimedTotal`, `lastEventBlock`. A value an event has not carried yet is null; a treasury's constructor events before its `BalanceModuleSet` are not indexed.
+
+`treasury_event`, one row per treasury event: `kind` (`statement_converted`, `cc_redeemed`, `claims_funded`, `claims_allocated`, `claims_returned`, `working_withdrawn`, `policy_set`, `fee_set`, `switches_set`, `contribution_set`, `floor_set`, `migrated`, `migration_received`, `payment_accrued`, `owed_claimed`), `ccIn`, `balanceOut`, `claimReserve`, `ccSupply`, `configEpoch`, `amount`, `bps`, `actor`, `recipient`, `policy`, `statementId`, `detail` json, block and tx fields. Public redemptions are the `cc_redeemed` rows; owner changes are the `claims_*` and `working_withdrawn` rows. Burns are never inferred from contribution events.
+
+The `controller` row gains nullable `statementSalesEnabled`, `statementSaleMultiplierBps`, `statementRedeemDelaySeconds` from the ControllerV2 setter events; a V2 controller leaves the V1 anchor columns null and `anchorBps` at its derived 10,000.
+
 ### 6.8 `activity` (the ledger)
 
 One row per user-visible event, newest first by (`blockNumber`, `logIndex`): `kind` (`credit_bought`, `credit_adopted`, `listing_bought`, `credit_swapped`, `composed`, `restyled`, `statement_sold`, `credit_sold`, `redeemed`, `buyback`, `fees_added`, `funded`, `escrow_collected`), `creditId`, `statementId`, `account`, `amount` (ETH wei), `amount2` (kind specific, documented per kind in the schema), block and tx fields. Index on (`kind`, `blockNumber`) and on `account`.
@@ -263,7 +271,7 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | settings, controller params | L snapshot; also I `engine.settings`, `controller` (not read by the web yet) |
 | pot (live, with unbooked income) | L snapshot; D `potWithPending` |
 | reserve and the room the bids read (packet B, decision 154) | L `Core.reserve()` in the snapshot; D `potRoom` = `potWithPending` less the reserve, the clamp of the eth bid and the cap of a listing sweep |
-| buying room, processing reserve and header "pot covers" | L snapshot `potWithPending`, `reserve`, `potRoom`, `ethRate` and `settings.buyToArtistBps`; D points covered = `potPoints(potRoom * 10_000 / (10_000 + buyToArtistBps), ethRate)`. The gross pot, spendable room and reserve are labeled separately on the home and keeper pages |
+| buying room and processing reserve | L snapshot `potWithPending`, `reserve`, `potRoom`. The home shows only the spendable room as "pot" (decision 242); the keeper page labels the gross pot, room and reserve separately |
 | value mode and the quote (packet C, decision 148) | L snapshot: `settings.valueModeOn`; `noQuote` when value mode is on and the protected buy quote is unusable, while `ethRate` can use its last good value; controller `valuePerPoint(false)` and `valuePerPoint(true)` for `value.usable` and the per point values; also I `controller.quote*` (QuoteSet) |
 | balance token reference against spot (packet C, decisions 148 and 157) | L controller `referencePrice()`, `referenceTime()`, `spotPrice()` and `quote()` in the snapshot (`value.referencePrice`, `value.spot`); shown on the balance page; also I `controller.referencePrice`, `referenceSpot`, `referenceTime` at the last `ReferenceRefreshed` |
 | ETH/USD | L Chainlink |
@@ -277,11 +285,17 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 
 | value | source |
 |---|---|
+| pre-launch banner and disabled CC trading | L `useCoinLive()` checks bytecode at snapshot `coin` through the read-only website RPC API, polling every 15 seconds until code exists; an unset Core also uses pre-launch. Unknown status remains disabled/loading. The banner disappears and normal market discovery resumes when live becomes true, without a reload |
+| empty-ledger artwork and placeholder rows | D presentation only while `useFeed` has no rows, before or after coin launch; placeholders are not transactions. The existing reduced-motion-aware `CCLogo` is reused. Ledger is the default feed view; a manual choice of Listings persists through polling. Mobile is one scroll that shows the latest 6 ledger rows until "view full ledger" (decision 242) |
 | credits held, statements held | L snapshot `pileSize`, `heldStatements` |
-| $BALANCE held by engine | L module `available()` (also I `engine.balanceAvailable`, minute scale) |
-| $CC burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
-| explainer fee wording | L hook skim and bounty (`useHookFeeBps`); D engine share |
-| statement sale split | D from I `engine.settings` |
+| $CC bought + burned and % | I `stats.ccBurned` (chain mode: Core buyback burns scanned, swap-fee burns not included); D % over the launch supply constant |
+| ETH recycled and its sale count | I sum and count of `statement.toPot` where set (only StatementSoldTo sets it); chain mode: D `price - toBuyback - toArtist - toOperator` per StatementSoldTo in the scan. A controller-only `Bought` sale has no split and is left out |
+| points held by engine | D sum of the pile credits' scores (I `credit.score`; chain mode `CreditScore.scoreOf` over `Core.pilePage`, unknown while the pile exceeds its first page) plus L `Core.ratingOf` of each held statement (current, so an overprint counts); shown as score / 10,000 |
+| pot row and step 02 chip | L snapshot `potRoom` (spendable room; the reserve is not shown) |
+| statement sale split (intro line 3, proportion bar) | L snapshot `settings.saleToBuybackBps`; the caption states it applies after the artist and operator cuts |
+| $CC burned so far (split caption) | as $CC bought + burned |
+| ledger $CC burned rows | I `activity` kind `buyback`: `amount` ETH spent, `amount2` the Core's coin burn in the same tx (`transaction_fact.coreBurn`); chain mode: `Buyback.amountIn` and the scanned coin `Transfer` to zero from the Core in the same tx. No source statement is named: a buyback pools every sale's share |
+| ledger statement sold rows | I `activity` kind `statement_sold` (`amount` price, `amount2` toBuyback) joined to `statement.toPot`; chain mode: StatementSoldTo |
 | ledger rows | Currency is I `activity.balanceToken` for BALANCE purchases/redemptions (chain mode: prior `BalanceModuleSet` in log order); amount is `BalanceFill.paid` per credit (the seller's posted payout; the artist royalty `BalanceFill.toArtist` is an additional obligation that may remain claimable debt) or `StatementRedeemed.received`. Historical metadata is used only for the matching token, otherwise show exact raw units and token address. I `activity` joined to `statement`, `statement_format` and `log`; score and plates by id from I `credit` (`useScores`, `useCreditTraits`); art from I `credit.tokenUri`, `statement.tokenUri`; paged by row limit |
 | next credit progress | D pot over bid from L snapshot |
 | next statement progress | L snapshot `pileSize` mod 80 |
@@ -295,7 +309,11 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | paid, got by, bought time, rating | I `credit` |
 | buy rate per hour | I `stats_hourly` last 24 hourly buckets |
 | compose estimate | D from I pile position, pile size, `controller.window`, `saleOn`, buy rate |
-| header meta: bid at rating | L `ethRate` |
+| header meta | D held count from the pile; the next compose estimate (above) |
+| market report: median paid, sales and change by rating band | I `credit` where `acquiredHow` is `eth_bid` or `listing` and `acquiredAt` within 14 days, counted in SQL by rating band, week and `costBasis` bucket of 0.0001 ETH (`useMarketIx`; the SQL API has no percentile function, so D the median from the counts, `web/lib/market-report.ts`); chain mode: the newest 200 scan purchases with their scores |
+| market report: engine ask, vs median | D the cheapest held credit's L `creditPrice` per band, and each held credit's price against its band's median |
+| market report: market ask | K keeper market view through `/api/listings` (9.1): D the cheapest scored, unexpired OpenSea ask of its best rows and CreditStrategy row per band |
+| sort orders | D from the values above (`web/lib/credit-sort.ts`) |
 
 ### 9.4 credit detail
 
@@ -321,15 +339,41 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 | history: composed, restyled, anchor moved, sold, redeemed | I `activity`, `statement_format`, `anchor_move` |
 | holder | I `statement.owner` |
 | art | I `statement.tokenUri` |
+| forming statement (an id at or past the next one): page, credits, state | L snapshot `nextStatementId`, `pileSize`, `page.ready`, `paused`, `creditWindow`; the pile from I `credit` held by the Core, oldest first (chain mode: `Core.pilePage`, first 200); D page `id - nextStatementId` of 80 (`web/lib/forming.ts`) |
+| forming cost, rating and compose estimate | D sum of the page's I `credit.cost` (chain mode: `creditInfo`) and I `credit.score` (indexer mode only); D `composeEta` from the page's newest acquisition time and I `stats_hourly` buy rate |
 
 ### 9.6 sell, compose, balance, keeper
 
 | page | indexer | live |
 |---|---|---|
 | sell | wallet credits with scores (I `credit` by owner) | bids and quotes (`bidOf`, anchor slots; in value mode `balanceRate` and controller `valuePerPoint(false)`), approvals; per-credit batch fills D from the same quote reads (eth: `replayEthFills`; balance: `replayBalanceFills` over the L snapshot `balanceRate` and `balanceUnit`; value mode: `replayValueFills`); USD at the L Chainlink ETH/USD feed, the balance side through the L balance pool spot |
+| exchange (local development; public route disabled by default) | same wallet Credits and scores as sell through `useWalletCredits` | L snapshot module/token, posted rate/unit, available reserve, bid/pause/retirement, artist royalty and protected value. D existing `replayBalanceFills` gives the payout, protocol fee is gross less posted payout, price protection is posted less executable payout; reserve check includes per-Credit artist royalties on top. Before an executable quote, show selected point ratings/their sum and the configured fee percentage, with an explicit unavailable notice. Exact minimum uses 0/0.5/1-percent tolerance. Approval is followed by full-batch `sellForBalance(ids,minOut,expectedToken)` simulation; pending display and consent freeze and wallet/network changes stop further sends. No new indexer table. |
+| exchange claim panel "Burn CC for BALANCE" (phase 2, same gate) | history only, not read by the web yet: I `treasury_event` (one row per treasury event; public burns are kind `cc_redeemed`, the owner's reserve changes are `claims_funded`, `claims_allocated`, `claims_returned`, `working_withdrawn`) and I `treasury_state` (per treasury named by `BalanceModuleSet`: event-carried `claimReserve`, `totalOwed`, `configEpoch`, `policy`, `conversionToClaimBps`, `redemptionFeeBps`, the three switches, `migrated`, and the running totals `convertedTotal`, `contributedTotal`, `redeemedCcTotal`, `paidBalanceTotal`); I `controller.statementSalesEnabled`, `statementSaleMultiplierBps`, `statementRedeemDelaySeconds` for a ControllerV2 | every value shown is L through the Core's `balanceModule` read as a `Phase2BalanceTreasury` (`useTreasury`, `useClaimQuote` in `web/lib/live.ts`), see the table below |
 | compose | pile with order and window state (I) | `nextPage` readiness, CC balance |
 | balance | $BALANCE price history (phase 2) | pool, quotes, module available |
 | keeper | `engine.lastBuybackBlock` (I; chain mode: Core view), `stats` payouts | pots, artist, payee, head |
+
+### 9.6b exchange claim panel
+
+The claim panel's values, every one a live read (L) through `/api/rpc`, polled every 15 s. The panel hides behind a notice when the module does not answer `quoteRedemption` and `claimReserve` (no module, or the StatementBalanceModule).
+
+| value | source |
+|---|---|
+| BALANCE token address and symbol | L treasury `balanceToken()`; L erc20 `symbol()` and `decimals()` of that token (tolerant) |
+| redemption policy address and version | L treasury `redemptionPolicy()`; L policy `VERSION()` (tolerant; `pro-rata-v1` is the first policy, any other version is labelled) |
+| claim reserve | L treasury `claimReserve()` |
+| free working funds | L treasury `freeWorking()` |
+| CC total supply, symbol, decimals | L coin `totalSupply()`, `symbol()`, `decimals()` at the treasury's `ccToken()` |
+| contribution rate | L treasury `conversionToClaimBps()`; D `bps / 100` percent |
+| redemption fee | L treasury `redemptionFeeBps()`; D `bps / 100` percent |
+| backing per CC | D `claimReserve * 1e18 / ccSupply` from the quote's reserve and supply (`backingPerCc` in `web/lib/exchange.ts`) |
+| your CC | L coin `balanceOf(wallet)` |
+| quoted BALANCE out | L treasury `quoteRedemption(ccIn)` for the entered amount (`balanceOut`, `reserve`, `supply`, `epoch`, `executable`); D `proRataQuote` = `floor(ccIn * reserve / supply) * (10000 - fee) / 10000` stands in until the read answers and flags a mismatch (`claimQuote`) |
+| minimum you receive | D `balanceOut * (10000 - tolerance) / 10000` at the 0, 0.5 or 1 percent tolerance of `EXCHANGE_SLIPPAGE`, exact |
+| terms epoch | L `quoteRedemption(ccIn).epoch`, pinned at consent and passed as `expectedConfigEpoch`; a changed epoch stops the burn before any send (`redeemClaim`) |
+| disabled states | L treasury `ccRedemptionEnabled()`, `selectedForClaims()` (fallback `selected()`), `transfersReady()`, `solvent()`, `migrated()` and the quote's `executable`; wallet and chain from wagmi |
+| approval | L coin `allowance(wallet, treasury)`; an `approve(treasury, ccIn)` for exactly the amount only when short |
+| burn | L simulate then send treasury `redeemCC(ccIn, wallet, minOut, now + 20 minutes, epoch)`; the receipt's own `CCRedeemed` log gives the burned and received amounts shown after confirmation (`decodeRedemption`) |
 
 ### 9.6a listings page
 
@@ -350,7 +394,7 @@ Mainnet browser reads use the same-origin read-only RPC API, with Tenderly first
 
 ### 9.7 swap panel
 
-Live only: slot0, quoter, hook fee, balances, allowances, receipts. Phase 2 adds I `price_hourly` for a 24 h change and a chart, replacing the archive `getSlot0` read.
+Live only: slot0, quoter, hook fee, balances, allowances, receipts. The price change beside the price is D from L `StateView.getSlot0` now against `getSlot0` at the block 7,200 back; for a pool younger than that, against the `sqrtPriceX96` of its L PoolManager `Initialize` log (`eth_getLogs` in spans under 5,000 blocks, kept in localStorage), labelled since launch. The market cap links to the token's DexScreener page and the token contract to evm.now. Phase 2 adds I `price_hourly` for a 24 h change and a chart, replacing the archive `getSlot0` read.
 
 ### 9.8 page metadata and share images
 

@@ -18,13 +18,16 @@
   NEXT_PUBLIC_INDEXER_URL = "https://cc-indexer-mainnet.fly.dev"
   # CreditStrategy deploy block, as in indexer/env/mainnet.env STRATEGY_START_BLOCK
   NEXT_PUBLIC_STRATEGY_START_BLOCK = "26037623"
-  # Set from the mainnet deployment record once the engine is deployed (uncomment and fill):
-  # NEXT_PUBLIC_CORE = ""
-  # NEXT_PUBLIC_DEPLOY_BLOCK = ""
-  # NEXT_PUBLIC_STRATEGY_ADAPTER = ""
-  # NEXT_PUBLIC_SEAPORT_ADAPTER = ""
+  # From the tracked mainnet deployment record deployments/1.json. Set here, not only in the Netlify UI, so every
+  # context (production, deploy previews, branch deploys) builds against the same mainnet Core.
+  NEXT_PUBLIC_CORE = "0xcdb1889ae12074d750CD9B8531B692015465e0dD"
+  NEXT_PUBLIC_DEPLOY_BLOCK = "26229330"
+  NEXT_PUBLIC_STRATEGY_ADAPTER = "0x5757788D0A6dF507dba064d66532F0b630Be1dc9"
+  NEXT_PUBLIC_SEAPORT_ADAPTER = "0x40302D497436bcC03e0Af2138Ec325C68DF3B0c8"
+  NEXT_PUBLIC_POOL_HOOK = "0x866F31562dDe70D7B989C2529a9deFFFFd3bE8CC"
+  NEXT_PUBLIC_POOL_FEE = "8388608"
+  NEXT_PUBLIC_POOL_TICK_SPACING = "200"
   # Optional. A real WalletConnect project id improves wallet reliability; a placeholder is used when unset.
   # NEXT_PUBLIC_WC_PROJECT_ID = ""
   # Mainnet browser reads use /api/rpc. Optional server-only RPC_URL selects a dedicated Tenderly endpoint;
   # keep credential-bearing URLs in Netlify's Functions secret store. NEXT_PUBLIC_RPC_URL is local-only.
-  # Optional NEXT_PUBLIC_POOL_HOOK, NEXT_PUBLIC_POOL_FEE and NEXT_PUBLIC_POOL_TICK_SPACING assert the Core tuple.

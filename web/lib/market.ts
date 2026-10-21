@@ -5,7 +5,7 @@
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePublicClient, useReadContract, useReadContracts } from "wagmi";
-import { formatUnits, parseAbi, zeroAddress, type Address } from "viem";
+import { formatUnits, parseAbi, parseAbiItem, zeroAddress, type Address } from "viem";
 import { chain, core, ethUsdFeed, expectedPool } from "./config";
 import { chainlinkAbi, controllerAbi, erc20Abi, hookAbi, mevAbi, quoterAbi, stateViewAbi } from "./abis";
 import { useCoinLive, useHead, useSnapshot } from "./live";
@@ -247,39 +247,71 @@ export function useEthUsd() {
 // Price in USD, market cap and the 24h change of a market. Price = pool spot x
 // the eth/usd feed; market cap = price x totalSupply; the change compares the
 // spot now with the spot DAY_BLOCKS earlier, read once per bucket with a
-// blockTag and kept in localStorage. undefined for any figure whose read fails.
+// blockTag and kept in localStorage. undefined for any figure whose read fails; `loading` while the reads are out.
 export function useMarketStats(market?: Market) {
   const client = usePublicClient();
-  const { data: perEth } = useTokensPerEth(market);
-  const { data: ethUsd } = useEthUsd();
+  const { data: perEth, isPending: spotPending } = useTokensPerEth(market);
+  const { data: ethUsd, isPending: usdPending } = useEthUsd();
   const head = useHead().data?.n;
-  const { data: supply } = useReadContract({ address: market?.token, abi: erc20Abi, functionName: "totalSupply", query: { enabled: Boolean(market) } });
+  const { data: supply, isPending: supplyPending } = useReadContract({ address: market?.token, abi: erc20Abi, functionName: "totalSupply", query: { enabled: Boolean(market) } });
 
   const ref = head != null && head > DAY_BLOCKS ? ((head - DAY_BLOCKS) / BUCKET) * BUCKET : undefined;
-  const { data: perEthThen } = useQuery<number | null>({
+  // the reference price: the spot DAY_BLOCKS ago, or, for a pool younger than that, its opening price ("since launch")
+  const { data: then, isPending: thenPending } = useQuery<{ perEth: number; since: "24h" | "launch" } | null>({
     queryKey: ["spot24", market && poolIdOf(market.key), ref?.toString()],
-    enabled: Boolean(client && market && ref),
+    enabled: Boolean(client && market && ref && head),
     staleTime: Infinity,
     retry: false,
     queryFn: async () => {
       const id = poolIdOf(market!.key);
       const key = `${SCOPE}:spot24:${id}:${ref}`;
       const hit = lsGet<number>(key);
-      if (hit != null) return hit;
+      if (hit != null) return { perEth: hit, since: "24h" };
+      let sqrt = 0n;
       try {
-        const [sqrt] = await client!.readContract({ address: V4.stateView, abi: stateViewAbi, functionName: "getSlot0", args: [id], blockNumber: ref });
-        if (sqrt === 0n) return null;
+        [sqrt] = await client!.readContract({ address: V4.stateView, abi: stateViewAbi, functionName: "getSlot0", args: [id], blockNumber: ref });
+      } catch {
+        // pruned state, or a pool younger than the reference block
+      }
+      if (sqrt > 0n) {
         const v = ccPerEthFromSqrt(sqrt, market!.decimals);
         lsSet(key, v);
-        return v;
-      } catch {
-        return null; // pruned state, or a pool younger than the reference block
+        return { perEth: v, since: "24h" };
       }
+      const launch = await openingPerEth(client!, id, market!.decimals, ref!, head!);
+      return launch != null ? { perEth: launch, since: "launch" } : null;
     },
   });
+  const perEthThen = then?.perEth;
 
   const priceUsd = ethUsd != null && perEth ? ethUsd / perEth : undefined;
   const marketCap = priceUsd != null && supply != null && market ? priceUsd * Number(formatUnits(supply, market.decimals)) : undefined;
   const change = perEth && perEthThen != null ? (perEthThen / perEth - 1) * 100 : undefined;
-  return { priceUsd, ethUsd, marketCap, change };
+  // loading: a read the figures need has not answered (as opposed to answered with nothing, shown as a dash)
+  const loading = !market || spotPending || usdPending;
+  return { priceUsd, ethUsd, marketCap, change, changeSince: then?.since, loading, capLoading: loading || supplyPending, changeLoading: loading || thenPending };
+}
+
+const initializeEvent = parseAbiItem(
+  "event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)"
+);
+const LOG_SPAN = 4_999n; // the website RPC API takes eth_getLogs spans under 5,000 blocks (lib/rpc-proxy.ts)
+
+// The pool's opening price, tokens per eth, from its PoolManager Initialize event between `from` and `to`; null when
+// the pool was not initialized in that range. Fixed once found, so kept in localStorage.
+async function openingPerEth(client: NonNullable<ReturnType<typeof usePublicClient>>, id: `0x${string}`, decimals: number, from: bigint, to: bigint): Promise<number | null> {
+  const key = `${SCOPE}:open:${id}`;
+  const hit = lsGet<number>(key);
+  if (hit != null) return hit;
+  for (let a = from; a <= to; a += LOG_SPAN + 1n) {
+    const b = a + LOG_SPAN < to ? a + LOG_SPAN : to;
+    const logs = await client.getLogs({ address: V4.poolManager, event: initializeEvent, args: { id }, fromBlock: a, toBlock: b }).catch(() => []);
+    const sqrt = logs[0]?.args.sqrtPriceX96;
+    if (sqrt != null && sqrt > 0n) {
+      const v = ccPerEthFromSqrt(sqrt, decimals);
+      lsSet(key, v);
+      return v;
+    }
+  }
+  return null;
 }

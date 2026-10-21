@@ -158,9 +158,13 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     x.blockNumber === y.blockNumber ? Number(x.logIndex - y.logIndex) : x.blockNumber < y.blockNumber ? -1 : 1
   );
 
-  // total coin burned by the core
+  // coin burned by the core, in total and per transaction (a Buyback row reads the burn of its own tx)
   let burned = 0n;
-  for (const b of st.logs.burn ?? []) burned += b.args.value ?? 0n;
+  const burns = new Map<string, bigint>();
+  for (const b of st.logs.burn ?? []) {
+    burned += b.args.value ?? 0n;
+    burns.set(b.transactionHash, (burns.get(b.transactionHash) ?? 0n) + (b.args.value ?? 0n));
+  }
 
   // compose mode per Composed transaction
   const modes = new Map<string, ComposeMode>();
@@ -183,7 +187,7 @@ async function scanTo(client: Client, head: bigint): Promise<Scan> {
     saved = { total, head };
   }
 
-  const { stats, credits, statements, rows } = processLogs({ logs, head, burned, modes, balanceToken: st.balance });
+  const { stats, credits, statements, rows } = processLogs({ logs, head, burned, burns, modes, balanceToken: st.balance });
   // logs arrive oldest first; the feed is newest first
   return (lastGood = { feed: rows.reverse(), stats, credits, statements, balanceToken: st.balance });
 }
@@ -211,5 +215,6 @@ export function useScan() {
       return p;
     },
   });
-  return { ...q, data: q.data ?? EMPTY_SCAN };
+  // ready: a scan has answered (until then data is the empty scan, which must not read as an empty history)
+  return { ...q, data: q.data ?? EMPTY_SCAN, ready: q.data !== undefined };
 }

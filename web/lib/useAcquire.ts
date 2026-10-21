@@ -114,9 +114,9 @@ export const adapterOf = (l: Listing): Address => (l.source === "strategy" ? str
 const keyOf = (l: { source: string; id: bigint; price: bigint }) => `${l.source}:${l.id}:${l.price}`;
 
 /**
- * Core.buyListing for the first of `candidates` that simulates. A candidate that reverts is dropped for the block.
- * An OpenSea candidate without fulfillment data (`params` "0x") has it fetched from the route first. Shared by the
- * header button and the /listings rows.
+ * Core.buyListing for the first candidate that simulates, or sequentially for selected OpenSea bulk candidates.
+ * A candidate that reverts is dropped for the block. OpenSea fulfillment is fetched from the route before simulation.
+ * Shared by the header button and the /listings rows.
  */
 export function useAcquireTx(block: bigint | undefined) {
   const { address } = useAccount();
@@ -125,7 +125,8 @@ export function useAcquireTx(block: bigint | undefined) {
   const { openConnectModal } = useConnectModal();
   const { run, pending, err } = useTx();
   const [dropped, setDropped] = useState<{ block?: bigint; keys: string[] }>({ keys: [] });
-  const [done, setDone] = useState<{ id: bigint; hash: `0x${string}` }>();
+  const [done, setDone] = useState<{ id: bigint; hash: `0x${string}`; count: number; target: number }>();
+  const [activeId, setActiveId] = useState<bigint>();
 
   const live = dropped.block === block ? dropped.keys : [];
   const available = <T extends Listing>(list: T[]) => paused ? [] : list.filter((l) => preparedForAcquire(l) && !live.includes(keyOf(l)));
@@ -137,40 +138,58 @@ export function useAcquireTx(block: bigint | undefined) {
     return () => clearTimeout(t);
   }, [done]);
 
-  const buy = (candidates: Priced[]) => {
+  const purchase = (candidates: Priced[], target: number, bulk: boolean) => {
     if (paused) return;
     if (!address) return openConnectModal?.();
     setDone(undefined);
-    run(async (write) => {
+    setActiveId(!bulk && candidates.length === 1 ? candidates[0].id : undefined);
+    return run(async (write) => {
       const bad: string[] = [];
+      let count = 0;
       try {
-        for (let l of available(candidates)) {
+        const choices = available(candidates);
+        if (bulk && choices.length < target) throw new Error("selected listings are no longer available; refresh and try again");
+        for (let l of bulk ? choices.slice(0, target) : choices) {
+          const shownPrice = l.price;
+          const candidateKey = keyOf(l);
           if (l.source === "opensea" && l.params === "0x") {
             try {
               const f = (await (await fetch(`/api/listings?fulfill=${l.orderHash}`)).json()) as { price?: string; params?: `0x${string}` };
               if (!f.params || !f.price) throw new Error("no fulfillment");
               l = { ...l, price: BigInt(f.price), params: f.params };
             } catch {
-              bad.push(keyOf(l));
+              bad.push(candidateKey);
+              if (bulk) throw new Error(`stopped after ${count} of ${target}: fulfillment unavailable`);
               continue;
+            }
+          }
+          if (bulk) {
+            if (l.source !== "opensea") throw new Error("bulk acquire supports OpenSea listings only");
+            if (l.price > shownPrice) {
+              bad.push(candidateKey);
+              throw new Error(`stopped after ${count} of ${target}: ask changed; refresh and try again`);
             }
           }
           const req = { address: core!, abi: coreAbi, functionName: "buyListing", args: [adapterOf(l), l.id, l.params] } as const;
           try {
             await client!.simulateContract({ ...req, account: address });
           } catch {
-            bad.push(keyOf(l));
+            bad.push(candidateKey);
+            if (bulk) throw new Error(`stopped after ${count} of ${target}: listing no longer clears`);
             continue;
           }
           const hash = await write(req);
-          setDone({ id: l.id, hash });
-          return;
+          count++;
+          setDone({ id: l.id, hash, count, target });
+          if (count === target) return;
         }
-        throw new Error("no listing available");
+        throw new Error(bulk ? `stopped after ${count} of ${target}: listings unavailable` : "no listing available");
       } finally {
         if (bad.length) setDropped((d) => ({ block, keys: [...(d.block === block ? d.keys : []), ...bad] }));
       }
-    }, [{ label: "acquire" }]);
+    }, Array.from({ length: target }, (_, i) => ({ label: bulk ? `acquire ${i + 1} of ${target}` : "acquire" }))).finally(() => setActiveId(undefined));
   };
-  return { buy, available, pending, err, done };
+  const buy = (candidates: Priced[]) => purchase(candidates, 1, false);
+  const buyMany = (candidates: Priced[]) => purchase(candidates, candidates.length, true);
+  return { buy, buyMany, available, pending, activeId, err, done };
 }

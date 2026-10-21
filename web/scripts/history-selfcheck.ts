@@ -57,4 +57,30 @@ assert.equal(valued.stats.creditsBalance, 0);
 assert.equal(valued.stats.ethIntoCredits, 0.2);
 assert.equal(valued.credits[12][0].t, "bought");
 assert.equal(valued.credits[12][0].t === "bought" ? valued.credits[12][0].rate : 1n, undefined);
+
+// promise: "ETH recycled" sums the pot's part of StatementSoldTo sales (price less buyback, artist and operator) and
+// leaves out a controller-only Bought sale, whose split is unknown.
+const e = (n: bigint) => n * 10n ** 16n; // hundredths of an ETH
+const sales = processLogs({
+  logs: [
+    log("StatementSoldTo", 1, { sid: 4n, buyer: a, price: e(100n), toBuyback: e(20n), toArtist: e(10n), toOperator: e(5n) }),
+    { ...log("Bought", 1, { sid: 5n, buyer: a, price: e(50n) }), transactionHash: `0x${"2".repeat(64)}` },
+  ],
+  head: 100n, burned: 0n, modes: new Map(), balanceToken: current,
+});
+assert.equal(sales.stats.sold, 2);
+assert.equal(sales.stats.potSales, 1);
+assert.equal(sales.stats.ethToPot, 0.65);
+assert.equal(sales.statements[4].sold?.toPot, e(65n));
+assert.equal(sales.rows[0].detail, "· 0.65 ETH to the pot · 0.2 to buyback · bought by");
+
+// promise: each Buyback is a "$CC burned" ledger row with the ETH spent and the coin the Core burned in its own tx.
+const burns = processLogs({
+  logs: [log("Buyback", 3, { caller: a, amountIn: e(80n), paid: 0n })],
+  head: 100n, burned: 8_214_330n * 10n ** 18n, burns: new Map([[tx, 8_214_330n * 10n ** 18n]]), modes: new Map(), balanceToken: current,
+});
+assert.deepEqual(
+  { kind: burns.rows[0].kind, title: burns.rows[0].title, detail: burns.rows[0].detail, eth: burns.rows[0].eth },
+  { kind: "burned", title: "8,214,330 $CC", detail: "bought with 0.8 ETH", eth: "0.8" },
+);
 console.log("history selfcheck ok");

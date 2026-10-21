@@ -2,6 +2,8 @@
 
 read docs/STATUS.md first. CLAUDE.md points here.
 
+for product orientation, newcomer explanations and website copy, also read docs/CONTEXT.md. it is guidance, not authority over SPEC, DECISIONS or code.
+
 ## authority
 
 1. the owner's latest explicit instruction.
@@ -18,6 +20,8 @@ Record consequential owner decisions once in docs/DECISIONS.md; update affected 
 - Inspect unexpected foundry.lock or submodule changes; do not automatically restore files or reset another task's work. After a change of a production contract's external surface: `script/tools/gen-interfaces.sh`, then re-pin the build hashes in script/Checks.sol and test/BuildIdentity.t.sol. Check deployment bytecode size when it changes.
 - Name the release step: deferred Core, coin launch or service activation. Preserve the evidence and owner approval scoped to that step; do not convert a waiver into a pass or a Core approval into permission to launch the coin. Use `script/tools/check-freeze.sh <core|coin|services>`; the default checks coin launch. Later-stage requirements block an earlier step only for a concrete risk to that step.
 - no mainnet broadcast, deploy, push to main, merge or private key without the owner's explicit instruction.
+- owner deploys and sends run from the `main` checkout, brought up to date with origin/main and this work first, unless the owner names another branch. never prepare a broadcast command from a side branch, even one with identical code.
 - the vocabulary is "balance", never "exit" (decision 102). comments state rules, invariants and caveats in plain technical voice; no em or en dashes.
 - a change that adds data to the web names its source in docs/INDEXER.md section 9.
 - toolchain, timings and the fork env: docs/STATUS.md section 5.
+- owner commands are written and run with the owner's foundry keystore and Tenderly's public gateway: `--account ripe0x --rpc-url https://gateway.tenderly.co/public/mainnet` (decision 257); `MAINNET_RPC_URL` is that URL.

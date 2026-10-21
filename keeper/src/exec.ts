@@ -14,7 +14,7 @@ import {
   type PrivateKeyAccount,
   type PublicClient,
 } from "viem";
-import { controllerAbi, coreAbi } from "@cc/engine/abis";
+import { controllerAbi, coreAbi, splitV2Abi } from "@cc/engine/abis";
 import { revertName, txError } from "@cc/engine/errors";
 import type { Config } from "./config.ts";
 import { recheck, type Intended, type Listing, type Policy, type State } from "./decide.ts";
@@ -63,8 +63,16 @@ export class Executor {
   }
 
   private data(c: Intended): Hex {
-    const abi = c.target === "controller" ? controllerAbi : coreAbi;
+    const abi = c.target === "controller" ? controllerAbi : c.target === "split" ? splitV2Abi : coreAbi;
     return encodeFunctionData({ abi, functionName: c.functionName as any, args: c.args as any });
+  }
+
+  // the contract a decided call goes to: the controller, the configured split, or the Core. exported through `run`
+  // for the test of the selection; a split call without a configured split is refused before any simulation
+  target(c: Intended, s: Pick<State, "controller">): Address | undefined {
+    if (c.target === "controller") return s.controller;
+    if (c.target === "split") return this.policy.split?.address;
+    return this.cfg.record.core;
   }
 
   hasPending() { return !!this.pending.current; }
@@ -74,7 +82,8 @@ export class Executor {
     if (this.pending.current) return { kind: "skipped", reason: `transaction ${this.pending.current.hash} still unresolved` };
     const chainId = this.cfg.record.chainId;
     if (this.breaker.paused(c.door)) return { kind: "skipped", reason: `door paused by the breaker until ${new Date(this.breaker.pausedUntil(c.door)!).toISOString()}` };
-    const to = c.target === "controller" ? s.controller : this.cfg.record.core;
+    const to = this.target(c, s);
+    if (!to) return { kind: "failed", reason: "no split configured for the distributeSplit call" };
     const data = this.data(c);
     const pol = this.policy.doors[c.door];
     const fee = { maxFeePerGas: pol.maxBaseFee + pol.tip, maxPriorityFeePerGas: pol.tip };
@@ -114,6 +123,7 @@ export class Executor {
     if (this.cfg.dryRun) {
       log("info", "dry run: would send", {
         door: c.door,
+        to,
         fn: c.functionName,
         args: c.args,
         gas: gasUsed,

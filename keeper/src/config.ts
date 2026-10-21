@@ -7,8 +7,8 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAddress, parseEther, parseGwei, type Address } from "viem";
 
-export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference";
-export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "refreshReference"];
+export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "distributeSplit";
+export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "refreshReference", "distributeSplit"];
 
 // the owner key never signs a keeper transaction (decision 57)
 export const OWNER: Address = "0xCB43078C32423F5348Cab5885911C3B5faE217F9";
@@ -32,6 +32,21 @@ export interface DoorPolicy {
   maxBaseFee: bigint;
   // the priority fee the keeper pays
   tip: bigint;
+}
+
+// the artist and operator split (a Splits v2 push split at the Core's `artist`): the stored configuration the
+// `distribute` call must restate, and the balances at which the keeper distributes. the split pays nobody until
+// someone calls `distribute`; the keeper does, in ETH at `minEth` and, when `minBalance` is set, in the Core's live
+// balance token at `minBalance`
+export interface SplitConfig {
+  address: Address;
+  recipients: Address[];
+  allocations: bigint[];
+  totalAllocation: bigint;
+  distributionIncentive: number;
+  minEth: bigint;
+  // undefined: the BALANCE leg is off
+  minBalance?: bigint;
 }
 
 export interface Config {
@@ -71,6 +86,8 @@ export interface Config {
   doorsOn: Set<Door>;
   // the read-only market view server (./market-view.ts); off without MARKET_VIEW_PORT
   marketView: { port?: number; host: string; token?: string };
+  // the distributeSplit door's split; undefined (SPLIT_ADDRESS unset or zero) leaves the door off
+  split?: SplitConfig;
 }
 
 type Env = { [k: string]: string | undefined };
@@ -144,6 +161,7 @@ const DOOR_DEFAULT_TIP: { [d in Door]: string } = {
   book: "0.05",
   redeemStatement: "0.05",
   refreshReference: "0.05",
+  distributeSplit: "0.05",
 };
 
 const DOOR_DEFAULT_BASEFEE: { [d in Door]: string } = {
@@ -154,7 +172,48 @@ const DOOR_DEFAULT_BASEFEE: { [d in Door]: string } = {
   book: "3",
   redeemStatement: "3",
   refreshReference: "3",
+  distributeSplit: "3",
 };
+
+const isAddress = (v: string) => /^0x[0-9a-fA-F]{40}$/.test(v);
+const isUint = (v: string) => /^\d+$/.test(v);
+
+// SPLIT_ADDRESS and its companions (docs/RUNBOOK.md section 8): undefined when the address is unset or zero. every
+// other value is checked here, since a mismatch with the split's stored hash reverts every distribute
+export function splitConfig(env: Env): SplitConfig | undefined {
+  const raw = env.SPLIT_ADDRESS;
+  if (!raw || /^0x0{40}$/i.test(raw)) return undefined;
+  if (!isAddress(raw)) throw new Error("config: SPLIT_ADDRESS must be an address");
+  const recipientsRaw = list(env.SPLIT_RECIPIENTS);
+  const allocationsRaw = list(env.SPLIT_ALLOCATIONS);
+  if (recipientsRaw.length === 0) throw new Error("config: SPLIT_RECIPIENTS is empty");
+  for (const r of recipientsRaw) if (!isAddress(r)) throw new Error(`config: SPLIT_RECIPIENTS holds a non address ${r}`);
+  for (const a of allocationsRaw) if (!isUint(a)) throw new Error(`config: SPLIT_ALLOCATIONS holds a non integer ${a}`);
+  if (recipientsRaw.length !== allocationsRaw.length) {
+    throw new Error(`config: SPLIT_RECIPIENTS has ${recipientsRaw.length} entries, SPLIT_ALLOCATIONS ${allocationsRaw.length}`);
+  }
+  const allocations = allocationsRaw.map(BigInt);
+  const sum = allocations.reduce((a, b) => a + b, 0n);
+  if (env.SPLIT_TOTAL_ALLOCATION !== undefined && env.SPLIT_TOTAL_ALLOCATION !== "" && !isUint(env.SPLIT_TOTAL_ALLOCATION)) {
+    throw new Error("config: SPLIT_TOTAL_ALLOCATION must be an integer");
+  }
+  const totalAllocation = env.SPLIT_TOTAL_ALLOCATION ? BigInt(env.SPLIT_TOTAL_ALLOCATION) : sum;
+  if (totalAllocation !== sum) throw new Error(`config: SPLIT_ALLOCATIONS sum to ${sum}, SPLIT_TOTAL_ALLOCATION is ${totalAllocation}`);
+  if (totalAllocation === 0n) throw new Error("config: SPLIT_TOTAL_ALLOCATION is 0");
+  const incentiveRaw = env.SPLIT_DISTRIBUTION_INCENTIVE || "0";
+  if (!isUint(incentiveRaw) || Number(incentiveRaw) > 65535) throw new Error("config: SPLIT_DISTRIBUTION_INCENTIVE must be an integer at most 65535");
+  const minBalance = env.SPLIT_MIN_BALANCE ? parseEther(env.SPLIT_MIN_BALANCE) : undefined;
+  return {
+    address: getAddress(raw),
+    recipients: recipientsRaw.map((r) => getAddress(r)),
+    allocations,
+    totalAllocation,
+    distributionIncentive: Number(incentiveRaw),
+    minEth: ether(env, "SPLIT_MIN_ETH", "0.25"),
+    // the balance token has 18 decimals (docs/RUNBOOK.md, phase 2 stage A), so whole tokens parse like ether
+    minBalance,
+  };
+}
 
 export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRecord): Config {
   const recordPath = env.RECORD ?? `deployments/${env.CHAIN_ID ?? "1"}.json`;
@@ -207,6 +266,12 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
 
   const doorsOn = new Set<Door>(env.DOORS ? (list(env.DOORS) as Door[]) : DOORS);
   for (const d of doorsOn) if (!DOORS.includes(d)) throw new Error(`config: unknown door ${d}`);
+  // the split door needs a split: without SPLIT_ADDRESS the default door set drops it, an explicit DOORS entry refuses
+  const split = splitConfig(env);
+  if (!split) {
+    if (env.DOORS && doorsOn.has("distributeSplit")) throw new Error("config: DOORS names distributeSplit but SPLIT_ADDRESS is unset");
+    doorsOn.delete("distributeSplit");
+  }
 
   return {
     rpcUrls,
@@ -243,6 +308,7 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
       host: env.MARKET_VIEW_HOST || "0.0.0.0",
       token: env.MARKET_VIEW_TOKEN || undefined,
     },
+    split,
   };
 }
 
@@ -277,5 +343,14 @@ export function describe(c: Config) {
     opensea: c.opensea.file ? "file" : c.opensea.key ? "api" : "off",
     alerts: Boolean(c.alertWebhook),
     marketView: c.marketView.port ? { host: c.marketView.host, port: c.marketView.port, token: Boolean(c.marketView.token) } : "off",
+    split: c.split
+      ? {
+          address: c.split.address,
+          recipients: c.split.recipients.length,
+          incentive: c.split.distributionIncentive,
+          minEth: Number(c.split.minEth) / 1e18,
+          minBalance: c.split.minBalance === undefined ? "off" : Number(c.split.minBalance) / 1e18,
+        }
+      : "off",
   };
 }
