@@ -107,7 +107,7 @@ export class Keeper {
   }
 
   async tick(): Promise<TickResult> {
-    const read = await readState(this.client, this.cfg.record.core, this.fixed);
+    const read = await readState(this.client, this.cfg.record.core, this.fixed, this.cfg.split);
     const { snap } = read;
     const state = { ...read.state, lastBookAt: this.lastBookAt };
     const pending = await this.exec.reconcile();
@@ -163,6 +163,8 @@ export class Keeper {
       // phase 2 reads, logged only: the treasury's conversion gate and the V2 statement redemption delay
       conversionReady: state.conversionReady,
       statementRedeemDelaySeconds: state.statementRedeemDelaySeconds,
+      // the artist and operator split's holdings, read only while the distributeSplit door is configured
+      ...(this.cfg.split ? { splitEth: state.splitEth, splitBalance: state.splitBalance } : {}),
       candidates: listings.length,
       decided: d.calls.map((c) => c.key),
       sent: outcomes.filter((o) => o.outcome.kind === "sent").map((o) => o.key),
@@ -180,7 +182,11 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
   const ledger = new Ledger(cfg.stateDir, cfg.dailyBudget);
   const pending = new PendingStore(cfg.stateDir);
   const breaker = new Breaker(cfg.breakerThreshold, cfg.breakerPauseSec);
-  const policy: Policy = { doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec };
+  const policy: Policy = {
+    doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec,
+    // the keeper names itself as the split's distributor, so a distribution incentive pays its own wallet
+    split: cfg.split ? { ...cfg.split, distributor: signer.address } : undefined,
+  };
   const sources = new Sources(client, cfg, Date.now, pending);
   const keeper = new Keeper(client, cfg, fixed, sources, new Executor(client, cfg, policy, signer, ledger, breaker, pending), policy);
   return { cfg, client, keeper, sources };

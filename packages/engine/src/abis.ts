@@ -365,6 +365,23 @@ export const escrowAbi = parseAbi(["function balances(address feeOwner, address 
 export const factoryAbi = parseAbi([
   "function deploymentInfo(address token) view returns ((address token, address hook, address locker, address mevModule, address escrow, bytes32 poolId, bytes32 configHash, uint16 version, uint40 launchedAt, bool restricted, address[] extensions))",
 ]);
+// The Splits v2 push split (0xSplits/splits-contracts-monorepo, src/splitters/push/PushSplit.sol and
+// src/libraries/SplitV2.sol): the keeper's distributeSplit door calls `distribute` with the split's stored
+// configuration, the token (the zero address for ETH) and itself as the distributor, which earns
+// `distributionIncentive / 1e6` of the amount. The split keeps only the hash of its configuration, so the keeper's
+// SPLIT_RECIPIENTS, SPLIT_ALLOCATIONS, SPLIT_TOTAL_ALLOCATION and SPLIT_DISTRIBUTION_INCENTIVE must match it exactly or
+// the call reverts InvalidSplit. Caveat: check the deployed split's version against this ABI before enabling the door.
+// A Splits v1 SplitMain split (`distributeETH(address, address[], uint32[], uint32, address)` on the shared SplitMain)
+// and a v2 pull split have different interfaces and must not be configured here.
+export const splitV2Abi = parseAbi([
+  "struct Split { address[] recipients; uint256[] allocations; uint256 totalAllocation; uint16 distributionIncentive; }",
+  "function distribute(Split split, address token, address distributor)",
+  "function splitHash() view returns (bytes32)",
+  "function paused() view returns (bool)",
+  "event SplitDistributed(address indexed token, address indexed distributor, uint256 amount)",
+  "error InvalidSplit()",
+  "error Paused()",
+]);
 // the traitsOf mask bit mapping (bit 0 C, 1 M, 2 Y, 3 K) was checked against the local fork: the decoded masks match
 // the Credits tokenURI "Colors" trait for ids 1 to 8.
 export const scoreAbi = parseAbi([

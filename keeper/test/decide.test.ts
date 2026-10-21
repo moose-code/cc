@@ -73,6 +73,7 @@ function state(over: Partial<State> = {}): State {
     referenceRateBpsPerHour: 100n,
     referenceStepBps: 100n,
     spot: parseEther("0.49"),
+    balanceToken: zeroAddress,
     ...over,
   };
 }

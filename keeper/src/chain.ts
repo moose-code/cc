@@ -3,8 +3,8 @@
 
 import { createPublicClient, fallback, http, zeroAddress, type Address, type PublicClient } from "viem";
 import { readSnapshot, mc, type Snapshot } from "@cc/engine/snapshot";
-import { controllerAbi, coreAbi, escrowAbi, factoryAbi, treasuryAbi } from "@cc/engine/abis";
-import type { Config } from "./config.ts";
+import { controllerAbi, coreAbi, erc20Abi, escrowAbi, factoryAbi, treasuryAbi } from "@cc/engine/abis";
+import type { Config, SplitConfig } from "./config.ts";
 import type { State } from "./decide.ts";
 import { log } from "./log.ts";
 
@@ -77,7 +77,34 @@ export async function readConversionReady(
   return res.status === "success" ? (res.result as boolean) : undefined;
 }
 
-export async function readState(client: PublicClient, core: Address, fixed: Fixed): Promise<Read> {
+// the artist and operator split's holdings at the block, for the distributeSplit door: its ETH balance, and its balance
+// of the Core's balance token when the BALANCE leg is on (minBalance set) and a token is bound. read tolerant: a failed
+// read leaves the value undefined, which the decision skips with a reason, so a node fault never stalls the other
+// doors. exported for the test of the fallback
+export async function readSplitBalances(
+  client: Pick<PublicClient, "getBalance" | "multicall">,
+  split: Pick<SplitConfig, "address" | "minBalance">,
+  balanceToken: Address,
+  blockNumber?: bigint,
+): Promise<{ eth?: bigint; balance?: bigint }> {
+  const ethRead = client.getBalance({ address: split.address, blockNumber }).catch(() => undefined);
+  const balanceRead =
+    split.minBalance !== undefined && balanceToken !== zeroAddress
+      ? client
+          .multicall({
+            ...mc,
+            blockNumber,
+            allowFailure: true,
+            contracts: [{ address: balanceToken, abi: erc20Abi, functionName: "balanceOf", args: [split.address] }] as const,
+          })
+          .then(([r]) => (r.status === "success" ? (r.result as bigint) : undefined))
+          .catch(() => undefined)
+      : Promise.resolve(undefined);
+  const [eth, balance] = await Promise.all([ethRead, balanceRead]);
+  return { eth, balance };
+}
+
+export async function readState(client: PublicClient, core: Address, fixed: Fixed, split?: SplitConfig): Promise<Read> {
   const snap = await readSnapshot(client, core);
   if (!snap.pinned || snap.blockNumber === undefined) throw new Error("the node refused a pinned read");
   const blockNumber = snap.blockNumber;
@@ -112,7 +139,10 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     : [];
   // the phase 2 treasury's conversionReady(), read tolerant: a module without the view (StatementBalanceModule) leaves
   // it undefined, which the decision treats as ready
-  const conversionReady = await readConversionReady(client, snap.balanceModule, blockNumber);
+  const [conversionReady, splitBalances] = await Promise.all([
+    readConversionReady(client, snap.balanceModule, blockNumber),
+    split ? readSplitBalances(client, split, snap.balanceToken, blockNumber) : Promise.resolve(undefined),
+  ]);
   const st = snap.settings;
   const state: State = {
     core,
@@ -161,6 +191,9 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     referenceRateBpsPerHour: BigInt(snap.value.quote?.referenceRateBpsPerHour ?? 0),
     referenceStepBps: BigInt(snap.value.quote?.referenceStepBps ?? 0),
     spot: snap.value.spot ?? 0n,
+    balanceToken: snap.balanceToken,
+    splitEth: splitBalances?.eth,
+    splitBalance: splitBalances?.balance,
   };
   return { state, snap };
 }
