@@ -304,7 +304,7 @@ contract Phase2TreasuryTest is Test {
         assertFalse(t.workingPaymentsEnabled());
         assertFalse(t.ccRedemptionEnabled());
         assertEq(t.claimReserve(), 0);
-        assertEq(t.conversionToClaimBps(), 300);
+        assertEq(t.conversionToClaimBps(), 1_000);
         assertEq(t.redemptionFeeBps(), 0);
         assertEq(t.redemptionPolicy(), address(policy));
         assertEq(t.configEpoch(), 1, "the policy set advanced the epoch once");
@@ -393,7 +393,7 @@ contract Phase2TreasuryTest is Test {
 
     // ------------------------------------------------------------------ conversion
 
-    // promise: SPEC phase 2 a conversion measures its receipt, keeps every token here and earmarks 300 bps as claim backing
+    // promise: SPEC phase 2 a conversion measures its receipt, keeps every token here and earmarks 1,000 bps as claim backing
     function test_redeemEarmarksMeasuredReceipt() public {
         statements.set(7, address(t), 2_000_000);
         token.setGates(true, 0, 0);
@@ -402,12 +402,12 @@ contract Phase2TreasuryTest is Test {
         assertTrue(t.conversionReady(), "conversion is ready before transfers open");
         assertFalse(t.transfersReady());
         vm.expectEmit(address(t));
-        emit ITreasury.StatementConverted(7, 2e20, 6e18, 300, 6e18);
+        emit ITreasury.StatementConverted(7, 2e20, 2e19, 1_000, 2e19);
         uint256 out = t.redeem(7);
         assertEq(out, 2e20);
         assertEq(t.custody(), 2e20, "every token stays in custody");
-        assertEq(t.claimReserve(), 6e18);
-        assertEq(t.working(), 194e18);
+        assertEq(t.claimReserve(), 2e19);
+        assertEq(t.working(), 180e18);
         assertEq(statements.ownerOf(7), address(token), "the token took the statement");
         assertEq(t.available(), 0, "no working payment before transfers open");
     }
@@ -982,7 +982,7 @@ contract Phase2TreasuryRetirementTest is Phase2TreasuryTest {
         statements.set(7, address(t), 2_000_000);
         t.redeem(7);
         (uint256 q1, uint256 c1,,,) = t.quoteRedemption(x);
-        assertEq(c1, 40 ether + 6e18);
+        assertEq(c1, 40 ether + 2e19);
         assertGt(q1, q0, "a conversion's earmark raises the quote");
         vm.startPrank(address(0xD00D));
         coin.approve(address(0xD00D), SUPPLY / 2);

@@ -86,7 +86,7 @@ contract Phase2TreasuryCoreTest is Fixture {
         );
     }
 
-    // promise: SPEC phase 2 the Core's physical receipt check passes with the 300 bps claim earmark kept inside the treasury, before transfers open
+    // promise: SPEC phase 2 the Core's physical receipt check passes with the 1,000 bps claim earmark kept inside the treasury, before transfers open
     function test_coreReceiptCheckPassesWithInternalEarmark() public {
         _select();
         assertEq(t.available(), 0, "nothing available before the switches and the gates");
@@ -105,7 +105,7 @@ contract Phase2TreasuryCoreTest is Fixture {
         vm.prank(keeper);
         core.redeemStatement(sid);
         assertEq(t.custody(), rating * 1e14, "every token stays in the treasury");
-        assertEq(t.claimReserve(), rating * 1e14 * 300 / 10_000);
+        assertEq(t.claimReserve(), rating * 1e14 * 1_000 / 10_000);
         assertEq(t.working(), rating * 1e14 - t.claimReserve());
         assertEq(STATEMENTS.ownerOf(sid), address(token), "the token took the statement");
         assertFalse(_isHeld(sid));

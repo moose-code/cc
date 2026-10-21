@@ -182,7 +182,7 @@ contract Phase2BalanceTreasury is IBalanceModule {
         balanceToken = balanceToken_;
         ccToken = coin;
         predecessor = predecessor_;
-        conversionToClaimBps = 300;
+        conversionToClaimBps = 1_000;
         _setPolicy(policy_);
     }
 
