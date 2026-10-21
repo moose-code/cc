@@ -13,6 +13,8 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 /// @notice Reads the signed local deployment and runs real pool transactions in an in-process fork.
 /// SIGNED_RECORD_REHEARSAL=1 opts in while the isolated Anvil deployment is running. The trader is test-funded;
 /// swaps use the test router against the deployed v4 pool manager and hook.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it drives an isolated signed local
+/// deployment, so it never reads or mutates the live Core.
 contract SignedRecordLifecycleTest is Test {
     uint256 internal constant LISTED_CREDIT = 35377;
     string internal constant RECORD = "deployments/rehearsal.json";

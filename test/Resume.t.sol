@@ -14,7 +14,9 @@ import {LaunchConfig} from "../script/LaunchConfig.sol";
 import {CreditSale} from "../src/interfaces/Interfaces.sol";
 
 /// @notice `script/SystemResumer.sol` on the pinned fork with the live v2 stack. the deployer is the factory owner and
-/// the config owner. both libraries go through the deterministic deployer, so the tests send them there by hand
+/// the config owner. both libraries go through the deterministic deployer, so the tests send them there by hand.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it deploys and resumes a new system on a
+/// pre-launch fork, so it never reads or mutates the live Core.
 contract ResumeTest is Test, SystemResumer, ProdDeployer {
     V2Stack.Stack internal v2;
     IArtCoinsFactoryV2 internal FACTORY;
@@ -23,9 +25,15 @@ contract ResumeTest is Test, SystemResumer, ProdDeployer {
     LaunchConfig internal base;
 
     function setUp() public {
-        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
-        if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
-        else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
+        // a deploy-mechanics test of a fresh system must fork before the live Core and its libraries existed. the
+        // default pins the pre-launch block Rehearsal uses; never the head, which the RPC cache cannot serve for free
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(26208025));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
+        // libraryAddress() and opsLibraryAddress() are the deterministic CREATE2 addresses that on a post-launch fork
+        // hold the live CoreLib and ops library linked into the live Core. etching empty code there would wipe the live
+        // Core's linked code for the rest of the run, so refuse unless the fork is before the deploy block
+        // (deployments/1.json deployBlock), where those addresses are empty and the reset is a safe no-op
+        require(block.number < 26229330, "Resume must fork a pre-launch block: see deployments/1.json deployBlock");
         // the test runner predeploys linked libraries across fork selection; reset their accounts to the mainnet state
         vm.etch(libraryAddress(), "");
         vm.resetNonce(libraryAddress());
