@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {LiveFixture} from "./LiveFixture.sol";
+import {Fixture} from "./Fixture.sol";
 import {IControllerV1} from "../../src/interfaces/IControllerV1.sol";
 import {Settings, Quote, RATE_SCORE, POINT_UNIT} from "../../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -35,7 +36,10 @@ abstract contract LiveValueBase is LiveFixture {
 
     function setUp() public virtual override {
         super.setUp();
-        _enterPhase2();
+        // the merged LiveFixture overrides `_enterPhase2` to the live token treasury; the value mode suites here need a
+        // mintable mock balance token and a pool they can push and drain, so call the Fixture stand in path explicitly
+        // on the live Core (the balance module and pool are the controller's quoted asset, not the treasury payout)
+        Fixture._enterPhase2();
         key = PoolKey({
             currency0: Currency.wrap(address(0)),
             currency1: Currency.wrap(address(xt)),
@@ -146,10 +150,13 @@ abstract contract LiveValueBase is LiveFixture {
         // value mode requires the eth spend cap active (under 10,000, decision 157); 9,999 keeps it effectively open
         s.spendCapBps = 9_999;
         _setSettings(s);
-        // the switch turns on age only eligibility (decision 155). the credit spread stays at the live 1,000
-        vm.startPrank(owner);
-        ctl.setAgeEligibilityOn(true);
-        vm.stopPrank();
+        // age only eligibility (decision 155) is a ControllerV1 setter ControllerV2 dropped; in stage B the live
+        // controller is V2 and carries it already, so the V1 call is skipped there
+        if (!_liveStageB()) {
+            vm.startPrank(owner);
+            ctl.setAgeEligibilityOn(true);
+            vm.stopPrank();
+        }
     }
 
     /// the eth bid the value mode prices for 100 points at the shared rate `bps`: `bps * valuePerPoint(false) * 100 / 10_000`

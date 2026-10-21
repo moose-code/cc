@@ -155,7 +155,10 @@ contract BuildIdentityTest is LiveFixture {
     // promise: the live deployment (the Core, ControllerV1, the two listing adapters, the renderer and both linked libraries at their mainnet addresses) is the via ir artifacts of this tree
     function test_theFixtureDeploysTheViaIrArtifacts() public view {
         _identical(address(core), "Core", CORE_RUNTIME);
-        _identical(address(ctl), "ControllerV1", CONTROLLER_RUNTIME);
+        // in stage B the Core's controller is the live ControllerV2 (decision 250 keeps the V1 view surface); check its
+        // identity there, the ControllerV1 identity otherwise
+        if (_liveStageB()) _identical(address(ctl), "ControllerV2", CONTROLLER_V2_RUNTIME);
+        else _identical(address(ctl), "ControllerV1", CONTROLLER_RUNTIME);
         _identical(seaportAdapter, "SeaportBasicAdapter", SEAPORT_ADAPTER_RUNTIME);
         _identical(strategyAdapter, "CreditStrategyAdapter", STRATEGY_ADAPTER_RUNTIME);
         _identical(renderer, "LogoCoinRenderer", RENDERER_RUNTIME);

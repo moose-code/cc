@@ -175,6 +175,9 @@ contract Phase2ScriptsTest is LiveFixture {
 
     // promise: PLAN section 8 stage A the deploy script creates the three contracts disabled, bound to the Core, with the live credit sale, and its readback passes; decision 255 the fourth creation is the push split with the Core's artist at 5/6, its payee at 1/6 and its owner as controller, not yet the Core's artist
     function test_deployCreatesTheDisabledStackAndReadbackPasses() public {
+        // the subject is the pre stage B baseline (nothing selected on the Core, controller is V1); stage B has already
+        // selected the module and the V2 controller, so this promise does not apply there
+        if (_liveStageB()) return;
         Phase2Deploy.Inputs memory i = _inputs();
         Phase2Deploy.Result memory r = deployProbe.deploy(i);
         SplitConfig memory cfg = deployProbe.splitConfig(core.artist(), core.payee());
@@ -298,6 +301,9 @@ contract Phase2ScriptsTest is LiveFixture {
 
     // promise: decision 259 the settings preview prints the working gain per 100 BALANCE funded points and refuses a non positive margin unless ALLOW_NONPOSITIVE_MARGIN=1, and the readback's margin row fails only while working payments are on at a non positive margin unless ACCEPT_NONPOSITIVE_MARGIN=1
     function test_marginPreviewAndReadbackRow() public {
+        // the subject is the pre stage B losing payout (90 percent): stage B has already applied the 80 percent payout
+        // patch, so the losing margin premise no longer holds
+        if (_liveStageB()) return;
         // the fixture's launch settings: 90 percent payout and the launch royalty, a loss with the 10 percent earmark
         Settings memory launch = core.settings();
         uint256 payout = 10_000 - 1_000;
@@ -333,6 +339,9 @@ contract Phase2ScriptsTest is LiveFixture {
 
     // promise: PLAN section 8 the readback refuses a treasury bound to another Core and altered code, and names the hazard state
     function test_readbackRefusesForeignCoreAlteredCodeAndHazard() public {
+        // the hazard and payout rows are read against the pre stage B baseline (balance bid off, no pool key on the live
+        // controller); stage B has the bid on with a pool key, so the readback's payout row legitimately fails here
+        if (_liveStageB()) return;
         Phase2Deploy.Result memory r = deployProbe.deploy(_inputs());
         vm.mockCall(
             r.treasury, abi.encodeCall(IPhase2BalanceTreasury.core, ()), abi.encode(makeAddr("phase2.otherCore"))
@@ -358,6 +367,9 @@ contract Phase2ScriptsTest is LiveFixture {
 
     // promise: decision 262 without a split the settings script changes exactly balanceDiscountBps, keeps the three buy and burn shares and creditCostToPotBps at their live values, and refuses the stage C switches
     function test_settingsPatchChangesOnlyThePayoutAndKeepsTheBurns() public {
+        // the subject is the stage B settings patch moving the payout by one field; stage B has already applied it, so
+        // the preview changes nothing there
+        if (_liveStageB()) return;
         // the fixture launches with feeToRedeemBurnBps 0; mainnet carries 1,000, so set it first to see it kept
         Settings memory live = core.settings();
         live.feeToRedeemBurnBps = 1_000;
