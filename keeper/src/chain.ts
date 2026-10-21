@@ -3,7 +3,7 @@
 
 import { createPublicClient, fallback, http, zeroAddress, type Address, type PublicClient } from "viem";
 import { readSnapshot, mc, type Snapshot } from "@cc/engine/snapshot";
-import { controllerAbi, coreAbi, escrowAbi, factoryAbi } from "@cc/engine/abis";
+import { controllerAbi, coreAbi, escrowAbi, factoryAbi, treasuryAbi } from "@cc/engine/abis";
 import type { Config } from "./config.ts";
 import type { State } from "./decide.ts";
 import { log } from "./log.ts";
@@ -60,6 +60,23 @@ export interface Read {
   snap: Snapshot;
 }
 
+// the module's conversionReady() at the block: true or false from a phase 2 treasury, undefined when no module is
+// bound or the module does not answer the view (an older module). exported for the test of the fallback
+export async function readConversionReady(
+  client: Pick<PublicClient, "multicall">,
+  balanceModule: Address,
+  blockNumber?: bigint,
+): Promise<boolean | undefined> {
+  if (balanceModule === zeroAddress) return undefined;
+  const [res] = await client.multicall({
+    ...mc,
+    blockNumber,
+    allowFailure: true,
+    contracts: [{ address: balanceModule, abi: treasuryAbi, functionName: "conversionReady" }] as const,
+  });
+  return res.status === "success" ? (res.result as boolean) : undefined;
+}
+
 export async function readState(client: PublicClient, core: Address, fixed: Fixed): Promise<Read> {
   const snap = await readSnapshot(client, core);
   if (!snap.pinned || snap.blockNumber === undefined) throw new Error("the node refused a pinned read");
@@ -93,6 +110,9 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
         contracts: held.map((sid) => ({ address: snap.controller, abi: controllerAbi, functionName: "atFloor", args: [sid] }) as const),
       })
     : [];
+  // the phase 2 treasury's conversionReady(), read tolerant: a module without the view (StatementBalanceModule) leaves
+  // it undefined, which the decision treats as ready
+  const conversionReady = await readConversionReady(client, snap.balanceModule, blockNumber);
   const st = snap.settings;
   const state: State = {
     core,
@@ -128,6 +148,8 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     escrowBalance,
     pageReady: snap.page.ready,
     balanceModule: snap.balanceModule,
+    conversionReady,
+    statementRedeemDelaySeconds: snap.statementRedeemDelaySeconds,
     atFloor: held.filter((_, i) => floors[i]?.status === "success" && floors[i].result === true),
     controller: snap.controller,
     valueModeOn: snap.value.on,

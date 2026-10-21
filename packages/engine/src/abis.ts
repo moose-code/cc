@@ -1,6 +1,6 @@
-// Hand-written subset of src/interfaces/ICore.sol, IControllerV1.sol and
-// ISeaportBasicAdapter.sol: the views and actions web/ and keeper/ call, the
-// events the feed decodes and the custom errors a simulation decodes.
+// Hand-written subset of src/interfaces/ICore.sol, IControllerV1.sol, IControllerV2.sol,
+// IPhase2BalanceTreasury.sol and ISeaportBasicAdapter.sol: the views and actions web/ and keeper/ call,
+// the events the feed decodes and the custom errors a simulation decodes.
 
 import { parseAbi } from "viem";
 
@@ -162,7 +162,108 @@ export const controllerAbi = parseAbi([
   "function buyCredit(uint256 id) payable",
   "function buyCredits(uint256[] ids) payable",
   "function refreshReference()",
+  // ControllerV2 (src/interfaces/IControllerV2.sol): the statement ask is a persistent multiple of the reference and a
+  // statement is redeemable once its age reaches the delay. V2 has no startBps() and no Sale or anchor setters;
+  // markupBps, decayHours, startCapBps, anchorBps and ageEligibilityOn remain as derived read only values. Reads of
+  // the views below fail on a V1 controller, and startBps fails on V2, so every caller reads them with allowFailure
+  "function statementSalesEnabled() view returns (bool)",
+  "function statementSaleMultiplierBps() view returns (uint32)",
+  "function statementRedeemDelaySeconds() view returns (uint32)",
   "error NoQuote()",
+  "error StatementSalesOff()",
+]);
+
+// The phase 2 balance module (src/interfaces/IPhase2BalanceTreasury.sol): the views the web claim panel and the keeper
+// read, the two public actions, the events the indexer projects and the custom errors a simulation decodes.
+export const treasuryAbi = parseAbi([
+  // views
+  "function quoteRedemption(uint256 ccIn) view returns (uint256 balanceOut, uint256 reserve, uint256 supply, uint64 epoch, bool executable)",
+  "function claimReserve() view returns (uint256)",
+  "function totalOwed() view returns (uint256)",
+  "function owed(address a) view returns (uint256)",
+  "function custody() view returns (uint256)",
+  "function working() view returns (uint256)",
+  "function freeWorking() view returns (uint256)",
+  "function available() view returns (uint256)",
+  "function solvent() view returns (bool)",
+  "function conversionReady() view returns (bool)",
+  "function transfersReady() view returns (bool)",
+  "function selected() view returns (bool)",
+  // the gate of CC burns: the module is selected and not migrated, whatever the Core's retirement. added after the
+  // first interface generation, so it is read tolerant with selected() as the fallback
+  "function selectedForClaims() view returns (bool)",
+  "function configEpoch() view returns (uint64)",
+  "function redemptionPolicy() view returns (address)",
+  "function redemptionFeeBps() view returns (uint16)",
+  "function conversionToClaimBps() view returns (uint16)",
+  "function minimumWorkingBalance() view returns (uint256)",
+  "function ccRedemptionEnabled() view returns (bool)",
+  "function workingPaymentsEnabled() view returns (bool)",
+  "function conversionEnabled() view returns (bool)",
+  "function migrated() view returns (bool)",
+  "function balanceToken() view returns (address)",
+  "function ccToken() view returns (address)",
+  "function core() view returns (address)",
+  "function predecessor() view returns (address)",
+  "function unitPerPoint() view returns (uint256)",
+  "function owner() view returns (address)",
+  // actions open to the public
+  "function redeemCC(uint256 ccIn, address recipient, uint256 minBalanceOut, uint256 deadline, uint64 expectedConfigEpoch) returns (uint256 balanceOut)",
+  "function claim(address to) returns (uint256 amount)",
+  // events (src/adapters/Phase2BalanceTreasury.sol)
+  "event StatementConverted(uint256 indexed statementId, uint256 received, uint256 allocated, uint16 contributionBps, uint256 claimReserve)",
+  "event PaymentAccrued(address indexed to, uint256 amount)",
+  "event OwedClaimed(address indexed to, uint256 amount)",
+  "event CCRedeemed(address indexed burner, address indexed recipient, uint256 ccIn, uint256 balanceOut, uint256 claimReserve, uint256 ccSupply, uint64 configEpoch)",
+  "event SwitchesSet(bool conversionEnabled, bool workingPaymentsEnabled, bool ccRedemptionEnabled)",
+  "event ConversionToClaimBpsSet(uint16 bps)",
+  "event RedemptionFeeSet(uint16 bps, uint64 configEpoch)",
+  "event MinimumWorkingBalanceSet(uint256 amount)",
+  "event RedemptionPolicySet(address indexed policy, uint64 configEpoch)",
+  "event ClaimsFunded(address indexed from, uint256 amount, uint256 claimReserve)",
+  "event ClaimsAllocated(uint256 amount, uint256 claimReserve)",
+  "event ClaimsReturned(uint256 amount, uint256 claimReserve, uint64 configEpoch)",
+  "event WorkingWithdrawn(address indexed to, uint256 amount)",
+  "event TokenRescued(address indexed token, address indexed to, uint256 amount)",
+  "event TreasuryMigrated(address indexed successor, uint256 moved, uint256 claimsImported, uint64 configEpoch)",
+  "event MigrationReceived(address indexed predecessor, uint256 claimsImported, uint256 claimReserve, uint64 configEpoch)",
+  // errors
+  "error BadPolicy()",
+  "error BadSetting(bytes32 field)",
+  "error BurnMismatch()",
+  "error ConversionOff()",
+  "error Expired()",
+  "error Insolvent()",
+  "error InsufficientAvailable()",
+  "error InsufficientClaims()",
+  "error InsufficientWorking()",
+  "error InvalidAmount()",
+  "error InvalidConfiguration()",
+  "error InvalidRecipient()",
+  "error InvalidSuccessor()",
+  "error Migrated()",
+  "error NotHeld()",
+  "error OnlyCore()",
+  "error OnlyOwner()",
+  "error OnlyPredecessor()",
+  "error ProtectedAsset()",
+  "error RedeemedBelowRating()",
+  "error RedemptionEnabled()",
+  "error RedemptionOff()",
+  "error Reentrant()",
+  "error ShortPayment()",
+  "error Slippage()",
+  "error StaleEpoch()",
+  "error SwitchesOn()",
+  "error ZeroAmount()",
+  "error ZeroSupply()",
+]);
+
+// The first redemption policy (src/adapters/ProRataRedemptionPolicy.sol): its version string and its pure quote.
+export const redemptionPolicyAbi = parseAbi([
+  "function VERSION() view returns (string)",
+  "function isRedemptionPolicy() view returns (bool)",
+  "function quote(uint256 ccIn, uint256 claimReserve, uint256 ccSupply, uint256 feeBps) view returns (uint256 out)",
 ]);
 
 // Credits: the holdings read, the owner read and the Core approval.
@@ -241,6 +342,10 @@ export const engineEventsAbi = parseAbi([
   // ControllerV1
   "event Bought(uint256 indexed sid, address indexed buyer, uint256 price)",
   "event AnchorMoved(uint256 indexed sid, uint256 saleBps, uint32 anchorBps)",
+  // ControllerV2 (the Bought event is shared)
+  "event StatementSalesSet(bool enabled)",
+  "event StatementSaleMultiplierSet(uint32 multiplierBps)",
+  "event StatementRedeemDelaySet(uint32 delaySeconds)",
 ]);
 
 // The coin burn is Transfer(core, address(0), amount); the balance token paid to a seller is Transfer(core, seller, amount).

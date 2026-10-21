@@ -160,6 +160,9 @@ export class Keeper {
       pot: state.potWithPending,
       reserve: state.reserve,
       toBuyback: state.ethToBuyback,
+      // phase 2 reads, logged only: the treasury's conversion gate and the V2 statement redemption delay
+      conversionReady: state.conversionReady,
+      statementRedeemDelaySeconds: state.statementRedeemDelaySeconds,
       candidates: listings.length,
       decided: d.calls.map((c) => c.key),
       sent: outcomes.filter((o) => o.outcome.kind === "sent").map((o) => o.key),

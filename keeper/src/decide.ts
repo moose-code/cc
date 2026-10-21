@@ -71,6 +71,14 @@ export interface State {
   escrowBalance: bigint;
   pageReady: boolean;
   balanceModule: Address;
+  // the phase 2 treasury's conversionReady() (IPhase2BalanceTreasury.sol): the conversion switch, the selection,
+  // the finalized upstream retirement and the registered renderer, all of which Core.redeemStatement needs before the
+  // module's redeem can succeed. undefined when the module has no such view (StatementBalanceModule), which reads
+  // as ready so that path is unchanged
+  conversionReady?: boolean;
+  // ControllerV2.statementRedeemDelaySeconds(): the age a statement needs before atFloor(sid) is true. logged only;
+  // atFloor stays the decision. undefined on a controller without the view (V1)
+  statementRedeemDelaySeconds?: number;
   // the held statements with controller.atFloor(sid) true
   atFloor: bigint[];
   // the value switch: the controller, the Core's valueModeOn, whether the protected value quote is unusable now,
@@ -367,11 +375,14 @@ export function decide(
     }
   }
 
-  // 6. redeemStatement: reverts NoBalanceModule until a module is set, so it is skipped (one log per tick, no simulation) until then
+  // 6. redeemStatement: reverts NoBalanceModule until a module is set, so it is skipped (one log per tick, no simulation)
+  // until then. A phase 2 treasury whose conversionReady() is false reverts ConversionOff (or the upstream token refuses
+  // the withdrawal), so the door is skipped until the treasury reports ready; a module without the view is treated as ready
   if (on("redeemStatement") && s.atFloor.length > 0) {
     const pol = p.doors.redeemStatement;
     if (/^0x0{40}$/i.test(s.balanceModule)) skips.push({ door: "redeemStatement", reason: "no balance module bound" });
     else if (!s.settings.redeemOn) skips.push({ door: "redeemStatement", reason: "RedeemOff" });
+    else if (s.conversionReady === false) skips.push({ door: "redeemStatement", reason: "conversion not ready" });
     else if (ceiling("redeemStatement")) {
       for (const sid of s.atFloor) {
         const payment = callerPayment(s, GAS_GUESS.redeemStatement, REDEEM_GAS, worstBaseFee(gas, pol));

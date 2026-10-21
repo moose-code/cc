@@ -12,12 +12,13 @@ import { atBlock, mc as engineMc, MULTICALL3, pendingIncome, readSnapshot, type 
 import { CREDIT_SCORE } from "@cc/engine/addresses";
 import { multicallAbi, scoreAbi, seedAbi } from "@cc/engine/abis";
 import { core, credits, engineDeployed, SCORE_PER_100_POINTS, statements } from "./config";
-import { controllerAbi, coreAbi, creditsAbi, erc20Abi, statementsAbi } from "./abis";
+import { controllerAbi, coreAbi, creditsAbi, erc20Abi, redemptionPolicyAbi, statementsAbi, treasuryAbi } from "./abis";
 import { SCOPE, lsGet, lsSet } from "./cache";
 import { ETH_ANCHOR_SLOT, ethAnchorWords, replayBalanceFills, replayEthFills, replayValueFills } from "./sell";
 import { useCreditRow, useCreditTraitsIx, useHeldCredits, useIxMode, useStatementDetailIx, useWalletCreditsIx } from "./indexer";
 import type { AcquiredHow } from "./indexer-schema";
 import type { BalanceTokenInfo } from "./format";
+import type { ClaimQuoteRead } from "./exchange";
 
 type Client = NonNullable<ReturnType<typeof usePublicClient>>;
 
@@ -693,4 +694,139 @@ export function countdown(s: number): string {
 // Short message from a viem error: shortMessage, else the first line.
 export function errMsg(e: any): string {
   return e?.shortMessage || String(e?.message || "transaction failed").split("\n")[0];
+}
+
+// ---- phase 2 treasury (the claim panel of /exchange) -------------------------------------------------------------
+
+export interface TreasuryInfo {
+  treasury: Address;
+  balanceToken: Address;
+  balanceSymbol?: string;
+  balanceDecimals?: number;
+  coin: Address;
+  coinSymbol?: string;
+  coinDecimals?: number;
+  ccSupply: bigint;
+  walletCc?: bigint;
+  policy: Address;
+  policyVersion?: string;
+  claimReserve: bigint;
+  freeWorking: bigint;
+  conversionToClaimBps: number;
+  redemptionFeeBps: number;
+  configEpoch: bigint;
+  ccRedemptionEnabled: boolean;
+  // selectedForClaims(): the Core's module and not migrated, the gate of CC burns
+  selected: boolean;
+  transfersReady: boolean;
+  solvent: boolean;
+  migrated: boolean;
+}
+
+const TREASURY_POLL_MS = 15000;
+
+// The Core's balance module read as a phase 2 treasury (IPhase2BalanceTreasury.sol), every 15 s. `data` is null when
+// the module does not answer quoteRedemption and claimReserve (no module, or the StatementBalanceModule), so the panel
+// can say so instead of showing figures. Every other read is tolerant: a missing symbol or policy version leaves its
+// field undefined. Live reads only; the indexer's treasury tables are history (docs/INDEXER.md section 9.6)
+export function useTreasury(account?: Address) {
+  const client = usePublicClient();
+  const { data: snap } = useSnapshot();
+  const module = snap?.balanceModule && snap.balanceModule !== zeroAddress ? snap.balanceModule : undefined;
+  const q = useQuery<TreasuryInfo | null>({
+    queryKey: ["treasury", module, account],
+    enabled: engineDeployed && Boolean(client && module),
+    refetchInterval: TREASURY_POLL_MS,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const t = { address: module!, abi: treasuryAbi } as const;
+      const r = await client!.multicall({
+        ...mc,
+        allowFailure: true,
+        contracts: [
+          { ...t, functionName: "quoteRedemption", args: [1n] },
+          { ...t, functionName: "claimReserve" },
+          { ...t, functionName: "freeWorking" },
+          { ...t, functionName: "conversionToClaimBps" },
+          { ...t, functionName: "redemptionFeeBps" },
+          { ...t, functionName: "configEpoch" },
+          { ...t, functionName: "redemptionPolicy" },
+          { ...t, functionName: "ccRedemptionEnabled" },
+          { ...t, functionName: "selected" },
+          { ...t, functionName: "transfersReady" },
+          { ...t, functionName: "solvent" },
+          { ...t, functionName: "migrated" },
+          { ...t, functionName: "balanceToken" },
+          { ...t, functionName: "ccToken" },
+          { ...t, functionName: "selectedForClaims" },
+        ] as const,
+      });
+      const probe = r[0];
+      if (probe.status !== "success" || r[1].status !== "success") return null;
+      const v = <T,>(i: number, d: T): T => val(r[i], d);
+      const balanceToken = v<Address>(12, zeroAddress);
+      const coin = v<Address>(13, snap?.coin ?? zeroAddress);
+      const policy = v<Address>(6, zeroAddress);
+      const e = { abi: erc20Abi } as const;
+      const x = await client!.multicall({
+        ...mc,
+        allowFailure: true,
+        contracts: [
+          { ...e, address: coin, functionName: "symbol" },
+          { ...e, address: coin, functionName: "decimals" },
+          { ...e, address: coin, functionName: "totalSupply" },
+          { ...e, address: coin, functionName: "balanceOf", args: [account ?? zeroAddress] },
+          { ...e, address: balanceToken, functionName: "symbol" },
+          { ...e, address: balanceToken, functionName: "decimals" },
+          { address: policy, abi: redemptionPolicyAbi, functionName: "VERSION" },
+        ] as const,
+      });
+      const opt = <T,>(i: number): T | undefined => (x[i].status === "success" ? (x[i].result as T) : undefined);
+      return {
+        treasury: module!,
+        balanceToken,
+        balanceSymbol: opt<string>(4),
+        balanceDecimals: opt<number>(5),
+        coin,
+        coinSymbol: opt<string>(0),
+        coinDecimals: opt<number>(1),
+        // the supply quoteRedemption divides by; the probe's answer and totalSupply agree at one block
+        ccSupply: opt<bigint>(2) ?? (probe.result as readonly [bigint, bigint, bigint, bigint, boolean])[2],
+        walletCc: account ? opt<bigint>(3) : undefined,
+        policy,
+        policyVersion: opt<string>(6),
+        claimReserve: r[1].result as bigint,
+        freeWorking: v<bigint>(2, 0n),
+        conversionToClaimBps: Number(v<number>(3, 0)),
+        redemptionFeeBps: Number(v<number>(4, 0)),
+        configEpoch: BigInt(v<bigint>(5, 0n)),
+        ccRedemptionEnabled: v<boolean>(7, false),
+        // the burn gate is selectedForClaims (selected and not migrated, whatever the Core's retirement); a treasury
+        // built before that view answers selected()
+        selected: v<boolean>(14, v<boolean>(8, false)),
+        transfersReady: v<boolean>(9, false),
+        solvent: v<boolean>(10, false),
+        migrated: v<boolean>(11, false),
+      };
+    },
+  });
+  // no module: known absent; the hook reports ready with null so the page can say the balance side is not set
+  return { data: module ? q.data : engineDeployed && snap ? null : undefined, error: q.error, ready: module ? q.data !== undefined : Boolean(snap) };
+}
+
+// quoteRedemption(ccIn) of the treasury for the entered amount, every 15 s; the previous answer stays while the
+// next loads for the same amount only. undefined while ccIn is 0
+export function useClaimQuote(treasury: Address | undefined, ccIn: bigint) {
+  const client = usePublicClient();
+  const key = ccIn.toString();
+  return useQuery<ClaimQuoteRead | undefined>({
+    queryKey: ["claim-quote", treasury, key],
+    enabled: engineDeployed && Boolean(client && treasury) && ccIn > 0n,
+    refetchInterval: TREASURY_POLL_MS,
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === key ? prev : undefined),
+    queryFn: async () => {
+      const [balanceOut, reserve, supply, epoch, executable] = await client!.readContract({ address: treasury!, abi: treasuryAbi, functionName: "quoteRedemption", args: [ccIn] });
+      return { ccIn, balanceOut, reserve, supply, epoch: BigInt(epoch), executable };
+    },
+  });
 }

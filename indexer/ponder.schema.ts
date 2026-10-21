@@ -30,7 +30,7 @@ export const log = onchainTable(
   (t) => ({
     id: t.text().primaryKey(), // txHash:logIndex
     address: t.hex().notNull(),
-    contract: t.text().notNull(), // core, controller, coin, credits, statements, strategy
+    contract: t.text().notNull(), // core, controller, treasury, coin, credits, statements, strategy
     event: t.text().notNull(),
     args: t.json().notNull(),
     blockNumber: t.bigint().notNull(),
@@ -171,6 +171,105 @@ export const controller = onchainTable("controller", (t) => ({
   referencePrice: t.bigint(),
   referenceSpot: t.bigint(),
   referenceTime: t.bigint(),
+  // ControllerV2 statement sale terms (StatementSalesSet, StatementSaleMultiplierSet, StatementRedeemDelaySet), read
+  // at ControllerSet and following the setter events; null on a V1 controller
+  statementSalesEnabled: t.boolean(),
+  statementSaleMultiplierBps: t.bigint(),
+  statementRedeemDelaySeconds: t.bigint(),
+}));
+
+// ---- phase 2 treasury (src/adapters/Phase2BalanceTreasury.sol) ---------------------------------------------------
+
+export const treasuryEventKind = onchainEnum("treasury_event_kind", [
+  "statement_converted", // StatementConverted: amount received, detail allocated and contributionBps
+  "cc_redeemed", // CCRedeemed, a public burn: ccIn, balanceOut, ccSupply after the burn, actor the burner
+  "claims_funded", // ClaimsFunded, an owner transfer into the claim reserve: amount, actor the funder
+  "claims_allocated", // ClaimsAllocated, an owner reclassification of working funds as backing: amount
+  "claims_returned", // ClaimsReturned, an owner reduction of backing while redemption is off: amount, configEpoch
+  "working_withdrawn", // WorkingWithdrawn, an owner withdrawal of free working funds: amount, actor the recipient
+  "policy_set", // RedemptionPolicySet: policy, configEpoch
+  "fee_set", // RedemptionFeeSet: bps, configEpoch
+  "switches_set", // SwitchesSet: detail the three switches
+  "contribution_set", // ConversionToClaimBpsSet: bps
+  "minimum_working_set", // MinimumWorkingBalanceSet: amount
+  "payment_accrued", // PaymentAccrued, a short or failed working payment recorded as debt: amount, actor the payee
+  "owed_claimed", // OwedClaimed: amount, actor the payee
+  "migrated_out", // TreasuryMigrated: amount moved, detail claimsImported, actor the successor, configEpoch
+  "migration_received", // MigrationReceived: amount claimsImported, actor the predecessor, configEpoch
+]);
+
+/**
+ * One row per treasury event, the projection of the treasury's `log` rows. Public redemptions (cc_redeemed) and the
+ * owner's reserve changes (claims_funded, claims_allocated, claims_returned, working_withdrawn) are separate kinds.
+ * claimReserve is the reserve after the event where the event carries it. amount is in balance token base units.
+ */
+export const treasuryEvent = onchainTable(
+  "treasury_event",
+  (t) => ({
+    id: t.text().primaryKey(), // txHash:logIndex
+    treasury: t.hex().notNull(),
+    kind: treasuryEventKind("kind").notNull(),
+    ccIn: t.bigint(), // CC burned, 18 decimals
+    balanceOut: t.bigint(), // balance token paid to the burn's recipient
+    claimReserve: t.bigint(),
+    ccSupply: t.bigint(), // CC total supply after the burn
+    configEpoch: t.bigint(),
+    amount: t.bigint(),
+    bps: t.integer(),
+    actor: t.hex(), // burner, funder, recipient, payee, successor or predecessor per kind
+    recipient: t.hex(), // cc_redeemed: where the balance token went
+    policy: t.hex(),
+    statementId: t.bigint(),
+    detail: t.json(), // the remaining event fields, bigints as strings
+    blockNumber: t.bigint().notNull(),
+    blockTimestamp: t.bigint().notNull(),
+    txHash: t.hex().notNull(),
+    logIndex: t.integer().notNull(),
+  }),
+  (table) => ({
+    byTreasury: index().on(table.treasury, table.blockNumber),
+    byKind: index().on(table.kind, table.blockNumber),
+    byActor: index().on(table.actor),
+  }),
+);
+
+/**
+ * One row per treasury named by BalanceModuleSet, written from events only (no latest-state read). A column is null
+ * until an event after the treasury's registration carries it: the constructor's RedemptionPolicySet and any event
+ * before BalanceModuleSet are not indexed, so policy and configEpoch fill at the next policy, fee, claim return or
+ * migration event. The web reads the live values through the treasury (docs/INDEXER.md section 9.6).
+ */
+export const treasuryState = onchainTable("treasury_state", (t) => ({
+  id: t.hex().primaryKey(), // treasury address
+  balanceToken: t.hex().notNull(), // BalanceModuleSet.balanceToken
+  setBlock: t.bigint().notNull(),
+  active: t.boolean().notNull(), // the Core's current module
+  claimReserve: t.bigint(), // the latest event-carried reserve; 0 after TreasuryMigrated
+  totalOwed: t.bigint().notNull().default(0n), // PaymentAccrued less OwedClaimed since registration
+  configEpoch: t.bigint(),
+  policy: t.hex(),
+  conversionToClaimBps: t.integer(),
+  redemptionFeeBps: t.integer(),
+  conversionEnabled: t.boolean(),
+  workingPaymentsEnabled: t.boolean(),
+  ccRedemptionEnabled: t.boolean(),
+  minimumWorkingBalance: t.bigint(),
+  migrated: t.boolean().notNull().default(false),
+  successor: t.hex(),
+  // running totals since registration
+  convertedTotal: t.bigint().notNull().default(0n), // StatementConverted.received
+  contributedTotal: t.bigint().notNull().default(0n), // StatementConverted.allocated
+  conversions: t.bigint().notNull().default(0n),
+  redeemedCcTotal: t.bigint().notNull().default(0n), // CCRedeemed.ccIn
+  paidBalanceTotal: t.bigint().notNull().default(0n), // CCRedeemed.balanceOut
+  redemptions: t.bigint().notNull().default(0n),
+  ownerFundedTotal: t.bigint().notNull().default(0n), // ClaimsFunded.amount
+  ownerAllocatedTotal: t.bigint().notNull().default(0n), // ClaimsAllocated.amount
+  ownerReturnedTotal: t.bigint().notNull().default(0n), // ClaimsReturned.amount
+  ownerWithdrawnTotal: t.bigint().notNull().default(0n), // WorkingWithdrawn.amount
+  accruedTotal: t.bigint().notNull().default(0n), // PaymentAccrued.amount
+  claimedTotal: t.bigint().notNull().default(0n), // OwedClaimed.amount
+  lastEventBlock: t.bigint(),
 }));
 
 /**

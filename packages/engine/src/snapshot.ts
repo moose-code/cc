@@ -156,8 +156,10 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     ] as const,
   });
   // Price curve parameters and the statement supply. A failing read leaves the field undefined and the rest of the
-  // snapshot intact; consumers hide the figure that needs it.
-  const [markupRes, startCapRes, decayRes, anchorRes, startRes, floorRes, creditStartRes, supplyRes] = await client.multicall({
+  // snapshot intact; consumers hide the figure that needs it. ControllerV2 has no startBps() (its markupBps,
+  // decayHours, startCapBps and anchorBps are derived read only values) and ControllerV1 has none of the three
+  // statement sale views, so every read here tolerates a failure and a controller of either version reads whole.
+  const [markupRes, startCapRes, decayRes, anchorRes, startRes, floorRes, creditStartRes, supplyRes, salesOnRes, saleMultRes, redeemDelayRes] = await client.multicall({
     ...mc,
     blockNumber,
     allowFailure: true,
@@ -170,6 +172,9 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { ...k, functionName: "floorMultBps" },
       { ...k, functionName: "creditStartBps" },
       { address: STATEMENTS, abi: statementsAbi, functionName: "supply" },
+      { ...k, functionName: "statementSalesEnabled" },
+      { ...k, functionName: "statementSaleMultiplierBps" },
+      { ...k, functionName: "statementRedeemDelaySeconds" },
     ] as const,
   });
   // the protected price (decision 148): the controller's reference of the balance token against the pool spot, both
@@ -269,6 +274,11 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
     // creditWindow seconds, then rests at the floor.
     creditFloorBps: num(floorRes),
     creditStartBps: num(creditStartRes),
+    // ControllerV2 statement sale terms (IControllerV2.sol): the sale switch, the ask as a multiple of the reference in
+    // bps and the age a statement needs before atFloor(sid) is true. undefined on a controller without them (V1)
+    statementSalesEnabled: ok<boolean>(salesOnRes),
+    statementSaleMultiplierBps: num(saleMultRes),
+    statementRedeemDelaySeconds: num(redeemDelayRes),
     // Id the next compose mints: Statements.supply() + 1 (Core.compose asserts the new id equals supply()).
     nextStatementId: statementSupply === undefined ? undefined : Number(statementSupply) + 1,
   };

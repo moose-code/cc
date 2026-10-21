@@ -2,6 +2,7 @@ import type { Hex } from "viem";
 import { zeroAddress } from "viem";
 
 import { controllerAbi } from "../abis/ControllerV1";
+import { controllerV2Abi } from "../abis/ControllerV2";
 import { coreAbi } from "../abis/Core";
 import { creditScoreAbi, creditsAbi, moduleAbi, multicall3Abi, MULTICALL3, CREDIT_SCORE, statementsAbi } from "../abis/external";
 import { COLLECTIONS, CORE_ADDRESS, CORE_DEPLOY_BLOCK } from "../ponder.config";
@@ -251,10 +252,13 @@ export async function refreshStatementArt(ctx: Ctx, id: bigint) {
 /** Reads a controller's parameters at the event block. */
 export async function readController(ctx: Ctx, address: Hex) {
   const k = { address, abi: controllerAbi } as const;
-  const [markupBps, startCapBps, decayHours, anchorHalfLife, anchorMinCost, saleOn, window, spreadBps, startBps, anchorBps, poolSet, poolKey, ageEligibilityOn] =
+  const v2 = { address, abi: controllerV2Abi } as const;
+  // tolerant reads: ControllerV2 has no anchorHalfLife, anchorMinCost or storedAnchorBps (its anchorBps is a derived
+  // read only value) and ControllerV1 has none of the statement sale views, so a failing read leaves its column null
+  const [markupBps, startCapBps, decayHours, anchorHalfLife, anchorMinCost, saleOn, window, spreadBps, startBps, anchorBps, poolSet, poolKey, ageEligibilityOn, salesOn, saleMult, redeemDelay] =
     await ctx.client.multicall({
       ...mc,
-      allowFailure: false,
+      allowFailure: true,
       contracts: [
         { ...k, functionName: "markupBps" },
         { ...k, functionName: "startCapBps" },
@@ -269,26 +273,46 @@ export async function readController(ctx: Ctx, address: Hex) {
         { ...k, functionName: "balancePoolKeySet" },
         { ...k, functionName: "balancePoolKey" },
         { ...k, functionName: "ageEligibilityOn" },
+        { ...v2, functionName: "statementSalesEnabled" },
+        { ...v2, functionName: "statementSaleMultiplierBps" },
+        { ...v2, functionName: "statementRedeemDelaySeconds" },
       ],
     });
+  const ok = <T,>(r: { status: string; result?: unknown }): T | null => (r.status === "success" ? (r.result as T) : null);
+  const num = (r: { status: string; result?: unknown }) => {
+    const v = ok<bigint | number>(r);
+    return v === null ? null : Number(v);
+  };
+  const big = (r: { status: string; result?: unknown }) => {
+    const v = ok<bigint | number>(r);
+    return v === null ? null : BigInt(v);
+  };
+  const key = ok<readonly [Hex, Hex, number, number, Hex]>(poolKey);
+  // a V2 controller without storedAnchorBps answers anchorBps (the derived value) for the same column
+  const anchor = anchorBps.status === "success"
+    ? big(anchorBps)
+    : big((await ctx.client.multicall({ ...mc, allowFailure: true, contracts: [{ ...k, functionName: "anchorBps" }] }))[0]);
   return {
-    markupBps: Number(markupBps),
-    startCapBps: BigInt(startCapBps),
-    decayHours: Number(decayHours),
-    anchorHalfLife: BigInt(anchorHalfLife),
-    anchorMinCost,
-    saleOn,
-    ageEligibilityOn,
-    window: BigInt(window),
-    spreadBps: Number(spreadBps),
-    startBps: BigInt(startBps),
-    anchorBps: BigInt(anchorBps),
-    balancePoolSet: poolSet,
-    balanceCurrency0: lc(poolKey[0]),
-    balanceCurrency1: lc(poolKey[1]),
-    balanceFee: Number(poolKey[2]),
-    balanceTickSpacing: Number(poolKey[3]),
-    balanceHooks: lc(poolKey[4]),
+    markupBps: num(markupBps),
+    startCapBps: big(startCapBps),
+    decayHours: num(decayHours),
+    anchorHalfLife: big(anchorHalfLife),
+    anchorMinCost: ok<bigint>(anchorMinCost),
+    saleOn: ok<boolean>(saleOn),
+    ageEligibilityOn: ok<boolean>(ageEligibilityOn),
+    window: big(window),
+    spreadBps: num(spreadBps),
+    startBps: big(startBps),
+    anchorBps: anchor,
+    balancePoolSet: ok<boolean>(poolSet) ?? false,
+    balanceCurrency0: key ? lc(key[0]) : null,
+    balanceCurrency1: key ? lc(key[1]) : null,
+    balanceFee: key ? Number(key[2]) : null,
+    balanceTickSpacing: key ? Number(key[3]) : null,
+    balanceHooks: key ? lc(key[4]) : null,
+    statementSalesEnabled: ok<boolean>(salesOn),
+    statementSaleMultiplierBps: big(saleMult),
+    statementRedeemDelaySeconds: big(redeemDelay),
     ...(await readQuote(ctx, address)),
   };
 }

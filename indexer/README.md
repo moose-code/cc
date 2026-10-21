@@ -18,7 +18,7 @@ Endpoints: `/graphql`, `/sql` (`@ponder/client`), `/health/parity` (503 when a r
 
 | command | purpose |
 |---|---|
-| `npm run abis` | regenerate `abis/Core.ts` and `abis/ControllerV1.ts` from forge `out/` (run `forge build` first) |
+| `npm run abis` | regenerate `abis/Core.ts`, `abis/ControllerV1.ts`, `abis/ControllerV2.ts`, `abis/Controller.ts` (the V1 plus V2 union the Controller source decodes) and `abis/Phase2BalanceTreasury.ts` from forge `out/` (run `forge build` first) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | `node --test` on `src/lib` |
 | `DRY_RUN=1 ./deploy.sh <local\|mainnet>` | evaluates every deploy check without deploying |

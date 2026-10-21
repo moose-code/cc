@@ -14,6 +14,8 @@ import {
   statementFormat,
   strategyListing,
   transactionFact,
+  treasuryEvent,
+  treasuryState,
 } from "../ponder.schema";
 import { ensureCredit, ensureCredits, ensureEngine, ensureStatement, readController, refreshStatementArt, settingsColumns, snapshot } from "./chain";
 import { composeModeOf } from "./lib/mode";
@@ -370,7 +372,17 @@ ponder.on("Core:ArtistSet", async ({ event, context }) => {
 ponder.on("Core:BalanceModuleSet", async ({ event, context }) => {
   await coreEvent(context, event, "BalanceModuleSet");
   const { balanceModule, balanceToken, unitPerPoint } = event.args;
-  await setting(context, event, "BalanceModuleSet", { balanceModule: lc(balanceModule), balanceToken: lc(balanceToken) });
+  const addr = lc(balanceModule);
+  const cur = await ensureEngine(context);
+  if (cur.balanceModule && cur.balanceModule !== addr) await context.db.update(treasuryState, { id: cur.balanceModule }).set({ active: false });
+  // the treasury_state row of every module, written from events only; a StatementBalanceModule stays at its defaults
+  if (addr !== zeroAddress) {
+    await context.db
+      .insert(treasuryState)
+      .values({ id: addr, balanceToken: lc(balanceToken), setBlock: event.block.number, active: true })
+      .onConflictDoUpdate({ active: true });
+  }
+  await setting(context, event, "BalanceModuleSet", { balanceModule: addr, balanceToken: lc(balanceToken) });
   await settingValue(context, event, "core", "BalanceModuleSet.unitPerPoint", null, { unitPerPoint });
 });
 
@@ -525,6 +537,159 @@ ponder.on("Controller:ReferenceRefreshed", async ({ event, context }) => {
   const id = lc(event.log.address);
   if (!(await context.db.find(controller, { id }))) throw new Error(`ReferenceRefreshed from controller ${id} before its ControllerSet`);
   await context.db.update(controller, { id }).set({ referencePrice: event.args.referencePrice, referenceSpot: event.args.spot, referenceTime: event.block.timestamp });
+});
+
+// ControllerV2 statement sale terms (src/interfaces/IControllerV2.sol): the sale switch, the persistent ask multiple
+// and the age after which a statement is redeemable (atFloor)
+ponder.on("Controller:StatementSalesSet", async ({ event, context }) => {
+  await record(context, event, "controller", "StatementSalesSet");
+  await controllerSetting(context, event, "StatementSalesSet", { statementSalesEnabled: event.args.enabled });
+});
+
+ponder.on("Controller:StatementSaleMultiplierSet", async ({ event, context }) => {
+  await record(context, event, "controller", "StatementSaleMultiplierSet");
+  await controllerSetting(context, event, "StatementSaleMultiplierSet", { statementSaleMultiplierBps: BigInt(event.args.multiplierBps) });
+});
+
+ponder.on("Controller:StatementRedeemDelaySet", async ({ event, context }) => {
+  await record(context, event, "controller", "StatementRedeemDelaySet");
+  await controllerSetting(context, event, "StatementRedeemDelaySet", { statementRedeemDelaySeconds: BigInt(event.args.delaySeconds) });
+});
+
+// ---- phase 2 treasury (src/adapters/Phase2BalanceTreasury.sol) ---------------------------------------------------
+
+type TreasuryRow = typeof treasuryEvent.$inferInsert;
+type TreasuryStateRow = typeof treasuryState.$inferInsert;
+
+/**
+ * Every treasury event: the log row, the treasury_event row and the treasury_state patch, with the running totals
+ * added. State comes from the event's own fields only; nothing is read from the chain. A treasury that emits before
+ * its BalanceModuleSet (none can, as the factory registers it there) would fail loudly here.
+ */
+async function treasuryEventRow(
+  ctx: Ctx,
+  e: At & { args?: unknown; log: { logIndex: number; address: Hex } },
+  name: string,
+  row: Pick<TreasuryRow, "kind"> & Partial<Omit<TreasuryRow, "id" | "treasury" | "kind" | "blockNumber" | "blockTimestamp" | "txHash" | "logIndex">>,
+  patch: Partial<Omit<TreasuryStateRow, "id" | "balanceToken" | "setBlock" | "active">> = {},
+  totals: Partial<Record<"convertedTotal" | "contributedTotal" | "conversions" | "redeemedCcTotal" | "paidBalanceTotal" | "redemptions" | "ownerFundedTotal" | "ownerAllocatedTotal" | "ownerReturnedTotal" | "ownerWithdrawnTotal" | "accruedTotal" | "claimedTotal" | "totalOwed", bigint>> = {},
+) {
+  await record(ctx, e, "treasury", name);
+  const id = lc(e.log.address);
+  await ctx.db.insert(treasuryEvent).values({ id: idOf(e), treasury: id, ...row, ...posOf(e) }).onConflictDoNothing();
+  const cur = await ctx.db.find(treasuryState, { id });
+  if (!cur) throw new Error(`${name} from treasury ${id} before its BalanceModuleSet`);
+  const added = Object.fromEntries(Object.entries(totals).map(([k, v]) => [k, (cur as unknown as Record<string, bigint>)[k] + v]));
+  await ctx.db.update(treasuryState, { id }).set({ ...patch, ...added, lastEventBlock: e.block.number });
+}
+
+ponder.on("Treasury:StatementConverted", async ({ event, context }) => {
+  const { statementId, received, allocated, contributionBps, claimReserve } = event.args;
+  await treasuryEventRow(
+    context, event, "StatementConverted",
+    { kind: "statement_converted", statementId, amount: received, claimReserve, bps: Number(contributionBps), detail: toJson({ allocated }) },
+    { claimReserve },
+    { convertedTotal: received, contributedTotal: allocated, conversions: 1n },
+  );
+});
+
+ponder.on("Treasury:PaymentAccrued", async ({ event, context }) => {
+  const { to, amount } = event.args;
+  await treasuryEventRow(context, event, "PaymentAccrued", { kind: "payment_accrued", amount, actor: lc(to) }, {}, { accruedTotal: amount, totalOwed: amount });
+});
+
+ponder.on("Treasury:OwedClaimed", async ({ event, context }) => {
+  const { to, amount } = event.args;
+  await treasuryEventRow(context, event, "OwedClaimed", { kind: "owed_claimed", amount, actor: lc(to) }, {}, { claimedTotal: amount, totalOwed: -amount });
+});
+
+// a public redemption: the burner's CC for a share of the claim reserve. the reserve and the supply are after the burn
+ponder.on("Treasury:CCRedeemed", async ({ event, context }) => {
+  const { burner, recipient, ccIn, balanceOut, claimReserve, ccSupply, configEpoch } = event.args;
+  await treasuryEventRow(
+    context, event, "CCRedeemed",
+    { kind: "cc_redeemed", ccIn, balanceOut, claimReserve, ccSupply, configEpoch: BigInt(configEpoch), actor: lc(burner), recipient: lc(recipient) },
+    { claimReserve, configEpoch: BigInt(configEpoch) },
+    { redeemedCcTotal: ccIn, paidBalanceTotal: balanceOut, redemptions: 1n },
+  );
+});
+
+ponder.on("Treasury:SwitchesSet", async ({ event, context }) => {
+  const { conversionEnabled, workingPaymentsEnabled, ccRedemptionEnabled } = event.args;
+  await treasuryEventRow(
+    context, event, "SwitchesSet",
+    { kind: "switches_set", detail: toJson({ conversionEnabled, workingPaymentsEnabled, ccRedemptionEnabled }) },
+    { conversionEnabled, workingPaymentsEnabled, ccRedemptionEnabled },
+  );
+});
+
+ponder.on("Treasury:ConversionToClaimBpsSet", async ({ event, context }) => {
+  const bps = Number(event.args.bps);
+  await treasuryEventRow(context, event, "ConversionToClaimBpsSet", { kind: "contribution_set", bps }, { conversionToClaimBps: bps });
+});
+
+ponder.on("Treasury:RedemptionFeeSet", async ({ event, context }) => {
+  const bps = Number(event.args.bps);
+  const configEpoch = BigInt(event.args.configEpoch);
+  await treasuryEventRow(context, event, "RedemptionFeeSet", { kind: "fee_set", bps, configEpoch }, { redemptionFeeBps: bps, configEpoch });
+});
+
+ponder.on("Treasury:MinimumWorkingBalanceSet", async ({ event, context }) => {
+  const { amount } = event.args;
+  await treasuryEventRow(context, event, "MinimumWorkingBalanceSet", { kind: "minimum_working_set", amount }, { minimumWorkingBalance: amount });
+});
+
+// a policy replacement turns CC redemption off; the treasury emits SwitchesSet in the same transaction
+ponder.on("Treasury:RedemptionPolicySet", async ({ event, context }) => {
+  const policy = lc(event.args.policy);
+  const configEpoch = BigInt(event.args.configEpoch);
+  await treasuryEventRow(context, event, "RedemptionPolicySet", { kind: "policy_set", policy, configEpoch }, { policy, configEpoch });
+});
+
+// the owner's reserve changes, kept apart from public redemptions
+ponder.on("Treasury:ClaimsFunded", async ({ event, context }) => {
+  const { from, amount, claimReserve } = event.args;
+  await treasuryEventRow(context, event, "ClaimsFunded", { kind: "claims_funded", amount, claimReserve, actor: lc(from) }, { claimReserve }, { ownerFundedTotal: amount });
+});
+
+ponder.on("Treasury:ClaimsAllocated", async ({ event, context }) => {
+  const { amount, claimReserve } = event.args;
+  await treasuryEventRow(context, event, "ClaimsAllocated", { kind: "claims_allocated", amount, claimReserve }, { claimReserve }, { ownerAllocatedTotal: amount });
+});
+
+ponder.on("Treasury:ClaimsReturned", async ({ event, context }) => {
+  const { amount, claimReserve } = event.args;
+  const configEpoch = BigInt(event.args.configEpoch);
+  await treasuryEventRow(context, event, "ClaimsReturned", { kind: "claims_returned", amount, claimReserve, configEpoch }, { claimReserve, configEpoch }, { ownerReturnedTotal: amount });
+});
+
+ponder.on("Treasury:WorkingWithdrawn", async ({ event, context }) => {
+  const { to, amount } = event.args;
+  await treasuryEventRow(context, event, "WorkingWithdrawn", { kind: "working_withdrawn", amount, actor: lc(to) }, {}, { ownerWithdrawnTotal: amount });
+});
+
+ponder.on("Treasury:TreasuryMigrated", async ({ event, context }) => {
+  const { successor, moved, claimsImported } = event.args;
+  const configEpoch = BigInt(event.args.configEpoch);
+  await treasuryEventRow(
+    context, event, "TreasuryMigrated",
+    { kind: "migrated_out", amount: moved, claimReserve: 0n, configEpoch, actor: lc(successor), detail: toJson({ claimsImported }) },
+    { claimReserve: 0n, configEpoch, migrated: true, successor: lc(successor), conversionEnabled: false, workingPaymentsEnabled: false, ccRedemptionEnabled: false },
+  );
+});
+
+ponder.on("Treasury:MigrationReceived", async ({ event, context }) => {
+  const { predecessor, claimsImported, claimReserve } = event.args;
+  const configEpoch = BigInt(event.args.configEpoch);
+  await treasuryEventRow(
+    context, event, "MigrationReceived",
+    { kind: "migration_received", amount: claimsImported, claimReserve, configEpoch, actor: lc(predecessor) },
+    { claimReserve, configEpoch },
+  );
+});
+
+ponder.on("Treasury:TokenRescued", async ({ event, context }) => {
+  await record(context, event, "treasury", "TokenRescued");
 });
 
 // ---- tokens ----------------------------------------------------------------------------------------------------

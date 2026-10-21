@@ -4,19 +4,149 @@ import { useEffect, useRef, useState } from "react";
 import { useAccount, useConfig, usePublicClient } from "wagmi";
 import { getAccount } from "wagmi/actions";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
-import type { Address } from "viem";
+import { parseUnits, type Address } from "viem";
+import { ClaimPanel, type ClaimReceipt } from "@/components/ClaimPanel";
 import { ExchangeView } from "@/components/ExchangeView";
 import { chain, core, credits, engineDeployed } from "@/lib/config";
-import { exchangeAmount, exchangeQuote, sellExchange } from "@/lib/exchange";
+import {
+  CLAIM_DEADLINE_SECONDS, PRO_RATA_VERSION, claimQuote, decodeRedemption, exchangeAmount, exchangeQuote, redeemClaim, sellExchange,
+  type ClaimMarket,
+} from "@/lib/exchange";
 import { rating, type BalanceTokenInfo } from "@/lib/format";
-import { useBalanceToken, useSnapshot, useWalletCredits, type Snapshot } from "@/lib/live";
+import { useBalanceToken, useClaimQuote, useNow, useSnapshot, useTreasury, useWalletCredits, type Snapshot, type TreasuryInfo } from "@/lib/live";
 import { useTx } from "@/lib/tx";
 import "./exchange.css";
 
 export default function ExchangePage() {
   const { address, isConnected, chainId } = useAccount();
-  // A wallet or network change discards the old selection and its accepted quote.
-  return <Exchange key={`${address}:${chainId}`} account={isConnected ? address : undefined} chainId={chainId} />;
+  const account = isConnected ? address : undefined;
+  // A wallet or network change discards the old selection and its accepted quote, on both panels.
+  return (
+    <>
+      <Exchange key={`${address}:${chainId}`} account={account} chainId={chainId} />
+      <Claim key={`claim:${address}:${chainId}`} account={account} chainId={chainId} />
+    </>
+  );
+}
+
+// the second panel: burn CC for a proportional share of the phase 2 treasury's claim reserve
+function Claim({ account, chainId }: { account?: Address; chainId?: number }) {
+  const client = usePublicClient();
+  const config = useConfig();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const { openConnectModal } = useConnectModal();
+  const now = useNow(1000);
+  const treasury = useTreasury(account);
+  const [amount, setAmount] = useState("");
+  const [slippage, setSlippage] = useState(50);
+  const [receipt, setReceipt] = useState<ClaimReceipt>();
+  // the figures frozen at consent: the market, the quote and the amount shown while the wallet confirms
+  const [review, setReview] = useState<{ info: TreasuryInfo; market: ClaimMarket; ccIn: bigint; slippage: number }>();
+  const live = treasury.data ?? undefined;
+  const info = review?.info ?? live;
+  const ccDecimals = info?.coinDecimals ?? 18;
+  const ccIn = review?.ccIn ?? parseAmount(amount, ccDecimals);
+  const liveQuote = useClaimQuote(review ? undefined : info?.treasury, ccIn);
+  const tolerance = review?.slippage ?? slippage;
+  const market: ClaimMarket | undefined = review?.market ?? (info && {
+    treasury: info.treasury, balanceToken: info.balanceToken, coin: info.coin, policy: info.policy, policyVersion: info.policyVersion,
+    claimReserve: info.claimReserve, ccSupply: info.ccSupply, freeWorking: info.freeWorking,
+    conversionToClaimBps: info.conversionToClaimBps, redemptionFeeBps: info.redemptionFeeBps, configEpoch: info.configEpoch,
+    ccRedemptionEnabled: info.ccRedemptionEnabled, selected: info.selected, transfersReady: info.transfersReady,
+    solvent: info.solvent, migrated: info.migrated, quote: liveQuote.data,
+  });
+  const quote = market ? claimQuote(market, ccIn, tolerance, info?.walletCc) : undefined;
+  const { run, pending, err } = useTx();
+  const bal = (value: bigint | undefined, precise = false) => value === undefined || info?.balanceDecimals === undefined
+    ? "—" : exchangeAmount(value, info.balanceDecimals, precise ? info.balanceDecimals : 6);
+  const cc = (value: bigint | undefined, precise = false) => value === undefined ? "—" : exchangeAmount(value, ccDecimals, precise ? ccDecimals : 6);
+  const wrongChain = Boolean(account && chainId !== chain.id);
+  const quoted = Boolean(quote && !quote.reason && quote.executable && quote.out > 0n && (review || liveQuote.data?.ccIn === ccIn));
+  const status = pending ? "Your amount, minimum, deadline and terms epoch are held while you confirm in your wallet."
+    : !engineDeployed ? "The exchange is not configured."
+    : treasury.error ? "Unable to read the treasury. Please try again."
+    : !info ? "Reading the treasury…"
+    : !account ? "Connect your wallet to burn CC."
+    : wrongChain ? `Switch your wallet to ${chain.name} to burn CC.`
+    : amount !== "" && ccIn === 0n ? "Enter a valid amount of CC."
+    : quote?.reason ?? (ccIn > 0n && !liveQuote.data ? "Reading the quote…" : undefined);
+  const blocked = !account || wrongChain || !info || !quote || !quoted || quote.minOut <= 0n || Boolean(treasury.error);
+  const label = pending ? "confirming burn…" : !info?.ccRedemptionEnabled ? "redemption not open yet" : ccIn === 0n ? "enter an amount to burn" : "burn CC for BALANCE";
+
+  async function burn() {
+    if (blocked || pending || !account || !client || !info || !market || !quote) return;
+    // consent: every value the transaction carries is fixed here, before any await
+    const accepted = {
+      ccIn, minOut: quote.minOut, epoch: quote.epoch, deadline: BigInt(now + CLAIM_DEADLINE_SECONDS),
+      account, treasury: info.treasury, coin: info.coin, chainId: chain.id,
+    };
+    setReceipt(undefined);
+    setReview({ info, market: { ...market }, ccIn, slippage: tolerance });
+    const consentIsCurrent = () => {
+      const current = getAccount(config);
+      return mounted.current && current.address === account && current.chainId === chain.id;
+    };
+    await run(async (write) => {
+      const hash = await redeemClaim(client, write, accepted, consentIsCurrent);
+      // the receipt's own CCRedeemed log is the record of what was burned and received
+      const rc = await client.getTransactionReceipt({ hash });
+      const done = decodeRedemption(rc.logs, info.treasury);
+      if (done) setReceipt({ burned: cc(done.burned, true), received: bal(done.received, true), reserveAfter: bal(done.claimReserve), hash });
+      setAmount("");
+    }, [], consentIsCurrent);
+    setReview(undefined);
+  }
+
+  const notice = !engineDeployed ? "The exchange is not configured."
+    : treasury.data === null ? "The engine's balance module is not a phase 2 treasury yet. CC burns open once the treasury is selected."
+    : undefined;
+  const pct = (bps: number) => `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+  return <ClaimPanel
+    notice={notice}
+    treasury={info?.treasury ?? "—"}
+    balanceToken={info?.balanceToken ?? "—"}
+    balanceSymbol={info?.balanceSymbol ?? "$BALANCE"}
+    policy={info?.policy ?? "—"}
+    policyVersion={info?.policyVersion ?? "unknown version"}
+    policyIsProRata={info?.policyVersion === PRO_RATA_VERSION}
+    claimReserve={bal(info?.claimReserve)}
+    freeWorking={bal(info?.freeWorking)}
+    ccSupply={cc(info?.ccSupply)}
+    ccSymbol={info?.coinSymbol ?? "CC"}
+    contributionRate={info ? pct(info.conversionToClaimBps) : "—"}
+    feeRate={info ? pct(info.redemptionFeeBps) : "—"}
+    backingPerCc={bal(quote?.backingPerCc ?? (info ? (info.ccSupply > 0n ? (info.claimReserve * 10n ** 18n) / info.ccSupply : 0n) : undefined))}
+    walletCc={cc(info?.walletCc)}
+    connected={Boolean(account)}
+    amount={review ? formatAmount(review.ccIn, ccDecimals) : amount}
+    onAmountChange={(value) => { setReceipt(undefined); setAmount(value); }}
+    onMax={() => { if (info?.walletCc !== undefined) setAmount(formatAmount(info.walletCc, ccDecimals)); }}
+    quoted={bal(quoted ? quote?.out : undefined)}
+    minimum={bal(quoted ? quote?.minOut : undefined, true)}
+    epoch={quoted && quote ? quote.epoch.toString() : "—"}
+    liveMismatch={quote?.liveMatchesLocal === false}
+    slippageBps={tolerance}
+    onSlippageChange={setSlippage}
+    busy={pending}
+    status={status}
+    error={err ?? undefined}
+    receipt={receipt}
+    action={!account
+      ? <button type="button" onClick={openConnectModal}>connect wallet</button>
+      : <button type="button" disabled={blocked || pending} onClick={burn}>{label}</button>}
+  />;
+}
+
+// the entered CC amount in base units; 0 for an empty or malformed entry
+function parseAmount(value: string, decimals: number): bigint {
+  const trimmed = value.trim().replace(/,/g, "");
+  if (!/^\d*(\.\d*)?$/.test(trimmed) || trimmed === "" || trimmed === ".") return 0n;
+  try { return parseUnits(trimmed, decimals); } catch { return 0n; }
+}
+
+function formatAmount(value: bigint, decimals: number): string {
+  return exchangeAmount(value, decimals).replace(/,/g, "");
 }
 
 function Exchange({ account, chainId }: { account?: Address; chainId?: number }) {
