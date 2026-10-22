@@ -22,7 +22,8 @@ export type ExchangeViewProps = {
   quoteAvailable: boolean;
   selectedRating: string;
   total: string;
-  fee: string;
+  fee?: string; // the protocol fee in $BALANCE for the selection; the row is left out until a Credit is selected
+  available?: string; // the treasury's $BALANCE free for the exchange, shown once the exchange is open
   adjustment?: string;
   minimum: string;
   rate: string;
@@ -40,7 +41,7 @@ export type ExchangeViewProps = {
 };
 
 export function ExchangeView({
-  rows, walletReady, connected, selectionCount, quoteAvailable, selectedRating, total, fee, adjustment,
+  rows, walletReady, connected, selectionCount, quoteAvailable, selectedRating, total, fee, available, adjustment,
   minimum, rate, slippageBps, onSlippageChange, onToggle, onSelectAll,
   allSelected, busy, status, error, receipt, onReset, action,
 }: ExchangeViewProps) {
@@ -95,10 +96,19 @@ export function ExchangeView({
             {rows.length === 0 && <p className="exchange-empty" role="status">{status || (!walletReady ? "Loading wallet…" : connected ? "No Credits in this wallet." : "Connect your wallet to view your Credits.")}</p>}
           </div>
           {rows.length > 0 && status && <p className="exchange-inventory-status" role="status">{status}</p>}
+          {/* mobile: the selection and its payout stay at the bottom of the screen while the list scrolls, and the bar
+              docks at the end of the list once the checkout below comes into view */}
+          {connected && rows.length > 0 && !receipt && (
+            <div className="exchange-mobile-bar">
+              <span>{selectionCount === 0 ? "select Credits to exchange"
+                : `${selectionCount} selected · ${quoteAvailable ? `${total} $BALANCE` : `${selectedRating} pts`}`}</span>
+              <a href="#exchange-summary">review</a>
+            </div>
+          )}
         </div>
       </section>
 
-      <section className="exchange-summary" aria-labelledby="exchange-receive-title" aria-busy={busy}>
+      <section id="exchange-summary" className="exchange-summary" aria-labelledby="exchange-receive-title" aria-busy={busy}>
         {receipt ? (
           <div className="exchange-success" role="status">
             <p className="exchange-success-title" id="exchange-receive-title">sale complete</p>
@@ -113,13 +123,14 @@ export function ExchangeView({
         ) : <>
         <div className="exchange-summary-content">
           {status && <p className="exchange-quote-status" role="status">{status}</p>}
+          {available && <p className="exchange-available">{available} $BALANCE available to exchange from the Credit Cycle treasury</p>}
           <p className="exchange-eyebrow" id="exchange-receive-title">you receive</p>
           <div className="exchange-total" aria-live="polite" aria-atomic="true">{total}</div>
           <div className="exchange-currency"><i aria-hidden="true" />$BALANCE</div>
           <dl className="exchange-breakdown">
             {selected.map((row) => <div key={row.id}><dt>Credit #{row.id}</dt><dd>{quoteAvailable ? row.gross : `${row.rating} pts`}</dd></div>)}
             {selected.length > 0 && !quoteAvailable && <div><dt>selected rating</dt><dd>{selectedRating} pts</dd></div>}
-            <div><dt>protocol fee</dt><dd>{fee}</dd></div>
+            {fee && <div><dt>protocol fee</dt><dd>{fee} $BALANCE</dd></div>}
             {adjustment && <div><dt>price-protection adjustment</dt><dd>{adjustment}</dd></div>}
             <div className="exchange-breakdown-total"><dt>you receive</dt><dd>{total} $BALANCE</dd></div>
           </dl>
