@@ -207,18 +207,23 @@ const questions: Question[] = [
   },
 ];
 
+// value mode: the ceiling is 100% of the points' value at the protected $BALANCE price (it moves with that price); the
+// bid sits at it, drops toward the 90% floor at each buy and recovers. drawn with the ceiling wandering, not climbing
 function BidIllustration() {
   return (
-    <svg className="faq-bid-drawing" viewBox="0 0 480 174" role="img" aria-label="illustration: the bid drops after a purchase, then recovers toward 100% of value">
+    <svg className="faq-bid-drawing" viewBox="0 0 480 174" role="img" aria-label="illustration: the bid sits at 100% of the Credit's $BALANCE value, which moves with the $BALANCE price; a purchase drops it toward 90%, then it recovers">
       <line x1="14" y1="145" x2="466" y2="145" className="faq-axis" />
       <line x1="14" y1="16" x2="14" y2="145" className="faq-axis" />
-      <path className="faq-bid-path" d="M24 134 L83 114 L151 78 L192 48 L195 117 L245 103 L297 76 L347 52 L350 115 L408 96 L456 67" />
-      <circle cx="195" cy="117" r="5" className="faq-drop-dot" />
-      <circle cx="350" cy="115" r="5" className="faq-drop-dot" />
-      <text x="195" y="137" textAnchor="middle" className="faq-bid-label">buy</text>
-      <text x="350" y="135" textAnchor="middle" className="faq-bid-label">buy</text>
-      <text x="102" y="56" className="faq-bid-label">recovers</text>
-      <text x="268" y="35" className="faq-bid-label">recovers</text>
+      {/* the ceiling: 100% of value, moving with $BALANCE */}
+      <path className="faq-axis" strokeDasharray="4 4" fill="none" d="M24 70 C90 60 140 52 200 58 S300 82 360 74 S430 54 456 50" />
+      {/* the bid: at the ceiling, a drop at each buy, then recovery back to it */}
+      <path className="faq-bid-path" d="M24 70 C90 60 140 52 186 57 L190 84 C210 80 225 66 248 64 C280 70 310 80 336 77 L340 104 C360 99 380 82 404 66 C425 58 440 53 456 50" />
+      <circle cx="190" cy="84" r="5" className="faq-drop-dot" />
+      <circle cx="340" cy="104" r="5" className="faq-drop-dot" />
+      <text x="190" y="106" textAnchor="middle" className="faq-bid-label">buy</text>
+      <text x="340" y="126" textAnchor="middle" className="faq-bid-label">buy</text>
+      <text x="40" y="44" className="faq-bid-label">100% of value (moves with $BALANCE)</text>
+      <text x="380" y="98" className="faq-bid-label">recovers</text>
       <text x="20" y="165" className="faq-bid-label">time →</text>
     </svg>
   );
@@ -413,7 +418,7 @@ export default function Faq() {
           <article className="faq-visual-card">
             <div className="faq-visual-copy">
               <h3>the bid moves</h3>
-              <p>the ETH bid moves between 90% and 100% of a Credit&apos;s $BALANCE value: it drops when the engine buys, then recovers.</p>
+              <p>the ETH bid sits at 100% of a Credit&apos;s $BALANCE value, which moves with the $BALANCE price. a purchase drops it toward 90%, then it recovers.</p>
             </div>
             <BidIllustration />
             <small>illustrative only. not a quote or price forecast.</small>
