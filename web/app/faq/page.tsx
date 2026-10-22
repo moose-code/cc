@@ -235,7 +235,7 @@ function InventoryPaths() {
       <svg
         className="faq-paths-diagram"
         style={{ display: "block", width: "100%", minWidth: 940, height: "auto", fontFamily: "var(--mono)" }}
-        viewBox="0 0 1360 600"
+        viewBox="0 0 1360 620"
         role="img"
         aria-labelledby="faq-paths-title faq-paths-description"
       >
@@ -317,9 +317,9 @@ function InventoryPaths() {
           <text x="1142" y="453" fill="#1a1a1a" fontSize={15} fontWeight={400} textAnchor="middle" dominantBaseline="middle">with $BALANCE (exchange)</text>
         </g>
         <g className="faq-paths-box faq-paths-future-box">
-          <rect x="995" y="527" width="294" height="62" fill="#f6f5f0" stroke="#8a877e" strokeWidth={1.7} strokeDasharray="6 5" />
-          <text x="1142" y="550" fill="#6e6c64" fontSize={14} fontWeight={400} textAnchor="middle" dominantBaseline="middle">future: burn $CC to redeem</text>
-          <text x="1142" y="571" className="faq-paths-small" fill="#8a877e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">a share of the claim reserve · not active</text>
+          <rect x="995" y="527" width="294" height="80" fill="#f6f5f0" stroke="#8a877e" strokeWidth={1.7} strokeDasharray="6 5" />
+          <text x="1142" y="555" fill="#6e6c64" fontSize={14} fontWeight={400} textAnchor="middle" dominantBaseline="middle">future: burn $CC to redeem</text>
+          <text x="1142" y="584" className="faq-paths-small" fill="#8a877e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">a share of the claim reserve · not active</text>
         </g>
         <g className="faq-paths-box faq-paths-outcome-box">
           <rect x="260" y="403" width="686" height="73" fill="#f6f5f0" stroke="#d9d7cf" strokeWidth={1.7} />
