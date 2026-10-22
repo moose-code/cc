@@ -14,8 +14,7 @@ import { engineDeployed } from "@/lib/config";
 const NAV = [
   { href: "/credits", label: "credits" },
   { href: "/statements", label: "statements" },
-  // /exchange is public but not linked yet
-  // { href: "/exchange", label: "exchange" },
+  { href: "/exchange", label: "exchange" },
 ];
 
 // the cream/dark /claim page keeps the split header: the brand with the page's own sub line, the wallet and no nav
