@@ -1,3 +1,4 @@
+// Lives in src/api: Ponder hashes every other file under src into the build id, and a changed build id refuses the deployed schema.
 // Stall watchdog. Ponder's /health answers 200 while the process is up, even when indexing is stuck on a request that
 // never settles (2026-10-22: frozen for hours at 80.9 percent with CPU, database and RPC idle; a restart finished it in
 // two minutes). Every minute the process reads its own /metrics; when none of the progress counters below moved for
