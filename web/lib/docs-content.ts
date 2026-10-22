@@ -145,7 +145,7 @@ export const docPages: DocPage[] = [
     group: "Guides",
     title: "Exchange Credits for BALANCE",
     eyebrow: "Guide / BALANCE exchange",
-    summary: "Exchange approved Credit NFTs for BALANCE from the selected treasury.",
+    summary: "Sell eligible Credit NFTs for BALANCE and help build the Core's next Statement.",
     mainnetAddresses: [
       { label: "Core", address: "0xcdb1889ae12074d750CD9B8531B692015465e0dD" },
       { label: "Credits", address: "0x97630aA70AB14ed9883B41dAfccBc11349723043" },
@@ -154,10 +154,19 @@ export const docPages: DocPage[] = [
     ],
     sections: [
       {
-        id: "quote",
-        title: "Read a quote",
+        id: "cycle",
+        title: "The Credit and BALANCE cycle",
         points: [
-          "Check Core.settings().balanceBidOn, the selected Core.balanceModule(), and Core.balanceToken(). The treasury's available() must cover the full batch payout plus artist royalties.",
+          "The Core acquires Credits through its ETH bid, approved listings, and BALANCE exchanges. It gathers 80 Credits into a Statement and holds that Statement.",
+          "When a held Statement is eligible and conversion is enabled, the Core sends it through the selected treasury. The conversion delivers BALANCE to the treasury. A configured share is reserved; the rest becomes working BALANCE that can fund Credit exchanges.",
+          "Exchanging a Credit spends BALANCE now and adds that Credit to the Core's pile. A later Statement conversion can replenish the treasury and increase its BALANCE holdings. Treasury growth depends on what conversions bring in relative to payouts and other uses of its funds.",
+        ],
+      },
+      {
+        id: "quote",
+        title: "Check your quote",
+        points: [
+          "If you hold Credits, you can exchange eligible ones when the BALANCE bid is open and the treasury has working funds. Check Core.settings().balanceBidOn, the selected Core.balanceModule(), and Core.balanceToken(). The treasury's available() must cover the full batch payout plus artist royalties.",
           "Read balanceBidOf for each Credit ID. A single-Credit quote does not guarantee the full batch can be paid, and balanceBidOn must be checked separately.",
         ],
         entries: [
