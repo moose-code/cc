@@ -90,11 +90,11 @@
   "activation": {
     "balanceModuleSet": true,
     "controllerSet": true,
-    "conversionEnabled": false,
-    "workingPaymentsEnabled": false,
+    "conversionEnabled": true,
+    "workingPaymentsEnabled": true,
     "ccRedemptionEnabled": false,
-    "statementSalesEnabled": false,
-    "balancePoolKeySet": false,
+    "statementSalesEnabled": true,
+    "balancePoolKeySet": true,
     "artistSet": true
   },
   "stageB": {
@@ -121,5 +121,50 @@
       }
     ],
     "readback": "Phase2Readback 53 of 53 after stage B; margin 760 bps; keeper v20 (Phase 2 build) skips redeemStatement while conversionReady is false"
+  },
+  "stageC": {
+    "transactions": [
+      {
+        "what": "setRate(2962256201024912)",
+        "hash": "0x14a5a4c98b8c0246968a0ef40e1872b85bbe5ec44f788fdc3b7c344385dea853",
+        "block": 26244618
+      },
+      {
+        "what": "setBalancePoolKey (fee 3000, spacing 30, hooks 0x2eef0e2a9a652d755accad95a24541a98b5ca000)",
+        "hash": "0xbf8473d77afe9a476529988e9a2a56c6437d7320315240592035437c745accfe",
+        "block": 26244636
+      },
+      {
+        "what": "setQuote (first)",
+        "hash": "0xa535b14b530d38db063d0c43760d4acd89ef85d54cb5fb23d9c36fee2b741c94",
+        "block": 26244787
+      },
+      {
+        "what": "setQuote (step 1000, rate 6000/h, minSeconds 600, maxStale uint32 max, minLiquidity 3e21)",
+        "hash": "0x804f7ef898d384cf3c417939136075cceebd407638dec8cf6e16d7bacf5cdeff",
+        "block": 26245363
+      },
+      {
+        "what": "treasury setSwitches(true,true,false)",
+        "hash": "0x0873dc0008c646510a3fe68ba50d9c5cec822e23345a053ed59bac3a11e1ab5c",
+        "block": 26245409
+      },
+      {
+        "what": "setSettings valueModeOn 1, spendCapBps 9999 (bid off)",
+        "hash": "0xbfc5881c975a2cf0231db8b7026647fbb43655ec1084afee2d97dd7c1e792656",
+        "block": 26245505
+      },
+      {
+        "what": "ControllerV2 setStatementSales(true)",
+        "hash": "0x8181e3d505f12b9a72bf0833db5fa2aba1e963cf98fa506078ea2a8d77e531a7",
+        "block": 26245518
+      },
+      {
+        "what": "setSettings balanceBidOn 1",
+        "hash": "0x2143a21df71e5d48cf76b8c5970f37dad11254046b7e5744ab25c21c605c48d4",
+        "block": 26248373
+      }
+    ],
+    "readback": "53 of 53 after C5a; after C7 only balanceBidOn changed; valuePerPoint(true) ok; Statement 348 converted by a user (tx 0x5ced9876\u2026fe92, 50,227.79 BALANCE)"
   }
 }
