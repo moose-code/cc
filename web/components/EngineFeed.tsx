@@ -6,6 +6,8 @@ import type { FeedEvent, FeedKind } from "@/lib/events";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { useNow, useScores, useSnapshot } from "@/lib/live";
 import { useListings } from "@/lib/useListings";
+import { useCcMarket } from "@/lib/market";
+import { poolIdOf } from "@/lib/v4";
 import { ListingsTable } from "./ListingsTable";
 import { ListingsStatus } from "./ListingsStatus";
 import { useStatementRating } from "./Cards";
@@ -32,7 +34,8 @@ const MOBILE_ROWS = 6; // rows the one-scroll mobile home shows before "view ful
 
 const PAGE = 100; // rows per page of the feed
 
-type FeedView = "ledger" | "listings";
+type FeedView = "ledger" | "listings" | "chart";
+const VIEW_LABEL: Record<FeedView, string> = { ledger: "ledger", listings: "listings", chart: "$CC chart" };
 
 const TWEEN_MS = 1200;
 
@@ -122,17 +125,19 @@ export function EngineFeed() {
   return (
     <section className={full ? "ledger" : "ledger short"}>
       <div className="ledger-head">
-        <h2>{view === "listings" ? "listings" : "engine ledger"}</h2>
+        <h2>{view === "ledger" ? "engine ledger" : VIEW_LABEL[view]}</h2>
         <div className="seg" role="group" aria-label="feed view">
-          {(["ledger", "listings"] as FeedView[]).map((v) => (
+          {(["ledger", "listings", "chart"] as FeedView[]).map((v) => (
             <button key={v} className={v === view ? "on" : undefined} onClick={() => setView(v)}>
-              {v}
+              {VIEW_LABEL[v]}
             </button>
           ))}
         </div>
       </div>
 
-      {view === "listings" ? (
+      {view === "chart" ? (
+        <ChartPanel />
+      ) : view === "listings" ? (
         <ListingsPanel />
       ) : (
         <>
@@ -227,6 +232,20 @@ const LISTINGS_PAGE = 50;
 
 // The listings table inside the feed tab: reads listings only while this tab is mounted, so the ledger view adds no
 // listings query. It is a read-only view of the same listings as the listings page, OpenSea included.
+// The $CC pool's DexScreener chart, embedded. The pool id comes from the same key the swap uses; the theme follows the
+// site's (data-theme, or the system's under "auto") when the tab opens.
+function ChartPanel() {
+  const { market } = useCcMarket();
+  const [dark] = useState(() =>
+    typeof document !== "undefined" &&
+    (document.documentElement.dataset.theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark",
+  );
+  if (!market) return <p className="ledger-chart-wait"><Sk w="12ch" /></p>;
+  const theme = dark ? "dark" : "light";
+  const src = `https://dexscreener.com/ethereum/${poolIdOf(market.key)}?embed=1&loadChartSettings=0&trades=0&tabs=0&info=0&chartLeftToolbar=0&chartTheme=${theme}&theme=${theme}&chartStyle=1&chartType=usd&interval=60`;
+  return <iframe className="ledger-chart" src={src} title="$CC price chart on DexScreener" loading="lazy" />;
+}
+
 function ListingsPanel() {
   const { data, error, isFetching, refetch, dataUpdatedAt } = useListings();
   const [shown, setShown] = useState(LISTINGS_PAGE);
