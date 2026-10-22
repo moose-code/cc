@@ -71,7 +71,8 @@ export function relativeGap(ethReceived: number | undefined, askWei: bigint): nu
 
 export function ethPerPoint(askWei: bigint, score: bigint): number | undefined {
   if (score <= 0n) return undefined;
-  return (Number(askWei) / 1e18) / (Number(score) / 10_000);
+  // one division of exact integers keeps round asks exact (0.03 ETH over 300 points is 0.0001, not 0.0000999…)
+  return Number(askWei * 10_000n) / Number(score) / 1e18;
 }
 
 export function percentFromBalance(earned: bigint, base: bigint): number | undefined {
