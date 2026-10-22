@@ -6,7 +6,7 @@ import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {IControllerV3} from "../src/interfaces/IControllerV3.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
 import {IBalanceTreasuryV2} from "../src/interfaces/IBalanceTreasuryV2.sol";
-import {IRedeemer, CcQuote, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {IRedeemer, CcQuote, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Phase3} from "../script/Phase3.s.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -134,6 +134,23 @@ contract Phase3Test is LiveFixture {
         vm.expectRevert(abi.encodeWithSignature("ReturnLocked(uint256)", id));
         vm.prank(user);
         t.sellCredit(_one(id), 0);
+    }
+
+    function test_bidStaysBelowTheResaleFloorAfterTheCoreCapFalls() public {
+        // promise: the v2 bid never prices above the controller's credit floor multiplier, also after the Core's balanceBidCapBps falls below the bid cap
+        _migrate();
+        vm.warp(block.timestamp + 1 days);
+        script.enableBid(address(core), d, false);
+        assertEq(t.bidBpsNow(), 11_500, "the bid climbed to its cap");
+        Settings memory cfg = core.settings();
+        cfg.balanceBidCapBps = 10_000;
+        _setSettings(cfg);
+        uint256 floorMult = v3.floorMultBps();
+        assertEq(floorMult, 11_000, "the resale floor multiplier fell under the bid cap");
+        uint256 id = _credits(seller, 1)[0];
+        (uint256 q,) = t.quoteCredit(id);
+        assertGt(q, 0, "the bid still quotes");
+        assertLe(q, _scoreOf(id) * 1e14 * (floorMult - 1) / 10_000, "priced under the resale floor multiplier");
     }
 
     function test_redeemersPayFromTheirBucketInsideTheirCaps() public {

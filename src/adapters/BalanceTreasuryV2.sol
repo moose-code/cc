@@ -365,13 +365,22 @@ contract BalanceTreasuryV2 is IBalanceModule {
         if (x < b.floorBps) x = b.floorBps;
     }
 
+    /// `bidBpsNow()` below the controller's credit floor multiplier, read at each fill: the Core's `balanceBidCapBps`
+    /// can fall after `setBid`, and a credit the engine resells after its return lock must stay worth more at the
+    /// engine than here
+    function _fillBps() private view returns (uint256 bps) {
+        bps = bidBpsNow();
+        uint256 floorMult = IV2Controller(IV2Core(core).controller()).floorMultBps();
+        if (bps >= floorMult) bps = floorMult - 1;
+    }
+
     /// what `sellCredit([id])` would pay the seller and the artist now, zero when the bid could not price or fund it.
     /// the return lock, the caps and the holder are checked only by the fill
     function quoteCredit(uint256 id) external view returns (uint256 paid, uint256 toArtist) {
         if (paused || !bidEnabled || !selected()) return (0, 0);
         (bool ok, uint256 ethPrice, uint256 vSell) = _ethTerms();
         if (!ok) return (0, 0);
-        paid = _price(_scoreOf(id), bidBpsNow(), ethPrice, vSell, bid.overEthBps);
+        paid = _price(_scoreOf(id), _fillBps(), ethPrice, vSell, bid.overEthBps);
         toArtist = paid * IV2Core(core).settings().buyToArtistBps / BPS;
         if (paid + toArtist > bidBudget) return (0, 0);
     }
@@ -439,7 +448,7 @@ contract BalanceTreasuryV2 is IBalanceModule {
         Settings memory cfg = c.settings();
         IV2Controller ctrl = IV2Controller(c.controller());
         BalanceBid memory b = bid;
-        uint256 bps = bidBpsNow();
+        uint256 bps = _fillBps();
         uint256 artistTotal;
         for (uint256 i; i < ids.length; ++i) {
             uint256 id = ids[i];

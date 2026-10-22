@@ -49,7 +49,10 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 ///    clock and does not move on a value mode fill, so "bought" is read from the pile: the newest pile credit's
 ///    acquisition time, found through `fillHint`. any purchase door (eth, balance, adoption) appends to the pile tail, so
 ///    a purchase makes the hint stale and the loosening reads zero until `syncFill` moves the hint to the new tail.
-///    a stale or unknown tail always reads zero: the loosening can only be missed, never overstated
+///    a stale or unknown tail always reads zero. a tail credit this controller sells before any sync still advances
+///    `lastFillSeen`. a tail composed before any sync is older than `creditWindow`, so its own idle time already
+///    reaches the cap whenever `idle.bps * creditWindow / idle.stepSeconds >= idle.capBps` (1,200 against 700 at the
+///    shipped settings); below that the loosening can read up to the cap early
 /// 5. every credit this controller sells records `creditSoldAt`, so treasury v2's bid refuses a credit inside the Core's
 ///    return lock (the Core's own lock does not cover `adopt`)
 /// 6. a CC price reference on the native eth / CC pool for later redeemers: an average toward the spot over
@@ -646,8 +649,9 @@ contract ControllerV3 is IController {
         refreshReference();
         uint256 price = _creditPrice(id, _cfg());
         if (msg.value < price) revert Underpaid();
+        (,, uint64 acquiredAt) = CORE.creditInfo(id);
         ICoreSale(address(CORE)).sellCreditTo{value: price}(id, msg.sender);
-        _recordSale(id, price);
+        _recordSale(id, price, acquiredAt);
         if (msg.value > price) SafeTransferLib.safeTransferETH(msg.sender, msg.value - price);
         _busy = false;
     }
@@ -665,14 +669,17 @@ contract ControllerV3 is IController {
             uint256 price = _creditPrice(ids[i], cfg);
             spent += price;
             if (msg.value < spent) revert Underpaid();
+            (,, uint64 acquiredAt) = CORE.creditInfo(ids[i]);
             ICoreSale(address(CORE)).sellCreditTo{value: price}(ids[i], msg.sender);
-            _recordSale(ids[i], price);
+            _recordSale(ids[i], price, acquiredAt);
         }
         if (msg.value > spent) SafeTransferLib.safeTransferETH(msg.sender, msg.value - spent);
         _busy = false;
     }
 
-    function _recordSale(uint256 id, uint256 price) private {
+    function _recordSale(uint256 id, uint256 price, uint64 acquiredAt) private {
+        // a sold tail leaves the pile: its purchase time is kept so the loosening cannot restart from an older credit
+        if (acquiredAt > lastFillSeen) lastFillSeen = acquiredAt;
         // forge-lint: disable-next-line(unsafe-typecast)
         creditSoldAt[id] = uint64(block.timestamp);
         emit CreditSoldRecorded(id, msg.sender, price);
