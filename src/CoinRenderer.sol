@@ -6,22 +6,26 @@ import {LibString} from "solady/utils/LibString.sol";
 import {ICore} from "./interfaces/ICore.sol";
 import {ICoinRenderer} from "./interfaces/ICoinRenderer.sol";
 import {IArtCoinsTokenV2} from "./interfaces/ArtCoinsV2.sol";
-import {ICredits, Mainnet} from "./interfaces/Interfaces.sol";
-import {CreditDrawing} from "./lib/CreditDrawing.sol";
 
-/// @notice the coin's metadata renderer: the Core's pile drawn as a Statement page, 8 columns by 10 rows.
-/// @dev    retained for an owner swap after the LogoCoinRenderer launch. the constructor owner keeps its CREATE2
-/// address independent of the Core; `setCore` binds the Core once. a pile of at most 80 credits is drawn whole, in
-/// pile order. a larger pile is read whole, then 80 of its credits are sampled by `block.prevrandao`, so the
-/// selection changes each block and holds within a block. every cell is the credit's own drawing,
-/// `CreditDrawing.body`, the code the live CreditArt and StatementArt run. a view contract: every call reads the
-/// Core, Credits and the coin. the pile walk costs about 2,200 gas per pile credit and the page about 10,000,000
-/// gas at 80 cells; the whole call is about 25,000,000 gas at 80 cells.
+/// the Balances artwork the BALANCE token creates: one wallet bound NFT per wallet that has received BALANCE, its
+/// image the wallet's current BALANCE amount drawn in its CMYK ink. no administrator; the drawing code is immutable
+interface IBalancesArtwork {
+    /// zero for a wallet that has never received BALANCE
+    function tokenIdOf(address wallet) external view returns (uint256);
+    function svg(uint256 id) external view returns (string memory);
+}
+
+/// @notice the coin's metadata renderer for an owner swap after the LogoCoinRenderer launch: the image is the Balances
+///         artwork held by the Core's balance module, the treasury's live BALANCE drawing.
+/// @dev    the holder is read through `core.balanceModule()` on every call, so a treasury migration moves the image to
+///         the successor's artwork. a module with no artwork (zero, or a successor that has not yet received BALANCE)
+///         draws the launch LogoCoinRenderer's logo instead of reverting, so the coin's `tokenURI` never fails on it.
+///         the constructor owner keeps the CREATE2 address independent of the Core; `setCore` binds the Core once.
+///         the artwork's `svg` costs about 2,000,000 gas.
 contract CoinRenderer is ICoinRenderer {
-    uint256 private constant COLS = 8;
-    uint256 private constant ROWS = 10;
-    uint256 private constant PAGE = COLS * ROWS;
-    ICredits private constant CREDITS = ICredits(Mainnet.CREDITS);
+    IBalancesArtwork private constant ARTWORK = IBalancesArtwork(0x3F2BA6C00c386986686A429c52099AaCD51b7e38);
+    /// the live LogoCoinRenderer; its `image()` is pure
+    ICoinRenderer private constant LOGO = ICoinRenderer(0x0D2022F8D780884A1B46de156CBfc4f36423504c);
 
     address public immutable owner;
     ICore public core;
@@ -56,53 +60,10 @@ contract CoinRenderer is ICoinRenderer {
         return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
     }
 
-    /// the pile as a page: every pile credit in pile order when the pile holds at most 80, else 80 pile credits
-    /// sampled by `block.prevrandao`. reads the whole pile through `pilePage(0, pileSize())` before sampling, so a pile
-    /// over 80 pays about 2,200 gas per pile credit to read the pile, then draws 80 cells
+    /// the balance module's Balances artwork, or the CC logo when the module holds none
     function image() public view returns (string memory) {
         if (address(core) == address(0)) revert ZeroCore();
-        uint256[] memory ids = core.pilePage(0, core.pileSize());
-        bool sampled = ids.length > PAGE;
-        uint256 n = sampled ? PAGE : ids.length;
-        uint256 rnd = uint256(keccak256(abi.encode(block.prevrandao, ids.length)));
-        bytes21[80] memory seeds;
-        uint64[80] memory paidAt;
-        for (uint256 i; i < n; ++i) {
-            if (sampled) {
-                uint256 j = i + rnd % (ids.length - i);
-                (ids[i], ids[j]) = (ids[j], ids[i]);
-                rnd = uint256(keccak256(abi.encode(rnd)));
-            }
-            seeds[i] = CREDITS.seedOf(ids[i]);
-            paidAt[i] = CREDITS.timestampOf(ids[i]);
-        }
-        return page(seeds, paidAt, n);
-    }
-
-    /// the first `n` credits of `seeds` and `paidAt` on the page, cell by cell in reading order, the frame and cell
-    /// placement of the live StatementArt. `n` at most 80. a credit draws with the plates its `paidAt` selects
-    function page(bytes21[80] memory seeds, uint64[80] memory paidAt, uint256 n) public pure returns (string memory) {
-        CreditDrawing.Buffer memory out = CreditDrawing.Buffer(new bytes(400_000), 0, new bytes(16 * 2768));
-        CreditDrawing.put(
-            out,
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10000 12500" shape-rendering="crispEdges"><rect width="10000" height="12500" fill="#ffffff"/>'
-        );
-        uint24[16] memory colors = CreditDrawing.palette();
-        for (uint256 i; i < n; ++i) {
-            CreditDrawing.put(
-                out,
-                string.concat(
-                    '<svg x="',
-                    LibString.toString(800 + (i % COLS) * 1050),
-                    '" y="',
-                    LibString.toString(820 + (i / COLS) * 1090),
-                    '" width="1050" height="1050" viewBox="0 0 320 320">'
-                )
-            );
-            CreditDrawing.body(out, seeds[i], CreditDrawing.platesAt(paidAt[i]), colors, true);
-            CreditDrawing.put(out, "</svg>");
-        }
-        CreditDrawing.put(out, "</svg>");
-        return CreditDrawing.finish(out);
+        uint256 id = ARTWORK.tokenIdOf(core.balanceModule());
+        return id == 0 ? LOGO.image() : ARTWORK.svg(id);
     }
 }
