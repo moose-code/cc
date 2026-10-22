@@ -1,6 +1,6 @@
 # Private Credit / BALANCE comparison
 
-Read-only operator page at /market-compare. No navigation link. During \`next dev\`, it is available without a password. In production/preview it returns 404 unless both server-only \`MARKET_COMPARE_ENABLED=true\` and a random \`MARKET_COMPARE_PASSWORD\` (20+ characters) are set; the browser uses HTTPS Basic Auth (username \`cc\`). Do not use a short password. No credentials go into NEXT_PUBLIC variables.
+Read-only page at /market-compare: public, with no navigation link and noindex (decision 274).
 
 The page reuses the existing /api/listings keeper view (OpenSea + CreditStrategy), displays its freshness, and reads BALANCE Uniswap v4 onchain pool spot and exact-input sell quotes. When ControllerV2 has a configured pool key, that is authoritative. Before Stage C, provide all four NEXT_PUBLIC_COMPARE_* pool fields in the environment: BALANCE token, fee, tick spacing and hook. Use parameters verified from a live initialized pool; no pool is guessed. Set these for local forks too.
 
