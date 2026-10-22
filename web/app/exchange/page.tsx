@@ -100,7 +100,7 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     selectionCount={order.length}
     quoteAvailable={quoteAvailable}
     selectedRating={selectedRating}
-    total={amount(quoteAvailable && order.length > 0 ? quote?.total : undefined)}
+    total={order.length === 0 ? "0" : amount(quoteAvailable ? quote?.total : undefined)}
     fee={quote && order.length > 0 ? `−${amount(quote.fee)}` : undefined}
     available={available && market?.balanceAvailable !== undefined ? amount(market.balanceAvailable) : undefined}
     adjustment={quoteAvailable && quote && order.length > 0 && quote.adjustment > 0n ? `−${amount(quote.adjustment)}` : undefined}
@@ -116,7 +116,7 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     onSelectAll={() => setSelected(new Set(allSelected ? [] : wallet.data.map((credit) => credit.id)))}
     allSelected={allSelected}
     busy={pending}
-    status={status ?? (order.length === 0 ? "Select Credits to see their payout." : undefined)}
+    status={status}
     error={err ?? undefined}
     receipt={receipt}
     onReset={() => setReceipt(undefined)}
