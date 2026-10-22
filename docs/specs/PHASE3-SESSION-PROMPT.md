@@ -2,8 +2,9 @@ Read AGENTS.md, then docs/specs/PHASE3-TREASURY-V2.md (the spec), docs/STATUS.md
 docs/DECISIONS.md. Live addresses are in deployments/1.json and deployments/1-phase2.json.
 
 Goal: build, test, review and prepare the deployment of treasury v2 (permissionless $BALANCE bid, funding by rule,
-CC burn bonds) and ControllerV3 (band headroom, idle loosening, the views v2 needs), exactly as the spec says, plus
-the indexer, keeper and web changes it lists. The owner approves the spec's open choices before code where the spec
+pluggable redemption with the current pro-rata plan as its first redeemer, off) and ControllerV3 (band headroom, idle
+loosening, the views v2 needs, a CC reference for future redeemers), exactly as the spec says, plus the indexer,
+keeper and web changes it lists. Do not design or ship a new burn mechanism; make v2 ready for one. The owner approves the spec's open choices before code where the spec
 says "must solve" or "evaluate"; ask one question at a time, with a recommendation.
 
 Hard constraints: the protocol never sells $BALANCE; the Core is immutable; tests and sims run against the deployed
