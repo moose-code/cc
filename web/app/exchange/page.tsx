@@ -96,6 +96,8 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
       selected: selection.has(credit.id),
     }))}
     walletReady={wallet.ready}
+    walletLoading={Boolean(account && !wrongChain && !wallet.ready && !wallet.error)}
+    marketLoading={engineDeployed && !market && !snapshot.error}
     connected={Boolean(account)}
     selectionCount={order.length}
     quoteAvailable={quoteAvailable}
