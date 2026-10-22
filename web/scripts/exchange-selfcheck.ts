@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { zeroAddress } from "viem";
 import { waitForSuccessfulReceipt } from "../lib/tx-receipt.ts";
 import { submitWithGasBuffer } from "../lib/tx-submit.ts";
-import { claimEnabled, exchangeEnabled } from "../lib/exchange-access.ts";
+import { claimEnabled } from "../lib/exchange-access.ts";
 import { encodeAbiParameters, encodeEventTopics, type Log } from "viem";
-import { treasuryAbi } from "@cc/engine/abis";
+import { engineEventsAbi, treasuryAbi } from "@cc/engine/abis";
 import {
-  CLAIM_ACCUMULATING_STATUS, CLAIM_DEADLINE_SECONDS, bpsPercent, claimQuote, claimSliderAmount, claimView, decodeRedemption, exchangeAmount, exchangeQuote, proRataQuote, redeemClaim, sellExchange,
+  CLAIM_ACCUMULATING_STATUS, CLAIM_DEADLINE_SECONDS, bpsPercent, claimQuote, claimSliderAmount, claimView, decodeRedemption, exchangeAmount, exchangeReceived, exchangeQuote, proRataQuote, redeemClaim, sellExchange,
   type ClaimMarket, type ExchangeMarket,
 } from "../lib/exchange.ts";
 
@@ -160,20 +160,6 @@ await check("wallet change during gas estimate", async () => {
   await submitWithGasBuffer(async () => 101n, async (limit) => { gas = limit; return "0x123"; }, () => true);
   assert.equal(gas, 127n);
 });
-// promise: production and deploy previews cannot expose the route without explicit server configuration.
-await check("public route closed by default", () => {
-  for (const flag of [undefined, "", "false", "1", "TRUE"]) assert.equal(exchangeEnabled("production", flag), false);
-  assert.equal(exchangeEnabled(undefined, undefined), false);
-  assert.equal(exchangeEnabled("test", undefined), false);
-});
-
-// promise: local development stays usable; a future explicit server opt-in is required for public publication.
-await check("development route and explicit publication", () => {
-  assert.equal(exchangeEnabled("development", undefined), true);
-  assert.equal(exchangeEnabled("development", "false"), true);
-  assert.equal(exchangeEnabled("production", "true"), true);
-});
-
 // promise: the claim page is closed by default in production and deploy previews, open in local development, and
 // opens publicly only on an explicit server-only CLAIM_ENABLED=true.
 await check("claim gate closed by default, open in development", () => {
@@ -355,6 +341,18 @@ await check("claim epoch pinning rejects a changed epoch", async () => {
 });
 
 // promise: the receipt shows the treasury's own CCRedeemed values, not the quote.
+// promise: the success screen shows what the seller was paid, summed over this Core's fills only.
+await check("exchange receipt sums the Core's BalanceFill payouts", () => {
+  const coreAddr = "0x00000000000000000000000000000000000000c0" as const;
+  const fill = (paid: bigint, address: string) => ({
+    address,
+    topics: encodeEventTopics({ abi: engineEventsAbi, eventName: "BalanceFill" }),
+    data: encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }], [paid, paid / 33n, 1n]),
+  }) as unknown as Log;
+  assert.equal(exchangeReceived([fill(70n, coreAddr), fill(8n, coreAddr), fill(999n, "0x00000000000000000000000000000000000000c1")], coreAddr), 78n);
+  assert.equal(exchangeReceived([], coreAddr), undefined);
+});
+
 await check("claim receipt decodes CCRedeemed", () => {
   const burner = "0x0000000000000000000000000000000000000001" as const;
   const topics = encodeEventTopics({ abi: treasuryAbi, eventName: "CCRedeemed", args: { burner, recipient: burner } });

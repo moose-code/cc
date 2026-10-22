@@ -5,7 +5,10 @@ import { treasuryAbi } from "../abis/Phase2BalanceTreasury";
 import { controllerAbi } from "../abis/ControllerV1";
 import { controllerV2Abi } from "../abis/ControllerV2";
 import { coreAbi } from "../abis/Core";
+import { parseAbi } from "viem";
 import { creditScoreAbi, creditsAbi, moduleAbi, multicall3Abi, MULTICALL3, CREDIT_SCORE, statementsAbi } from "../abis/external";
+
+const tokenReadAbi = parseAbi(["function balanceOf(address) view returns (uint256)", "function totalSupply() view returns (uint256)"]);
 import { COLLECTIONS, CORE_ADDRESS, CORE_DEPLOY_BLOCK } from "../ponder.config";
 import { credit, engine, engineSnapshot, statement } from "../ponder.schema";
 import { lc, toJson, type At, type Ctx } from "./shared";
@@ -85,6 +88,19 @@ export async function snapshot(ctx: Ctx, block: { number: bigint; timestamp: big
 async function snapshotBlock(ctx: Ctx, block: { number: bigint; timestamp: bigint }) {
   const e = await ensureEngine(ctx);
   const module = e.balanceModule && e.balanceModule !== zeroAddress ? (e.balanceModule as Hex) : null;
+  const token = module && e.balanceToken && e.balanceToken !== zeroAddress ? (e.balanceToken as Hex) : null;
+  const ctl = e.controller && e.controller !== zeroAddress ? (e.controller as Hex) : null;
+  // phase 2 reads, all allowed to fail; positions follow the eleven fixed calls
+  const p2 = [
+    ctl ? { address: ctl, abi: controllerV2Abi, functionName: "valuePerPoint", args: [false] } : null,
+    ctl ? { address: ctl, abi: controllerV2Abi, functionName: "valuePerPoint", args: [true] } : null,
+    ctl ? { address: ctl, abi: controllerV2Abi, functionName: "referencePrice" } : null,
+    ctl ? { address: ctl, abi: controllerV2Abi, functionName: "spotPrice" } : null,
+    token ? { address: token, abi: tokenReadAbi, functionName: "balanceOf", args: [module] } : null,
+    module ? { address: module, abi: treasuryAbi, functionName: "working" } : null,
+    module ? { address: module, abi: treasuryAbi, functionName: "claimReserve" } : null,
+    e.coin ? { address: e.coin as Hex, abi: tokenReadAbi, functionName: "totalSupply" } : null,
+  ];
   const r = await ctx.client.multicall({
     ...mc,
     allowFailure: true,
@@ -99,7 +115,8 @@ async function snapshotBlock(ctx: Ctx, block: { number: bigint; timestamp: bigin
       { ...core, functionName: "pileSize" },
       { ...core, functionName: "payeeOn" },
       { ...core, functionName: "paused" },
-      ...(module ? [{ address: module, abi: moduleAbi, functionName: "available" }] : []),
+      module ? { address: module, abi: moduleAbi, functionName: "available" } : { address: MULTICALL3, abi: multicall3Abi, functionName: "getEthBalance", args: [CORE_ADDRESS] },
+      ...p2.map((c) => c ?? { address: MULTICALL3, abi: multicall3Abi, functionName: "getEthBalance", args: [CORE_ADDRESS] }),
     ] as readonly unknown[]) as readonly { address: Hex; abi: typeof coreAbi; functionName: "ethPot" }[],
   });
   const need = <T>(i: number): T => {
@@ -123,10 +140,22 @@ async function snapshotBlock(ctx: Ctx, block: { number: bigint; timestamp: bigin
     balanceAvailable: module && r[10]?.status === "success" ? (r[10].result as bigint) : null,
     balanceToken: module ? (e.balanceToken as Hex) : null,
   };
+  // a slot with no contract (null in p2) was padded with a harmless read; it records null
+  const opt = (i: number): bigint | null => {
+    if (!p2[i]) return null;
+    const x = r[11 + i];
+    if (x?.status !== "success") return null;
+    const v = x.result as bigint | readonly [bigint, boolean];
+    return typeof v === "bigint" ? v : v[1] ? v[0] : null;
+  };
+  const phase2 = {
+    valueBuy: opt(0), valueSell: opt(1), referencePrice: opt(2), spotPrice: opt(3),
+    treasuryBalance: opt(4), treasuryWorking: opt(5), claimReserve: opt(6), ccSupply: opt(7),
+  };
   await ctx.db
     .insert(engineSnapshot)
-    .values({ blockNumber: block.number, blockTimestamp: block.timestamp, ...row })
-    .onConflictDoUpdate(() => ({ blockTimestamp: block.timestamp, ...row }));
+    .values({ blockNumber: block.number, blockTimestamp: block.timestamp, ...row, ...phase2 })
+    .onConflictDoUpdate(() => ({ blockTimestamp: block.timestamp, ...row, ...phase2 }));
   const { paused: _p, balanceToken: _bt, ...latest } = row;
   await ctx.db.update(engine, { id: CORE_ADDRESS }).set({ ...latest, snapshotBlock: block.number });
 }

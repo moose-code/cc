@@ -9,6 +9,8 @@ import {Fixture} from "./utils/Fixture.sol";
 ///     or one divergent site of an immutable, fails it while the identity row still passes (finding 2 of
 ///     docs/reviews/REVIEW-security.md),
 ///  2. `_requireNoChangeFlags` reverts for each owner change flag and both scripts call it.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it inspects the runtime code and deploy
+/// guards of a freshly built system, so it never reads or mutates the live Core.
 contract PostflightSlotsTest is Fixture {
     string internal constant SLOTS_ROW =
         "core: every library call site and every immutable slot holds the library or the getter value";

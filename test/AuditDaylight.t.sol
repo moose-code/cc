@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
@@ -26,7 +27,7 @@ contract DirtyBoolController {
 /// the daylight audit security findings on 8d16ffe: the balance bid does not climb without a usable module (M1), the
 /// controller setter requires a probed contract and the lock refuses an unset controller (M2), and a dirty bool from the
 /// controller reads as false instead of reverting (L1)
-contract AuditDaylightTest is Fixture {
+contract AuditDaylightTest is LiveFixture {
     function setUp() public override {
         super.setUp();
     }
@@ -88,15 +89,6 @@ contract AuditDaylightTest is Fixture {
         core.setController(np);
     }
 
-    // promise: M2 lockController reverts while no controller is set
-    function test_lockControllerRevertsWithoutController() public {
-        ICore bare = _launchCore(address(0), lc.stack, OPEN_RATE, _settings());
-        assertEq(bare.controller(), address(0), "the bare core has no controller");
-        vm.prank(owner);
-        vm.expectRevert(ICore.BadController.selector);
-        bare.lockController();
-    }
-
     // promise: L1 a controller bool read that answers with a word outside {0, 1} reads as false instead of reverting the
     // abi.decode, so redemption eligibility falls back to not eligible
     function test_dirtyBoolControllerReadsFalse() public {
@@ -109,5 +101,19 @@ contract AuditDaylightTest is Fixture {
         _setController(address(new DirtyBoolController()));
         vm.expectRevert(ICore.NotEligible.selector);
         core.redeemStatement(sid);
+    }
+}
+
+/// a core with no controller cannot exist on mainnet, so this one deploy mechanics promise (lockController reverts
+/// while the controller is unset) stays on the fresh Fixture that can build a bare core. the live Core always carries a
+/// controller, so LiveFixture cannot reach the unset state this asserts
+contract AuditDaylightDeployTest is Fixture {
+    // promise: M2 lockController reverts while no controller is set
+    function test_lockControllerRevertsWithoutController() public {
+        ICore bare = _launchCore(address(0), lc.stack, OPEN_RATE, _settings());
+        assertEq(bare.controller(), address(0), "the bare core has no controller");
+        vm.prank(owner);
+        vm.expectRevert(ICore.BadController.selector);
+        bare.lockController();
     }
 }

@@ -5,7 +5,7 @@ import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {FeeBase} from "./Fees.t.sol";
+import {FeeBase, FeeBaseFixture} from "./Fees.t.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {MockBalanceToken} from "./standins/MockBalanceToken.sol";
@@ -45,9 +45,14 @@ contract V2PortFeeTest is FeeBase {
     /// range of a pool amount)
     function test_escrowCreditOfTheCoreIsCollectedIntoThePot() public {
         _share(5_000);
+        // book any fee income unbooked at the pin so the collected credit is the only eth the pot and balance gain
+        core.book();
         _creditCore(0.3 ether);
         assertEq(ESCROW.balances(address(core), address(0)), 0.3 ether);
         assertFalse(ESCROW.selfClaimOnly(address(core)));
+        uint256 potBefore = core.ethPot();
+        uint256 rbBefore = core.ethRedeemBurn();
+        uint256 balBefore = address(core).balance;
         address stranger = _user("stranger");
         vm.startPrank(stranger);
         vm.expectRevert();
@@ -57,9 +62,9 @@ contract V2PortFeeTest is FeeBase {
         core.collectEscrow();
         vm.stopPrank();
         assertEq(ESCROW.balances(address(core), address(0)), 0);
-        assertEq(address(core).balance, 0.3 ether, "paid to the Core");
-        assertEq(core.ethPot(), 0.3 ether, "the whole claim is in the pot");
-        assertEq(core.ethRedeemBurn(), 0, "none to the reserve, whatever the share");
+        assertEq(address(core).balance - balBefore, 0.3 ether, "paid to the Core");
+        assertEq(core.ethPot() - potBefore, 0.3 ether, "the whole claim is in the pot");
+        assertEq(core.ethRedeemBurn(), rbBefore, "none to the reserve, whatever the share");
         _solvent();
     }
 
@@ -67,13 +72,16 @@ contract V2PortFeeTest is FeeBase {
     /// `ESCROW.claim(core, 0)` pays a credit of the Core to the Core itself and anyone may call it. the eth lands in
     /// `receive` unbooked, so `collectEscrow` finds nothing after it, and the next `book` splits it by the fee rules
     /// (payee share, redeem burn share, the rest to the pot) rather than booking it whole the way `collectEscrow` does.
-    /// a cold fresh deploy inside the sniper window, so the book does not latch the payee and shares nothing
+    /// the live payee share is latched but its ppm is 0, so the book still shares nothing
     function test_strangerEscrowClaimLandsAsIncomeForTheNextBook() public {
         _share(5_000);
+        // book any fee income unbooked at the pin so the claim is the only eth that waits above the pots
+        core.book();
         _creditCore(0.3 ether);
         assertEq(ESCROW.balances(address(core), address(0)), 0.3 ether);
-        assertEq(core.ethPot(), 0, "nothing booked at launch");
-        assertFalse(core.payeeOn(), "inside the sniper window the payee share is not latched");
+        uint256 potStart = core.ethPot();
+        // the window is long past so the payee share is latched; its ppm is 0, so the book shares nothing
+        assertTrue(core.payeeOn(), "the live payee share is latched; its zero ppm shares nothing");
 
         address stranger = _user("escrow claimer");
         uint256 bal0 = address(core).balance;
@@ -81,7 +89,7 @@ contract V2PortFeeTest is FeeBase {
         ESCROW.claim(address(core), address(0));
         assertEq(ESCROW.balances(address(core), address(0)), 0, "the stranger claimed the Core credit");
         assertEq(address(core).balance - bal0, 0.3 ether, "the claim pushed the eth to the Core, unbooked");
-        assertEq(core.ethPot(), 0, "the push booked nothing on its own");
+        assertEq(core.ethPot(), potStart, "the push booked nothing on its own");
         assertEq(address(core).balance - _tracked(), 0.3 ether, "the claim waits above the pots");
 
         // collectEscrow now has nothing to claim
@@ -104,10 +112,12 @@ contract V2PortFeeTest is FeeBase {
     // promise: SPEC 4 collectEscrow reverts with the escrow error when nothing is owed
     /// `collectEscrow` with nothing to claim reverts with the escrow's error and books nothing
     function test_collectEscrowWithNothingOwedReverts() public {
+        uint256 pot = core.ethPot();
+        uint256 bal = address(core).balance;
         vm.expectRevert();
         core.collectEscrow();
-        assertEq(core.ethPot(), 0);
-        assertEq(address(core).balance, 0);
+        assertEq(core.ethPot(), pot, "the revert booked nothing");
+        assertEq(address(core).balance, bal, "nothing moved");
     }
 
     /// @dev a tick below the current price, so an exact input eth to coin swap stops at the limit and fills partially
@@ -144,7 +154,6 @@ contract V2PortFeeTest is FeeBase {
         vm.expectRevert();
         router.swapWithLimit{value: ethIn}(launchKey, true, -int256(ethIn), limit, trader, "");
     }
-
 }
 
 /// refuses every eth transfer
@@ -156,7 +165,7 @@ contract RefusingRecipient {
 
 /// moving the fee stream to a new engine: a second Core bound to the same coin and stack, and the coin admin repointing
 /// the bounty recipient of the pool with the hook's `setBountyRecipient`. real v2 stack, real pool
-contract V2PortMigrationTest is FeeBase {
+contract V2PortMigrationTest is FeeBaseFixture {
     ICore internal core2;
     IControllerV1 internal ctl2;
 
@@ -281,7 +290,6 @@ contract V2PortMigrationTest is FeeBase {
         assertGt(core.ethPot(), pot0, "the Core books the stream again");
         _solvent();
     }
-
 }
 
 /// master coin admin controls over the pool skim, and where the protocol leg lands. real coin, real pool, real hook
@@ -299,8 +307,8 @@ contract V2PortSkimTest is FeeBase {
         _buyCoin(trader, 1 ether);
         uint256 full = address(core).balance - b0;
         vm.prank(owner);
-        IArtCoinsHookV2(lc.stack.hook).lowerBaselineSkim(poolId, 345);
-        assertEq(IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId).baselineSkimBps, 345, "baseline halved");
+        IArtCoinsHookV2(v2.hook).lowerBaselineSkim(poolId, 345);
+        assertEq(IArtCoinsHookV2(v2.hook).skimConfig(poolId).baselineSkimBps, 345, "baseline halved");
         uint256 b1 = address(core).balance;
         _buyCoin(trader, 1 ether);
         uint256 half = address(core).balance - b1;
@@ -316,7 +324,7 @@ contract V2PortSkimTest is FeeBase {
         assertTrue(coin.locked());
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSignature("CoinLocked()"));
-        IArtCoinsHookV2(lc.stack.hook).lowerBaselineSkim(poolId, 500);
+        IArtCoinsHookV2(v2.hook).lowerBaselineSkim(poolId, 500);
     }
 
     // promise: D126 and D186 the protocol leg lands at the protocol fee controller
@@ -324,8 +332,8 @@ contract V2PortSkimTest is FeeBase {
     /// (10 percent of the 690 bps baseline skim), pushed or credited to it in the escrow
     function test_protocolLegLandsAtTheController() public {
         address controller = v2.controller;
-        assertEq(IArtCoinsFactoryV2(lc.stack.factory).protocolRecipient(), payable(controller), "factory recipient");
-        assertEq(address(IArtCoinsHookV2(lc.stack.hook).skimConfig(poolId).protocolRecipient), controller, "pool recipient");
+        assertEq(IArtCoinsFactoryV2(v2.factory).protocolRecipient(), payable(controller), "factory recipient");
+        assertEq(address(IArtCoinsHookV2(v2.hook).skimConfig(poolId).protocolRecipient), controller, "pool recipient");
         autoBook = false;
         uint256 bal0 = controller.balance;
         uint256 esc0 = ESCROW.balances(controller, address(0));
@@ -342,6 +350,8 @@ contract V2PortRestrictionTest is FeeBase {
 
     function setUp() public override {
         super.setUp();
+        // the restricted-coin buyback tests fill the pot through a real statement sale; open the sale door in stage B
+        _openStatementSalesForStageB();
         _stock();
     }
 

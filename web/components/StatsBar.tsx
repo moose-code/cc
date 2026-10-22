@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useStats } from "@/lib/data";
-import { usePointsHeld, useSnapshot } from "@/lib/live";
+import { useEngineBalance, usePointsHeld, useSnapshot } from "@/lib/live";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
 import { BALANCE_SYMBOL, commas } from "@/lib/format";
 import { Sk, SkLines } from "./Skeleton";
@@ -16,6 +16,11 @@ export function StatsBar() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
   const pts = usePointsHeld();
+  const engineBal = useEngineBalance();
+  // the $BALANCE the module holds counted in points at its unitPerPoint (base units per 1/10,000 point); no module, or
+  // a failed unit read, counts nothing rather than waiting forever
+  const balPts = !snap?.balanceUnit ? 0n : engineBal != null ? engineBal / snap.balanceUnit : undefined;
+  const total = pts != null && balPts != null ? pts + balPts : undefined;
   const on = engineDeployed && !!snap;
   const burnedPct = s ? (s.ccBurned / LAUNCH_SUPPLY_CC) * 100 : 0;
   // a figure not read yet is a skeleton and each sub line keeps its row, so the cells do not grow when data arrives
@@ -60,13 +65,12 @@ export function StatsBar() {
       <div className="stat-cell ink-pts">
         <span className="label">points held by engine</span>
         <span className="value">
-          {pts != null ? <span className="fx-in">{commas(Number(pts / 10_000n))}</span> : engineDeployed ? <Sk w="7ch" /> : "—"}
+          {total != null ? <span className="fx-in">{commas(Number(total / 10_000n))}</span> : engineDeployed ? <Sk w="7ch" /> : "—"}
           <small>pts</small>
         </span>
         {on ? (
           <small className="stat-note fx-in">
-            across {commas(Number(snap.pileSize))} credits and {commas(snap.held.length)} statements · redeemable for{" "}
-            {BALANCE_SYMBOL} by the engine
+            across credits, statements and {BALANCE_SYMBOL} held
           </small>
         ) : (
           engineDeployed && (

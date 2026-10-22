@@ -11,7 +11,7 @@ export type Ctx = Context;
 /** Chain position of the event being handled. */
 export type At = {
   block: { number: bigint; timestamp: bigint };
-  transaction: { hash: Hex };
+  transaction: { hash: Hex; from?: Hex };
   log: { logIndex: number };
 };
 
@@ -38,7 +38,7 @@ export async function record(
 ) {
   await ctx.db
     .insert(log)
-    .values({ id: idOf(e), address: lc(e.log.address), contract, event, args: toJson(e.args ?? {}), ...posOf(e) })
+    .values({ id: idOf(e), address: lc(e.log.address), contract, event, args: toJson(e.args ?? {}), txFrom: e.transaction.from ? lc(e.transaction.from) : null, ...posOf(e) })
     .onConflictDoNothing();
 }
 

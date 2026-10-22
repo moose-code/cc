@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {Settings} from "../src/interfaces/Interfaces.sol";
 
@@ -11,7 +12,9 @@ import {Settings} from "../src/interfaces/Interfaces.sol";
 /// budget the next purchase enforces). cold cases, hand set state, numbers logged. the equalities hold because every
 /// door books the unbooked fee income as its first step and the views read the same pending aware pot: the bid
 /// checkpoints against it, and the purchase budget projects `spendCapBps` of it, the pot the first purchase snapshots.
-contract ViewEqualsStoredTest is Fixture {
+/// run against the live Core/controller/coin/BALANCE token on a fork (the equalities hold for the credit's real score,
+/// so no score is mocked).
+contract ViewEqualsStoredTest is LiveFixture {
     /// forces `amount` wei into the Core with no engine call, the way a selfdestruct or a raw hook transfer lands eth
     /// the Core has not booked
     function _pushUnbooked(uint256 amount) internal {
@@ -33,7 +36,6 @@ contract ViewEqualsStoredTest is Fixture {
         _skipSniperWindow();
         _addToPot(0.5 ether);
         uint256 id = _credits(seller, 1)[0];
-        _unitScore(id);
         uint256 quotedRate = core.ethRate();
         uint256 quotedBid = core.bidOf(id);
         uint256 paid = _sellOneForEth(seller, id);
@@ -48,7 +50,6 @@ contract ViewEqualsStoredTest is Fixture {
         _skipSniperWindow();
         _addToPot(0.5 ether);
         uint256 id = _credits(seller, 1)[0];
-        _unitScore(id);
         // fee income arrives with no engine call, then ten idle minutes climb the price state
         _pushUnbooked(0.3 ether);
         _warp(10 minutes);
@@ -61,41 +62,21 @@ contract ViewEqualsStoredTest is Fixture {
         assertEq(paid, quotedBid, "fill paid differs from the bid quoted while income waited unbooked");
     }
 
-    // promise: a fresh launch with only unbooked hook income (ethPot zero): bidOf equals the next fill payout
-    function test_ethBidEqualsFill_freshLaunchOnlyUnbookedIncome() public {
-        _skipSniperWindow();
-        // the exact launch stall state of decision 147: no door has booked, so ethPot is zero while the Core holds eth
-        assertEq(core.ethPot(), 0, "the fresh fixture has an empty pot");
-        uint256 id = _credits(seller, 1)[0];
-        _unitScore(id);
-        _pushUnbooked(1 ether);
-        _warp(30 minutes);
-        uint256 quotedRate = core.ethRate();
-        uint256 quotedBid = core.bidOf(id);
-        uint256 paid = _sellOneForEth(seller, id);
-        emit log_named_uint("ethPot booked (wei)", 0);
-        emit log_named_uint("ethRate quoted, empty booked pot (wei per 100 points)", quotedRate);
-        emit log_named_uint("bidOf quoted (wei)", quotedBid);
-        emit log_named_uint("fill paid (wei)", paid);
-        assertEq(paid, quotedBid, "fresh launch fill paid differs from the bid quoted over unbooked income");
-    }
-
     // ------------------------------------------------------------------ balance bid
 
     // promise: balance tokens arrive at the module then idle time: balanceBidOf equals the next fill payout
     function test_balanceBidEqualsFill_tokensArriveThenWarp() public {
         _enterPhase2();
         uint256 id = _credits(seller, 1)[0];
-        _unitScore(id);
-        // the module available() is the balance pot of the balance bid; tokens land at it with no engine call
-        xt.mint(address(mod), 1e22);
+        // the treasury available() is the balance pot of the balance bid; tokens land at it with no engine call
+        _fundTreasuryWorking(1e22);
         _warp(10 minutes);
         uint256 quotedRate = core.balanceRate();
         uint256 quotedBid = core.balanceBidOf(id);
-        uint256 before = xt.balanceOf(seller);
+        uint256 before = _balanceOf(seller);
         vm.prank(seller);
         core.sellForBalance(_one(id));
-        uint256 paid = xt.balanceOf(seller) - before;
+        uint256 paid = _balanceOf(seller) - before;
         emit log_named_uint("balanceRate quoted (bps of par)", quotedRate);
         emit log_named_uint("balanceBidOf quoted (balance token)", quotedBid);
         emit log_named_uint("fill paid (balance token)", paid);
@@ -134,12 +115,54 @@ contract ViewEqualsStoredTest is Fixture {
         // a fresh bucket with no purchase yet, so spendState reads the opening pot budget
         _warp(uint256(s.bucketSeconds) + 1);
         uint256 id = _credits(seller, 1)[0];
-        _unitScore(id);
         // fee income arrives with no engine call
         _pushUnbooked(1 ether);
         pot = core.ethPot();
         (, quoted,) = core.spendState();
         _sellOneForEth(seller, id); // the first purchase of the bucket books the income and snapshots the budget
         (, enforced,) = core.spendState();
+    }
+}
+
+/// @notice the one promise that needs the fresh-launch empty-pot stall state (decision 147) the live Core is past: a
+/// fresh launch with only unbooked hook income and a booked `ethPot` of zero. kept on the base `Fixture` (a fresh
+/// deploy) because the live Core's `ethPot` is not zero.
+contract ViewEqualsStoredFixtureTest is Fixture {
+    function setUp() public override {
+        super.setUp();
+        _useLiveSettings(); // controlled input, live configuration (Addendum 4)
+    }
+
+    /// forces `amount` wei into the Core with no engine call, the way a selfdestruct or a raw hook transfer lands eth
+    /// the Core has not booked
+    function _pushUnbooked(uint256 amount) internal {
+        vm.deal(address(core), address(core).balance + amount);
+    }
+
+    /// sells `id` once for eth, returns the wei the seller received
+    function _sellOneForEth(address who, uint256 id) internal returns (uint256 paid) {
+        uint256 before = who.balance;
+        vm.prank(who);
+        core.sellForEth(_one(id));
+        paid = who.balance - before;
+    }
+
+    // promise: a fresh launch with only unbooked hook income (ethPot zero): bidOf equals the next fill payout
+    function test_ethBidEqualsFill_freshLaunchOnlyUnbookedIncome() public {
+        _skipSniperWindow();
+        // the exact launch stall state of decision 147: no door has booked, so ethPot is zero while the Core holds eth
+        assertEq(core.ethPot(), 0, "the fresh fixture has an empty pot");
+        uint256 id = _credits(seller, 1)[0];
+        _unitScore(id);
+        _pushUnbooked(1 ether);
+        _warp(30 minutes);
+        uint256 quotedRate = core.ethRate();
+        uint256 quotedBid = core.bidOf(id);
+        uint256 paid = _sellOneForEth(seller, id);
+        emit log_named_uint("ethPot booked (wei)", 0);
+        emit log_named_uint("ethRate quoted, empty booked pot (wei per 100 points)", quotedRate);
+        emit log_named_uint("bidOf quoted (wei)", quotedBid);
+        emit log_named_uint("fill paid (wei)", paid);
+        assertEq(paid, quotedBid, "fresh launch fill paid differs from the bid quoted over unbooked income");
     }
 }

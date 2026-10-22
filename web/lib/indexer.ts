@@ -15,7 +15,7 @@ import { createClient, and, asc, count, desc, eq, gte, inArray, isNotNull, min, 
 import { getTableColumns } from "drizzle-orm";
 import { formatUnits } from "viem";
 import { chain, core, engineDeployed, indexerUrl, STATEMENT_SIZE } from "./config";
-import { commas, eth, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
+import { BALANCE_SYMBOL, commas, eth, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
 import { indexedBlockForChain } from "./indexer-health";
 import { BANDS, BUCKET_WEI, POINT, WEEK_S } from "./market-report";
 import { soldDetail, type CreditEvt, type FeedEvent, type StatementRecord } from "./events";
@@ -505,13 +505,24 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
   const amount = r.amount ?? 0n;
   switch (r.kind) {
     case "credit_bought":
+      // a balance-bid buy (amount2, the $BALANCE paid) is a Credit exchanged on /exchange: its own row, seller named
+      if (r.amount2 && r.amount2 > 0n) return {
+        ...base,
+        kind: "exchanged",
+        label: "credit exchanged",
+        detail: `for ${BALANCE_SYMBOL} by`,
+        addr: r.account ?? undefined,
+        eth: formatHistoricalBalance(r.amount2, r.balanceToken ?? undefined, balance),
+        link: creditLink(cid!),
+        tile: { kind: "credit", id: cid! },
+      };
       return {
         ...base,
         ...credit,
         kind: "credit",
         label: "credit acquired",
         detail: "",
-        eth: r.amount2 && r.amount2 > 0n ? formatHistoricalBalance(r.amount2, r.balanceToken ?? undefined, balance) : eth(amount),
+        eth: eth(amount),
         link: creditLink(cid!),
         tile: { kind: "credit", id: cid! },
       };

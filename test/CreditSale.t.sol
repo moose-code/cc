@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {CreditSale, Settings, Quote, Mainnet} from "../src/interfaces/Interfaces.sol";
@@ -17,15 +17,28 @@ import {LowballCreditController, ReentrantCreditBuyer} from "./attackers/CreditS
 /// `valueOf(score)`, times `floorMultBps()` (`(10_000 + creditSpreadBps)` of the Core's `balanceBidCapBps`); the start is the floor times `creditStartBps`. `valueOf` is the rate term
 /// `floorRate * score / refScore` with value mode off. the core keeps a hard floor
 /// at `saleFloorBps` of the credit's cost. a buy pays the price, with the artist and operator cuts taken off it (decision 123). while
-/// the sale is on compose takes only credits past their window
-contract CreditSaleTest is Fixture {
+/// the sale is on compose takes only credits past their window.
+/// ported to the live Core/controller/pile on a mainnet fork: the live credit sale is on, the live pile already holds
+/// credits, and every credit carries its real score, so the sub-100-point floor case uses a real sub-100 credit (never
+/// `_mockScore`) and the pile-count assertions read the live pile as a delta rather than an absolute zero
+contract CreditSaleTest is LiveFixture {
     uint256 internal constant BPS = 10_000;
+
+    /// a real strategy-held credit scoring below 100 points (score 808824 < RATE_SCORE), for the sub-100-point floor
+    /// case: its per-point value is a fraction of the floor rate, the shape the fresh deploy forced with `_mockScore`
+    uint256 internal constant SUB100 = 12968;
 
     address internal buyer;
 
     function setUp() public override {
         super.setUp();
         buyer = _user("creditbuyer");
+        // the fresh Fixture these cases were written against runs with the reserve floor at zero (Fixture._settings);
+        // the live reserve (0.1 ether) would leave the eth pile's modest pots with no biddable room, so apply it as the
+        // owner here. the reserve floor itself is test/Reserve.t.sol's subject
+        Settings memory s = core.settings();
+        s.reserveWei = 0;
+        _setSettings(s);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -41,6 +54,22 @@ contract CreditSaleTest is Fixture {
 
     function _on() internal {
         _setCreditSaleOn(true);
+    }
+
+    /// moves the real sub-100-point credit `id` from the strategy into the eth pile at the live (low) rate, so its
+    /// recorded cost stays well below its per-point value once the rate is lifted. the live score is read, never mocked
+    function _pileSub100(uint256 id) internal {
+        _fundPot(1 ether);
+        // restate the rate to the floor right before the sale, so the credit records a tiny cost (no idle time passes
+        // before the bid, so the funded climb does not lift it) and its per-point value governs once the rate is lifted
+        vm.prank(owner);
+        core.setRate(1e13);
+        vm.prank(STRATEGY);
+        CREDITS.transferFrom(STRATEGY, seller, id);
+        vm.prank(seller);
+        CREDITS.setApprovalForAll(address(core), true);
+        vm.prank(seller);
+        core.sellForEth(_one(id));
     }
 
     /// `who` buys credit `id` at its price (the artist and operator cuts come off it inside the core)
@@ -59,7 +88,10 @@ contract CreditSaleTest is Fixture {
     // promise: INTEGRATION CreditSaleOff
     function test_toggle_offBlocksBuyCredit() public {
         uint256[] memory ids = _fillEthPile(1);
-        assertFalse(ctl.creditSaleOn(), "the fixture starts with the sale off");
+        // the subject is "off blocks buyCredit": the live sale is on, so the owner turns it off first, then the buy
+        // refuses
+        _setCreditSaleOn(false);
+        assertFalse(ctl.creditSaleOn(), "the owner turned the sale off");
         vm.deal(buyer, 10 ether);
         vm.prank(buyer);
         vm.expectRevert(IControllerV1.CreditSaleOff.selector);
@@ -91,40 +123,52 @@ contract CreditSaleTest is Fixture {
         _creditBad(c, "creditWindow");
         c.window = type(uint32).max;
 
-        // the floor remains at 200 with zero tolerance; 100 tolerance needs 203 to close the loop
-        c.spreadBps = 0;
-        _creditBad(c, "creditSpreadBps");
-        c.spreadBps = 200;
-        _creditBad(c, "creditSpreadBps");
-        c.spreadBps = 203;
-        ctl.setCredit(c);
-        assertEq(ctl.floorMultBps(), 10_203, "100 tolerance requires a 203 bps spread");
-        Quote memory q = Mainnet.defaultQuote();
-        q.tolBps = 0;
-        ctl.setQuote(q);
-        c.spreadBps = 199;
-        _creditBad(c, "creditSpreadBps");
-        c.spreadBps = 200;
-        ctl.setCredit(c);
-        assertEq(ctl.floorMultBps(), 10_200, "the spread floor remains with zero tolerance");
-        q.tolBps = 100;
-        vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
-        ctl.setQuote(q);
-        c.spreadBps = 203;
-        ctl.setCredit(c);
-        ctl.setQuote(q);
-        c.spreadBps = 1_000;
-        ctl.setCredit(c);
-        q.tolBps = 450;
-        ctl.setQuote(q);
-        c.spreadBps = 0;
-        _creditBad(c, "creditSpreadBps");
-        c.spreadBps = 1_000;
-        ctl.setCredit(c);
-        assertEq(ctl.floorMultBps(), 11_000, "spread 1,000 at the 10,000 cap is a 10 percent floor over the reference");
-        c.spreadBps = type(uint16).max;
-        ctl.setCredit(c);
-        assertEq(ctl.creditSpreadBps(), type(uint16).max);
+        // the credit spread floor's coupling to the value mode quote tolerance (the "close the loop" rule: 100 tolerance
+        // needs a 203 bps spread, and the floorMultBps it yields) is a ControllerV1 surface. ControllerV2 uses a
+        // different credit floor model and does not reject a spread against the quote tolerance, so this block runs only
+        // before stage B; the window, start and owner bounds hold on both controllers
+        if (!_liveStageB()) {
+            c.spreadBps = 0;
+            _creditBad(c, "creditSpreadBps");
+            c.spreadBps = 200;
+            _creditBad(c, "creditSpreadBps");
+            c.spreadBps = 203;
+            ctl.setCredit(c);
+            assertEq(ctl.floorMultBps(), 10_203, "100 tolerance requires a 203 bps spread");
+            Quote memory q = Mainnet.defaultQuote();
+            q.tolBps = 0;
+            ctl.setQuote(q);
+            c.spreadBps = 199;
+            _creditBad(c, "creditSpreadBps");
+            c.spreadBps = 200;
+            ctl.setCredit(c);
+            assertEq(ctl.floorMultBps(), 10_200, "the spread floor remains with zero tolerance");
+            q.tolBps = 100;
+            vm.expectRevert(abi.encodeWithSelector(IControllerV1.BadSetting.selector, bytes32("creditSpreadBps")));
+            ctl.setQuote(q);
+            c.spreadBps = 203;
+            ctl.setCredit(c);
+            ctl.setQuote(q);
+            c.spreadBps = 1_000;
+            ctl.setCredit(c);
+            q.tolBps = 450;
+            ctl.setQuote(q);
+            c.spreadBps = 0;
+            _creditBad(c, "creditSpreadBps");
+            c.spreadBps = 1_000;
+            ctl.setCredit(c);
+            assertEq(
+                ctl.floorMultBps(), 11_000, "spread 1,000 at the 10,000 cap is a 10 percent floor over the reference"
+            );
+            c.spreadBps = type(uint16).max;
+            ctl.setCredit(c);
+            assertEq(ctl.creditSpreadBps(), type(uint16).max);
+        } else {
+            // on ControllerV2 the spread is still owner set and read back; the floor model differs (checked elsewhere)
+            c.spreadBps = 1_000;
+            ctl.setCredit(c);
+            assertEq(ctl.creditSpreadBps(), 1_000, "the spread is set and read on ControllerV2");
+        }
 
         c.startBps = type(uint32).max;
         ctl.setCredit(c);
@@ -259,24 +303,29 @@ contract CreditSaleTest is Fixture {
     /// a credit scoring well below 100 points floors at its per-point value, not the floor rate. the dropped term
     /// (decision 115a, redundant under the per-point bid of decision 116) would have priced it at floorRate * floorMultBps, far above
     function test_floor_usesValueOfNotTheFlatFloorRate() public {
-        uint256 id = _fillEthPile(1)[0];
+        // a real sub-100-point credit (12968, score 808824 < RATE_SCORE) piled at the live rate, so its recorded cost is
+        // small; the live CreditScore is read, never mocked
+        uint256 id = SUB100;
+        _pileSub100(id);
         _on();
         // raise the rate well above the credit's recorded cost, so the flat floorRate sits above both the cost and the
         // per-point value term; a score below 100 points puts valueOf(score) at a fraction of floorRate
         _liftRateCap();
         vm.prank(owner);
         core.setRate(1e17);
-        _mockScore(id, RATE_SCORE / 2);
         uint256 s = _scoreOf(id);
         assertLt(s, RATE_SCORE, "the credit scores below 100 points");
         (, uint256 cost,) = core.creditInfo(id);
+        // the live floor rate drifts across the window (the peak decays, the climb moves), so the floor terms are read
+        // at the window end, where the price is the resting floor and `creditPrice` reads the same floor rate
+        _warp(ctl.creditWindow());
         uint256 fr = core.floorRate();
         uint256 value = ctl.valueOf(s);
         assertEq(value, FullMath.mulDiv(fr, s, RATE_SCORE), "valueOf is the rate term, no pool");
         uint256 hi = _max(cost, value);
+        assertEq(hi, value, "the per-point value governs over the credit's small recorded cost");
         assertLt(hi, fr, "the governing term is below the flat floor rate that was dropped");
         uint256 fb = ctl.floorMultBps();
-        _warp(ctl.creditWindow());
         assertEq(ctl.creditPrice(id), hi * fb / BPS, "the floor is max(cost, valueOf(score)) * floorMultBps");
         assertLt(ctl.creditPrice(id), fr * fb / BPS, "and below floorRate * floorMultBps, the dropped flat term");
     }
@@ -286,6 +335,7 @@ contract CreditSaleTest is Fixture {
     /// in-order quotes and empties the pile (H1)
     function test_h1_buyCreditsPricesEachAfterThePreviousSale() public {
         uint256[] memory ids = _armCostGoverns(2);
+        uint256 pileBefore = core.pileSize();
         _warp(ctl.creditWindow());
         uint256 q0 = ctl.creditPrice(ids[0]);
         uint256 q1 = ctl.creditPrice(ids[1]);
@@ -294,7 +344,7 @@ contract CreditSaleTest is Fixture {
         vm.prank(buyer);
         ctl.buyCredits{value: pay}(ids);
         assertEq(buyer.balance, pay - (q0 + q1), "the batch charges each credit priced in order");
-        assertEq(core.pileSize(), 0, "both credits left the pile");
+        assertEq(core.pileSize(), pileBefore - 2, "both named credits left the pile");
     }
 
     // ------------------------------------------------------------------ buy
@@ -413,12 +463,24 @@ contract CreditSaleTest is Fixture {
 
     // ------------------------------------------------------------------ compose and the window
 
-    // promise: SPEC 1 credit sale window: composeChosen waits for the window (InWindow)
+    // promise: SPEC 1 credit sale window: compose waits for the window (nextPage not ready, NotReady on compose)
     function test_compose_waitsForTheWindowWhenSaleOn() public {
+        _on(); // the credit sale is on (its live value, the subject of the window gate)
+        // the live pile holds pre-launch credits long past their window, so the oldest page is already composable.
+        // drain the composable pages until under one page remains, so a freshly filled page's newest credit (the one
+        // nextPage reads, page[79]) is one just acquired and still inside its window
+        for (uint256 i; i < 50 && core.pileSize() >= 80; ++i) {
+            (bool r,,) = ctl.nextPage();
+            if (!r) break;
+            vm.fee(composeBasefee);
+            vm.prank(keeper);
+            core.compose();
+        }
+        require(core.pileSize() < 80, "could not drain the live pile under one page");
+
         _fillEthPile(80);
-        _on();
         (bool ready,,) = ctl.nextPage();
-        assertFalse(ready, "not ready while the newest credit is inside its window");
+        assertFalse(ready, "not ready while the newest credit in the page is inside its window");
         vm.fee(composeBasefee);
         vm.prank(keeper);
         vm.expectRevert(ICore.NotReady.selector);
@@ -440,10 +502,11 @@ contract CreditSaleTest is Fixture {
 
     // promise: SPEC 1 one pile: a balance bought credit sells at its recorded cost (decision 96)
     function test_buy_balanceTokenCreditSellsAtItsRecordedCost() public {
+        // the live phase 2 balance side: a fresh treasury on the live BALANCE token, the live eth / BALANCE pool, and a
+        // funded pot, replacing the stand in token and pool the fresh deploy minted
         _enterPhase2();
         _fundPot(3 ether);
-        xt.mint(address(mod), 1e24);
-        _setBalancePool();
+        _setLiveBalancePool();
         uint256[] memory ids = _credits(seller, 1);
         uint256 id = ids[0];
         vm.prank(seller);
@@ -471,6 +534,7 @@ contract CreditSaleTest is Fixture {
     function test_reentrancy_buyerCannotReenter() public {
         uint256[] memory ids = _armCostGoverns(2);
         ReentrantCreditBuyer attacker = new ReentrantCreditBuyer(address(ctl));
+        uint256 pileBefore = core.pileSize();
         uint256 price0 = ctl.creditPrice(ids[0]);
         attacker.arm(ids[1]);
         // overpay so the refund callback fires, where the attacker reenters buyCredit
@@ -479,7 +543,7 @@ contract CreditSaleTest is Fixture {
         vm.expectRevert();
         attacker.buy(ids[0], pay);
         // nothing moved: both credits stay in the pile
-        assertEq(core.pileSize(), 2, "the pile is untouched");
+        assertEq(core.pileSize(), pileBefore, "the pile is untouched");
         assertEq(CREDITS.ownerOf(ids[0]), address(core), "the core still holds the first credit");
     }
 

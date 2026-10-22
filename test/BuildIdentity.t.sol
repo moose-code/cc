@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICoreOpsLib} from "../src/interfaces/ICoreOpsLib.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 import {CreditSale, Quote} from "../src/interfaces/Interfaces.sol";
-import {Phase2BalanceTokenStandin} from "./standins/Phase2BalanceTokenStandin.sol";
 
 /// @notice proof that the suite exercises the production build. tests and scripts compile on the default profile (no
 /// via_ir), the production contracts on the via_ir profile (foundry.toml). this test fails unless
@@ -21,7 +20,7 @@ import {Phase2BalanceTokenStandin} from "./standins/Phase2BalanceTokenStandin.so
 ///     sizes and the constants in the same commit that changes a production contract on purpose.
 /// the generated interfaces are not part of the proof: `script/tools/gen-interfaces.sh --check` covers them, and the
 /// the two library functions the abi does not list are pinned to the artifact selectors below.
-contract BuildIdentityTest is Fixture {
+contract BuildIdentityTest is LiveFixture {
     uint256 internal constant CORE_RUNTIME = 23762;
     uint256 internal constant CONTROLLER_RUNTIME = 17189;
     uint256 internal constant LIB_RUNTIME = 23811;
@@ -153,10 +152,13 @@ contract BuildIdentityTest is Fixture {
         );
     }
 
-    // promise: the fixture deploys the via ir artifacts
+    // promise: the live deployment (the Core, ControllerV1, the two listing adapters, the renderer and both linked libraries at their mainnet addresses) is the via ir artifacts of this tree
     function test_theFixtureDeploysTheViaIrArtifacts() public view {
         _identical(address(core), "Core", CORE_RUNTIME);
-        _identical(address(ctl), "ControllerV1", CONTROLLER_RUNTIME);
+        // in stage B the Core's controller is the live ControllerV2 (decision 250 keeps the V1 view surface); check its
+        // identity there, the ControllerV1 identity otherwise
+        if (_liveStageB()) _identical(address(ctl), "ControllerV2", CONTROLLER_V2_RUNTIME);
+        else _identical(address(ctl), "ControllerV1", CONTROLLER_RUNTIME);
         _identical(seaportAdapter, "SeaportBasicAdapter", SEAPORT_ADAPTER_RUNTIME);
         _identical(strategyAdapter, "CreditStrategyAdapter", STRATEGY_ADAPTER_RUNTIME);
         _identical(renderer, "LogoCoinRenderer", RENDERER_RUNTIME);
@@ -171,10 +173,11 @@ contract BuildIdentityTest is Fixture {
     // promise: the phase 2 contracts a deploy script creates are the via ir artifacts at their shipped sizes, under EIP-170
     function test_phaseTwoArtifactsAreTheViaIrBuild() public {
         address policy = vm.deployCode("ProRataRedemptionPolicy.sol:ProRataRedemptionPolicy");
-        Phase2BalanceTokenStandin token = new Phase2BalanceTokenStandin();
+        // the treasury constructor validates its balance token (statements() is the live Statements, decimals() is 18);
+        // the live BALANCE token passes, so no stand in is needed to exercise the phase 2 artifact build
         address treasury = vm.deployCode(
             "Phase2BalanceTreasury.sol:Phase2BalanceTreasury",
-            abi.encode(address(core), address(token), policy, address(0))
+            abi.encode(address(core), liveBalanceToken, policy, address(0))
         );
         CreditSale memory credit = CreditSale({saleOn: true, window: 14_400, spreadBps: 1_000, startBps: 15_000});
         Quote memory none;

@@ -9,18 +9,30 @@ export const RATE_SCORE = 1_000_000;
 // score of the calibration credit the market model prices (points): a market price Pe is eth per credit of this score
 export const REF_PTS = 433;
 
-// the launch package. every launch number comes from script/config/mainnet.json, the single source. node reads the file
-// here; build.mjs strips the import and inlines the parsed object as LAUNCH_RAW for the browser, so neither path hand
-// copies a launch value and the two cannot drift
+// the launch package. the parameter source is the deployed Core and controller's live state, read at a pinned block by
+// sim/snapshot.mjs into sim/live-state.json (owner rule: a contract that exists on mainnet is read from its live state,
+// not a config copy). the launch config stays the source only for the fields the chain holds no view for: the pool and
+// distribution block (launch.*) and the controller sale half-life and anchor (sale.anchorHalfLife, sale.anchorMinCost,
+// sale.anchorMoveBps). node reads both files here; build.mjs strips the imports and inlines both parsed objects for the
+// browser, so neither path hand copies a value and the two cannot drift
 import { readFileSync as _readFileSync } from 'node:fs'; // build-strip
 export const LAUNCH_RAW = JSON.parse(_readFileSync(new URL('../script/config/mainnet.json', import.meta.url), 'utf8')); // build-inline
+const LIVE = JSON.parse(_readFileSync(new URL('./live-state.json', import.meta.url), 'utf8')); // build-inline-live
+// overlay the live state onto the launch config: the Core settings, the opening rate, the chain-held controller sale
+// fields (markupBps, startCapBps, decayHours), the credit block and the protected quote come from the chain; the config
+// keeps only the fields listed above
+LAUNCH_RAW.rateStart = LIVE.rateStart;
+Object.assign(LAUNCH_RAW.settings, LIVE.settings);
+Object.assign(LAUNCH_RAW.sale, LIVE.sale);
+Object.assign(LAUNCH_RAW.credit, LIVE.credit);
+Object.assign(LAUNCH_RAW.quote, LIVE.quote);
 // Jack's balance token constants live in one place, sim/upstream.js (build.mjs inlines it for the browser). the balance
 // model's unit, decimals and redemption math read them, so a change in his repo is a one-line sim change
 import { UNIT_PER_POINT, DECIMALS, redeemQuote } from './upstream.js'; // build-strip
 export { UNIT_PER_POINT, DECIMALS, redeemQuote }; // build-strip
 const _cs = LAUNCH_RAW.settings, _sale = LAUNCH_RAW.sale, _cr = LAUNCH_RAW.credit, _ln = LAUNCH_RAW.launch;
 
-// the Core's Settings struct (src/interfaces/Interfaces.sol), same field names, values read from the config.
+// the Core's Settings struct (src/interfaces/Interfaces.sol), same field names, values read from the live Core state.
 // the stepped bid fields are kept in percent and hours here: dropPerCreditPct = dropPerCreditBps / 100, dropToPct = dropFloorBps / 100,
 // climbPerMin = climbPerMinBps / 100, ceilPct = ceilBps / 100, idleLoosenPct = idleLoosenBps / 100, recoveryClimbPerMin = recoveryClimbPerMinBps / 100,
 // recoveryGapPct = recoveryGapBps / 100, peakHalfLifeHours = peakHalfLife / 3600. durations in seconds, buybackSlice and the fees in eth, swapFeeCc in whole coins.
@@ -84,7 +96,7 @@ export const CONTROLLER = {
   anchorMoveBps: _sale.anchorMoveBps,
 };
 export const CONTROLLER_KEYS = Object.keys(CONTROLLER);
-// the credit settings (script/config/mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
+// the credit settings, live values from sim/live-state.json (field names from the mainnet.json credit block, the Credit struct). creditCostToPotBps, chosenComposeOn and minCcToChoose are Core settings
 // (Core.setCreditCostToPotBps, setChosenComposeOn, setMinCcToChoose); creditSaleOn, creditWindow, creditSpreadBps and creditStartBps are controller
 // settings (FLOW 88 to 90, 93, 94). refScore is a Core setting the eth doors and the controller share. while creditSaleOn is true every pile credit is for sale from its acquisition time: creditPrice falls linearly from
 // start = floor * creditStartBps / 10000 to floor over creditWindow and rests there, with floor = max(cost, valueOf(score)) * floorMultBps / 10000, floorMultBps = max(10000, (10000 + creditSpreadBps) * balanceBidCapBps / 10000) (decisions 104, 115, 150, 153). valueOf is the rate term
@@ -106,7 +118,7 @@ export const CREDIT_KEYS = Object.keys(CREDIT);
 // the config names of the credit block (script/config/mainnet.json credit.*)
 export const CREDIT_CONFIG_KEY = { creditCostToPotBps: 'costToPotBps', chosenComposeOn: 'chosenComposeOn', minCcToChoose: 'minCcToChoose', creditSaleOn: 'saleOn', creditWindow: 'window', creditSpreadBps: 'spreadBps', creditStartBps: 'startBps' };
 // the config credit block also holds royaltyRecipient, an address the model has no use for
-// the controller's protected price settings (script/config/mainnet.json quote block, the Quote struct, ControllerV1.setQuote, decision 148).
+// the controller's protected price settings, live values from sim/live-state.json (field names from the mainnet.json quote block, the Quote struct, ControllerV1.setQuote, decision 148).
 // the reference moves toward the pool spot by at most min(referenceRateBpsPerHour * elapsed / 3600, referenceStepBps) bps
 // per update; buys price off min(spot, reference * (10000 + tolBps) / 10000), sales off max(spot, reference * (10000 - tolBps) / 10000);
 // the reference price is usable while it is at most referenceMaxStale old (referenceMaxStale 0 is never usable) and the pool holds
@@ -220,12 +232,12 @@ export const CORE_PARAMS = {
   BUYLISTING_GAS_USED: 470000, // counted gas of one buyListing through the CreditStrategy (466,714 in test/CoreUnit.t.sol): gas used 418,000 plus the 250,000 overhead less the work after the count
 };
 
-// launch config (script/config/mainnet.json) and simulator inputs
+// live launch parameters (sim/live-state.json, with the config's pool and distribution block) and simulator inputs
 export const SIM_DEFAULTS = {
   seed: 7,
   days: 90,
   stepSec: 60, // time step after the first hour, seconds. a divisor of 3600. 60 matches the minute bucket of the contract's drop floor and climb; hourly steps distort the stepped rule (bid up to 3x market). rates quoted per hour or per day, the hourly cap and arrival counts scale with the step
-  rateStart: LAUNCH_RAW.rateStart, // launch opening rate (script/config/mainnet.json rateStart): wei per 100 points
+  rateStart: LAUNCH_RAW.rateStart, // the live opening rate (Core.RATE_START(), in sim/live-state.json): wei per 100 points
   // seller model toggle: one seller with an unlimited supply sells one credit per step whenever the bid has reached throttleFrac of the market price
   throttler: false,
   throttleFrac: 0.95,

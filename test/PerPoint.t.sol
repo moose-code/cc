@@ -2,13 +2,13 @@
 pragma solidity ^0.8.28;
 
 import {RATE_SCORE} from "../src/interfaces/Interfaces.sol";
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 
 /// @notice the per-point eth bid: every eth door prices a credit at
 /// `ethRate() * score / refScore`, and a fill drops the rate by `dropPer100PointsBps * score / refScore`. the balance side
 /// and the statement reference already read the score; the eth doors scale the bid and the drop by `score / refScore`
-contract PerPointTest is Fixture {
+contract PerPointTest is LiveFixture {
     address internal user;
 
     function setUp() public override {
@@ -56,7 +56,11 @@ contract PerPointTest is Fixture {
         core.sellForEth(_one(id));
         assertEq(user.balance - before, want, "the seller is paid the per-credit bid");
         (, uint256 cost,) = core.creditInfo(id);
-        assertEq(cost, want + want * core.settings().buyToArtistBps / 10_000, "the cost basis is the per-credit bid plus its royalty");
+        assertEq(
+            cost,
+            want + want * core.settings().buyToArtistBps / 10_000,
+            "the cost basis is the per-credit bid plus its royalty"
+        );
 
         uint256 fallNum = uint256(core.settings().dropPer100PointsBps) * score;
         uint256 denom = 10_000 * ref;

@@ -1,0 +1,170 @@
+{
+  "chainId": 1,
+  "core": "0xcdb1889ae12074d750CD9B8531B692015465e0dD",
+  "balanceToken": "0x3620540c994433D7B4a628C46d2ED5F92572eA07",
+  "balanceTokenCodehash": "0x83c6085628758fb522e28b5abb7c24253b6d8667a8b2b23d2c3542deabc25de7",
+  "policy": "0x433f3627Cb96c3c87A401D8e274541045ff45c51",
+  "treasury": "0xB85CF439Ca57b4bfC28fA1Cb8a97Ee85555B0496",
+  "controllerV2": "0xCD64e368b3d7033B2E2B22Fa5F67f554aB807d36",
+  "split": {
+    "address": "0x0493299d3384518bFAb5b061384271ed771EDDE2",
+    "factory": "0x8E8eB0cC6AE34A38B67D5Cf91ACa38f60bc3Ecf4",
+    "recipients": [
+      "0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a",
+      "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
+    ],
+    "allocations": [
+      833333,
+      166667
+    ],
+    "totalAllocation": 1000000,
+    "distributionIncentive": 0,
+    "controller": "0xCB43078C32423F5348Cab5885911C3B5faE217F9"
+  },
+  "constructorArgs": {
+    "policy": {},
+    "treasury": {
+      "core": "0xcdb1889ae12074d750CD9B8531B692015465e0dD",
+      "balanceToken": "0x3620540c994433D7B4a628C46d2ED5F92572eA07",
+      "policy": "0x433f3627Cb96c3c87A401D8e274541045ff45c51",
+      "predecessor": "0x0000000000000000000000000000000000000000"
+    },
+    "controllerV2": {
+      "core": "0xcdb1889ae12074d750CD9B8531B692015465e0dD",
+      "credit": {
+        "saleOn": true,
+        "window": 14400,
+        "spreadBps": 1000,
+        "startBps": 15000
+      },
+      "quote": {
+        "referenceRateBpsPerHour": 0,
+        "referenceStepBps": 0,
+        "tolBps": 0,
+        "referenceMaxStale": 0,
+        "referenceMinSeconds": 0,
+        "minLiquidity": 0
+      },
+      "statementSaleMultiplierBps": 15000,
+      "statementRedeemDelaySeconds": 3600
+    }
+  },
+  "codeHashes": {
+    "policy": "0x5f6faabee10ccfb5ac36719d4cad193d7dc70ca4c56946cdf6dc6fa919ccf2ae",
+    "treasury": "0x8f40ca0bd12444280a5b5793669cc0b66b5b661d1ea2aec0af5092ce50dc3035",
+    "controllerV2": "0x1b53eb82b718984715964c7e143a950c218f9ff200ce7f0f0fb0a36bcceb65a5"
+  },
+  "buildHashes": {
+    "policy": "0x5f6faabee10ccfb5ac36719d4cad193d7dc70ca4c56946cdf6dc6fa919ccf2ae",
+    "treasury": "0xbf53bfbc3d964c1506556712022a4fe9e31ec523d65cef37b69f2d984fb4fe44",
+    "controllerV2": "0x711de842ffd952f36ffae03d261a92d339c1cf3efa0b7b0441bdd9c8a263644e"
+  },
+  "policyVersion": "pro-rata-v1",
+  "deployment": {
+    "commit": "51fc57c",
+    "planHash": "0xca546731fd63c61f91a69409abf1e40940d97aada95dcd7edd4b306da0b9239b",
+    "transactions": [
+      {
+        "what": "ProRataRedemptionPolicy",
+        "hash": "0xa9b3f2477f25acbd557d6ce61e54e3f674270f9b8b41fc3c7206380fcc6c6f3e",
+        "block": 26243688
+      },
+      {
+        "what": "Phase2BalanceTreasury",
+        "hash": "0x16f40f482e19f4d1c4aadf5ba8023b87e3bb8f5e3dda4852193c6377670b8cf5",
+        "block": 26243689
+      },
+      {
+        "what": "ControllerV2",
+        "hash": "0x3ef3ecec42ebb2051172981c7f45eba410aa10c81a988d73cb9a6d23ce22f6d5",
+        "block": 26243697
+      },
+      {
+        "what": "push split (factory createSplit)",
+        "hash": "0x37978dcea06232d7420ffec8c13e570b711166759049805e1ef6657963b9a34a",
+        "block": 26243698
+      }
+    ],
+    "readback": "Phase2Readback 48 of 48 at block 26243717; split accepted (recipients, allocations, controller)"
+  },
+  "activation": {
+    "balanceModuleSet": true,
+    "controllerSet": true,
+    "conversionEnabled": true,
+    "workingPaymentsEnabled": true,
+    "ccRedemptionEnabled": false,
+    "statementSalesEnabled": true,
+    "balancePoolKeySet": true,
+    "artistSet": true
+  },
+  "stageB": {
+    "transactions": [
+      {
+        "what": "setBalanceModule(treasury)",
+        "hash": "0x0480ab3ab75ddb2740581f4b0b85f6343e49dbd558163c8477c79f9143d32d33",
+        "block": 26243776
+      },
+      {
+        "what": "setController(controllerV2)",
+        "hash": "0x92a78e0cfea86694d2474248ee35c470bd1f5c5286c576fac481323db328664c",
+        "block": 26243791
+      },
+      {
+        "what": "setArtist(split)",
+        "hash": "0xc5b28f1c35d325e92d9886dd8e67acbe9a90863baa07a942696dc41b1116dcd8",
+        "block": 26243806
+      },
+      {
+        "what": "setSettings (balanceDiscountBps 2000, buyToArtistBps 300, saleToArtistBps 300, saleToOperatorBps 0; burns kept)",
+        "hash": "0xe53e509a190c88807460e188a8072ca32ce891bb11e7f47d1ed540e9aea99ba0",
+        "block": 26243807
+      }
+    ],
+    "readback": "Phase2Readback 53 of 53 after stage B; margin 760 bps; keeper v20 (Phase 2 build) skips redeemStatement while conversionReady is false"
+  },
+  "stageC": {
+    "transactions": [
+      {
+        "what": "setRate(2962256201024912)",
+        "hash": "0x14a5a4c98b8c0246968a0ef40e1872b85bbe5ec44f788fdc3b7c344385dea853",
+        "block": 26244618
+      },
+      {
+        "what": "setBalancePoolKey (fee 3000, spacing 30, hooks 0x2eef0e2a9a652d755accad95a24541a98b5ca000)",
+        "hash": "0xbf8473d77afe9a476529988e9a2a56c6437d7320315240592035437c745accfe",
+        "block": 26244636
+      },
+      {
+        "what": "setQuote (first)",
+        "hash": "0xa535b14b530d38db063d0c43760d4acd89ef85d54cb5fb23d9c36fee2b741c94",
+        "block": 26244787
+      },
+      {
+        "what": "setQuote (step 1000, rate 6000/h, minSeconds 600, maxStale uint32 max, minLiquidity 3e21)",
+        "hash": "0x804f7ef898d384cf3c417939136075cceebd407638dec8cf6e16d7bacf5cdeff",
+        "block": 26245363
+      },
+      {
+        "what": "treasury setSwitches(true,true,false)",
+        "hash": "0x0873dc0008c646510a3fe68ba50d9c5cec822e23345a053ed59bac3a11e1ab5c",
+        "block": 26245409
+      },
+      {
+        "what": "setSettings valueModeOn 1, spendCapBps 9999 (bid off)",
+        "hash": "0xbfc5881c975a2cf0231db8b7026647fbb43655ec1084afee2d97dd7c1e792656",
+        "block": 26245505
+      },
+      {
+        "what": "ControllerV2 setStatementSales(true)",
+        "hash": "0x8181e3d505f12b9a72bf0833db5fa2aba1e963cf98fa506078ea2a8d77e531a7",
+        "block": 26245518
+      },
+      {
+        "what": "setSettings balanceBidOn 1",
+        "hash": "0x2143a21df71e5d48cf76b8c5970f37dad11254046b7e5744ab25c21c605c48d4",
+        "block": 26248373
+      }
+    ],
+    "readback": "53 of 53 after C5a; after C7 only balanceBidOn changed; valuePerPoint(true) ok; Statement 348 converted by a user (tx 0x5ced9876\u2026fe92, 50,227.79 BALANCE)"
+  }
+}

@@ -51,8 +51,9 @@ abstract contract Fixture is Test, ProdDeployer {
     address internal constant STRATEGY = Mainnet.CREDIT_STRATEGY;
     address internal constant DEAD = Mainnet.DEAD;
 
-    /// @dev credits the CreditStrategy lists for sale at the pinned block. they are never handed out as plain credits
-    uint256 internal constant LISTED_A = 35377;
+    /// @dev credits the CreditStrategy lists for sale at the pinned block. they are never handed out as plain credits.
+    /// verified strategy listed at LIVE_FORK_BLOCK 26242107 (the former LISTED_A 35377 had left the strategy by the pin)
+    uint256 internal constant LISTED_A = 19727;
     uint256 internal constant LISTED_B = 28352;
     uint256 internal constant LISTED_C = 18683;
 
@@ -389,7 +390,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice generates fees through real buys until the eth pot holds at least `eth`. in steady state about 5.90 percent
     /// of every buy reaches the pot (6.9 points of skim, 96.38 percent to the Core, minus the payee), inside
     /// the sniper window more
-    function _fundPot(uint256 eth) internal {
+    function _fundPot(uint256 eth) internal virtual {
         // about 5.31 percent of a buy reaches the pot now (5.90 points to the engine, less the 10 percent redeem burn
         // share); the estimate undershoots so each iteration overshoots the gap
         for (uint256 i; i < 16 && core.ethPot() < eth; ++i) {
@@ -482,7 +483,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// credit is recorded at its scaled bid `ethRate() * score / RATE_SCORE`. compose and sale tests read the recorded
     /// per-credit cost through `creditInfo`; the per-point payout and the scaled drop are test/PerPoint.t.sol,
     /// test/PerPointExact.t.sol and the invariants
-    function _fillEthPile(uint256 n) internal returns (uint256[] memory ids) {
+    function _fillEthPile(uint256 n) internal virtual returns (uint256[] memory ids) {
         ids = _credits(seller, n);
         // a price state that idle time loosened above the opening rate is restated to the opening rate
         uint256 opening = core.RATE_START();
@@ -492,11 +493,27 @@ abstract contract Fixture is Test, ProdDeployer {
         }
         uint256 room = _unclampedPot();
         if (core.ethPot() < room) _fundPot(room);
+        // fund six credits of rate above the reserve: the available pot (`ethPot` less the reserve) must cover the per
+        // credit bids, which for a live score above 100 points exceed the rate. the fresh fixture ran reserveWei 0, so
+        // this reduces to the old `total * 6`; the live reserve is nonzero, so the reserve is added on top
         uint256 total = core.ethRate() * n;
-        if (core.ethPot() < total * 6) _fundPot(total * 6);
+        uint256 need = total * 6 + core.reserve();
+        if (core.ethPot() < need) _fundPot(need);
         for (uint256 i; i < n; ++i) {
             vm.prank(seller);
             core.sellForEth(_one(ids[i]));
+        }
+    }
+
+    /// @notice ages the pile until the controller's next page is eligible: on the live Core the credit sale window is
+    /// on, so the oldest page is not composable until `creditWindow` seconds past its credits' acquisition. warps whole
+    /// windows (bounded) until `nextPage` reports ready. a no-op when the page is already ready, so the fresh fixture
+    /// with the sale window off is unchanged
+    function _warpPageReady() internal {
+        for (uint256 i; i < 4; ++i) {
+            (bool ready,,) = ctl.nextPage();
+            if (ready) return;
+            vm.warp(block.timestamp + ctl.creditWindow() + 1);
         }
     }
 
@@ -504,10 +521,14 @@ abstract contract Fixture is Test, ProdDeployer {
     /// first. the call checks that the core hands Statements the 80 oldest credits with the format `compose()` derives from
     /// `prevrandao` and the first page id. the state before the
     /// compose is kept in `preComposeSnap`, so a test can revert to it and compose again under other conditions
-    function _composeOnce() internal returns (Composed memory c) {
+    function _composeOnce() internal virtual returns (Composed memory c) {
         if (isComposed) return composed;
         uint256 size = core.pileSize();
         if (size < 80) _fillEthPile(80 - size);
+        // the live Core runs with the credit sale window on, so a freshly filled page is not eligible until it ages
+        // past the window. age it to eligibility before composing; a no-op when the page is already eligible (the
+        // fresh fixture composes with the sale window off)
+        _warpPageReady();
 
         uint256[] memory page = core.pilePage(0, 80);
         for (uint256 i; i < 80; ++i) {
@@ -545,7 +566,7 @@ abstract contract Fixture is Test, ProdDeployer {
 
     /// @notice `who` buys statement `sid` through the controller at the asking price of this block. `who` is funded
     /// for it. returns the price paid
-    function _buy(address who, uint256 sid) internal returns (uint256 price) {
+    function _buy(address who, uint256 sid) internal virtual returns (uint256 price) {
         price = ctl.priceOf(sid);
         vm.deal(who, who.balance + price);
         vm.prank(who);
@@ -597,6 +618,15 @@ abstract contract Fixture is Test, ProdDeployer {
     function _setSettings(Settings memory s) internal {
         vm.prank(owner);
         core.setSettings(s);
+    }
+
+    /// @notice applies the live Core's settings (all fields, read at the fork pin) to this fresh fixture Core, so a
+    /// controlled-input test on the fixture still runs under the live tuning (decision: the live settings are intended).
+    /// only the input a test controls (a score, a pot size) is set apart; the configuration stays the live one. needs
+    /// the fork pinned at the block where the live Core holds these settings
+    function _useLiveSettings() internal {
+        Settings memory live = ICore(payable(0xcdb1889ae12074d750CD9B8531B692015465e0dD)).settings();
+        _setSettings(live);
     }
 
     /// @notice sets the redeem burn pot share to 1,000 bps (phase 2 value, decision 155). launch is 0, so the
@@ -748,7 +778,7 @@ abstract contract Fixture is Test, ProdDeployer {
     /// @notice sets the stand in balance module and balance token and turns both balance side switches on, so redemptions and the
     /// balance token bid both run. the module holds the balance token (the Core holds none): it is funded a launch
     /// allocation, and redemptions mint their proceeds into it
-    function _enterPhase2() internal {
+    function _enterPhase2() internal virtual {
         xt = new MockBalanceToken("Balance Token", "XT");
         mod = new MockBalanceModule(address(xt), UNIT);
         xt.mint(address(mod), 1e24);

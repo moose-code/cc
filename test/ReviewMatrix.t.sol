@@ -8,7 +8,9 @@ import {Mainnet} from "../src/interfaces/Interfaces.sol";
 /// one of four ways, never in a launch that passes every check with the signed hash. preflight fails the row of the
 /// rule the change breaks (one mutation for every row a mutation can fail), the deploy reverts, the postflight reverts
 /// the deploy, or the config hash differs from the signed one (a valid but different config). `runOne` runs a mutation in
-/// its own call frame
+/// its own call frame.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: every row runs the deploy path on a
+/// pre-launch fork, so it never reads or mutates the live Core.
 contract ReviewMatrixConfigTest is ReviewHarness {
     uint256 internal constant N_STACK = 6;
 
@@ -147,7 +149,9 @@ contract ReviewMatrixConfigTest is ReviewHarness {
 }
 
 /// @notice the matrix, part two: the chain state differs from the one that was signed off (factory, balances, the Core
-/// address, the library, the stack code)
+/// address, the library, the stack code).
+/// this is a deploy-mechanics test of a fresh system, not the live Core: every row runs the deploy path on a
+/// pre-launch fork, so it never reads or mutates the live Core.
 contract ReviewMatrixStateTest is ReviewHarness {
     uint256 internal constant N_STATE = 11;
 

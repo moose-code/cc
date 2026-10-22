@@ -7,7 +7,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
 import { ExchangeView, type ExchangeReceipt } from "@/components/ExchangeView";
 import { chain, core, credits, engineDeployed } from "@/lib/config";
-import { exchangeAmount, exchangeQuote, sellExchange } from "@/lib/exchange";
+import { exchangeAmount, exchangeQuote, exchangeReceived, sellExchange } from "@/lib/exchange";
 import { rating, type BalanceTokenInfo } from "@/lib/format";
 import { useBalanceToken, useSnapshot, useWalletCredits, type Snapshot } from "@/lib/live";
 import { useTx } from "@/lib/tx";
@@ -83,7 +83,18 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     };
     await run(async (write) => {
       const hash = await sellExchange(client, write, accepted, consentIsCurrent);
-      setReceipt({ count: accepted.ids.length, minimum: amount(accepted.minOut), hash });
+      // run already waited for a successful receipt; the fills in it are what the seller actually received
+      // a failed read must not turn a confirmed sale into an error
+      const received = await client.getTransactionReceipt({ hash })
+        .then(({ logs }) => exchangeReceived(logs, accepted.core)).catch(() => undefined);
+      const explorer = chain.blockExplorers?.default.url;
+      setReceipt({
+        count: accepted.ids.length,
+        received: received === undefined ? undefined : amount(received),
+        minimum: amount(accepted.minOut),
+        hash,
+        href: explorer ? `${explorer}/tx/${hash}` : undefined,
+      });
       setSelected(new Set());
     }, [], consentIsCurrent);
     setReview(undefined);
@@ -96,12 +107,15 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
       selected: selection.has(credit.id),
     }))}
     walletReady={wallet.ready}
+    walletLoading={Boolean(account && !wrongChain && !wallet.ready && !wallet.error)}
+    marketLoading={engineDeployed && !market && !snapshot.error}
     connected={Boolean(account)}
     selectionCount={order.length}
     quoteAvailable={quoteAvailable}
     selectedRating={selectedRating}
-    total={amount(quoteAvailable && order.length > 0 ? quote?.total : undefined)}
-    fee={quoteAvailable && quote && order.length > 0 ? `−${amount(quote.fee)}` : market ? `${(10_000 - Number(market.balanceRate)) / 100}%` : "—"}
+    total={order.length === 0 ? "0" : amount(quoteAvailable ? quote?.total : undefined)}
+    fee={quote && order.length > 0 ? `−${amount(quote.fee)}` : undefined}
+    available={available && market?.balanceAvailable !== undefined ? amount(market.balanceAvailable) : undefined}
     adjustment={quoteAvailable && quote && order.length > 0 && quote.adjustment > 0n ? `−${amount(quote.adjustment)}` : undefined}
     minimum={amount(quoteAvailable && order.length > 0 ? quote?.minOut : undefined)}
     rate={market ? `${Number(market.balanceRate) / 100}%` : "the posted rate"}
@@ -115,7 +129,7 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     onSelectAll={() => setSelected(new Set(allSelected ? [] : wallet.data.map((credit) => credit.id)))}
     allSelected={allSelected}
     busy={pending}
-    status={status ?? (order.length === 0 ? "Select Credits to see their payout." : undefined)}
+    status={status}
     error={err ?? undefined}
     receipt={receipt}
     onReset={() => setReceipt(undefined)}

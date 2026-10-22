@@ -30,7 +30,8 @@ export function formatBalance(v: bigint, info?: BalanceTokenInfo): string {
 export function formatHistoricalBalance(v: bigint, token?: string, info?: BalanceTokenInfo): string {
   if (!token) return `${v} raw units (token unknown)`;
   const known = info?.address.toLowerCase() === token.toLowerCase() ? info : undefined;
-  return known ? `${formatBalance(v, known)} (${token})` : `${v} raw units (${token})`;
+  // the token the site reads today needs no address; an older or unread one keeps it, in raw units
+  return known ? formatBalance(v, known) : `${v} raw units (${token})`;
 }
 
 // "+58%" / "-12%" for a percentage number.

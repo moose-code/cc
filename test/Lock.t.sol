@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {LaunchConfig} from "../script/LaunchConfig.sol";
 import {Lock} from "../script/Lock.s.sol";
 import {IArtCoinsHookV2} from "../src/interfaces/ArtCoinsV2.sol";
@@ -47,13 +47,19 @@ contract LockProbe is Lock {
     }
 }
 
-/// the owner command that freezes the fee recipients (docs/RUNBOOK.md section 4) and the postflight rows around it
-contract LockTest is Fixture {
+/// the owner command that freezes the fee recipients (docs/RUNBOOK.md section 4) and the postflight rows around it, run
+/// against the live Core. Lock.s.sol sends against the live Core, so its test runs there too. the launch config the
+/// command reads is the signed record (`script/config/mainnet.json`), loaded unchanged so the postflight's CREATE2
+/// address check matches the live core. the owner tuned the opening rate and some settings after launch, so the run
+/// supplies the recorded opening rate signoff (PRELAUNCH_RATE/PRELAUNCH_RATE_HASH from deployments/1.json) and
+/// SETTINGS_CHANGED=1, exactly as the owner runs the command; the settings differences are then postflight warnings
+contract LockTest is LiveFixture {
     LockProbe internal probe;
     bool internal coinChangedFlag;
 
     function setUp() public override {
         super.setUp();
+        lc = loadConfig("script/config/mainnet.json");
         probe = new LockProbe();
     }
 

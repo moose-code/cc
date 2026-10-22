@@ -23,6 +23,13 @@ kill_timeout = "30s"
   # the read-only market view the website API reads (docs/RUNBOOK.md section 8); the bearer token is the
   # MARKET_VIEW_TOKEN secret, set the same value as KEEPER_MARKET_TOKEN in the website's Netlify functions store
   MARKET_VIEW_PORT = "8080"
+  # the decision 255 artist and operator push split (deployments/1-phase2.json, stage A); the distributeSplit door
+  # sweeps it at SPLIT_MIN_BALANCE. public values, not secrets
+  SPLIT_ADDRESS = "0x0493299d3384518bFAb5b061384271ed771EDDE2"
+  SPLIT_RECIPIENTS = "0xc8f8e2F59Dd95fF67c3d39109ecA2e2A017D4c8a,0xCB43078C32423F5348Cab5885911C3B5faE217F9"
+  SPLIT_ALLOCATIONS = "833333,166667"
+  SPLIT_TOTAL_ALLOCATION = "1000000"
+  SPLIT_DISTRIBUTION_INCENTIVE = "0"
 
 # GET-only JSON from the keeper process. The machine must not stop for want of traffic: the keeper's own
 # discovery and doors run whether or not the website reads the view.

@@ -36,6 +36,47 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
+2026-10-21 Phase 2 production deployment, stage A done (owner sends from main `51fc57c`, decisions 245 to 268). Transaction log:
+
+| step | what | tx | block | result |
+|---|---|---|---|---|
+| market | `setRate(4507972118932936)` re-anchor to the last hour's sale median (decision 267) | 0x50a7f2992407a9fa5b867a18c4d3595b669d951706ea141627d9bafddc632a9b | 26,242,736 | readback ethRate = floorRate = rateAtCheckpoint = 4507972118932936 |
+| A1 | ProRataRedemptionPolicy 0x433f3627Cb96c3c87A401D8e274541045ff45c51 | 0xa9b3f2477f25acbd557d6ce61e54e3f674270f9b8b41fc3c7206380fcc6c6f3e | 26,243,688 | status 1 |
+| A2 | Phase2BalanceTreasury 0xB85CF439Ca57b4bfC28fA1Cb8a97Ee85555B0496 | 0x16f40f482e19f4d1c4aadf5ba8023b87e3bb8f5e3dda4852193c6377670b8cf5 | 26,243,689 | status 1 |
+| A3 | ControllerV2 0xCD64e368b3d7033B2E2B22Fa5F67f554aB807d36 | 0x3ef3ecec42ebb2051172981c7f45eba410aa10c81a988d73cb9a6d23ce22f6d5 | 26,243,697 | status 1, Etherscan verified |
+| A4 | push split 0x0493299d3384518bFAb5b061384271ed771EDDE2 (artist 833,333, operator 166,667, controller the owner) | 0x37978dcea06232d7420ffec8c13e570b711166759049805e1ef6657963b9a34a | 26,243,698 | status 1 |
+
+Readback after stage A: `Phase2Readback` 48 of 48 at block 26,243,717 (runtime code equals the pinned build for all three, every switch off, claim reserve 0, earmark 1,000, not selected; the Core unchanged); the split accepted against the plan; on-chain code hashes equal the pre-send simulation. Record: `deployments/1-phase2.json`. The first send stopped after A2 because the owner account is EIP-7702 delegated (one in-flight transaction); `--resume --slow` sent A3 and A4. Every owner send now carries `--slow`.
+
+Evidence before the sends (main `51fc57c`, pin 26,242,960, decision 265): every non-invariant suite 774 passed / 0 failed in today's live state and under `LIVE_STAGE=B`; invariants 69 / 0 (7 deep variants skipped by design) in both; Lock 8 / 8; Launch and LaunchDay keep the three launch era failures recorded below.
+
+Stage B done (owner sends from main, `--slow`). The hosted keeper was the pre Phase 2 build (v19, 2026-10-20 17:44 UTC, before the conversionReady gate `83f4174`); the owner redeployed it from main `cd92f3f` as v20 with the split's public SPLIT_* values (PR 146), keeper tests 164 of 164; it skipped `redeemStatement` ("conversion not ready") from the selection block on.
+
+| step | what | tx | block | result |
+|---|---|---|---|---|
+| B1 | `setBalanceModule(treasury)` | 0x0480ab3ab75ddb2740581f4b0b85f6343e49dbd558163c8477c79f9143d32d33 | 26,243,776 | status 1, readback 53 of 53 |
+| B2 | `setController(ControllerV2)` | 0x92a78e0cfea86694d2474248ee35c470bd1f5c5286c576fac481323db328664c | 26,243,791 | status 1, readback 53 of 53 |
+| B3a | `setArtist(split)` | 0xc5b28f1c35d325e92d9886dd8e67acbe9a90863baa07a942696dc41b1116dcd8 | 26,243,806 | status 1 |
+| B3b | `setSettings`: balanceDiscountBps 2000, buyToArtistBps 300, saleToArtistBps 300, saleToOperatorBps 0; the burns and creditCostToPotBps kept (decision 262) | 0xe53e509a190c88807460e188a8072ca32ce891bb11e7f47d1ed540e9aea99ba0 | 26,243,807 | status 1 |
+
+Readback after stage B: 53 of 53 (module the treasury, controller ControllerV2, artist the split, margin 760 bps, every treasury switch off, hazard row clear).
+
+Stage C done 2026-10-21 and 2026-10-22 (owner sends from main, `--slow`, each after a no-keystore dry run; decisions 269 to 273). Stage D (CC redemption) stays off.
+
+| step | what | tx | block | result |
+|---|---|---|---|---|
+| C1 | `setRate(2962256201024912)` re-anchor to the market before value mode | 0x14a5a4c98b8c0246968a0ef40e1872b85bbe5ec44f788fdc3b7c344385dea853 | 26,244,618 | status 1 |
+| C2 | `setBalancePoolKey` on ControllerV2: the main ETH/BALANCE v4 pool, fee 3,000, spacing 30, hooks 0x2eef0e2a9a652d755accad95a24541a98b5ca000 (decision 270) | 0xbf8473d77afe9a476529988e9a2a56c6437d7320315240592035437c745accfe | 26,244,636 | status 1 |
+| C3 | `setQuote`, first parameters | 0xa535b14b530d38db063d0c43760d4acd89ef85d54cb5fb23d9c36fee2b741c94 | 26,244,787 | status 1 |
+| C3b | `setQuote` without a heartbeat: step 1,000 bps, rate 6,000 bps per hour, minSeconds 600, maxStale uint32 max, minLiquidity 3e21 (decisions 271, 272) | 0x804f7ef898d384cf3c417939136075cceebd407638dec8cf6e16d7bacf5cdeff | 26,245,363 | status 1 |
+| C4 | treasury `setSwitches(true, true, false)`: conversion and working payments on, CC redemption off | 0x0873dc0008c646510a3fe68ba50d9c5cec822e23345a053ed59bac3a11e1ab5c | 26,245,409 | status 1 |
+| C4a | Statement 348 converted by a user (0x09D1), 50,227.79 BALANCE into the treasury (5,022.78 to the claim reserve); the owner's attempt in the same block reverted `NotHeld`, tx 0x5268fe3e0f87d99227ee4f598a2a795e0e194b6b3f3b3840c41a3f63d1f6406a. The remaining Statements are left for users to convert | 0x5ced987620e8786fb4884d0515532f7b0183fbe082076bdc5114ffe7ef15fe92 | 26,245,442 | status 1 |
+| C5a | `setSettings`: `valueModeOn` 1, `spendCapBps` 9,999, the balance bid still off | 0xbfc5881c975a2cf0231db8b7026647fbb43655ec1084afee2d97dd7c1e792656 | 26,245,505 | status 1, readback 53 of 53 |
+| C6 | ControllerV2 `setStatementSales(true)` | 0x8181e3d505f12b9a72bf0833db5fa2aba1e963cf98fa506078ea2a8d77e531a7 | 26,245,518 | status 1, `statementSalesEnabled` true |
+| C7 | `setSettings`: `balanceBidOn` 1, the other 38 fields unchanged (2026-10-22) | 0x2143a21df71e5d48cf76b8c5970f37dad11254046b7e5744ab25c21c605c48d4 | 26,248,373 | status 1, `valuePerPoint(true)` ok, `/exchange` reads 45,205.01 BALANCE available |
+
+Live after stage C: treasury conversion and working payments on, CC redemption off, pool key set, Statement sales on, value mode on, balance bid on. Keeper v21 refreshes the reference only when needed (decision 273). `/exchange` is public and unlinked (decision 269). The indexer runs `cc_mainnet_v7` with a stall watchdog (PRs 150, 155, 157).
+
 2026-10-21 frozen candidate for the phase 2 exchange launch (decisions 254 to 260): contracts and pins at `8347a12`, unchanged by the later commits on `claude/phase-2-system-review-1iillx` (tests, scripts, web and docs only; head `07d2b14`). Gate evidence, chain id 1 fork at block 26,208,025: `CANDIDATE_RUN=1` full suite, 125 suites, 863 passed, 8 failed, 11 skipped (the rehearsal and deep variants skip by design). One failure was this branch's: the real token conversion test still asserted the 3 percent earmark, fixed in `c7dbd94` (2/2). The other seven (ColdAudit 2, Fees 1, Launch 2, LaunchDay 2: the anti sniper skim reading 6,900 bps where the test expects 9,000, hook income booking, launch day keeper behavior) reproduce identically on main's base `fd85ba5` at the same block, so they predate this branch and touch nothing it changed; a follow up outside this PR. Deep campaigns with `CANDIDATE_RUN=1 INVARIANT_DEEP=1` at 64 runs and depth 200 over `test/invariant`: 17 suites, 125 passed, 0 failed, 2,632 seconds. The live BALANCE token (0x3620540c994433D7B4a628C46d2ED5F92572eA07) authenticates: retired, funding phase 3, ready, transfers open at block 26,241,565, bytecode equal to the pinned upstream build outside the immutables and the 32 byte metadata hash; the stage A preview with it passed every row at block 26,241,404 (plan hash 0xca546731fd63c61f91a69409abf1e40940d97aada95dcd7edd4b306da0b9239b at that state). `test/Phase2LiveToken.t.sol`: a real holder's transfer costs about 314,000 gas, inside the Core's 600,000 push bound. `test/Phase2Lifecycle.t.sol`: the production scripts in their order on a fork of the head against the live Core, the live token and a live eth / BALANCE pool: stage A, stage B with the split as artist and the 80 percent payout, the launch state, Statement 348 converted into 50,228 BALANCE with 10 percent earmarked, the readback at a 760 bps margin, stage C (pool key, quote, value mode, the balance bid) with a pile Credit bought from the engine and sold back for 531 BALANCE and 15.9 to the split through the real token with no accrual, then stage D (claims allocated, enabled, a real holder's burn paid, disabled). Every owner send is scripted (`Phase2Deploy`, `Phase2Wire`, `Phase2Settings`, `SetSettings`, `Phase2Claims`) with a preview, a plan hash and a readback. Keeper 174, indexer 27, web selfcheck 23, each with its typecheck. The claim panel lives at `/claim` behind `CLAIM_ENABLED`; the exchange page carries the Credit to BALANCE exchange only.
 
 Not done and not claimed: no mainnet transaction of any kind; the second audit (prompt `docs/reviews/PHASE2-AUDIT-PROMPT-8347a12.md`) has not run; the stage C pool is an owner choice among several fresh live pools; the seven launch era failures above are unresolved on main.

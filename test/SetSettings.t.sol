@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Fixture} from "./utils/Fixture.sol";
+import {LiveFixture} from "./utils/LiveFixture.sol";
 import {IControllerV1} from "../src/interfaces/IControllerV1.sol";
 import {Settings, Sale, CreditSale} from "../src/interfaces/Interfaces.sol";
 import {SettingsFields} from "../script/SettingsFields.sol";
@@ -84,7 +84,7 @@ contract SetSettingsProbe is SetSettings {
 
 /// @notice `script/SetSettings.s.sol` on the fixture core: the overrides touch only the fields they name, bad input is
 /// refused, a dry run sends nothing
-contract SetSettingsTest is Fixture {
+contract SetSettingsTest is LiveFixture {
     SetSettingsProbe internal probe;
 
     function setUp() public override {
@@ -178,6 +178,8 @@ contract SetSettingsTest is Fixture {
 
     // promise: previewing controller settings never consumes the changes the subsequent broadcast must send
     function test_controllerPreviewRestoresStateAndKeepsChangePlanned() public {
+        // anchorMoveBps is a ControllerV1 Sale field ControllerV2 dropped; in stage B the live controller is V2
+        if (_liveStageB()) return;
         uint256 before_ = ctl.anchorMoveBps();
         probe.single("anchorMoveBps", 10_000);
         probe.previewController(ctl, owner);
@@ -207,6 +209,9 @@ contract SetSettingsTest is Fixture {
 
     // promise: coordinated floor/start edits are previewed and applied in a valid order in both directions
     function test_combinedFloorAndMarkupUpdatesBothDirections() public {
+        // markupBps is a settable ControllerV1 field; ControllerV2 keeps only the read, so in stage B (V2 controller)
+        // the patch has no such field. the V2 analogue is covered by SetSettingsV2Test
+        if (_liveStageB()) return;
         probe.single("markupBps", 22_000);
         Settings memory next = core.settings();
         next.saleFloorBps = 20_000;
@@ -226,7 +231,7 @@ contract SetSettingsTest is Fixture {
 /// @notice `script/SetSettings.s.sol` after the owner selects a ControllerV2: ordinary Core settings and Credit settings
 /// still change, the statement policy fields replace the V1 `Sale` fields, a V1 only field is refused, and the Core's
 /// `markupBps()` bound on `saleFloorBps` is enforced against the clamped multiplier
-contract SetSettingsV2Test is Fixture {
+contract SetSettingsV2Test is LiveFixture {
     SetSettingsProbe internal probe;
     IControllerV2 internal c2;
 
@@ -301,13 +306,16 @@ contract SetSettingsV2Test is Fixture {
         next.saleFloorBps = 30_001;
         vm.expectRevert(abi.encodeWithSelector(SetSettings.OutOfBounds.selector, bytes32("saleFloorBps")));
         probe.applyCombined(IControllerV1(address(c2)), next);
-        // a V2 only field with the V1 controller is refused too
-        _setController(address(ctl));
-        probe = new SetSettingsProbe();
-        probe.configure(address(core), "");
-        probe.single("statementRedeemDelaySeconds", 1);
-        next.saleFloorBps = 10_000;
-        vm.expectRevert(abi.encodeWithSelector(SetSettings.UnknownField.selector, "statementRedeemDelaySeconds"));
-        probe.applyCombined(ctl, next);
+        // a V2 only field with the V1 controller is refused too. this half needs a live V1 controller; in stage B the
+        // live controller is V2 (it accepts the field), so the V1 only refusal cannot be exercised there
+        if (!_liveStageB()) {
+            _setController(address(ctl));
+            probe = new SetSettingsProbe();
+            probe.configure(address(core), "");
+            probe.single("statementRedeemDelaySeconds", 1);
+            next.saleFloorBps = 10_000;
+            vm.expectRevert(abi.encodeWithSelector(SetSettings.UnknownField.selector, "statementRedeemDelaySeconds"));
+            probe.applyCombined(ctl, next);
+        }
     }
 }

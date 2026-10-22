@@ -43,7 +43,9 @@ contract LockStub {
 /// profile) on the pinned fork with the real Statements and the real engine. the artifact comes from
 /// script/tools/upstream-auction-balance.sh, which pins the upstream commit and the code hashes. the auction, funding
 /// phases and the open block are not driven here: this file proves the pre opening path, a conversion that releases the
-/// token's own reserve to the treasury while ordinary transfers stay locked, and that the lock holds the funds in
+/// token's own reserve to the treasury while ordinary transfers stay locked, and that the lock holds the funds in.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it builds a fresh engine and treasury, so it
+/// never reads or mutates the live Core.
 contract Phase2UpstreamBalanceTest is Fixture {
     IAuctionToken private token;
     ITreasury private t;

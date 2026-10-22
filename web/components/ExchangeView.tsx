@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { CreditTile } from "./Tiles";
+import { Sk } from "./Skeleton";
 
 export type ExchangeRow = {
   id: number;
@@ -12,17 +13,21 @@ export type ExchangeRow = {
   note?: string;
 };
 
-export type ExchangeReceipt = { count: number; minimum: string; hash: string };
+// received: the $BALANCE the receipt's fills paid; undefined only if the receipt could not be read (then "≥ minimum")
+export type ExchangeReceipt = { count: number; received?: string; minimum: string; hash: string; href?: string };
 
 export type ExchangeViewProps = {
   rows: ExchangeRow[];
   walletReady: boolean;
+  walletLoading: boolean; // a connected wallet whose Credits have not been read yet: skeleton rows in the table
+  marketLoading: boolean; // the live exchange not read yet: skeletons for the payout and the treasury balance
   connected: boolean;
   selectionCount: number;
   quoteAvailable: boolean;
   selectedRating: string;
   total: string;
-  fee: string;
+  fee?: string; // the protocol fee in $BALANCE for the selection; the row is left out until a Credit is selected
+  available?: string; // the treasury's $BALANCE free for the exchange, shown once the exchange is open
   adjustment?: string;
   minimum: string;
   rate: string;
@@ -40,7 +45,7 @@ export type ExchangeViewProps = {
 };
 
 export function ExchangeView({
-  rows, walletReady, connected, selectionCount, quoteAvailable, selectedRating, total, fee, adjustment,
+  rows, walletReady, walletLoading, marketLoading, connected, selectionCount, quoteAvailable, selectedRating, total, fee, available, adjustment,
   minimum, rate, slippageBps, onSlippageChange, onToggle, onSelectAll,
   allSelected, busy, status, error, receipt, onReset, action,
 }: ExchangeViewProps) {
@@ -54,6 +59,7 @@ export function ExchangeView({
             <div>
               <strong>your credits</strong>
               {walletReady && connected && <span> · {rows.length} in wallet · {selectionCount} selected</span>}
+              {walletLoading && <span> · <Sk w="12ch" /></span>}
             </div>
             <button
               className="exchange-select-all"
@@ -69,6 +75,18 @@ export function ExchangeView({
                 <tr><th scope="col">credit</th><th scope="col">rating</th><th scope="col"><span className="exchange-sr-only">select</span></th></tr>
               </thead>
               <tbody>
+                {walletLoading && rows.length === 0 && SKELETON_ROWS.map((i) => (
+                  <tr key={`sk-${i}`} aria-hidden="true">
+                    <th scope="row">
+                      <span className="exchange-credit">
+                        <Sk block className="exchange-art" w="" />
+                        <span><Sk w={i % 2 ? "9ch" : "11ch"} /></span>
+                      </span>
+                    </th>
+                    <td className="exchange-rating"><Sk w="3ch" /></td>
+                    <td className="exchange-selection"><Sk block w="24px" h="24px" style={{ margin: "0 auto" }} /></td>
+                  </tr>
+                ))}
                 {rows.map((row) => (
                   <tr key={row.id} className={`${row.selected ? "is-selected" : ""}${row.disabled ? " is-unavailable" : ""}`}>
                     <th scope="row">
@@ -92,34 +110,46 @@ export function ExchangeView({
                 ))}
               </tbody>
             </table>
-            {rows.length === 0 && <p className="exchange-empty" role="status">{status || (!walletReady ? "Loading wallet…" : connected ? "No Credits in this wallet." : "Connect your wallet to view your Credits.")}</p>}
+            {rows.length === 0 && !walletLoading && <p className="exchange-empty" role="status">{status || (!walletReady ? "Loading wallet…" : connected ? "No Credits in this wallet." : "Connect your wallet to view your Credits.")}</p>}
           </div>
           {rows.length > 0 && status && <p className="exchange-inventory-status" role="status">{status}</p>}
+          {/* mobile: the selection and its payout stay at the bottom of the screen while the list scrolls, and the bar
+              docks at the end of the list once the checkout below comes into view */}
+          {connected && rows.length > 0 && !receipt && (
+            <div className="exchange-mobile-bar">
+              <span>{selectionCount === 0 ? "select Credits to exchange"
+                : `${selectionCount} selected · ${quoteAvailable ? `${total} $BALANCE` : `${selectedRating} pts`}`}</span>
+              <a href="#exchange-summary">review</a>
+            </div>
+          )}
         </div>
       </section>
 
-      <section className="exchange-summary" aria-labelledby="exchange-receive-title" aria-busy={busy}>
+      <section id="exchange-summary" className="exchange-summary" aria-labelledby="exchange-receive-title" aria-busy={busy}>
         {receipt ? (
           <div className="exchange-success" role="status">
             <p className="exchange-success-title" id="exchange-receive-title">sale complete</p>
-            <p className="exchange-success-value">{receipt.count}</p>
-            <p className="exchange-success-currency">Credit{receipt.count === 1 ? "" : "s"} sold for $BALANCE</p>
+            <div className="exchange-total exchange-success-value"><span>{receipt.received ?? `≥ ${receipt.minimum}`}</span><span className="exchange-currency">$BALANCE</span></div>
+            <p className="exchange-success-currency">received for {receipt.count} Credit{receipt.count === 1 ? "" : "s"}</p>
             <dl className="exchange-breakdown">
-              <div><dt>minimum received</dt><dd>{receipt.minimum} $BALANCE</dd></div>
-              <div><dt>transaction</dt><dd><code title={receipt.hash}>{shortHash(receipt.hash)}</code></dd></div>
+              <div><dt>transaction</dt><dd>{receipt.href
+                ? <a href={receipt.href} target="_blank" rel="noreferrer"><code title={receipt.hash}>{shortHash(receipt.hash)}</code> ↗</a>
+                : <code title={receipt.hash}>{shortHash(receipt.hash)}</code>}</dd></div>
             </dl>
             <button type="button" onClick={onReset}>sell more Credits</button>
           </div>
         ) : <>
         <div className="exchange-summary-content">
           {status && <p className="exchange-quote-status" role="status">{status}</p>}
+          {/* the treasury's free $BALANCE takes the status box when there is no status to show */}
+          {marketLoading && <p className="exchange-available"><Sk w="90%" /></p>}
+          {available && <p className={status ? "exchange-available" : "exchange-quote-status"}>{available} $BALANCE available to exchange from the Credit Cycle treasury</p>}
           <p className="exchange-eyebrow" id="exchange-receive-title">you receive</p>
-          <div className="exchange-total" aria-live="polite" aria-atomic="true">{total}</div>
-          <div className="exchange-currency"><i aria-hidden="true" />$BALANCE</div>
+          <div className="exchange-total" aria-live="polite" aria-atomic="true"><span>{marketLoading ? <Sk w="2ch" /> : total}</span><span className="exchange-currency">$BALANCE</span></div>
           <dl className="exchange-breakdown">
             {selected.map((row) => <div key={row.id}><dt>Credit #{row.id}</dt><dd>{quoteAvailable ? row.gross : `${row.rating} pts`}</dd></div>)}
             {selected.length > 0 && !quoteAvailable && <div><dt>selected rating</dt><dd>{selectedRating} pts</dd></div>}
-            <div><dt>protocol fee</dt><dd>{fee}</dd></div>
+            {fee && <div><dt>protocol fee</dt><dd>{fee} $BALANCE</dd></div>}
             {adjustment && <div><dt>price-protection adjustment</dt><dd>{adjustment}</dd></div>}
             <div className="exchange-breakdown-total"><dt>you receive</dt><dd>{total} $BALANCE</dd></div>
           </dl>
@@ -146,6 +176,8 @@ export function ExchangeView({
     </main>
   );
 }
+
+const SKELETON_ROWS = [0, 1, 2, 3];
 
 function shortHash(hash: string): string {
   return hash.length > 20 ? `${hash.slice(0, 10)}…${hash.slice(-8)}` : hash;

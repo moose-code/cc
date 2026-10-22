@@ -34,6 +34,8 @@ contract PostflightRecordProbe is Postflight {
 }
 
 /// Checks the deferred Core's price reset and resume checks on the live v2 factory fork.
+/// this is a deploy-mechanics test of a fresh system, not the live Core: it resumes a new deferred Core on a
+/// pre-launch fork, so it never reads or mutates the live Core.
 contract PrelaunchRateTest is Test, SystemResumer, ProdDeployer {
     address internal deployer;
     address internal creator;
@@ -43,9 +45,17 @@ contract PrelaunchRateTest is Test, SystemResumer, ProdDeployer {
     bool internal signoffGood;
 
     function setUp() public {
-        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(0));
-        if (forkBlock == 0) vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
-        else vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
+        // a deploy-mechanics test of a fresh system must fork before the live Core and its libraries existed. the
+        // default pins the pre-launch block Rehearsal uses; never the head, which the RPC cache cannot serve for free
+        uint256 forkBlock = vm.envOr("FORK_BLOCK", uint256(26208025));
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), forkBlock);
+        // libraryAddress() and opsLibraryAddress() are the deterministic CREATE2 addresses that on a post-launch fork
+        // hold the live CoreLib and ops library linked into the live Core. etching empty code there would wipe the live
+        // Core's linked code for the rest of the run, so refuse unless the fork is before the deploy block
+        // (deployments/1.json deployBlock), where those addresses are empty and the reset is a safe no-op
+        require(
+            block.number < 26229330, "PrelaunchRate must fork a pre-launch block: see deployments/1.json deployBlock"
+        );
         vm.etch(libraryAddress(), "");
         vm.resetNonce(libraryAddress());
         vm.etch(opsLibraryAddress(), "");

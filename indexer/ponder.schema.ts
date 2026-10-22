@@ -33,6 +33,7 @@ export const log = onchainTable(
     contract: t.text().notNull(), // core, controller, treasury, coin, credits, statements, strategy
     event: t.text().notNull(),
     args: t.json().notNull(),
+    txFrom: t.hex(), // the transaction's sender: the caller of events that do not name one (a conversion, a refresh)
     blockNumber: t.bigint().notNull(),
     blockTimestamp: t.bigint().notNull(),
     txHash: t.hex().notNull(),
@@ -118,6 +119,17 @@ export const engineSnapshot = onchainTable("engine_snapshot", (t) => ({
   pileSize: t.bigint().notNull(),
   payeeOn: t.boolean().notNull(),
   paused: t.boolean().notNull(),
+  // phase 2, null where the read fails or the contract lacks it (ControllerV1, no module): value mode's protected
+  // ETH value per point for the bid (buy) and the sale (sell), the controller's stored reference and live pool spot
+  // (wei per 1e18 BALANCE units), the module's BALANCE holding, working funds and claim reserve, and the $CC supply
+  valueBuy: t.bigint(),
+  valueSell: t.bigint(),
+  referencePrice: t.bigint(),
+  spotPrice: t.bigint(),
+  treasuryBalance: t.bigint(),
+  treasuryWorking: t.bigint(),
+  claimReserve: t.bigint(),
+  ccSupply: t.bigint(),
 }));
 
 /** One row per setter, lock or ownership event. before and after hold the changed values as json. */

@@ -22,8 +22,10 @@ for (const r of o.dump) ok(r.meanPaidPct < 92 && r.ethSpent <= 10 + 1e-9 && r.le
 // promise: the pot loses on every floor sale and breaks even only above 1 / (0.75 * 0.97) times the bid paid
 for (const r of o.split) ok(Math.abs(r.breakEvenMult - r.bid / (0.75 * 0.97)) < 1e-9 && (r.mult < r.breakEvenMult) === (r.potChange < 0), 'sale split break even');
 // promise: against a patient seller the shipped eth bid (climb 200, rateCap 3x, the loosening) pays out most of a 10 eth pot in a day
-// at a 0.005 eth market, and the loss falls with a lower rateCap and a slower climb
+// at a 0.005 eth market, and the loss falls with a lower rateCap, and with a slower climb once the cap is low enough that
+// the pot does not fully drain either way (at the 3x cap both climbs empty the pot, so the slower climb's fewer but
+// pricier sales do not lower the overpay there)
 const pat = (climb, capX, loosen, PE = 0.005) => o.patient.find((r) => r.climb === climb && r.rateCapX === capX && r.loosening === loosen && r.marketEth === PE);
 ok(pat(200, 3, 'shipped').overpay24h > 5, 'shipped bid loses most of the pot to a patient seller');
-ok(pat(200, 1.2, 'shipped').overpay24h < pat(200, 3, 'shipped').overpay24h && pat(20, 3, 'shipped').overpay24h < pat(200, 3, 'shipped').overpay24h, 'rateCap and climb bound the patient seller');
+ok(pat(200, 1.2, 'shipped').overpay24h < pat(200, 3, 'shipped').overpay24h && pat(20, 1.2, 'shipped').overpay24h < pat(200, 1.2, 'shipped').overpay24h, 'rateCap and climb bound the patient seller');
 console.log(`ok, ${n} checks passed`);
