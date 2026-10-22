@@ -116,7 +116,7 @@ export function Flywheel() {
           <p className="lead">every $CC trade funds an onchain collector</p>
           <p>the engine acquires Credits at a standing bid, then combines every {STATEMENT_SIZE} into a Statement</p>
           <p>
-            {potPct} of Statement sale proceeds fund more acquisitions, while {burnPct} buys and burns $CC
+            {potPct} of Statement sale proceeds fund more acquisitions{split?.buyback !== 0 && <>, while {burnPct} buys and burns $CC</>}
           </p>
         </div>
         <Link href="/faq" className="fw-faq-link">
