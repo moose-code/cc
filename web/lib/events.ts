@@ -9,7 +9,8 @@ export type { BalanceTokenInfo };
 
 // Rows from the chain scan carry `block` (its timestamp is read per shown row); rows from the indexer carry `ts`.
 
-export type FeedKind = "credit" | "composed" | "sold" | "redeemed" | "burned";
+// exchanged: a Credit sold to the engine for $BALANCE on /exchange (CreditBought through the balance bid)
+export type FeedKind = "credit" | "exchanged" | "composed" | "sold" | "redeemed" | "burned";
 
 export interface FeedEvent {
   key: string;
@@ -190,8 +191,12 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         cr(id).push({ t: "bought", how: viaEth ? "eth bid" : `${BALANCE_SYMBOL} bid`, cost: a.cost, from: a.from, rate: f?.rate, pot: f?.pot, block, tx });
         if (viaEth) stats.creditsEth++;
         else stats.creditsBalance++;
-        creditRow(id, viaEth ? eth(a.cost) : undefined);
-        if (!viaEth) balanceBuy = { tx, row: rows[rows.length - 1] };
+        if (viaEth) creditRow(id, eth(a.cost));
+        else {
+          // the amount is filled in by the BalanceFill that follows in the same tx
+          row({ kind: "exchanged", label: "credit exchanged", detail: `for ${BALANCE_SYMBOL} by`, addr: a.from, link: { text: `credit #${id}`, href: `/credits/${id}` }, tile: { kind: "credit", id } });
+          balanceBuy = { tx, row: rows[rows.length - 1] };
+        }
         fill = undefined;
         break;
       }

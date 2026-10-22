@@ -20,6 +20,7 @@ import { Sk } from "./Skeleton";
 
 const MARK: Record<FeedKind, string> = {
   credit: "m",
+  exchanged: "mx", // half magenta, half yellow: a Credit in, $BALANCE out
   composed: "y",
   sold: "c",
   redeemed: "c",
