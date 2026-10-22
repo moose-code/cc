@@ -28,7 +28,7 @@ assert.equal(result.statements[2].redeemed?.token, b);
 assert.equal(result.rows[0].detail, `· module received 1000000000000000000 raw units (${a})`);
 assert.equal(result.rows[1].eth, `2000000000000000000 raw units (${a})`);
 assert.equal(result.rows[2].eth, `3000000000000000000 raw units (${a})`);
-assert.equal(result.rows[3].detail, `· module received 1 $BALANCE (${b})`);
+assert.equal(result.rows[3].detail, "· module received 1 $BALANCE");
 
 // promise: missing event-time identity or metadata never borrows the current token's decimals.
 assert.equal(formatHistoricalBalance(10n ** 18n, a, current), `1000000000000000000 raw units (${a})`);
@@ -40,9 +40,17 @@ assert.equal(unknown.rows[0].detail, "· module received 1 raw units (token unkn
 // promise: the indexer feed displays the saved currency for both redemptions and balance-credit payments.
 const row = { id: "test", kind: "redeemed", creditId: null, other: null, statementId: 1n, account: null, amount: 10n ** 18n, amount2: null, balanceToken: a, ts: 100n, tx, rating: null, mode: null, composedFormat: null, restyledTo: null } as Parameters<typeof feedEvent>[0];
 assert.equal(feedEvent(row, current).detail, `· module received 1000000000000000000 raw units (${a})`);
-assert.equal(feedEvent({ ...row, balanceToken: b, amount: 10n ** 6n }, current).detail, `· module received 1 $BALANCE (${b})`);
+assert.equal(feedEvent({ ...row, balanceToken: b, amount: 10n ** 6n }, current).detail, "· module received 1 $BALANCE");
 assert.equal(feedEvent({ ...row, balanceToken: null }, current).detail, "· module received 1000000000000000000 raw units (token unknown)");
 assert.equal(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount2: 2n * 10n ** 18n }, current).eth, `2000000000000000000 raw units (${a})`);
+
+// promise: a Credit sold to the engine for $BALANCE is its own "credit exchanged" row naming the seller, with the
+// $BALANCE paid; an ETH-bid buy stays "credit acquired" in ETH.
+const ex = feedEvent({ ...row, kind: "credit_bought", creditId: 10n, account: a, amount: 1n, amount2: 77_830_000n, balanceToken: b }, current);
+assert.deepEqual({ kind: ex.kind, label: ex.label, addr: ex.addr, eth: ex.eth, detail: ex.detail }, { kind: "exchanged", label: "credit exchanged", addr: a, eth: "77.83 $BALANCE", detail: "for $BALANCE by" });
+assert.equal(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount: 10n ** 16n, amount2: 0n }, current).label, "credit acquired");
+assert.equal(result.rows[1].kind, "exchanged");
+assert.equal(result.rows[1].addr, a);
 
 // promise: a value-mode ETH fill counts as ETH spent and classifies the following CreditBought as an ETH bid.
 const valued = processLogs({

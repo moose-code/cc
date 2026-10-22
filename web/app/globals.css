@@ -2909,6 +2909,9 @@ button.slot:disabled {
 .mark.k {
   background: var(--k);
 }
+.mark.mx {
+  background: linear-gradient(135deg, var(--m) 50%, var(--y) 50%);
+}
 
 /* art tile: art on white with a hairline outline; crop marks sit outside the corners */
 .art-frame {
