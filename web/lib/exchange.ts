@@ -1,5 +1,5 @@
 import { formatUnits, parseEventLogs, zeroAddress, type Address, type Log, type PublicClient } from "viem";
-import { coreAbi, creditsAbi, erc20Abi, treasuryAbi } from "@cc/engine/abis";
+import { coreAbi, creditsAbi, engineEventsAbi, erc20Abi, treasuryAbi } from "@cc/engine/abis";
 import type { Snapshot } from "@cc/engine/snapshot";
 import type { Write } from "./tx";
 import { replayBalanceFills } from "./sell.ts";
@@ -47,6 +47,14 @@ export function exchangeQuote(market: ExchangeMarket | undefined, scores: bigint
     minOut: total * BigInt(10_000 - slippageBps) / 10_000n,
     reason,
   };
+}
+
+// The $BALANCE a confirmed sale paid the seller: the sum of the Core's BalanceFill payouts in the receipt (one per
+// Credit; the artist royalty is separate). undefined when the receipt carries no fill from this Core.
+export function exchangeReceived(logs: Log[], core: Address): bigint | undefined {
+  const fills = parseEventLogs({ abi: engineEventsAbi, eventName: "BalanceFill", logs })
+    .filter((e) => e.address.toLowerCase() === core.toLowerCase());
+  return fills.length ? fills.reduce((t, e) => t + e.args.paid, 0n) : undefined;
 }
 
 // Display token amounts with at most two decimals without changing their exact base-unit transaction values.
