@@ -95,6 +95,6 @@ const burns = processLogs({
 });
 assert.deepEqual(
   { kind: burns.rows[0].kind, title: burns.rows[0].title, detail: burns.rows[0].detail, amount: burns.rows[0].amount },
-  { kind: "burned", title: "8,214,330 $CC", detail: "bought with 0.8 ETH", amount: { sign: "−", value: "0.8", unit: "ETH" } },
+  { kind: "burned", title: "8,214,330 $CC", detail: "", amount: { sign: "−", value: "0.8", unit: "ETH" } },
 );
 console.log("history selfcheck ok");

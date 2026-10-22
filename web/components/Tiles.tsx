@@ -23,6 +23,21 @@ function Tile({ kind, id }: { kind: TokenKind; id: number }) {
   );
 }
 
+// The $CC burn's tile: a pixel flame drawn like Credit art (an 8 x 8 grid of 20 px cells centred on a white 320
+// canvas, crisp edges) in the Credits inks, red over yellow.
+const FLAME = ["....R...", "...RR...", "..RRR.R.", ".RRYRRR.", ".RYYYRRR", "RRYYYYRR", "RRYYYYRR", ".RRYYRR."];
+const INK: Record<string, string> = { R: "#e40000", Y: "#ffd100" };
+export function BurnTile() {
+  return (
+    <svg className="tile-credit" viewBox="0 0 320 320" shapeRendering="crispEdges" role="img" aria-label="$CC burned">
+      <rect width="320" height="320" fill="#ffffff" />
+      {FLAME.flatMap((row, y) =>
+        [...row].map((c, x) => (c in INK ? <rect key={`${x}-${y}`} x={80 + x * 20} y={80 + y * 20} width="20" height="20" fill={INK[c]} /> : null)),
+      )}
+    </svg>
+  );
+}
+
 export function CreditTile({ id }: { id: number }) {
   return <Tile key={id} kind="credit" id={id} />;
 }
