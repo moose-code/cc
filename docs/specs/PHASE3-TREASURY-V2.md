@@ -39,7 +39,7 @@ Owner constraints (hard):
 | C2 | ControllerV3 | idle loosening: the ETH bid premium rises slowly while nothing is bought, bounded |
 | C3 | ControllerV3 | views the treasury needs (resale floor of an id; anything T5 needs) |
 | O1 | Indexer | handlers for v2 and V3 events; one batched reindex on a temp machine |
-| O2 | Web | /exchange shows the better of the Core offer and the v2 bid; burn bond page; FAQ/flowchart |
+| O2 | Web | /exchange shows the better of the Core offer and the v2 bid; /claim on the pro-rata redeemer (off); FAQ/flowchart |
 | O3 | Keeper | refresh as needed for V3; no new paid doors |
 
 Out of scope: any Core change (immutable), selling $BALANCE, buyback settings (owner decides separately).
@@ -110,7 +110,7 @@ job (custody and accounting) from the redemption rule:
 
 ### 3.5 T2, funding by rule (`sweep()`, anyone)
 
-- Surplus = working funds above `cushion + bidBudget + bondBudget + reserved liabilities`.
+- Surplus = working funds above `cushion + bidBudget + redeemer buckets + reserved liabilities`.
 - `sweep()` moves surplus into `bidBudget` and into each enabled redeemer's bucket in owner-set shares, subject to the
   break-even rule (section 6). The conversion contribution (`conversionToClaimBps`, 10% today) keeps feeding the
   pro-rata bucket as in v1. No owner transfer needed to keep anything running.
@@ -134,7 +134,7 @@ Sequence: deploy v2 → v1 `setSwitches` as needed → `migrateTo(v2)` (moves fu
 
 ## 5. Off-chain
 
-- Indexer: v2/V3 events (bid fills, bonds, claims of vested $BALANCE, sweeps, controller settings). Put any API-only
+- Indexer: v2/V3 events (bid fills, redeemer registrations, redemptions, vesting and deferred claims, sweeps, controller settings). Put any API-only
   code in `indexer/src/api` (excluded from the build id). One reindex on a temporary machine
   (memory: indexer-reindex-cost; ~40 min warm).
 - Web: /exchange best offer; /claim reads the pro-rata redeemer (still off); generic support for vesting and deferred
@@ -146,7 +146,7 @@ Sequence: deploy v2 → v1 `setSwitches` as needed → `migrateTo(v2)` (moves fu
 Per-point facts: conversion returns 1.00 $BALANCE per point (0.90 working, 0.10 claim at 1,000 bps); the Core's flat
 exchange costs 0.824 per point at 80% (+3% royalty).
 
-1. Spend only realized surplus: `bidBudget` and `bondBudget` grow only from `sweep()` of working funds above the
+1. Spend only realized surplus: `bidBudget` and the redeemer buckets grow only from `sweep()` (and the conversion contribution) of working funds above the
    cushion; over any window, treasury working funds never fall below the cushion.
 2. Bid ceiling vs exit path: Credits bought above par lose `(bidBps x 1.03 - 1.00)` per point if converted. Route
    them to ETH first: their Statements get a longer redemption delay (e.g. 7 days) so ETH buyers can take them; set
@@ -154,7 +154,7 @@ exchange costs 0.824 per point at 80% (+3% royalty).
 3. Redeemers are paid only from their own buckets, funded from surplus; a committed liability (vesting or deferred)
    is reserved in full at creation so it can never overdraw.
 4. ETH-bought Credits that convert are pure $BALANCE inflow (no $BALANCE paid out); keep the ETH bid buying (C2) so
-   the surplus that funds the bid and the bonds keeps arriving.
+   the surplus that funds the bid and redemption keeps arriving.
 5. Report the realized result: a public view of cumulative in/out per bucket so break-even is checkable.
 
 ## 7. Settings to decide alongside (no code)
@@ -171,7 +171,7 @@ exchange costs 0.824 per point at 80% (+3% royalty).
 3. Redemption: the pro-rata redeemer (switched on only on the fork) burns CC, pays `ccIn * B / S` less the fee and
    reverts on a stale epoch; a test redeemer (fork only) exercises the vesting and deferred payout modes and cannot
    exceed its bucket or caps; the CC reference resists a one-block pump within its bounds.
-4. Break-even: a scripted sequence of fills, conversions and bonds leaves working funds ≥ cushion.
+4. Break-even: a scripted sequence of bid fills, conversions and redemptions leaves working funds ≥ cushion.
 5. ControllerV3: the live parameters pass the band check; idle loosening is bounded; every view the Core/keeper/
    indexer read answers.
 6. Independent review of v2 + V3 (money, authority, migration): findings fixed before any send.
