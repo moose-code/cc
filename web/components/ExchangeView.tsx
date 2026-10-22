@@ -143,7 +143,7 @@ export function ExchangeView({
           {marketLoading && <p className="exchange-available"><Sk w="90%" /></p>}
           {available && <p className={status ? "exchange-available" : "exchange-quote-status"}>{available} $BALANCE available to exchange from the Credit Cycle treasury</p>}
           <p className="exchange-eyebrow" id="exchange-receive-title">you receive</p>
-          <div className="exchange-total" aria-live="polite" aria-atomic="true">{marketLoading ? <Sk w="2ch" /> : total} <span className="exchange-currency"><i aria-hidden="true" />$BALANCE</span></div>
+          <div className="exchange-total" aria-live="polite" aria-atomic="true"><span>{marketLoading ? <Sk w="2ch" /> : total}</span><span className="exchange-currency">$BALANCE</span></div>
           <dl className="exchange-breakdown">
             {selected.map((row) => <div key={row.id}><dt>Credit #{row.id}</dt><dd>{quoteAvailable ? row.gross : `${row.rating} pts`}</dd></div>)}
             {selected.length > 0 && !quoteAvailable && <div><dt>selected rating</dt><dd>{selectedRating} pts</dd></div>}
