@@ -49,14 +49,14 @@ assert.equal(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount2: 
 // promise: a Credit sold to the engine for $BALANCE is its own "credit exchanged" row naming the seller, with the
 // $BALANCE paid; an ETH-bid buy stays "credit acquired" in ETH.
 const ex = feedEvent({ ...row, kind: "credit_bought", creditId: 10n, account: a, amount: 1n, amount2: 77_830_000n, balanceToken: b }, current);
-assert.deepEqual({ kind: ex.kind, label: ex.label, addr: ex.addr, amount: ex.amount, detail: ex.detail }, { kind: "exchanged", label: "credit exchanged", addr: a, amount: { sign: "−", value: "77.83", unit: "$BALANCE", exact: "77.83" }, detail: "for $BALANCE by" });
+assert.deepEqual({ kind: ex.kind, label: ex.label, addr: ex.addr, amount: ex.amount, detail: ex.detail }, { kind: "exchanged", label: "credit exchanged", addr: undefined, amount: { sign: "−", value: "77.83", unit: "$BALANCE", exact: "77.83" }, detail: "" });
 // promise: an ETH-bid buy is ETH out, a credit sale ETH in, an adoption moves nothing
 assert.deepEqual(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount: 2n * 10n ** 16n, amount2: 0n }, current).amount, { sign: "−", value: "0.02", unit: "ETH" });
 assert.equal(feedEvent({ ...row, kind: "credit_sold", creditId: 10n, amount: 3n * 10n ** 16n }, current).amount?.sign, "+");
 assert.equal(feedEvent({ ...row, kind: "credit_adopted", creditId: 10n, amount: 1n }, current).amount, undefined);
 assert.equal(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount: 10n ** 16n, amount2: 0n }, current).label, "credit acquired");
 assert.equal(result.rows[1].kind, "exchanged");
-assert.equal(result.rows[1].addr, a);
+assert.equal(result.rows[1].addr, undefined);
 
 // promise: a value-mode ETH fill counts as ETH spent and classifies the following CreditBought as an ETH bid.
 const valued = processLogs({

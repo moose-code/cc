@@ -210,7 +210,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         if (viaEth) creditRow(id, ethAmount("−", a.cost));
         else {
           // the amount is filled in by the BalanceFill that follows in the same tx
-          row({ kind: "exchanged", label: "credit exchanged", detail: `for ${BALANCE_SYMBOL} by`, addr: a.from, link: { text: `credit #${id}`, href: `/credits/${id}` }, tile: { kind: "credit", id } });
+          row({ kind: "exchanged", label: "credit exchanged", detail: "", link: { text: `credit #${id}`, href: `/credits/${id}` }, tile: { kind: "credit", id } });
           balanceBuy = { tx, row: rows[rows.length - 1] };
         }
         fill = undefined;
