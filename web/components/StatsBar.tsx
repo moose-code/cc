@@ -2,9 +2,9 @@
 
 import type { ReactNode } from "react";
 import { useStats } from "@/lib/data";
-import { useBalanceToken, useEngineBalance, usePointsHeld, useSnapshot, useStatements } from "@/lib/live";
+import { useEngineBalance, usePointsHeld, useSnapshot } from "@/lib/live";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { BALANCE_SYMBOL, balanceAmount, commas } from "@/lib/format";
+import { BALANCE_SYMBOL, commas } from "@/lib/format";
 import { Sk, SkLines } from "./Skeleton";
 
 const LAUNCH_SUPPLY_CC = 1e9; // the coin's launch supply, 1e27 wei
@@ -16,14 +16,11 @@ export function StatsBar() {
   const { data: s } = useStats();
   const { data: snap } = useSnapshot();
   const pts = usePointsHeld();
-  const held = useStatements();
-  const balToken = useBalanceToken();
   const engineBal = useEngineBalance();
-  // the points in held Statements: each can be redeemed (converted) into $BALANCE through the treasury by anyone
-  const waitingPts =
-    snap && held.isSuccess && held.data.length === snap.held.length
-      ? held.data.reduce((t, st) => t + st.rating, 0n)
-      : undefined;
+  // the $BALANCE the module holds counted in points at its unitPerPoint (base units per 1/10,000 point); no module, or
+  // a failed unit read, counts nothing rather than waiting forever
+  const balPts = !snap?.balanceUnit ? 0n : engineBal != null ? engineBal / snap.balanceUnit : undefined;
+  const total = pts != null && balPts != null ? pts + balPts : undefined;
   const on = engineDeployed && !!snap;
   const burnedPct = s ? (s.ccBurned / LAUNCH_SUPPLY_CC) * 100 : 0;
   // a figure not read yet is a skeleton and each sub line keeps its row, so the cells do not grow when data arrives
@@ -68,14 +65,12 @@ export function StatsBar() {
       <div className="stat-cell ink-pts">
         <span className="label">points held by engine</span>
         <span className="value">
-          {pts != null ? <span className="fx-in">{commas(Number(pts / 10_000n))}</span> : engineDeployed ? <Sk w="7ch" /> : "—"}
+          {total != null ? <span className="fx-in">{commas(Number(total / 10_000n))}</span> : engineDeployed ? <Sk w="7ch" /> : "—"}
           <small>pts</small>
         </span>
         {on ? (
           <small className="stat-note fx-in">
-            {waitingPts != null ? commas(Number(waitingPts / 10_000n)) : <Sk w="5ch" />} pts in{" "}
-            {commas(snap.held.length)} statements waiting to be redeemed for {BALANCE_SYMBOL} ·{" "}
-            {engineBal != null && balToken ? balanceAmount(engineBal, balToken) : <Sk w="5ch" />} {BALANCE_SYMBOL} held
+            across credits, statements and {BALANCE_SYMBOL} held
           </small>
         ) : (
           engineDeployed && (
