@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { EngineFeed, EngineProgress, PotRow } from "@/components/EngineFeed";
 import { Flywheel } from "@/components/Flywheel";
+import { Preload } from "@/components/Preload";
 import { StatsBar } from "@/components/StatsBar";
 import { TradeDock } from "@/components/TradeDock";
 import { TradePanel } from "@/components/TradePanel";
@@ -35,6 +36,7 @@ export default function Page() {
         </div>
       )}
       <Flywheel />
+      {engineDeployed && <Preload />}
       <div className="home-body">
         <StatsBar />
         <EngineFeed />

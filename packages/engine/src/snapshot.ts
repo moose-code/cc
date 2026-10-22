@@ -43,40 +43,27 @@ export function pendingIncome(
   return { income, toPayee, toRedeemBurn, toPot: income - toPayee - toRedeemBurn };
 }
 
-// blockNumber is the block every read of the snapshot was pinned to, undefined when the node refused pinned reads
+// blockNumber is the block every read of the snapshot was pinned to, undefined when the node refused pinned reads.
+// Two round trips: the Core's own views at the latest block, which also return that block's number (Multicall3
+// getBlockNumber in the same call), then every read that needs the controller or module address, pinned to it. A node
+// that refuses the pinned second trip gets one unpinned retry, reported as pinned: false, as atBlock does.
 export async function readSnapshot(client: ReadClient, coreAddr: Address) {
-  const { value, pinned, blockNumber } = await atBlock(client, (n) => snapshotAt(client, coreAddr, n));
-  return { ...value, pinned, blockNumber };
+  const first = await coreTrip(client, coreAddr);
+  try {
+    return { ...(await snapshotAt(client, coreAddr, first, first.blockNumber)), pinned: true, blockNumber: first.blockNumber };
+  } catch {
+    return { ...(await snapshotAt(client, coreAddr, first)), pinned: false, blockNumber: undefined };
+  }
 }
 
-async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: bigint) {
+// one multicall: the required Core views (allowFailure false semantics: a failed one throws), the tolerant ones, the
+// statement supply and the block number. `blockNumber` pins it (tests compare against the former reads at one block)
+async function coreTrip(client: ReadClient, coreAddr: Address, blockNumber?: bigint) {
   const c = { address: coreAddr, abi: coreAbi } as const;
-  const [
-    floorRate,
-    ethPot,
-    ethToBuyback,
-    ethRedeemBurn,
-    payee,
-    pileSize,
-    held,
-    settings,
-    paused,
-    retired,
-    chosenComposeOn,
-    minCcToChoose,
-    controller,
-    coin,
-    balanceModule,
-    balanceToken,
-    payeeOn,
-    coreEth,
-    balanceRate,
-    artist,
-    creditCostToPotBps,
-  ] = await client.multicall({
+  const r = await client.multicall({
     ...mc,
     blockNumber,
-    allowFailure: false,
+    allowFailure: true,
     contracts: [
       { ...c, functionName: "floorRate" },
       { ...c, functionName: "ethPot" },
@@ -99,24 +86,52 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { ...c, functionName: "balanceRate" },
       { ...c, functionName: "artist" },
       { ...c, functionName: "creditCostToPotBps" },
+      { address: MULTICALL3, abi: multicallAbi, functionName: "getBlockNumber" },
+      // tolerant from here on
+      { ...c, functionName: "climbMultiplier" },
+      { ...c, functionName: "reserve" },
+      { ...c, functionName: "ethRate" },
+      { ...c, functionName: "ethPrice" },
+      { address: STATEMENTS, abi: statementsAbi, functionName: "supply" },
     ] as const,
   });
+  const REQUIRED = 22;
+  r.slice(0, REQUIRED).forEach((x, i) => {
+    if (x.status !== "success") throw new Error(`snapshot read ${i} failed: ${String(x.error)}`);
+  });
+  return { r, blockNumber: r[21].result as bigint };
+}
+
+async function snapshotAt(client: ReadClient, coreAddr: Address, first: Awaited<ReturnType<typeof coreTrip>>, blockNumber?: bigint) {
+  const r = first.r;
+  // the required reads, checked in coreTrip
+  const floorRate = r[0].result!;
+  const ethPot = r[1].result!;
+  const ethToBuyback = r[2].result!;
+  const ethRedeemBurn = r[3].result!;
+  const payee = r[4].result!;
+  const pileSize = r[5].result!;
+  const held = r[6].result!;
+  const settings = r[7].result!;
+  const paused = r[8].result!;
+  const retired = r[9].result!;
+  const chosenComposeOn = r[10].result!;
+  const minCcToChoose = r[11].result!;
+  const controller = r[12].result!;
+  const coin = r[13].result!;
+  const balanceModule = r[14].result!;
+  const balanceToken = r[15].result!;
+  const payeeOn = r[16].result!;
+  const coreEth = r[17].result!;
+  const balanceRate = r[18].result!;
+  const artist = r[19].result!;
+  const creditCostToPotBps = r[20].result!;
   // the pot scaled climb multiplier (decision 128), a tolerant read so a pre-128 Core without the view does not blank
   // the whole snapshot. defaults to 1x (10_000 bps) when the Core does not answer
   // and the reserve (the eth the pot keeps for processing), a tolerant read that defaults to 0 for a Core without it
   // In value mode an unusable protected quote makes the Core return zero for the ETH bid and price. A failed Core
   // read also yields zero for these snapshot fields while leaving other fields available.
-  const [climbMultiplierRes, reserveRes, ethRateRes, ethPriceRes] = await client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: true,
-    contracts: [
-      { ...c, functionName: "climbMultiplier" },
-      { ...c, functionName: "reserve" },
-      { ...c, functionName: "ethRate" },
-      { ...c, functionName: "ethPrice" },
-    ] as const,
-  });
+  const [climbMultiplierRes, reserveRes, ethRateRes, ethPriceRes, supplyRes] = [r[22], r[23], r[24], r[25], r[26]];
   const climbMultiplier = climbMultiplierRes.status === "success" ? (climbMultiplierRes.result as bigint) : 10_000n;
   const reserve = reserveRes.status === "success" ? (reserveRes.result as bigint) : 0n;
   const ethRate = ethRateRes.status === "success" ? (ethRateRes.result as bigint) : 0n;
@@ -127,43 +142,31 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
   const potWithPending = ethPot + pending.toPot;
   // the most the bids may spend: the pot with the pending share less the reserve, the clamp of Core.ethRate
   const potRoom = potWithPending > reserve ? potWithPending - reserve : 0n;
-  // the balance token is held by the module, not the Core: the pot of the bid is the module's available() holding
-  // A failing module read leaves both undefined and the rest of the snapshot intact; consumers show the balance side
-  // as unavailable (the Core treats a failing module as a closed balance bid).
-  const [availableRes, unitRes] = balanceModule !== zeroAddress
-    ? await client.multicall({
-        ...mc,
-        blockNumber,
-        allowFailure: true,
-        contracts: [
-          { address: balanceModule, abi: moduleAbi, functionName: "available" },
-          { address: balanceModule, abi: moduleAbi, functionName: "unitPerPoint" },
-        ] as const,
-      })
-    : [{ status: "success", result: 0n }, { status: "success", result: 0n }];
-  const balanceAvailable = availableRes.status === "success" && unitRes.status === "success" ? (availableRes.result as bigint) : undefined;
-  const balanceUnit = availableRes.status === "success" && unitRes.status === "success" ? (unitRes.result as bigint) : undefined;
   const k = { address: controller, abi: controllerAbi } as const;
-  const [creditSaleOn, creditWindow, pointRate, page] = await client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: false,
-    contracts: [
-      { ...k, functionName: "creditSaleOn" },
-      { ...k, functionName: "creditWindow" },
-      { ...k, functionName: "pointRate" },
-      { ...k, functionName: "nextPage" },
-    ] as const,
-  });
-  // Price curve parameters and the statement supply. A failing read leaves the field undefined and the rest of the
-  // snapshot intact; consumers hide the figure that needs it. ControllerV2 has no startBps() (its markupBps,
-  // decayHours, startCapBps and anchorBps are derived read only values) and ControllerV1 has none of the three
-  // statement sale views, so every read here tolerates a failure and a controller of either version reads whole.
-  const [markupRes, startCapRes, decayRes, anchorRes, startRes, floorRes, creditStartRes, supplyRes, salesOnRes, saleMultRes, redeemDelayRes] = await client.multicall({
+  // the second trip: everything that needs the controller or the module address, in one multicall.
+  // the balance token is held by the module, not the Core: the pot of the bid is the module's available() holding.
+  // A failing module read leaves both undefined and the rest of the snapshot intact; consumers show the balance side
+  // as unavailable (the Core treats a failing module as a closed balance bid). Without a module the two slots read the
+  // Core's ETH balance as harmless padding and the fields are 0.
+  // Price curve parameters: ControllerV2 has no startBps() (its markupBps, decayHours, startCapBps and anchorBps are
+  // derived read only values) and ControllerV1 has none of the three statement sale views, so those reads tolerate a
+  // failure and a controller of either version reads whole. The four credit sale views are required.
+  // the protected price (decision 148): the controller's reference of the balance token against the pool spot, both
+  // wei per 1e18 base units, the reference's age and the quote settings, and the value of one point at the buy and sale
+  // prices. a controller without them leaves the fields undefined
+  const pad = { address: MULTICALL3, abi: multicallAbi, functionName: "getEthBalance", args: [coreAddr] } as const;
+  const hasModule = balanceModule !== zeroAddress;
+  const t = await client.multicall({
     ...mc,
     blockNumber,
     allowFailure: true,
     contracts: [
+      hasModule ? { address: balanceModule, abi: moduleAbi, functionName: "available" } : pad,
+      hasModule ? { address: balanceModule, abi: moduleAbi, functionName: "unitPerPoint" } : pad,
+      { ...k, functionName: "creditSaleOn" },
+      { ...k, functionName: "creditWindow" },
+      { ...k, functionName: "pointRate" },
+      { ...k, functionName: "nextPage" },
       { ...k, functionName: "markupBps" },
       { ...k, functionName: "startCapBps" },
       { ...k, functionName: "decayHours" },
@@ -171,20 +174,9 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { ...k, functionName: "startBps" },
       { ...k, functionName: "floorMultBps" },
       { ...k, functionName: "creditStartBps" },
-      { address: STATEMENTS, abi: statementsAbi, functionName: "supply" },
       { ...k, functionName: "statementSalesEnabled" },
       { ...k, functionName: "statementSaleMultiplierBps" },
       { ...k, functionName: "statementRedeemDelaySeconds" },
-    ] as const,
-  });
-  // the protected price (decision 148): the controller's reference of the balance token against the pool spot, both
-  // wei per 1e18 base units, the reference's age and the quote settings, and the value of one point at the buy and sale
-  // prices. a controller without them leaves the fields undefined
-  const [refRes, refTimeRes, spotRes, quoteRes, buyRes, sellRes] = await client.multicall({
-    ...mc,
-    blockNumber,
-    allowFailure: true,
-    contracts: [
       { ...k, functionName: "referencePrice" },
       { ...k, functionName: "referenceTime" },
       { ...k, functionName: "spotPrice" },
@@ -193,6 +185,16 @@ async function snapshotAt(client: ReadClient, coreAddr: Address, blockNumber?: b
       { ...k, functionName: "valuePerPoint", args: [true] },
     ] as const,
   });
+  for (const i of [2, 3, 4, 5]) if (t[i].status !== "success") throw new Error(`snapshot controller read ${i} failed: ${String(t[i].error)}`);
+  const [availableRes, unitRes] = hasModule ? [t[0], t[1]] : [{ status: "success", result: 0n }, { status: "success", result: 0n }];
+  const balanceAvailable = availableRes.status === "success" && unitRes.status === "success" ? (availableRes.result as bigint) : undefined;
+  const balanceUnit = availableRes.status === "success" && unitRes.status === "success" ? (unitRes.result as bigint) : undefined;
+  const creditSaleOn = t[2].result!;
+  const creditWindow = t[3].result!;
+  const pointRate = t[4].result!;
+  const page = t[5].result!;
+  const [markupRes, startCapRes, decayRes, anchorRes, startRes, floorRes, creditStartRes, salesOnRes, saleMultRes, redeemDelayRes] = t.slice(6, 16);
+  const [refRes, refTimeRes, spotRes, quoteRes, buyRes, sellRes] = t.slice(16, 22);
   const ok = <T,>(r: { status: string; result?: unknown }): T | undefined => (r.status === "success" ? (r.result as T) : undefined);
   const spot = ok<readonly [bigint, boolean]>(spotRes);
   const q = ok<readonly [number, number, number, number, number, bigint]>(quoteRes);
