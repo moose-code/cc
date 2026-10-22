@@ -13,7 +13,8 @@ export type ExchangeRow = {
   note?: string;
 };
 
-export type ExchangeReceipt = { count: number; minimum: string; hash: string };
+// received: the $BALANCE the receipt's fills paid; undefined only if the receipt could not be read (then "≥ minimum")
+export type ExchangeReceipt = { count: number; received?: string; minimum: string; hash: string; href?: string };
 
 export type ExchangeViewProps = {
   rows: ExchangeRow[];
@@ -128,11 +129,12 @@ export function ExchangeView({
         {receipt ? (
           <div className="exchange-success" role="status">
             <p className="exchange-success-title" id="exchange-receive-title">sale complete</p>
-            <p className="exchange-success-value">{receipt.count}</p>
-            <p className="exchange-success-currency">Credit{receipt.count === 1 ? "" : "s"} sold for $BALANCE</p>
+            <div className="exchange-total exchange-success-value"><span>{receipt.received ?? `≥ ${receipt.minimum}`}</span><span className="exchange-currency">$BALANCE</span></div>
+            <p className="exchange-success-currency">received for {receipt.count} Credit{receipt.count === 1 ? "" : "s"}</p>
             <dl className="exchange-breakdown">
-              <div><dt>minimum received</dt><dd>{receipt.minimum} $BALANCE</dd></div>
-              <div><dt>transaction</dt><dd><code title={receipt.hash}>{shortHash(receipt.hash)}</code></dd></div>
+              <div><dt>transaction</dt><dd>{receipt.href
+                ? <a href={receipt.href} target="_blank" rel="noreferrer"><code title={receipt.hash}>{shortHash(receipt.hash)}</code> ↗</a>
+                : <code title={receipt.hash}>{shortHash(receipt.hash)}</code>}</dd></div>
             </dl>
             <button type="button" onClick={onReset}>sell more Credits</button>
           </div>

@@ -7,7 +7,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
 import { ExchangeView, type ExchangeReceipt } from "@/components/ExchangeView";
 import { chain, core, credits, engineDeployed } from "@/lib/config";
-import { exchangeAmount, exchangeQuote, sellExchange } from "@/lib/exchange";
+import { exchangeAmount, exchangeQuote, exchangeReceived, sellExchange } from "@/lib/exchange";
 import { rating, type BalanceTokenInfo } from "@/lib/format";
 import { useBalanceToken, useSnapshot, useWalletCredits, type Snapshot } from "@/lib/live";
 import { useTx } from "@/lib/tx";
@@ -83,7 +83,18 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     };
     await run(async (write) => {
       const hash = await sellExchange(client, write, accepted, consentIsCurrent);
-      setReceipt({ count: accepted.ids.length, minimum: amount(accepted.minOut), hash });
+      // run already waited for a successful receipt; the fills in it are what the seller actually received
+      // a failed read must not turn a confirmed sale into an error
+      const received = await client.getTransactionReceipt({ hash })
+        .then(({ logs }) => exchangeReceived(logs, accepted.core)).catch(() => undefined);
+      const explorer = chain.blockExplorers?.default.url;
+      setReceipt({
+        count: accepted.ids.length,
+        received: received === undefined ? undefined : amount(received),
+        minimum: amount(accepted.minOut),
+        hash,
+        href: explorer ? `${explorer}/tx/${hash}` : undefined,
+      });
       setSelected(new Set());
     }, [], consentIsCurrent);
     setReview(undefined);
