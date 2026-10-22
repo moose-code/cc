@@ -183,7 +183,7 @@ One row per Credits id the CreditStrategy has listed: `id`, `listPrice` (wei, fr
 
 ### 7.1 endpoints
 
-Tenderly is always the first attempt. When `RPC_FAST_FALLBACK_URL` is set to an operator-authorized Alchemy mainnet endpoint, it is the first fallback, capped at four physical requests per second. The remaining public endpoints keep this fixed order before the optional paid reserve. Historical calls require an endpoint that serves the requested state; section 7.5 records the verification criteria.
+Tenderly is always the first attempt. When `RPC_FAST_FALLBACK_URL` is set to an operator-authorized Alchemy mainnet endpoint, it is the first fallback, capped at four physical requests per second. The owner withdrew Alchemy on 2026-10-22: the `RPC_FAST_FALLBACK_*` secrets were unset on `cc-indexer-mainnet` and must not be set again. The remaining public endpoints keep this fixed order before the optional paid reserve. Historical calls require an endpoint that serves the requested state; section 7.5 records the verification criteria.
 
 1. `https://gateway.tenderly.co/public/mainnet`: 4 requests per second, one active request
 2. `https://eth-mainnet.public.blastapi.io`: 8 requests per second
