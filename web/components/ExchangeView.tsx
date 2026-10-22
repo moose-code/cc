@@ -123,10 +123,10 @@ export function ExchangeView({
         ) : <>
         <div className="exchange-summary-content">
           {status && <p className="exchange-quote-status" role="status">{status}</p>}
-          {available && <p className="exchange-available">{available} $BALANCE available to exchange from the Credit Cycle treasury</p>}
+          {/* the treasury's free $BALANCE takes the status box when there is no status to show */}
+          {available && <p className={status ? "exchange-available" : "exchange-quote-status"}>{available} $BALANCE available to exchange from the Credit Cycle treasury</p>}
           <p className="exchange-eyebrow" id="exchange-receive-title">you receive</p>
-          <div className="exchange-total" aria-live="polite" aria-atomic="true">{total}</div>
-          <div className="exchange-currency"><i aria-hidden="true" />$BALANCE</div>
+          <div className="exchange-total" aria-live="polite" aria-atomic="true">{total} <span className="exchange-currency"><i aria-hidden="true" />$BALANCE</span></div>
           <dl className="exchange-breakdown">
             {selected.map((row) => <div key={row.id}><dt>Credit #{row.id}</dt><dd>{quoteAvailable ? row.gross : `${row.rating} pts`}</dd></div>)}
             {selected.length > 0 && !quoteAvailable && <div><dt>selected rating</dt><dd>{selectedRating} pts</dd></div>}
