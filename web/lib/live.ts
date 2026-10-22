@@ -634,6 +634,22 @@ export function useBalanceToken(): BalanceTokenInfo | undefined {
   return token && decimals != null ? { address: token, decimals } : undefined;
 }
 
+// The balance token the engine's module holds (the phase 2 treasury's custody: working funds and the claim reserve),
+// read from the token every 15 s. undefined while no module or token is set or the read has not answered
+export function useEngineBalance(): bigint | undefined {
+  const { data: s } = useSnapshot();
+  const token = s?.balanceToken && s.balanceToken !== zeroAddress ? s.balanceToken : undefined;
+  const module = s?.balanceModule && s.balanceModule !== zeroAddress ? s.balanceModule : undefined;
+  const { data } = useReadContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: module ? [module] : undefined,
+    query: { enabled: Boolean(token && module), refetchInterval: 15000 },
+  });
+  return data as bigint | undefined;
+}
+
 // sellQuote for the selected credit ids in sell order, refreshed with the chain clock. The previous minute's quote
 // stays on screen while the next one loads, for the same ids only.
 export function useSellQuote(ids: bigint[], now: number) {
