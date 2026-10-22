@@ -90,6 +90,7 @@ function policy(c = cfg, doorsOn: Iterable<Door> = ["distributeSplit"]): Policy 
     listingDelaySec: c.listingDelaySec,
     bookMinWei: c.bookMinWei,
     bookMinSec: c.bookMinSec,
+    refresh: c.refresh,
     split: c.split ? { ...c.split, distributor: KEEPER } : undefined,
   };
 }

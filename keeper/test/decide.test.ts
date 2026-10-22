@@ -13,7 +13,8 @@ import {
   listingKey,
   listingPayment,
   observe,
-  refreshReferenceDue,
+  refreshReferenceNeeded,
+  REFRESH_DRIFT_KEY,
   recheck,
   worstBaseFee,
   type Listing,
@@ -81,7 +82,7 @@ function state(over: Partial<State> = {}): State {
 function policy(over: Partial<{ [d in Door]: { maxBaseFee: bigint; tip: bigint } }> = {}, delay = 120): Policy {
   const doors = {} as Policy["doors"];
   for (const d of DOORS) doors[d] = { maxBaseFee: d === "buyListing" || d === "buyback" ? parseGwei("5") : parseGwei("3"), tip: parseGwei(d === "compose" ? "0.02" : "0.05") };
-  return { doors: { ...doors, ...over }, doorsOn: new Set(DOORS), margin: parseEther("0.00005"), listingDelaySec: delay, bookMinWei: parseEther("0.01"), bookMinSec: 600 };
+  return { doors: { ...doors, ...over }, doorsOn: new Set(DOORS), margin: parseEther("0.00005"), listingDelaySec: delay, bookMinWei: parseEther("0.01"), bookMinSec: 600, refresh: { driftBps: 300, persistSec: 600, maxCostEth: parseEther("0.00005") } };
 }
 
 const gas = (g: string) => ({ baseFee: parseGwei(g) });
@@ -256,69 +257,78 @@ test("listing: in value mode an unusable quote gives no ETH sweep", () => {
 });
 
 // ------------------------------------------------------------------ refreshReference
+// the door now calls the controller's own refreshReference() directly (unpaid), only when the reference has drifted
+// off the pool spot, that drift has persisted, a refresh would move it, and the keeper's own gas stays under the cap.
+// value mode on, a usable reference and a 4 percent drift (400 bps > the 300 bps default). referenceTime 1 keeps the
+// sample old, so referenceMinSeconds is satisfied and the integer move is nonzero
+const refreshBase = {
+  valueModeOn: true,
+  referencePrice: parseEther("0.49"),
+  referenceTime: 1n,
+  referenceMaxStale: 7_200n,
+  referenceMinSeconds: 600n,
+  referenceRateBpsPerHour: 1_200n,
+  referenceStepBps: 200n,
+};
+const DRIFT_SPOT = parseEther("0.5096"); // 0.49 * 1.04, a 400 bps drift off the reference
 
-test("refreshReference: due referenceMinSeconds after the last sample, never before the pool key or with referenceMaxStale 0", () => {
+// promise: a stable market, and a fresh drift seen only once, do not spend gas on an unpaid refresh
+test("refreshReference: a stable market makes no call, a 4 percent drift seen once makes no call", () => {
   const p = policy();
-  const base = { referencePrice: 49n * 10n ** 16n, referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n };
-  assert.match(refreshReferenceDue(state({ ...base, referencePrice: 0n })).reason, /pool key is not set/);
-  assert.match(refreshReferenceDue(state({ ...base, referenceMaxStale: 0n })).reason, /never usable/);
-  assert.match(refreshReferenceDue(state({ ...base, spot: 0n })).reason, /spot is unavailable/);
-  const early = decide(state({ ...base, timestamp: 4_000n + 599n }), [], gas("1"), p, new Map());
-  assert.deepEqual(doorsOf(early), []);
-  assert.match(reason(early, "refreshReference"), /next refresh at 4600/);
-  const due = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("1"), p, new Map());
-  assert.deepEqual(doorsOf(due), ["refreshReference"]);
-  const call = due.calls[0];
-  assert.equal(call.target, undefined, "the Core door, not the controller");
-  assert.ok(call.payment > 0n, "the Core pays the caller fee like compose");
-  assert.equal(recheck(call, state({ ...base, timestamp: 4_000n + 600n }), undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true, "the paid door clears the recheck at the caller fee");
-  const unpaid = decide(state({ ...base, timestamp: 4_000n + 600n, settings: { ...state().settings, callerFee: 0n, callerMaxBaseFee: 0n } }), [], gas("1"), p, new Map());
-  assert.match(reason(unpaid, "refreshReference"), /unprofitable/);
-  const high = decide(state({ ...base, timestamp: 4_000n + 600n }), [], gas("4"), p, new Map());
-  assert.match(reason(high, "refreshReference"), /above the door ceiling/);
+  const stable = decide(state({ ...refreshBase, timestamp: 10_000n, spot: parseEther("0.49") }), [], gas("0.5"), p, new Map());
+  assert.deepEqual(doorsOf(stable), []);
+  assert.match(reason(stable, "refreshReference"), /at or under REFRESH_DRIFT_BPS/);
+  assert.equal(stable.seen.has(REFRESH_DRIFT_KEY), false, "no drift, nothing tracked");
+
+  const once = decide(state({ ...refreshBase, timestamp: 10_000n, spot: DRIFT_SPOT }), [], gas("0.5"), p, new Map());
+  assert.deepEqual(doorsOf(once), []);
+  assert.match(reason(once, "refreshReference"), /needs REFRESH_PERSIST_SEC/);
+  assert.equal(once.seen.get(REFRESH_DRIFT_KEY), 10_000n, "the first drift observation is carried to the next tick");
 });
 
-// promise: a failed spot or integer move of zero cannot earn the Core's refresh payment, so the keeper spends no gas on it
-test("refreshReference: unavailable spot and sub-bps move do not send an unpaid call", () => {
-  const base = { referencePrice: parseEther("0.49"), referenceTime: 4_000n, referenceMaxStale: 7_200n, referenceMinSeconds: 600n };
-  const missing = decide(state({ ...base, timestamp: 4_600n, spot: 0n }), [], gas("1"), policy(), new Map());
-  assert.match(reason(missing, "refreshReference"), /spot is unavailable/);
-  const rounded = decide(state({ ...base, timestamp: 4_600n, referenceRateBpsPerHour: 1n }), [], gas("1"), policy(), new Map());
-  assert.match(reason(rounded, "refreshReference"), /rounds to zero/);
-  const due = decide(state({ ...base, timestamp: 7_600n, referenceRateBpsPerHour: 1n }), [], gas("1"), policy(), new Map());
-  assert.deepEqual(doorsOf(due), ["refreshReference"]);
+// promise: the same drift seen twice at least REFRESH_PERSIST_SEC apart sends one unpaid call to the controller
+test("refreshReference: a drift seen twice 600 s apart makes one call to the controller", () => {
+  const p = policy();
+  const first = decide(state({ ...refreshBase, timestamp: 10_000n, spot: DRIFT_SPOT }), [], gas("0.5"), p, new Map());
+  assert.deepEqual(doorsOf(first), []);
+  const second = decide(state({ ...refreshBase, timestamp: 10_600n, spot: DRIFT_SPOT }), [], gas("0.5"), p, first.seen);
+  assert.deepEqual(doorsOf(second), ["refreshReference"]);
+  const c = second.calls[0];
+  assert.equal(c.target, "controller", "the call goes to the controller, not the Core");
+  assert.equal(c.payment, 0n, "the direct controller refresh is unpaid");
+  assert.equal(c.functionName, "refreshReference");
+  assert.equal(recheck(c, state({ ...refreshBase, timestamp: 10_600n, spot: DRIFT_SPOT }), undefined, GAS_GUESS.refreshReference, gas("0.5"), p).ok, true, "the measured gas clears the cost cap");
+  assert.equal(recheck(c, state({ ...refreshBase, timestamp: 10_600n, spot: DRIFT_SPOT }), undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, false, "a dearer measured gas skips");
 });
 
-// promise: a refresh with only unbooked hook income is projected as paid from the pot share, matching the Core's
-// book-first-then-pay rule (decision 159, C02)
-test("refreshReference: pending-only cold pot is projected as paid from the booked pot share", () => {
-  const s = state({
-    timestamp: 1_600n,
-    launchedAt: 1_000n,
-    payeeOn: false,
-    ethPot: 0n,
-    pendingIncome: parseEther("0.00445"),
-    potWithPending: parseEther("0.004005"),
-    potRoom: 0n,
-    valueModeOn: true,
-    referencePrice: parseEther("0.49"),
-    referenceTime: 1_000n,
-    referenceMaxStale: 3_600n,
-    referenceMinSeconds: 600n,
-  });
-  const p = policy();
-  const r = decide(s, [], gas("1"), p, new Map());
-  assert.deepEqual(doorsOf(r), ["refreshReference"]);
-  assert.match(reason(r, "book"), /anti sniper window/);
-  const intended = r.calls[0];
-  assert.ok(intended.payment > 0n);
-  assert.equal(recheck(intended, s, undefined, GAS_GUESS.refreshReference, gas("1"), p).ok, true);
-  assert.equal(s.ethPot, 0n, "booked pot is empty; the Core books the pending pot share first, then pays from it");
-  const afterLatch = state({ ...s, payeeOn: true, ethPot: 1n, potWithPending: parseEther("0.000405") + 1n, pendingIncome: parseEther("0.00045"), lastBookAt: 1_000n });
-  const latched = decide(afterLatch, [], gas("1"), p, new Map());
-  assert.deepEqual(doorsOf(latched), ["refreshReference"]);
-  assert.match(reason(latched, "book"), /not above/);
-  assert.ok(latched.calls[0].payment > 1n, "the keeper still projects a caller fee from pending income");
+// promise: a persisted drift still waits while a refresh would not move the reference, and while value mode is off
+test("refreshReference: a call within referenceMinSeconds is skipped, and value mode off skips", () => {
+  const seeded = new Map([[REFRESH_DRIFT_KEY, 1n]]);
+  const soon = decide(state({ ...refreshBase, referenceTime: 10_000n, timestamp: 10_300n, spot: DRIFT_SPOT }), [], gas("0.5"), policy(), seeded);
+  assert.deepEqual(doorsOf(soon), []);
+  assert.match(reason(soon, "refreshReference"), /next refresh at 10600/);
+
+  const off = decide(state({ ...refreshBase, valueModeOn: false, timestamp: 10_600n, spot: DRIFT_SPOT }), [], gas("0.5"), policy(), seeded);
+  assert.deepEqual(doorsOf(off), []);
+  assert.match(reason(off, "refreshReference"), /value mode off/);
+  assert.equal(refreshReferenceNeeded(state({ ...refreshBase, valueModeOn: false }), policy().refresh, new Map()).ok, false);
+});
+
+// promise: the unpaid door still waits when the keeper's own gas would exceed REFRESH_MAX_COST_ETH
+test("refreshReference: gas over the cap skips", () => {
+  const seeded = new Map([[REFRESH_DRIFT_KEY, 1n]]);
+  // gas 1 gwei stays under the 3 gwei door ceiling but puts the 60k-gas own cost (0.0000705 ETH) over the 0.00005 cap
+  const dear = decide(state({ ...refreshBase, timestamp: 10_600n, spot: DRIFT_SPOT }), [], gas("1"), policy(), seeded);
+  assert.deepEqual(doorsOf(dear), []);
+  assert.match(reason(dear, "refreshReference"), /gas over cap/);
+});
+
+// promise: the refreshReference rewrite leaves the other doors' decisions untouched
+test("refreshReference: other doors are unchanged", () => {
+  const buyback = decide(state({ ethToBuyback: parseEther("1"), lastBuybackBlock: 976n }), [], gas("1"), policy(), new Map());
+  assert.deepEqual(doorsOf(buyback), ["buyback"]);
+  assert.equal(buyback.calls[0].functionName, "buyback");
+  assert.equal(buyback.calls[0].target, undefined, "still the Core door");
 });
 
 test("listing: the best gap goes first (Activity.s.sol rule), and every sweep precedes the buyback", () => {
@@ -446,7 +456,9 @@ test("paused: acquisition, buyback and compose wait while permitted maintenance 
   });
   const r = decide(s, [listing()], gas("1"), policy({}, 0), new Map([["stale-listing", 1n]]));
   for (const d of ["buyListing", "buyback", "compose"] as const) assert.match(reason(r, d), /Paused/);
-  assert.deepEqual(doorsOf(r), ["collectEscrow", "book", "redeemStatement", "refreshReference"]);
+  // refreshReference is no longer pause-blocked, but its own value-mode gate keeps it off here (value mode is off)
+  assert.deepEqual(doorsOf(r), ["collectEscrow", "book", "redeemStatement"]);
+  assert.match(reason(r, "refreshReference"), /value mode off/);
   assert.equal(r.seen.size, 0, "the listing delay restarts after a pause");
 });
 

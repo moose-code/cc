@@ -23,10 +23,17 @@ const cfg = loadConfig({ RECORD: "x", RPC_URLS: "http://127.0.0.1:8545", IMPERSO
 const policy: Policy = {
   doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec,
   bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec,
+  // a high cost cap so the executor-mechanics tests exercise the send path; the drift gate lives in decide, not here
+  refresh: { ...cfg.refresh, maxCostEth: parseEther("1") },
 };
 const call: Intended = {
   door: "refreshReference", functionName: "refreshReference", args: [], gas: 60_000n,
   payment: 0n, cost: 0n, key: "refreshReference",
+};
+// a paid door (compose) for the underpaid-breaker path, which refreshReference no longer exercises now that it is unpaid
+const paidCall: Intended = {
+  door: "compose", functionName: "compose", args: [], gas: 60_000n,
+  payment: parseEther("0.0003"), cost: 0n, key: "compose",
 };
 const state = {
   controller: rec.controller, core: rec.core, blockNumber: 1n, baseFee: parseGwei("1"),
@@ -209,14 +216,14 @@ test("executor: a fee-bearing pending simulation that receives no caller payment
   };
   const breaker = new Breaker(1, 60);
   const exec = new Executor(client, cfg, policy, { address: keeper, impersonate: true }, new Ledger(undefined, cfg.dailyBudget), breaker, new PendingStore());
-  const out = await exec.run(call, state);
+  const out = await exec.run(paidCall, state);
   assert.equal(out.kind, "sent");
   if (out.kind === "sent") assert.equal(out.received, 0n);
-  assert.equal(breaker.paused("refreshReference"), true);
+  assert.equal(breaker.paused("compose"), true);
   assert.equal(gasArgs.length, 1);
   assert.equal(gasArgs[0].blockTag, "pending");
-  assert.equal(gasArgs[0].maxFeePerGas, cfg.doors.refreshReference.maxBaseFee + cfg.doors.refreshReference.tip);
-  assert.equal(gasArgs[0].maxPriorityFeePerGas, cfg.doors.refreshReference.tip);
+  assert.equal(gasArgs[0].maxFeePerGas, cfg.doors.compose.maxBaseFee + cfg.doors.compose.tip);
+  assert.equal(gasArgs[0].maxPriorityFeePerGas, cfg.doors.compose.tip);
 });
 
 // promise: a confirmed receipt spends daily budget even when the historical balance read fails
