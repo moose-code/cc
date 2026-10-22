@@ -17,6 +17,7 @@ import "./market-compare.css";
 
 const PERCENT_BPS = 8000; // Selected Stage B settings; preview only until Core BALANCE bids are enabled.
 const READ_ROWS = 40;
+const CHEAPEST = 6; // the lowest asks by price, compared against the engine's two live bids
 const MAX_VIEW_ROWS = 1000;
 const KNOWN_MAINNET_BALANCE = "0x3620540c994433D7B4a628C46d2ED5F92572eA07" as Address;
 const formattedEth = (wei?: bigint) => wei == null ? "—" :
@@ -74,9 +75,10 @@ export default function MarketComparisonPage() {
   const pool = useComparisonPool();
   const spot = useTokensPerEth(pool.market);
   const usd = useEthUsd();
-  const [focus, setFocus] = useState("manual");
-  const [manualRating, setManualRating] = useState("300");
-  const [manualAsk, setManualAsk] = useState("0.017");
+  // no focus selects the cheapest live listing; the manual form starts empty
+  const [focus, setFocus] = useState("");
+  const [manualRating, setManualRating] = useState("");
+  const [manualAsk, setManualAsk] = useState("");
   const [shown, setShown] = useState(20);
   const now = Date.now();
   const fresh = viewLive(marketData, now);
@@ -107,6 +109,22 @@ export default function MarketComparisonPage() {
     };
   });
 
+  // the cheapest asks by price (not per point) with the engine's ETH bid (bidOf: what a listing buy may pay at most)
+  // and $BALANCE bid (balanceBidOf: what an exchange pays) for each
+  const cheapest = useMemo(() => [...asks].sort((a, b) => (a.priceWei < b.priceWei ? -1 : a.priceWei > b.priceWei ? 1 : 0)).slice(0, CHEAPEST), [asks]);
+  const cheapReads = useReadContracts({
+    contracts: cheapest.flatMap((r) => [
+      { address: core!, abi: coreAbi, functionName: "bidOf" as const, args: [BigInt(r.id)] as const },
+      { address: core!, abi: coreAbi, functionName: "balanceBidOf" as const, args: [BigInt(r.id)] as const },
+    ]),
+    query: { enabled: Boolean(core) && cheapest.length > 0, refetchInterval: 15_000 },
+  });
+  const cheap = cheapest.map((row, i) => {
+    const ethBid = cheapReads.data?.[2 * i]?.status === "success" ? (cheapReads.data[2 * i].result as bigint) : undefined;
+    const balBid = hasBid && cheapReads.data?.[2 * i + 1]?.status === "success" ? (cheapReads.data[2 * i + 1].result as bigint) : undefined;
+    return { key: "cheap:" + row.source + ":" + row.id, row, ethBid, bid: balBid ?? (hasBid ? undefined : postedBalance(row.score, PERCENT_BPS)), executable: balBid !== undefined && balBid > 0n } as Prepared & { ethBid?: bigint };
+  });
+
   const manualScore = useMemo(() => {
     try {
       return /^\d+(\.\d{0,4})?$/.test(manualRating) ? parseUnits(manualRating, 4) : 0n;
@@ -123,7 +141,7 @@ export default function MarketComparisonPage() {
     bid: manualScore > 0n ? postedBalance(manualScore, PERCENT_BPS) : undefined,
     executable: false,
   };
-  const selected = prepared.find((v) => v.key === focus) ?? manual;
+  const selected = focus === "manual" ? manual : prepared.find((v) => v.key === focus) ?? cheap.find((v) => v.key === focus) ?? cheap[0] ?? manual;
   const selectedAsk = selected.row.priceWei;
   const selectedBid = selected.bid;
   const exact = useQuote(pool.market, "sell", selectedBid ?? 0n);
@@ -145,6 +163,7 @@ export default function MarketComparisonPage() {
         <div><span>BALANCE per ETH</span><strong>{digits(spotPerEth, 2)}</strong><small>{pool.source}</small></div>
         <div><span>BALANCE in ETH</span><strong>{spotPerEth ? digits(1 / spotPerEth, 8) : "—"}</strong><small>v4 spot, not a sale quote</small></div>
         <div><span>BALANCE in USD</span><strong>{spotPerEth && usd.data ? "$" + digits(usd.data / spotPerEth, 4) : "—"}</strong><small>Chainlink ETH/USD × pool spot</small></div>
+        <div><span>engine pot</span><strong>{snap ? formattedEth(snap.ethPot) + " ETH" : "—"}</strong><small>{snap ? formattedEth(snap.potRoom) + " ETH spendable after the reserve" : "reading…"}</small></div>
         <div><span>Credit payout</span><strong>{hasBid ? digits(Number(snap!.balanceRate) / 100, 2) + "%" : "80% preview"}</strong><small>{hasBid ? "live Core; may clamp by ID" : "not an active CC offer"}</small></div>
       </div>
 
@@ -197,6 +216,41 @@ export default function MarketComparisonPage() {
               "This is a scenario, not a claim that CC will pay this amount."}
           </p>
         </div>
+      </section>
+
+      <section className="compare-section">
+        <div className="compare-section-head">
+          <div><h2>cheapest listings vs the engine's bids</h2><p>The lowest asks by price. The ETH bid is the most the engine pays for that Credit from a listing; the $BALANCE bid is what selling it on /exchange pays.</p></div>
+          <span>{cheap.length ? "OpenSea floor " + formattedEth(cheap[0].row.priceWei) + " ETH" : "waiting for keeper feed"}</span>
+        </div>
+        <div className="compare-scroll">
+          <table className="compare-table">
+            <thead><tr><th>Credit</th><th>Rating</th><th>Ask ETH</th><th>engine ETH bid</th><th>ETH bid vs ask</th><th>$BALANCE bid</th><th>at pool spot ETH</th><th>vs ask</th></tr></thead>
+            <tbody>
+              {cheap.map(({ key, row, ethBid, bid }) => {
+                const ethGap = ethBid != null ? relativeGap(Number(formatUnits(ethBid, 18)), row.priceWei) : undefined;
+                const spotEth = bid != null ? ethValueAtSpot(bid, spotPerEth) : undefined;
+                const balGap = relativeGap(spotEth, row.priceWei);
+                return (
+                  <tr key={key} className={selected.key === key ? "compare-active-row" : ""}>
+                    <td><button type="button" className="compare-row-btn" onClick={() => setFocus(key)} aria-pressed={selected.key === key}>
+                      #{row.id}<small>{row.source}</small>
+                    </button></td>
+                    <td>{digits(Number(row.score) / 10_000, 2)}</td>
+                    <td>{formattedEth(row.priceWei)}</td>
+                    <td>{formattedEth(ethBid)}</td>
+                    <td className={ethGap != null ? ethGap >= 0 ? "compare-up" : "compare-down" : ""}>{signed(ethGap)}</td>
+                    <td>{bid == null ? "—" : formattedBal(bid)}</td>
+                    <td>{spotEth != null ? digits(spotEth, 6) : "—"}</td>
+                    <td className={balGap != null ? balGap >= 0 ? "compare-up" : "compare-down" : ""}>{signed(balGap)}</td>
+                  </tr>
+                );
+              })}
+              {cheap.length === 0 && <tr><td colSpan={8}>No rated active asks in the current keeper view.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <p className="compare-footnote">A green ETH bid means the engine would pay at least the ask, so the listing can be bought (the caller is paid from the gap, so a tiny gap may not be worth executing). The $BALANCE columns value the exchange payout at pool spot, before price impact.</p>
       </section>
 
       <section className="compare-section">

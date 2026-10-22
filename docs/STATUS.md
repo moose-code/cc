@@ -61,12 +61,12 @@ Stage B done (owner sends from main, `--slow`). The hosted keeper was the pre Ph
 
 Readback after stage B: 53 of 53 (module the treasury, controller ControllerV2, artist the split, margin 760 bps, every treasury switch off, hazard row clear).
 
-Stage C done 2026-10-21 and 2026-10-22 (owner sends from main, `--slow`, each after a no-keystore dry run; decisions 269 to 273). Stage D (CC redemption) stays off.
+Stage C done 2026-10-21 and 2026-10-22 (owner sends from main, `--slow`, each after a no-keystore dry run; decisions 269, 271 to 273 and 275). Stage D (CC redemption) stays off.
 
 | step | what | tx | block | result |
 |---|---|---|---|---|
 | C1 | `setRate(2962256201024912)` re-anchor to the market before value mode | 0x14a5a4c98b8c0246968a0ef40e1872b85bbe5ec44f788fdc3b7c344385dea853 | 26,244,618 | status 1 |
-| C2 | `setBalancePoolKey` on ControllerV2: the main ETH/BALANCE v4 pool, fee 3,000, spacing 30, hooks 0x2eef0e2a9a652d755accad95a24541a98b5ca000 (decision 270) | 0xbf8473d77afe9a476529988e9a2a56c6437d7320315240592035437c745accfe | 26,244,636 | status 1 |
+| C2 | `setBalancePoolKey` on ControllerV2: the main ETH/BALANCE v4 pool, fee 3,000, spacing 30, hooks 0x2eef0e2a9a652d755accad95a24541a98b5ca000 (decision 275) | 0xbf8473d77afe9a476529988e9a2a56c6437d7320315240592035437c745accfe | 26,244,636 | status 1 |
 | C3 | `setQuote`, first parameters | 0xa535b14b530d38db063d0c43760d4acd89ef85d54cb5fb23d9c36fee2b741c94 | 26,244,787 | status 1 |
 | C3b | `setQuote` without a heartbeat: step 1,000 bps, rate 6,000 bps per hour, minSeconds 600, maxStale uint32 max, minLiquidity 3e21 (decisions 271, 272) | 0x804f7ef898d384cf3c417939136075cceebd407638dec8cf6e16d7bacf5cdeff | 26,245,363 | status 1 |
 | C4 | treasury `setSwitches(true, true, false)`: conversion and working payments on, CC redemption off | 0x0873dc0008c646510a3fe68ba50d9c5cec822e23345a053ed59bac3a11e1ab5c | 26,245,409 | status 1 |
