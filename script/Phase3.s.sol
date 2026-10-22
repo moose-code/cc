@@ -8,7 +8,7 @@ import {IControllerV3} from "../src/interfaces/IControllerV3.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
 import {IBalanceTreasuryV2} from "../src/interfaces/IBalanceTreasuryV2.sol";
 import {CreditSale, Quote, IdleLoosening, BalanceBid} from "../src/interfaces/Interfaces.sol";
-import {Report} from "./Report.sol";
+import {LaunchChecks} from "./Checks.sol";
 
 /// @notice the phase 3 owner sends (docs/specs/PHASE3.md), one `STEP` per run, each with a preview, the sends and a
 /// readback. every send is `vm.startBroadcast`, so the no-keystore dry run (`--sender <owner>`, no `--broadcast`)
@@ -27,7 +27,7 @@ import {Report} from "./Report.sol";
 ///
 /// `STEP=deploy forge script script/Phase3.s.sol --rpc-url https://gateway.tenderly.co/public/mainnet --sender <owner>`
 /// is the dry run; the send adds `--broadcast --slow --account ripe0x`
-contract Phase3 is Script, Report {
+contract Phase3 is Script, LaunchChecks {
     error NotOwner(address owner, address signer);
     error CreateFailed(string name);
 
@@ -204,6 +204,9 @@ contract Phase3 is Script, Report {
         IControllerV3 v3 = IControllerV3(d.controller);
         IPhase2BalanceTreasury v1 = IPhase2BalanceTreasury(t.predecessor());
         _reset();
+        _pin("ControllerV3", BUILD_HASH_CONTROLLER_V3, d.controller);
+        _pin("BalanceTreasuryV2", BUILD_HASH_TREASURY_V2, d.treasury);
+        _pin("ProRataRedeemer", BUILD_HASH_PRO_RATA_REDEEMER, d.redeemer);
         _eq("Core module is v2", c.balanceModule(), d.treasury);
         _eq("Core controller is V3", c.controller(), d.controller);
         _check("v1 migrated, holding only its debt", v1.migrated() && v1.custody() == v1.totalOwed(), vm.toString(v1.custody()));
@@ -228,6 +231,12 @@ contract Phase3 is Script, Report {
         _info("v2 bid now (bps of par)", vm.toString(t.bidBpsNow()));
         _print("phase 3 readback");
         _require();
+    }
+
+    /// @dev out/ equals the pinned build and the live code equals out/, immutables masked
+    function _pin(string memory name, bytes32 want, address at) private {
+        _check(string.concat("build: ", name, " out/ equals the pin"), artifactHash(name) == want, name);
+        _check(string.concat("build: ", name, " live code is the pinned build"), runtimeMatchesArtifact(at, name), vm.toString(at));
     }
 
     function _start(ICore c, bool broadcast) private {
