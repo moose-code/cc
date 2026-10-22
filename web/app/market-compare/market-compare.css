@@ -1,0 +1,51 @@
+.compare{max-width:1250px;width:100%;margin:0 auto;padding:46px 28px 90px;display:flex;flex-direction:column;gap:34px}
+.compare-heading{max-width:750px}.compare-eyebrow{font-size:11px;font-weight:600;letter-spacing:.12em;color:var(--muted)}
+.compare-heading h1{font-size:clamp(32px,4vw,52px);font-weight:500;letter-spacing:-.05em;line-height:1.04;margin:17px 0 12px}
+.compare-heading p{font-size:13px;color:var(--muted);max-width:68ch}
+.compare-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--structure);border-bottom:1px solid var(--divider)}
+.compare-stats>div{display:flex;flex-direction:column;gap:12px;padding:19px 18px 21px;border-right:1px solid var(--divider);min-width:0}
+.compare-stats>div:first-child{padding-left:0}.compare-stats>div:last-child{border-right:0}
+.compare-stats span,.compare-detail-grid span,.compare-execution span,.compare-econ-grid span{color:var(--muted);font-size:11px}
+.compare-stats strong{font-weight:500;font-size:clamp(17px,2vw,25px);letter-spacing:-.05em;white-space:nowrap}
+.compare-stats small{font-size:10px;color:var(--quiet)}
+.compare-note,.compare-warning{font-size:12px;padding:11px 15px;margin:-16px 0 0;border-left:2px solid var(--structure);background:var(--surface)}
+.compare-warning{border-left-color:var(--down)}
+.compare-section{display:flex;flex-direction:column;gap:18px}
+.compare-section-head{display:flex;align-items:end;justify-content:space-between;gap:16px;padding-bottom:12px;border-bottom:1px solid var(--structure)}
+.compare-section-head h2,.compare-economics h2{font-size:19px;letter-spacing:-.03em;font-weight:500;margin:0}
+.compare-section-head p,.compare-economics p{font-size:12px;color:var(--muted);margin:6px 0 0}
+.compare-section-head>span{font-size:11px;color:var(--muted);text-align:right}
+.compare-manual{display:flex;flex-wrap:wrap;align-items:end;gap:12px}
+.compare-manual label{display:flex;flex-direction:column;gap:8px;font-size:11px;color:var(--muted);min-width:180px}
+.compare-manual input{font-family:inherit;font-size:14px;border:1px solid var(--divider);border-radius:0;background:var(--surface);color:var(--ink);padding:13px;width:190px}
+.compare-manual button,.compare-table-footer button{border:1px solid var(--structure);color:var(--ink);background:transparent;font:inherit;font-size:12px;cursor:pointer;padding:13px 16px}
+.compare-manual button:hover,.compare-manual button.selected{background:var(--ink);color:var(--on-ink)}
+.compare-detail{border:1px solid var(--divider);background:var(--surface)}
+.compare-detail-label{padding:13px 18px;display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--divider);font-size:11px;color:var(--muted)}
+.compare-detail-grid,.compare-execution,.compare-econ-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+.compare-detail-grid>div,.compare-execution>div,.compare-econ-grid>div{display:flex;flex-direction:column;gap:10px;padding:18px;border-right:1px solid var(--divider)}
+.compare-detail-grid>div:last-child,.compare-execution>div:last-child,.compare-econ-grid>div:last-child{border-right:0}
+.compare-detail-grid strong,.compare-execution strong,.compare-econ-grid strong{font-size:17px;font-weight:500;letter-spacing:-.03em}
+.compare-execution{grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid var(--divider)}
+.compare-footnote{font-size:11px;line-height:1.6;color:var(--muted);margin:0;padding:12px 18px}
+.compare-line,.compare-table-footer{display:flex;justify-content:space-between;gap:16px;font-size:11px;color:var(--muted)}
+.compare-scroll{overflow-x:auto;border-top:1px solid var(--divider);border-bottom:1px solid var(--divider)}
+.compare-table{border-collapse:collapse;width:100%;min-width:780px;font-size:12px}
+.compare-table th{font-weight:400;color:var(--muted);text-align:right;font-size:10px;padding:14px 12px;border-bottom:1px solid var(--structure)}
+.compare-table td{text-align:right;padding:11px 12px;border-bottom:1px solid var(--hairline);white-space:nowrap}
+.compare-table tr:last-child td{border-bottom:0}
+.compare-table th:first-child,.compare-table td:first-child{text-align:left;padding-left:0}
+.compare-table tr.compare-active-row{background:var(--surface)}
+.compare-row-btn{border:0;background:transparent;text-align:left;color:var(--ink);cursor:pointer;font:inherit;padding:0 0 0 12px}
+.compare-row-btn:hover{text-decoration:underline}
+.compare-row-btn small{display:block;color:var(--muted);font-size:10px;margin-top:2px}
+.compare-table sup{font-size:9px;color:var(--up);margin-left:5px}
+.compare-up{color:var(--up)}.compare-down{color:var(--down)}
+.compare-table-footer button{padding:5px 9px}.compare-section>.compare-footnote{padding:0}
+.compare-economics{border-top:1px solid var(--structure);padding-top:20px}
+.compare-econ-grid{background:var(--surface);border:1px solid var(--divider)}
+.compare-econ-grid>div{padding:20px}.compare-econ-grid strong{font-size:22px}
+.compare-economics>.compare-footnote{padding:0}
+.compare-disclosure{color:var(--quiet);font-size:10px;border-top:1px solid var(--divider);padding-top:15px}
+@media(max-width:850px){.compare-stats,.compare-detail-grid,.compare-econ-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.compare-stats>div:nth-child(2),.compare-detail-grid>div:nth-child(2),.compare-econ-grid>div:nth-child(2){border-right:0}.compare-stats>div:nth-child(-n+2){border-bottom:1px solid var(--divider)}.compare-detail-grid>div:nth-child(-n+2),.compare-econ-grid>div:nth-child(-n+2){border-bottom:1px solid var(--divider)}.compare-stats>div:nth-child(3){padding-left:0}}
+@media(max-width:560px){.compare{padding:28px 16px 60px;gap:28px}.compare-section-head{align-items:start;flex-direction:column}.compare-section-head>span{text-align:left}.compare-stats>div{padding:14px 10px}.compare-detail-grid>div,.compare-execution>div{padding:13px}.compare-detail-grid strong,.compare-execution strong{font-size:13px}.compare-manual label,.compare-manual input{flex:1;min-width:130px;width:100%}.compare-execution{grid-template-columns:1fr}.compare-execution>div:first-child{border-right:0;border-bottom:1px solid var(--divider)}}
