@@ -65,10 +65,11 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     : quote?.reason;
   const blocked = !account || wrongChain || !wallet.ready || Boolean(wallet.error || snapshot.error) || !available || !quote || Boolean(quote.reason) || order.length === 0 || quote.minOut <= 0n;
   const allSelected = rows.length > 0 && order.length === rows.length;
-  const label = pending ? "confirming exchange…"
-    : !available ? "exchange not open yet"
-    : order.length === 0 ? "select Credits to exchange"
-    : `sell ${order.length} credit${order.length === 1 ? "" : "s"}`;
+  // short labels: the same button sits in the mobile bar beside the total
+  const label = pending ? "confirming…"
+    : !available ? "not open yet"
+    : order.length === 0 ? "select Credits"
+    : `sell ${order.length}`;
 
   async function sell() {
     if (blocked || pending || !account || !client || !core || !market || !token || !quote) return;
