@@ -245,7 +245,7 @@ function InventoryPaths() {
           or composed in groups of 80 into Statements. ETH sales return funds to the ETH buying pot. A Statement left
           unsold can be redeemed for BALANCE; the treasury then buys more Credits with BALANCE through the exchange,
           continuing a separate cycle. A future path, not active, would let CC holders burn CC for a share of the
-          treasury's claim reserve.
+          treasury's claim reserve, returning value to the CC holders whose trading fees started the cycle.
         </desc>
         <defs>
           <marker id="faq-paths-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
@@ -267,6 +267,8 @@ function InventoryPaths() {
           <path d="M1140 307 V403" fill="none" stroke="#976ba9" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
           {/* future: the claim reserve to a CC burn to redeem, dashed and grey to read as not active */}
           <path d="M1142 476 V527" className="faq-paths-future" fill="none" stroke="#8a877e" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6 6" markerEnd="url(#faq-paths-source-arrow)" />
+          {/* future: redemption closes the loop, value back to $CC holders, the side the trading fees come from */}
+          <path d="M995 567 H110 V115 H240" className="faq-paths-future" fill="none" stroke="#8a877e" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6 6" markerEnd="url(#faq-paths-source-arrow)" />
 
           <path d="M260 440 H151 V49 H584 V83" className="faq-paths-recycle" fill="none" stroke="#e5007e" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
           <path d="M1289 439 H1322 V19 H840 V83" className="faq-paths-recycle" fill="none" stroke="#976ba9" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" markerEnd="url(#faq-paths-arrow)" />
@@ -331,6 +333,7 @@ function InventoryPaths() {
           <text x="104" y="320" fill="#e5007e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">cycles back</text>
           <text x="813" y="355" fill="#e5007e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">ETH sale</text>
           <text x="1085" y="366" className="faq-paths-balance-caption" fill="#976ba9" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">$BALANCE path</text>
+          <text x="560" y="586" fill="#8a877e" fontSize={12} fontWeight={400} textAnchor="middle" dominantBaseline="middle">future: value back to $CC holders</text>
           <text x="1210" y="503" fill="#8a877e" fontSize={11} fontWeight={400} textAnchor="start" dominantBaseline="middle">10% held as</text>
           <text x="1210" y="517" fill="#8a877e" fontSize={11} fontWeight={400} textAnchor="start" dominantBaseline="middle">claim reserve</text>
         </g>
