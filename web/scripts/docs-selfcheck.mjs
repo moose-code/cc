@@ -1,4 +1,4 @@
-// promise: public docs have valid references and omit deferred balance flows.
+// promise: public docs track deployed references and keep deferred flows out of the guides.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -43,15 +43,20 @@ for (const page of docPages) {
 
 assert(docPages.some((page) => page.slug === ""), "docs landing page missing");
 const deployment = JSON.parse(readFileSync(new URL("../../deployments/1.json", import.meta.url), "utf8"));
+const phase2 = JSON.parse(readFileSync(new URL("../../deployments/1-phase2.json", import.meta.url), "utf8"));
 assert.equal(docPages.find((page) => page.slug === "contracts/core")?.mainnetAddress, deployment.core, "Core address differs from deployment record");
-assert.equal(docPages.find((page) => page.slug === "contracts/controller")?.mainnetAddress, deployment.controller, "Controller address differs from deployment record");
+assert.equal(docPages.find((page) => page.slug === "contracts/controller")?.mainnetAddress, phase2.controllerV2, "ControllerV2 address differs from deployment record");
+assert.equal(docPages.find((page) => page.slug === "contracts/controller")?.source, "src/interfaces/IControllerV2.sol", "selected Controller source differs from V2");
+assert.equal(docPages.find((page) => page.slug === "contracts/balance-module")?.mainnetAddress, phase2.treasury, "balance module address differs from deployment record");
+assert.deepEqual(docPages.find((page) => page.slug === "")?.mainnetAddresses, [{ label: "CC", address: deployment.coin }], "CC address differs from deployment record");
 assert.equal(docPages.find((page) => page.slug === "guides/credits")?.mainnetAddress, deployment.credits, "Credits address differs from deployment record");
 assert.equal(docPages.find((page) => page.slug === "guides/statements")?.mainnetAddress, deployment.statements, "Statements address differs from deployment record");
 assert.deepEqual(docPages.find((page) => page.slug === "contracts/adapters")?.mainnetAddresses, [
   { label: "CreditStrategyAdapter", address: deployment.strategyAdapter },
   { label: "SeaportBasicAdapter", address: deployment.seaportAdapter },
 ], "adapter addresses differ from deployment record");
-assert(!/\b(?:balance|redeem\w*|redemp\w*)\b/i.test(JSON.stringify(docPages)), "deferred balance flow appears in public docs");
-assert(!docPages.some((page) => page.slug === "contracts/balance-module"), "deferred balance module page must stay unpublished");
-assert(!Object.hasOwn(contractCatalog, "contracts/balance-module"), "deferred balance module catalog must stay unpublished");
+assert(!/\b(?:balance|redeem\w*|redemp\w*)\b/i.test(JSON.stringify(docPages.filter((page) => page.slug !== "contracts/balance-module"))), "deferred balance flow appears outside the module reference");
+assert(!/ControllerV1|AnchorMoved|SaleSet\(sale\)|coin was not live/.test(JSON.stringify(docPages)), "outdated pre-launch copy appears in public docs");
+assert(!docPages.some((page) => page.slug === "guides/balance" || page.slug === "guides/claim" || page.slug === "guides/exchange"), "deferred guide must stay unpublished");
+assert(!Object.hasOwn(contractCatalog, "contracts/balance-module"), "module page must stay curated without the claim interface catalog");
 console.log(`docs: ${docPages.length} routes and contract reference names verified`);
