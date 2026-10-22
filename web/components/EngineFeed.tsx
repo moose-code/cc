@@ -4,7 +4,7 @@ import { useFeed, useHistoryDown } from "@/lib/data";
 import { useBlockTs, useScan } from "@/lib/engine";
 import type { FeedEvent, FeedKind } from "@/lib/events";
 import { engineDeployed, STATEMENT_SIZE } from "@/lib/config";
-import { useCreditTraits, useNow, useScores, useSnapshot } from "@/lib/live";
+import { useNow, useScores, useSnapshot } from "@/lib/live";
 import { useListings } from "@/lib/useListings";
 import { ListingsTable } from "./ListingsTable";
 import { ListingsStatus } from "./ListingsStatus";
@@ -29,7 +29,6 @@ const MARK: Record<FeedKind, string> = {
 
 const MOBILE_ROWS = 6; // rows the one-scroll mobile home shows before "view full ledger" (see .ledger.short)
 
-const PLATES = ["C", "M", "Y", "K"]; // bit 0 to 3 of CreditTraits.mask; a set bit is a printed plate
 
 const PAGE = 100; // rows per page of the feed
 
@@ -119,7 +118,6 @@ export function EngineFeed() {
   // one batched read for the credits on screen
   const ids = [...new Set(shown.flatMap((e) => (e.tile?.kind === "credit" ? [BigInt(e.tile.id)] : [])))];
   const { data: scores, loading: scoresLoading } = useScores(ids);
-  const { data: traits, loading: traitsLoading } = useCreditTraits(ids);
 
   return (
     <section className={full ? "ledger" : "ledger short"}>
@@ -142,10 +140,9 @@ export function EngineFeed() {
             <div className="ledger-cols ledger-th">
               <span>time</span>
               <span>entry</span>
-              <span>ref</span>
-              <span className="plates">plates</span>
+              <span />
               <span className="num rate">rating</span>
-              <span className="num">ETH</span>
+              <span className="num">amount</span>
             </div>
             {shown.map((e) => (
               <Row
@@ -153,9 +150,7 @@ export function EngineFeed() {
                 e={e}
                 now={now}
                 score={e.tile?.kind === "credit" ? scores?.[String(e.tile.id)] : undefined}
-                mask={e.tile?.kind === "credit" ? traits?.[String(e.tile.id)]?.mask : undefined}
                 scoreWait={e.tile?.kind === "credit" && scoresLoading}
-                maskWait={e.tile?.kind === "credit" && traitsLoading}
               />
             ))}
             {shown.length === 0 && (loading ? <LoadingLedger /> : <EmptyLedger />)}
@@ -193,9 +188,6 @@ function LoadingLedger() {
             <Sk block w="24px" h="24px" />
             <Sk w="12ch" />
           </span>
-          <span className="plates">
-            <Sk w="7ch" />
-          </span>
           <span className="num rate">
             <Sk w="5ch" />
           </span>
@@ -219,7 +211,6 @@ function EmptyLedger() {
           <span className="when">—</span>
           <span className="entry"><i className={`mark ${ink}`} aria-hidden />{entry}</span>
           <span className="ref"><i className="ledger-placeholder-tile" aria-hidden /><span>{detail}</span></span>
-          <span className="plates" />
           <span className="num rate">—</span>
           <span className="num">—</span>
         </div>
@@ -254,8 +245,8 @@ function ListingsPanel() {
   );
 }
 
-// scoreWait, maskWait: the credit's rating or plates are still being read (a skeleton until they arrive).
-function Row({ e, now, score, mask, scoreWait, maskWait }: { e: FeedEvent; now: number; score?: bigint; mask?: number; scoreWait?: boolean; maskWait?: boolean }) {
+// scoreWait: the credit's rating is still being read (a skeleton until it arrives).
+function Row({ e, now, score, scoreWait }: { e: FeedEvent; now: number; score?: bigint; scoreWait?: boolean }) {
   const { data: blockTs } = useBlockTs(e.ts == null ? e.block : undefined);
   const { data: scan } = useScan();
   const ts = e.ts ?? blockTs;
@@ -311,19 +302,18 @@ function Row({ e, now, score, mask, scoreWait, maskWait }: { e: FeedEvent; now: 
           )}
         </span>
       </span>
-      <span className="plates">
-        {mask != null
-          ? PLATES.map((l, i) => (
-              <b key={l} className={mask & (1 << i) ? "on" : undefined}>
-                {l}
-              </b>
-            ))
-          : maskWait && <Sk w="7ch" />}
-      </span>
       <span className="num rate">
         {score != null ? rating(score) : rated && sid != null ? <StatementRating sid={sid} raw={e.rating} /> : scoreWait ? <Sk w="5ch" /> : ""}
       </span>
-      <span className="num">{e.eth ?? ""}</span>
+      <span className="num amount" title={e.amount?.exact ? `${e.amount.sign}${e.amount.exact} ${e.amount.unit}` : undefined}>
+        {e.amount && (
+          <>
+            {e.amount.sign}
+            {e.amount.value}
+            {e.amount.unit && <small className="unit"> {e.amount.unit}</small>}
+          </>
+        )}
+      </span>
     </div>
   );
 }

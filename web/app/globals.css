@@ -851,7 +851,7 @@ a:hover {
 }
 .ledger-cols {
   display: grid;
-  grid-template-columns: 56px 180px minmax(0, 1fr) 64px 64px 88px;
+  grid-template-columns: 56px 180px minmax(0, 1fr) 64px 132px;
   column-gap: 8px;
   align-items: center;
 }
@@ -944,17 +944,10 @@ a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ledger-row .plates {
-  display: flex;
-  gap: 4px;
-  font-size: 12px;
-}
-.ledger-row .plates b {
-  font-weight: 400;
-  color: var(--disabled);
-}
-.ledger-row .plates b.on {
-  color: var(--ink);
+/* the amount's currency, quieter than the number */
+.ledger-cols .amount .unit {
+  font-size: 0.85em;
+  color: var(--muted);
 }
 .ledger .more {
   align-self: flex-start;
@@ -1829,10 +1822,7 @@ button.tp-row:disabled {
     margin: 0 16px;
   }
   .ledger-cols {
-    grid-template-columns: 56px 180px minmax(0, 1fr) 64px 88px;
-  }
-  .ledger-cols .plates {
-    display: none;
+    grid-template-columns: 56px 180px minmax(0, 1fr) 64px 120px;
   }
   .ledger .more {
     margin: 16px;

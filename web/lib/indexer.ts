@@ -15,10 +15,10 @@ import { createClient, and, asc, count, desc, eq, gte, inArray, isNotNull, min, 
 import { getTableColumns } from "drizzle-orm";
 import { formatUnits } from "viem";
 import { chain, core, engineDeployed, indexerUrl, STATEMENT_SIZE } from "./config";
-import { BALANCE_SYMBOL, commas, eth, formatHistoricalBalance, type BalanceTokenInfo } from "./format";
+import { BALANCE_SYMBOL, commas, eth, type BalanceTokenInfo } from "./format";
 import { indexedBlockForChain } from "./indexer-health";
 import { BANDS, BUCKET_WEI, POINT, WEEK_S } from "./market-report";
-import { soldDetail, type CreditEvt, type FeedEvent, type StatementRecord } from "./events";
+import { balanceAmountCell, ethAmount, soldDetail, type CreditEvt, type FeedEvent, type StatementRecord } from "./events";
 import * as schema from "./indexer-schema";
 import type { AcquiredHow } from "./indexer-schema";
 
@@ -512,7 +512,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         label: "credit exchanged",
         detail: `for ${BALANCE_SYMBOL} by`,
         addr: r.account ?? undefined,
-        eth: formatHistoricalBalance(r.amount2, r.balanceToken ?? undefined, balance),
+        amount: balanceAmountCell("−", r.amount2, r.balanceToken ?? undefined, balance),
         link: creditLink(cid!),
         tile: { kind: "credit", id: cid! },
       };
@@ -522,13 +522,14 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         kind: "credit",
         label: "credit acquired",
         detail: "",
-        eth: eth(amount),
+        amount: ethAmount("−", amount),
         link: creditLink(cid!),
         tile: { kind: "credit", id: cid! },
       };
     case "listing_bought":
     case "credit_adopted":
-      return { ...base, ...credit, kind: "credit", label: "credit acquired", detail: "", eth: eth(amount), link: creditLink(cid!), tile: { kind: "credit", id: cid! } };
+      // an adoption pays nothing (the engine already held the credit; amount is its recorded basis)
+      return { ...base, ...credit, kind: "credit", label: "credit acquired", detail: "", amount: r.kind === "listing_bought" ? ethAmount("−", amount) : undefined, link: creditLink(cid!), tile: { kind: "credit", id: cid! } };
     case "credit_swapped":
       return {
         ...base,
@@ -547,7 +548,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         kind: "sold",
         label: "credit sold",
         detail: `credit #${cid} bought from the credit sale by`,
-        eth: eth(amount),
+        amount: ethAmount("+", amount),
         addr: r.account ?? undefined,
         tile: { kind: "credit", id: cid! },
       };
@@ -582,7 +583,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         label: "statement sold",
         link: stmtLink(sid!),
         detail: r.toPot != null ? soldDetail(r.toPot, r.amount2 ?? 0n) : "bought by",
-        eth: eth(amount),
+        amount: ethAmount("+", amount),
         addr: r.account ?? undefined,
         tile: { kind: "statement", id: sid! },
         rating: r.rating ?? undefined,
@@ -596,7 +597,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         label: "$CC burned",
         title: `${commas(Number(formatUnits(r.amount2 ?? 0n, 18)))} $CC`,
         detail: `bought with ${eth(amount)} ETH`,
-        eth: eth(amount),
+        amount: ethAmount("−", amount),
       };
     default:
       return {
@@ -604,7 +605,8 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         kind: "redeemed",
         label: "statement redeemed",
         link: stmtLink(sid!),
-        detail: `· module received ${formatHistoricalBalance(amount, r.balanceToken ?? undefined, balance)}`,
+        detail: `· converted to ${BALANCE_SYMBOL}`,
+        amount: balanceAmountCell("+", amount, r.balanceToken ?? undefined, balance),
         tile: { kind: "statement", id: sid! },
         rating: r.rating ?? undefined,
       };

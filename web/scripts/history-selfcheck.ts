@@ -25,29 +25,35 @@ const result = processLogs({
 });
 assert.equal(result.statements[1].redeemed?.token, a);
 assert.equal(result.statements[2].redeemed?.token, b);
-assert.equal(result.rows[0].detail, `· module received 1000000000000000000 raw units (${a})`);
-assert.equal(result.rows[1].eth, `2000000000000000000 raw units (${a})`);
-assert.equal(result.rows[2].eth, `3000000000000000000 raw units (${a})`);
-assert.equal(result.rows[3].detail, "· module received 1 $BALANCE");
+assert.deepEqual(result.rows[0].amount, { sign: "+", value: `1000000000000000000 raw units (${a})`, unit: "" });
+assert.deepEqual(result.rows[1].amount, { sign: "−", value: `2000000000000000000 raw units (${a})`, unit: "" });
+assert.equal(result.rows[2].amount?.value, `3000000000000000000 raw units (${a})`);
+assert.deepEqual(result.rows[3].amount, { sign: "+", value: "1", unit: "$BALANCE", exact: "1" });
 
 // promise: missing event-time identity or metadata never borrows the current token's decimals.
 assert.equal(formatHistoricalBalance(10n ** 18n, a, current), `1000000000000000000 raw units (${a})`);
 assert.equal(formatHistoricalBalance(1n, undefined, current), "1 raw units (token unknown)");
 const unknown = processLogs({ logs: [log("StatementRedeemed", 1, { sid: 3n, received: 1n })], head: 100n, burned: 0n, modes: new Map(), balanceToken: current });
 assert.equal(unknown.statements[3].redeemed?.token, undefined);
-assert.equal(unknown.rows[0].detail, "· module received 1 raw units (token unknown)");
+assert.equal(unknown.rows[0].amount?.value, "1 raw units (token unknown)");
 
 // promise: the indexer feed displays the saved currency for both redemptions and balance-credit payments.
 const row = { id: "test", kind: "redeemed", creditId: null, other: null, statementId: 1n, account: null, amount: 10n ** 18n, amount2: null, balanceToken: a, ts: 100n, tx, rating: null, mode: null, composedFormat: null, restyledTo: null } as Parameters<typeof feedEvent>[0];
-assert.equal(feedEvent(row, current).detail, `· module received 1000000000000000000 raw units (${a})`);
-assert.equal(feedEvent({ ...row, balanceToken: b, amount: 10n ** 6n }, current).detail, "· module received 1 $BALANCE");
-assert.equal(feedEvent({ ...row, balanceToken: null }, current).detail, "· module received 1000000000000000000 raw units (token unknown)");
-assert.equal(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount2: 2n * 10n ** 18n }, current).eth, `2000000000000000000 raw units (${a})`);
+assert.equal(feedEvent(row, current).amount?.value, `1000000000000000000 raw units (${a})`);
+assert.deepEqual(feedEvent({ ...row, balanceToken: b, amount: 10n ** 6n }, current).amount, { sign: "+", value: "1", unit: "$BALANCE", exact: "1" });
+// promise: a large conversion is compact in the cell and exact in the hover
+assert.deepEqual(feedEvent({ ...row, balanceToken: b, amount: 50_227_790_000n }, current).amount, { sign: "+", value: "50.2k", unit: "$BALANCE", exact: "50,227.79" });
+assert.equal(feedEvent({ ...row, balanceToken: null }, current).amount?.value, "1000000000000000000 raw units (token unknown)");
+assert.equal(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount2: 2n * 10n ** 18n }, current).amount?.value, `2000000000000000000 raw units (${a})`);
 
 // promise: a Credit sold to the engine for $BALANCE is its own "credit exchanged" row naming the seller, with the
 // $BALANCE paid; an ETH-bid buy stays "credit acquired" in ETH.
 const ex = feedEvent({ ...row, kind: "credit_bought", creditId: 10n, account: a, amount: 1n, amount2: 77_830_000n, balanceToken: b }, current);
-assert.deepEqual({ kind: ex.kind, label: ex.label, addr: ex.addr, eth: ex.eth, detail: ex.detail }, { kind: "exchanged", label: "credit exchanged", addr: a, eth: "77.83 $BALANCE", detail: "for $BALANCE by" });
+assert.deepEqual({ kind: ex.kind, label: ex.label, addr: ex.addr, amount: ex.amount, detail: ex.detail }, { kind: "exchanged", label: "credit exchanged", addr: a, amount: { sign: "−", value: "77.83", unit: "$BALANCE", exact: "77.83" }, detail: "for $BALANCE by" });
+// promise: an ETH-bid buy is ETH out, a credit sale ETH in, an adoption moves nothing
+assert.deepEqual(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount: 2n * 10n ** 16n, amount2: 0n }, current).amount, { sign: "−", value: "0.02", unit: "ETH" });
+assert.equal(feedEvent({ ...row, kind: "credit_sold", creditId: 10n, amount: 3n * 10n ** 16n }, current).amount?.sign, "+");
+assert.equal(feedEvent({ ...row, kind: "credit_adopted", creditId: 10n, amount: 1n }, current).amount, undefined);
 assert.equal(feedEvent({ ...row, kind: "credit_bought", creditId: 10n, amount: 10n ** 16n, amount2: 0n }, current).label, "credit acquired");
 assert.equal(result.rows[1].kind, "exchanged");
 assert.equal(result.rows[1].addr, a);
@@ -88,7 +94,7 @@ const burns = processLogs({
   head: 100n, burned: 8_214_330n * 10n ** 18n, burns: new Map([[tx, 8_214_330n * 10n ** 18n]]), modes: new Map(), balanceToken: current,
 });
 assert.deepEqual(
-  { kind: burns.rows[0].kind, title: burns.rows[0].title, detail: burns.rows[0].detail, eth: burns.rows[0].eth },
-  { kind: "burned", title: "8,214,330 $CC", detail: "bought with 0.8 ETH", eth: "0.8" },
+  { kind: burns.rows[0].kind, title: burns.rows[0].title, detail: burns.rows[0].detail, amount: burns.rows[0].amount },
+  { kind: "burned", title: "8,214,330 $CC", detail: "bought with 0.8 ETH", amount: { sign: "−", value: "0.8", unit: "ETH" } },
 );
 console.log("history selfcheck ok");
