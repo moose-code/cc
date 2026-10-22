@@ -68,6 +68,9 @@ export interface Config {
   // pending income above this, wei, and a last book older than bookMinSec, make the keeper book a latched Core
   bookMinWei: bigint;
   bookMinSec: number;
+  // the refreshReference door, which calls the controller's unpaid refreshReference() directly: the spot-to-reference
+  // drift (bps) that counts, how long it must persist, and the ceiling on the keeper's own gas for the call
+  refresh: { driftBps: number; persistSec: number; maxCostEth: bigint };
   tickMs: number;
   breakerThreshold: number;
   breakerPauseSec: number;
@@ -285,6 +288,11 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
     listingDelaySec: num(env, "LISTING_DELAY_SEC", 120),
     bookMinWei: ether(env, "BOOK_MIN_ETH", "0.01"),
     bookMinSec: num(env, "BOOK_MIN_SEC", 600),
+    refresh: {
+      driftBps: num(env, "REFRESH_DRIFT_BPS", 300),
+      persistSec: num(env, "REFRESH_PERSIST_SEC", 600),
+      maxCostEth: ether(env, "REFRESH_MAX_COST_ETH", "0.00005"),
+    },
     tickMs: num(env, "TICK_MS", 12_000),
     breakerThreshold: num(env, "BREAKER_THRESHOLD", 3),
     breakerPauseSec: num(env, "BREAKER_PAUSE_SEC", 3600),
@@ -337,6 +345,7 @@ export function describe(c: Config) {
     listingDelaySec: c.listingDelaySec,
     bookMinEth: Number(c.bookMinWei) / 1e18,
     bookMinSec: c.bookMinSec,
+    refresh: { driftBps: c.refresh.driftBps, persistSec: c.refresh.persistSec, maxCostEth: Number(c.refresh.maxCostEth) / 1e18 },
     strategy: c.strategy.mode,
     strategyFullRead: c.strategyFullRead,
     indexer: Boolean(c.indexerUrl),

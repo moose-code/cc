@@ -339,7 +339,7 @@ The record carries chain id 1, so the evm.now links of this node point at chain 
 | 4 | `collectEscrow()` | the fee escrow holds more for the Core than the gas of the claim |
 | 5 | `book()` | after `launchedAt + settings.sniperSeconds`, the first book with income latches the payee share; once latched, a book follows pending income above `BOOK_MIN_ETH` after `BOOK_MIN_SEC` |
 | 6 | `redeemStatement(sid)` | `atFloor(sid)`; logged only while no balance module is set (it reverts `NoBalanceModule`) |
-| 7 | `refreshReference()` on the Core | the reference is set, `referenceMaxStale` is nonzero, the pool spot reads nonzero, `referenceMinSeconds` has passed and `rate * elapsed / 3600` is at least 1 bps; the Core pays only when the controller updates the reference. at the intended 1,200-bps hourly rate, 200-bps step and 600-second cadence, each refresh can move one full step. in value mode an unusable reference closes ETH acquisitions with `NoQuote`; controller sale doors also revert |
+| 7 | `refreshReference()` on the controller | a direct, unpaid call to the controller (not the Core's paid door), so the protocol pot pays nothing. runs only when it is really needed: value mode is on, the reference is set and usable (`referenceMaxStale` nonzero), the pool spot reads nonzero, the live spot has drifted off the reference by more than `REFRESH_DRIFT_BPS`, that drift has persisted `REFRESH_PERSIST_SEC` (two observations), a refresh would move it (`referenceMinSeconds` passed and `rate * elapsed / 3600` at least 1 bps), and the keeper's own gas is at or under `REFRESH_MAX_COST_ETH`. being unpaid it uses the cost cap instead of the profit rule. in value mode an unusable reference closes ETH acquisitions with `NoQuote`; controller sale doors also revert |
 
 ### environment
 
@@ -358,6 +358,9 @@ every value is an environment variable; nothing secret is written to a file by t
 | `LISTING_DELAY_SEC` | 120 | mainnet launch override 0 seconds (decision 234); increase if bot competition appears |
 | `BOOK_MIN_ETH` | 0.01 | once the payee share is latched, the keeper books when the pending income (Core balance above the booked pots) exceeds this |
 | `BOOK_MIN_SEC` | 600 | the keeper's last book must be older than this for the latched book above, so booked state follows income at a bounded gas cost |
+| `REFRESH_DRIFT_BPS` | 300 | the `refreshReference` door (door 7) acts only once the live pool spot has drifted this far (in bps) off the controller reference |
+| `REFRESH_PERSIST_SEC` | 600 | the drift above must persist this long, seen on two ticks at least this far apart, before the keeper refreshes; it resets the moment the drift falls back under the threshold |
+| `REFRESH_MAX_COST_ETH` | 0.00005 | the ceiling on the keeper's own gas (gas estimate times base fee plus tip) for the unpaid refresh; over it the door waits for a cheaper tick. at 60k gas this holds the door to roughly sub-gwei base fees |
 | `STRATEGY_IDS` | `Credits.tokensOf(strategy)` | the CreditStrategy ids to watch, or `off`; refreshed every `STRATEGY_REFRESH_SEC` (600). The default set is kept by delta from the Credits Transfer logs of the strategy (state file `STATE_DIR/strategy-inventory.json`), with a rolling re-read of 300 prices per refresh and a full read once a day |
 | `STRATEGY_FULL_READ` | | `1` reads the whole strategy inventory on every refresh (first start, or a node without log queries) |
 | `INDEXER_URL` | | indexer origin (https or local); seeds the strategy inventory on the first start from `strategy_listing` instead of `tokensOf` |

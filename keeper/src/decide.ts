@@ -9,8 +9,6 @@ import type { Door, DoorPolicy, SplitConfig } from "./config.ts";
 
 // the private gas constants of the Core (src/Core.sol 224 to 236), restated
 export const COMPOSE_GAS = 13_700_000n;
-// the most gas the Core's refreshReference door counts for the caller payment (Core.REFRESH_GAS)
-export const REFRESH_GAS = 200_000n;
 export const REDEEM_GAS = 1_500_000n;
 export const BUYBACK_GAS = 600_000n;
 export const BUYLISTING_GAS = 1_500_000n;
@@ -154,6 +152,9 @@ export interface Policy {
   // a latched Core is booked when the pending income exceeds bookMinWei and the keeper's last book is older than bookMinSec
   bookMinWei: bigint;
   bookMinSec: number;
+  // the refreshReference door: driftBps is the spot-to-reference gap (bps) that counts as drift, persistSec how long
+  // that drift must persist before a refresh, maxCostEth the ceiling on the keeper's own gas for the unpaid call
+  refresh: { driftBps: number; persistSec: number; maxCostEth: bigint };
   // the distributeSplit door's split and the distributor the call names (the keeper address); undefined leaves the door off
   split?: SplitPolicy;
 }
@@ -253,19 +254,39 @@ export function observe(seen: ReadonlyMap<string, bigint>, sweepable: string[], 
   return next;
 }
 
-// whether a reference refresh is due: the controller holds a reference (the pool key is set), the reference can be
-// usable (referenceMaxStale nonzero), and referenceMinSeconds has passed since the last sample. the contract gates the
-// refresh at referenceMinSeconds, so a call before then does nothing. A low rate can take several cadences before
-// integer division gives a nonzero move; the controller leaves referenceTime unchanged while it waits
-export function refreshReferenceDue(s: State): { ok: boolean; reason: string } {
+// the reserved `seen` key the refreshReference door keeps its drift observation under, so a transient spike has to
+// persist across ticks before it triggers a refresh. it never collides with a listing key (venue:id:price)
+export const REFRESH_DRIFT_KEY = "refresh:driftSince";
+
+// whether the controller reference needs a direct, unpaid refresh now, plus the drift observation to carry to the next
+// tick (undefined resets it). the keeper calls the controller's own refreshReference(), not the Core's paid door, so
+// the protocol pot pays nothing; the door runs only when it is really needed. the gates, in order: value mode on, a
+// reference set and usable (referenceMaxStale nonzero), a readable pool spot; the live spot has drifted off the
+// reference by more than driftBps; that drift has persisted at least persistSec (first seen on an earlier tick, reset
+// the moment it falls back under the threshold); and a refresh would actually move the reference this tick
+// (referenceMinSeconds since the last sample and a nonzero integer move). the controller also no-ops a second refresh
+// in one block, but its lastRefreshBlock is private and so unreadable; the referenceMinSeconds gate stands in for it,
+// since a same-block refresh set referenceTime to now and leaves elapsed at zero
+export function refreshReferenceNeeded(
+  s: State,
+  r: Pick<Policy["refresh"], "driftBps" | "persistSec">,
+  seen: ReadonlyMap<string, bigint>,
+): { ok: boolean; reason: string; driftSince?: bigint } {
+  if (!s.valueModeOn) return { ok: false, reason: "value mode off" };
   if (s.referencePrice === 0n) return { ok: false, reason: "no reference: the balance pool key is not set" };
   if (s.referenceMaxStale === 0n) return { ok: false, reason: "referenceMaxStale is 0, the reference is never usable" };
   if (s.spot === 0n) return { ok: false, reason: "pool spot is unavailable" };
-  const due = s.referenceTime + s.referenceMinSeconds;
-  if (s.timestamp < due) return { ok: false, reason: `reference sampled at ${s.referenceTime}, next refresh at ${due}` };
-  const move = (s.referenceRateBpsPerHour * (s.timestamp - s.referenceTime)) / 3_600n;
-  if (move === 0n || s.referenceStepBps === 0n) return { ok: false, reason: "reference move rounds to zero" };
-  return { ok: true, reason: "referenceMinSeconds since the last sample" };
+  const diff = s.spot > s.referencePrice ? s.spot - s.referencePrice : s.referencePrice - s.spot;
+  const driftBps = (diff * 10_000n) / s.referencePrice;
+  if (driftBps <= BigInt(r.driftBps)) return { ok: false, reason: `drift ${driftBps} bps at or under REFRESH_DRIFT_BPS ${r.driftBps}` };
+  const since = seen.get(REFRESH_DRIFT_KEY) ?? s.timestamp;
+  const persisted = s.timestamp - since;
+  if (persisted < BigInt(r.persistSec)) return { ok: false, reason: `drift ${driftBps} bps seen ${persisted} s, needs REFRESH_PERSIST_SEC ${r.persistSec} s`, driftSince: since };
+  const elapsed = s.timestamp - s.referenceTime;
+  if (elapsed < s.referenceMinSeconds) return { ok: false, reason: `reference sampled at ${s.referenceTime}, next refresh at ${s.referenceTime + s.referenceMinSeconds}`, driftSince: since };
+  const move = (s.referenceRateBpsPerHour * elapsed) / 3_600n;
+  if (move === 0n || s.referenceStepBps === 0n) return { ok: false, reason: "reference move rounds to zero", driftSince: since };
+  return { ok: true, reason: `drift ${driftBps} bps persisted ${persisted} s`, driftSince: since };
 }
 
 // the legs of the artist and operator split that are due: ETH when the split holds at least minEth, the balance token
@@ -431,19 +452,23 @@ export function decide(
     }
   }
 
-  // 7. refreshReference: the Core door forwards to the controller and pays the caller like compose when a refresh runs,
-  // so the keeper keeps the reference tracking the market. paid, profit gated
+  // 7. refreshReference: a direct, unpaid call to the controller's own refreshReference(), so the protocol pot pays
+  // nothing. it runs only when the reference has drifted off the pool spot beyond REFRESH_DRIFT_BPS, that drift has
+  // persisted REFRESH_PERSIST_SEC, a refresh would move it, and the keeper's own gas is at or under REFRESH_MAX_COST_ETH.
+  // the drift observation is carried in `nextSeen` under a reserved key so it survives to the next tick and is dropped
+  // the moment the drift resets. a controller without the reference views (ControllerV1 before a pool key, or an older
+  // one) reads referencePrice 0 and skips here. being unpaid, the door uses the cost cap instead of the profit rule
   if (on("refreshReference")) {
-    const r = refreshReferenceDue(s);
-    if (!r.ok) skips.push({ door: "refreshReference", reason: r.reason });
+    const need = refreshReferenceNeeded(s, p.refresh, seen);
+    if (need.driftSince !== undefined) nextSeen.set(REFRESH_DRIFT_KEY, need.driftSince);
+    if (!need.ok) skips.push({ door: "refreshReference", reason: need.reason });
     else if (ceiling("refreshReference")) {
       const pol = p.doors.refreshReference;
-      const payment = callerPayment(s, GAS_GUESS.refreshReference, REFRESH_GAS, worstBaseFee(gas, pol));
       const cost = ownCost(GAS_GUESS.refreshReference, gas, pol);
-      if (!profitable(payment, cost, p.margin)) {
-        skips.push({ door: "refreshReference", reason: `unprofitable: payment ${payment} under cost ${cost} plus margin` });
+      if (cost > p.refresh.maxCostEth) {
+        skips.push({ door: "refreshReference", reason: `gas over cap: own cost ${cost} over REFRESH_MAX_COST_ETH ${p.refresh.maxCostEth}` });
       } else {
-        calls.push({ door: "refreshReference", functionName: "refreshReference", args: [], gas: GAS_GUESS.refreshReference, payment, cost, key: "refreshReference", note: { referenceTime: s.referenceTime, referenceMinSeconds: s.referenceMinSeconds } });
+        calls.push({ door: "refreshReference", functionName: "refreshReference", target: "controller", args: [], gas: GAS_GUESS.refreshReference, payment: 0n, cost, key: "refreshReference", note: { controller: s.controller, drift: need.reason, referenceTime: s.referenceTime, referencePrice: s.referencePrice, spot: s.spot } });
       }
     }
   }
@@ -503,8 +528,8 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
       payment = callerPayment(s, gasUsed, REDEEM_GAS, b);
       break;
     case "refreshReference":
-      payment = callerPayment(s, gasUsed, REFRESH_GAS, b);
-      break;
+      // unpaid, direct to the controller: it clears while the measured gas keeps the keeper's own cost at or under the cap
+      return { ok: cost <= p.refresh.maxCostEth, payment: 0n, cost };
     case "collectEscrow":
       return { ok: s.escrowBalance >= cost, payment, cost };
     case "book":
@@ -513,6 +538,6 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
       // the owner's own money moving; the measured cost is logged, never a gate
       return { ok: true, payment, cost };
   }
-  // compose and refreshReference are paid through the caller fee: they go only when the Core pays at least the cost
+  // compose and redeemStatement are paid through the caller fee: they go only when the Core pays at least the cost
   return { ok: profitable(payment, cost, p.margin), payment, cost };
 }

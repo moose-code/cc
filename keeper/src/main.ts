@@ -183,7 +183,7 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
   const pending = new PendingStore(cfg.stateDir);
   const breaker = new Breaker(cfg.breakerThreshold, cfg.breakerPauseSec);
   const policy: Policy = {
-    doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec,
+    doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec, refresh: cfg.refresh,
     // the keeper names itself as the split's distributor, so a distribution incentive pays its own wallet
     split: cfg.split ? { ...cfg.split, distributor: signer.address } : undefined,
   };

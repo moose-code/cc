@@ -209,7 +209,9 @@ export class Executor {
       if (this.breaker.fail(door)) void alert(this.cfg.alertWebhook, `breaker:${door}`, `${door} paused after receipt accounting failed`, fields);
       return { kind: "failed", reason: `receipt accounting failed: ${txError(e)}` };
     }
-    const paidDoor = door === "buyListing" || door === "buyback" || door === "compose" || door === "redeemStatement" || door === "refreshReference";
+    // refreshReference now calls the controller directly and is unpaid, so it joins collectEscrow, book and
+    // distributeSplit outside the paid-door underpaid check
+    const paidDoor = door === "buyListing" || door === "buyback" || door === "compose" || door === "redeemStatement";
     if (balanceError) {
       log("error", "receipt balance read failed", { ...fields, error: balanceError });
       if (this.breaker.fail(door)) void alert(this.cfg.alertWebhook, `breaker:${door}`, `${door} paused after confirmed receipt could not be accounted`, fields);
