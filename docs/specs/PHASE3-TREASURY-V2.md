@@ -1,7 +1,8 @@
-# Phase 3: treasury v2, ControllerV3, the burn stage
+# Phase 3: treasury v2 and ControllerV3
 
-Status: spec for owner approval, 2026-10-22. Supersedes nothing until the owner approves it; then record the
-decisions in docs/DECISIONS.md (next free number) and keep this file current.
+Status: spec for owner approval, 2026-10-22 (revision 2: no bonds; the burn stage stays the current pro-rata plan,
+undeployed, with the treasury built so any later redemption design plugs in without another migration). Record the
+decisions in docs/DECISIONS.md (next free number) once approved and keep this file current.
 
 ## 1. Why
 
@@ -20,7 +21,8 @@ Phase 2 is live (stages A, B, C; see docs/STATUS.md section 1). Three problems s
 Owner constraints (hard):
 - The protocol never sells $BALANCE (no swap of treasury $BALANCE for ETH, no ETH pot refill from $BALANCE).
 - Permissionless operation: buying, burning and funding run by onchain rule; the owner sets parameters and can pause.
-- The goal of the burn stage is to burn CC, using $BALANCE as the incentive.
+- The burn stage (burn CC, redeem $BALANCE) is not designed yet beyond the current pro-rata plan. v2 must let a future
+  design go live by configuration or by plugging in a new contract, never by migrating the treasury again.
 - Stay break-even or better over time (section 6).
 
 ## 2. Scope
@@ -29,7 +31,7 @@ Owner constraints (hard):
 |---|---|---|
 | T1 | Treasury v2 | permissionless, climbing $BALANCE bid for Credits (`sellCredit`) that hands Credits to the Core through `adopt` |
 | T2 | Treasury v2 | funding by rule: a working cushion, a surplus budget, no owner withdrawals needed to operate |
-| T3 | Treasury v2 | the burn stage: CC burn bonds (burn now, $BALANCE vests, longer vest = higher premium) |
+| T3 | Treasury v2 | redemption made pluggable: the current pro-rata plan as the first redeemer, any future design (market priced, vested, auctioned, budgeted) added later as another redeemer |
 | T4 | Treasury v2 | v1 behaviour kept: Statement conversion, claim reserve accounting, `available()` for the Core's exchange |
 | T5 | Treasury v2 | return-lock and resale-loop protection on the adopt route |
 | T6 | Treasury v2 | optional one-way locks on owner powers (`withdrawWorking`, migration) |
@@ -53,8 +55,9 @@ ControllerV2/V3 read it for valuation; it must not become dynamic.
 
 - `claimReserve` (v1 meaning; backs the legacy pro-rata claim, which stays off), `totalOwed` (v1), and:
 - `cushion` (owner parameter, e.g. 150k): working funds kept for the Core's flat exchange.
-- `bidBudget` and `bondBudget`: earmarks funded only from surplus by rule (section 6). Neither is ever paid from the
-  claim reserve, the debt or the cushion.
+- `bidBudget`: the $BALANCE bid's earmark, funded only from surplus by rule (section 6).
+- Redemption buckets: one budget per enabled redeemer (section 3.4); the v1 `claimReserve` becomes the pro-rata
+  redeemer's budget. No bucket is ever paid from another, the debt or the cushion.
 - `available()` (what the Core's exchange may spend) = working funds above the earmarks, never below 0.
 
 ### 3.2 T1, the $BALANCE bid (`sellCredit(uint256[] ids, uint256 minOut)`, anyone)
@@ -79,24 +82,38 @@ id must be refused within `returnLockSeconds` of an engine sale. Options to eval
 id's resale floor (C3); the v2 treasury recording `CreditSold` facts it can verify; refusing ids the Core sold
 (the Core emits `CreditSold`; onchain verification needs a view). Pick the simplest sound one and state it.
 
-### 3.4 T3, the burn stage: CC burn bonds (`bond(uint256 ccIn, uint8 tier, uint256 minOut)`, anyone)
+### 3.4 T3, pluggable redemption (the burn stage, ready but off)
 
-- The caller's CC is transferred in and burned at once (the coin's `burn`); supply falls immediately.
-- Payout in $BALANCE = `ccIn x rate x (1 + premium[tier])`, vesting linearly over `tierSeconds[tier]`,
-  claimable any time (`claim(bondId)`). Default tiers: 7d +5%, 30d +15%, 90d +30% (owner parameters, bounded).
-- Rate ($BALANCE per CC) = protected ratio: `min(CC TWAP, CC spot) / max(BALANCE TWAP, BALANCE spot)` in ETH, read at
-  the bond call. CC needs a manipulation-resistant reference: reuse the controller's reference pattern for the CC
-  pool (ControllerV3 or a small oracle in the treasury), with step/rate bounds and a staleness pause.
-- Liability is committed at bond time: `bondBudget` decreases by the full payout when the bond is created, so vesting
-  can never overdraw. Unvested balances stay in the treasury.
-- Caps: per-call, per-period, per-wallet-per-period; pause.
-- The legacy pro-rata `redeemCC` stays disabled; keep the function only if migration compatibility needs it.
+v1 hard-codes one rule in the treasury: a CC burn is paid the policy's quote, capped at the pro-rata share
+`floor(ccIn * C / S)` of the claim reserve. That cap blocks every non-pro-rata design. v2 separates the treasury's
+job (custody and accounting) from the redemption rule:
+
+- Redeemers: owner-registered contracts, each with its own budget bucket in the treasury, its own switch (off by
+  default) and its own caps (per call, per period, lifetime). The treasury enforces only: the CC was burned (the
+  measured supply decrease or a burn the treasury itself performs), the payout does not exceed the redeemer's budget
+  and caps, the payout goes to the stated recipient, and the configuration epoch the caller pinned is current.
+- Payout modes the treasury supports for any redeemer, so future designs need no treasury change:
+  immediate transfer; linear vesting escrow held in the treasury (claimable by the recipient); and a deferred claim
+  (the redeemer records an entitlement, the recipient claims later). The redeemer chooses the mode per redemption.
+- Price inputs available to redeemers: the controller's protected $BALANCE reads, and a CC reference (time averaged,
+  step and rate bounded, staleness pause) maintained like the $BALANCE reference so a market priced design can use it.
+  Building the CC reference is in scope (ControllerV3 or a small oracle); using it is not.
+- Redeemer 1 (shipped, off): the current plan, pro-rata over its bucket: pays `ccIn * B / S` (B = the bucket,
+  S = CC supply) less `redemptionFeeBps`, through the deployed ProRataRedemptionPolicy semantics (and the existing
+  policy contract if it fits the new interface). The v1 claim reserve migrates into this bucket. `/claim` keeps working
+  against it. Enabling it stays the owner's stage D decision.
+- Adding a redeemer later is: deploy it, `registerRedeemer`, fund its bucket (by `sweep` share or allocation), switch
+  it on. Registration and share changes are owner actions; consider a timelock or a one-way cap on how much any new
+  redeemer can take per period so a bad redeemer cannot drain the treasury in one block.
+- Disclosure stays as today: owner-managed backing; the owner can pause, return a bucket to working funds while its
+  redeemer is off, or change caps and fees.
 
 ### 3.5 T2, funding by rule (`sweep()`, anyone)
 
 - Surplus = working funds above `cushion + bidBudget + bondBudget + reserved liabilities`.
-- `sweep()` moves surplus into `bidBudget` and `bondBudget` in owner-set shares (and optionally into `claimReserve`),
-  subject to the break-even rule (section 6). No owner transfer needed to keep either running.
+- `sweep()` moves surplus into `bidBudget` and into each enabled redeemer's bucket in owner-set shares, subject to the
+  break-even rule (section 6). The conversion contribution (`conversionToClaimBps`, 10% today) keeps feeding the
+  pro-rata bucket as in v1. No owner transfer needed to keep anything running.
 
 ### 3.6 Migration
 
@@ -111,7 +128,7 @@ Sequence: deploy v2 → v1 `setSwitches` as needed → `migrateTo(v2)` (moves fu
 - C2: idle loosening for value mode: while no Credit has been bought for `idleStepSeconds`, raise the premium
   applied in `valuePerPoint(false)` by `idleLoosenBps` per step up to a bound, reset on a fill (Core exposes
   `lastFillTime()`). Bounded so a stale or falling $BALANCE cannot inflate the bid without limit.
-- C3: views T1/T5 need (resale floor of an id, protected prices for CC if the CC reference lives here).
+- C3: views T1/T5 need (resale floor of an id) and, if it lives here, the CC reference for future redeemers.
 - Keep every V2 view and event the Core, keeper, indexer and web read (tolerant reads exist for V1/V2 differences).
 - Switch: Core `setController(V3)` (not locked) after the treasury migration, or in the same window.
 
@@ -120,8 +137,8 @@ Sequence: deploy v2 → v1 `setSwitches` as needed → `migrateTo(v2)` (moves fu
 - Indexer: v2/V3 events (bid fills, bonds, claims of vested $BALANCE, sweeps, controller settings). Put any API-only
   code in `indexer/src/api` (excluded from the build id). One reindex on a temporary machine
   (memory: indexer-reindex-cost; ~40 min warm).
-- Web: /exchange best offer; a burn-bond page (tiers, live rate, vesting claims); FAQ and flowchart (burn stage now
-  live, not "future"); market-compare reads v2.
+- Web: /exchange best offer; /claim reads the pro-rata redeemer (still off); generic support for vesting and deferred
+  claims so a later redeemer only needs copy; market-compare reads v2. The FAQ keeps the burn stage as "future".
 - Keeper: refresh V3's reference(s) when needed (same refresh rule as today).
 
 ## 6. Break-even rules (encode onchain where possible)
@@ -134,8 +151,8 @@ exchange costs 0.824 per point at 80% (+3% royalty).
 2. Bid ceiling vs exit path: Credits bought above par lose `(bidBps x 1.03 - 1.00)` per point if converted. Route
    them to ETH first: their Statements get a longer redemption delay (e.g. 7 days) so ETH buyers can take them; set
    the Statement multiplier so ETH sales actually happen (1.5x has produced zero sales).
-3. Bonds are paid from surplus only and committed at creation; the premium schedule is bounded so the expected cost
-   per CC burned stays within the budget the surplus provides.
+3. Redeemers are paid only from their own buckets, funded from surplus; a committed liability (vesting or deferred)
+   is reserved in full at creation so it can never overdraw.
 4. ETH-bought Credits that convert are pure $BALANCE inflow (no $BALANCE paid out); keep the ETH bid buying (C2) so
    the surplus that funds the bid and the bonds keeps arriving.
 5. Report the realized result: a public view of cumulative in/out per bucket so break-even is checkable.
@@ -151,8 +168,9 @@ exchange costs 0.824 per point at 80% (+3% royalty).
    exchange and Statement conversion work unchanged against v2.
 2. Bid: a real Credit bought on the fork's market state, sold to `sellCredit`, adopted into the pile, composed and
    converted, $BALANCE back in v2. The resale loop of 3.3 is refused.
-3. Bonds: CC burned (supply falls), vesting claims pay exactly, budget cannot be overdrawn, price manipulation of
-   either pool within one block does not change the payout beyond bounds.
+3. Redemption: the pro-rata redeemer (switched on only on the fork) burns CC, pays `ccIn * B / S` less the fee and
+   reverts on a stale epoch; a test redeemer (fork only) exercises the vesting and deferred payout modes and cannot
+   exceed its bucket or caps; the CC reference resists a one-block pump within its bounds.
 4. Break-even: a scripted sequence of fills, conversions and bonds leaves working funds ≥ cushion.
 5. ControllerV3: the live parameters pass the band check; idle loosening is bounded; every view the Core/keeper/
    indexer read answers.
