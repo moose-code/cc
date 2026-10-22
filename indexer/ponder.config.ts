@@ -6,7 +6,7 @@ import { getAbiItem, zeroAddress } from "viem";
 import { controllerLogAbi } from "./abis/Controller";
 import { coreAbi } from "./abis/Core";
 import { creditsAbi, erc20Abi, statementsAbi, strategyAbi } from "./abis/external";
-import { treasuryAbi } from "./abis/Phase2BalanceTreasury";
+import { treasuryLogAbi } from "./abis/Treasury";
 import { guardedHttp, type Endpoint } from "./src/lib/rpc";
 import { localRpc } from "./src/lib/rpc-selection";
 import { sanitizedRpc, temporaryFallbackTransport, withFastFallback } from "./rpc-config";
@@ -119,10 +119,12 @@ export default createConfig({
       address: factory({ address: CORE, event: getAbiItem({ abi: coreAbi, name: "ControllerSet" }), parameter: "controller" }),
       startBlock: DEPLOY_BLOCK,
     },
-    // Every balance module named by BalanceModuleSet, from the block of that event, decoded with the phase 2
-    // treasury ABI. A StatementBalanceModule emits none of these events, so its registration is inert.
+    // Every balance module named by BalanceModuleSet, from the block of that event, decoded with the union of the
+    // phase 2 (Phase2BalanceTreasury) and phase 3 (BalanceTreasuryV2) ABIs, so both decode over the module's history
+    // (phase 2 migrates to phase 3 through v1 migrateTo). A StatementBalanceModule emits none of these events, so its
+    // registration is inert. No phase 3 deployment record is needed: the module is discovered here by its selection.
     Treasury: {
-      abi: treasuryAbi,
+      abi: treasuryLogAbi,
       chain: "chain",
       address: factory({ address: CORE, event: getAbiItem({ abi: coreAbi, name: "BalanceModuleSet" }), parameter: "balanceModule" }),
       startBlock: DEPLOY_BLOCK,
