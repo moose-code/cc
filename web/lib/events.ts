@@ -19,7 +19,7 @@ export interface FeedEvent {
   kind: FeedKind;
   label: string; // short human name of the event
   detail: string;
-  eth?: string; // pre-formatted for the eth column
+  amount?: Amount; // what the engine (or its treasury) paid or received; undefined when nothing moved
   tx: string; // short display label
   txHash?: string; // full hash, drives the evm.now link
   tile?: { kind: "credit"; id: number } | { kind: "statement"; id: number };
@@ -28,6 +28,22 @@ export interface FeedEvent {
   title?: string; // leads the detail cell of a row with no page to link (a $CC burn)
   rating?: bigint; // statement rows from the indexer
   composed?: { format: number; credits: number; cost: bigint }; // composed rows from the indexer
+}
+
+// The ledger's amount cell: the sign is from the engine's side ("+" came in, "−" went out), the value is compact
+// above 10,000 (exact in `exact`), the unit always shown. A token the site cannot read keeps raw units, no unit.
+export type Amount = { sign: "+" | "−"; value: string; unit: "ETH" | typeof BALANCE_SYMBOL | "$CC" | ""; exact?: string };
+
+const compact = (n: number) =>
+  n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${+(n / 1e3).toFixed(1)}k` : n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+export const ethAmount = (sign: Amount["sign"], wei: bigint): Amount => ({ sign, value: eth(wei), unit: "ETH" });
+
+export function balanceAmountCell(sign: Amount["sign"], v: bigint, token: string | undefined, info?: BalanceTokenInfo): Amount {
+  const known = token && info?.address.toLowerCase() === token.toLowerCase() ? info : undefined;
+  if (!known) return { sign, value: formatHistoricalBalance(v, token, info), unit: "" };
+  const n = Number(formatUnits(v, known.decimals));
+  return { sign, value: compact(n), unit: BALANCE_SYMBOL, exact: n.toLocaleString("en-US", { maximumFractionDigits: 6 }) };
 }
 
 export interface Stats {
@@ -159,8 +175,8 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
     const base = { key, tx: tx.slice(0, 6), txHash: tx, block };
     const row = (r: Pick<FeedEvent, "kind" | "label" | "detail"> & Partial<FeedEvent>) => rows.push({ ...base, ...r });
     // Every way the engine gets a credit is one row: the credit, linked, and what it paid.
-    const creditRow = (id: number, amount?: string) =>
-      row({ kind: "credit", label: "credit acquired", detail: "", eth: amount, link: { text: `credit #${id}`, href: `/credits/${id}` }, tile: { kind: "credit", id } });
+    const creditRow = (id: number, amount?: Amount) =>
+      row({ kind: "credit", label: "credit acquired", detail: "", amount, link: { text: `credit #${id}`, href: `/credits/${id}` }, tile: { kind: "credit", id } });
 
     if (fill && (fill.tx !== tx || name !== "CreditBought")) fill = undefined;
 
@@ -170,7 +186,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         break;
       case "BalanceFill":
         // the seller's posted payout; the artist royalty (a.toArtist) rides on top from the module (decisions 163, 164)
-        if (balanceBuy?.tx === tx) balanceBuy.row.eth = formatHistoricalBalance(a.paid, token, inp.balanceToken);
+        if (balanceBuy?.tx === tx) balanceBuy.row.amount = balanceAmountCell("−", a.paid, token, inp.balanceToken);
         balanceBuy = undefined;
         break;
       // ---- credits into the pile ------------------------------------------
@@ -191,7 +207,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         cr(id).push({ t: "bought", how: viaEth ? "eth bid" : `${BALANCE_SYMBOL} bid`, cost: a.cost, from: a.from, rate: f?.rate, pot: f?.pot, block, tx });
         if (viaEth) stats.creditsEth++;
         else stats.creditsBalance++;
-        if (viaEth) creditRow(id, eth(a.cost));
+        if (viaEth) creditRow(id, ethAmount("−", a.cost));
         else {
           // the amount is filled in by the BalanceFill that follows in the same tx
           row({ kind: "exchanged", label: "credit exchanged", detail: `for ${BALANCE_SYMBOL} by`, addr: a.from, link: { text: `credit #${id}`, href: `/credits/${id}` }, tile: { kind: "credit", id } });
@@ -206,14 +222,15 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         const total = a.cost + (a.toArtist ?? 0n) + a.paid;
         cr(id).push({ t: "bought", how: "listing", cost: total, from: a.caller, paid: a.paid, adapter: a.adapter, rate: a.rate, block, tx });
         stats.creditsListing++;
-        creditRow(id, eth(total));
+        creditRow(id, ethAmount("−", total));
         break;
       }
       case "CreditAdopted": {
         const id = Number(a.id);
         cr(id).push({ t: "bought", how: "adopted", cost: a.cost, block, tx });
         stats.creditsAdopted++;
-        creditRow(id, eth(a.cost));
+        // adoption pays nothing: the engine already held the credit, the cost is only its recorded basis
+        creditRow(id);
         break;
       }
       case "CreditSwapped": {
@@ -269,7 +286,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
           label: "statement sold",
           link: stmtLink(sid),
           detail: soldDetail(toPot, a.toBuyback),
-          eth: eth(a.price),
+          amount: ethAmount("+", a.price),
           addr: a.buyer,
           tile: { kind: "statement", id: sid },
         });
@@ -280,7 +297,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         if (soldKeys.has(`${tx}:${sid}`)) break;
         st(sid).sold = { buyer: a.buyer, price: a.price, block, tx };
         stats.sold++;
-        row({ kind: "sold", label: "statement sold", link: stmtLink(sid), detail: "bought by", eth: eth(a.price), addr: a.buyer, tile: { kind: "statement", id: sid } });
+        row({ kind: "sold", label: "statement sold", link: stmtLink(sid), detail: "bought by", amount: ethAmount("+", a.price), addr: a.buyer, tile: { kind: "statement", id: sid } });
         break;
       }
       case "AnchorMoved": {
@@ -294,14 +311,14 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         stats.creditsSold++;
         stats.artistReceived += Number(formatUnits(a.toArtist, 18));
         stats.payeeReceived += Number(formatUnits(a.toOperator, 18));
-        row({ kind: "sold", label: "credit sold", detail: `credit #${id} bought from the credit sale by`, eth: eth(a.price), addr: a.buyer, tile: { kind: "credit", id } });
+        row({ kind: "sold", label: "credit sold", detail: `credit #${id} bought from the credit sale by`, amount: ethAmount("+", a.price), addr: a.buyer, tile: { kind: "credit", id } });
         break;
       }
       case "StatementRedeemed": {
         const sid = Number(a.sid);
         st(sid).redeemed = { received: a.received, token, block, tx };
         stats.redeemed++;
-        row({ kind: "redeemed", label: "statement redeemed", link: stmtLink(sid), detail: `· module received ${formatHistoricalBalance(a.received, token, inp.balanceToken)}`, tile: { kind: "statement", id: sid } });
+        row({ kind: "redeemed", label: "statement redeemed", link: stmtLink(sid), detail: `· converted to ${BALANCE_SYMBOL}`, amount: balanceAmountCell("+", a.received, token, inp.balanceToken), tile: { kind: "statement", id: sid } });
         break;
       }
 
@@ -310,7 +327,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         stats.buybacks++;
         // the buyback pools the buyback share of every sale, so the burn names no source statement
         const burned = inp.burns?.get(tx);
-        row({ kind: "burned", label: "$CC burned", title: burned != null ? `${commas(Number(formatUnits(burned, 18)))} $CC` : "$CC", detail: `bought with ${eth(a.amountIn)} ETH`, eth: eth(a.amountIn) });
+        row({ kind: "burned", label: "$CC burned", title: burned != null ? `${commas(Number(formatUnits(burned, 18)))} $CC` : "$CC", detail: `bought with ${eth(a.amountIn)} ETH`, amount: ethAmount("−", a.amountIn) });
         break;
       }
       case "FeesAdded":
