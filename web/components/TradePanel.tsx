@@ -539,13 +539,10 @@ export function TradePanel({ market, pick }: { market?: Market; pick?: { side: "
         </button>
       )}
 
-      {m && !hookFee?.active && (
-        <p className="tp-fee caption">
-          trading fee {parseFloat((feeBps / 100).toFixed(2))}%{!market && " · a share funds credit acquisitions"}
-        </p>
-      )}
+      {/* the fee on the left (hidden while the launch fee shows above), the token contract right aligned */}
       {m && (
-        <p className="tp-addr caption">
+        <p className="tp-fee tp-addr caption">
+          <span>{!hookFee?.active && `trading fee ${parseFloat((feeBps / 100).toFixed(2))}%`}</span>
           <a href={evmNowAddress(m.token)} target="_blank" rel="noreferrer" aria-label={`${tag} contract on evm.now`}>
             {tag} {shortAddr(m.token)} ↗
           </a>
