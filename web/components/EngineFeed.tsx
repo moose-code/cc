@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatUnits } from "viem";
 import Link from "next/link";
 import { relTime, eth, ethPerPointPrice, evmNowTx, rating, commas } from "@/lib/format";
-import { CreditTile, StatementTile } from "./Tiles";
+import { BurnTile, CreditTile, StatementTile } from "./Tiles";
 import { Addr } from "./Addr";
 import { CCLogo } from "./CCLogo";
 import { Sk } from "./Skeleton";
@@ -24,7 +24,7 @@ const MARK: Record<FeedKind, string> = {
   composed: "y",
   sold: "c",
   redeemed: "c",
-  burned: "k",
+  burned: "r",
 };
 
 const MOBILE_ROWS = 6; // rows the one-scroll mobile home shows before "view full ledger" (see .ledger.short)
@@ -275,14 +275,10 @@ function Row({ e, now, score, scoreWait }: { e: FeedEvent; now: number; score?: 
       <span className="ref">
         {e.tile?.kind === "credit" && <CreditTile id={e.tile.id} />}
         {e.tile?.kind === "statement" && <StatementTile id={e.tile.id} />}
-        {e.kind === "burned" && (
-          <i className="tile-burn" aria-hidden>
-            CC
-          </i>
-        )}
+        {e.kind === "burned" && <BurnTile />}
         <span className="ref-text">
           {e.link && <Link href={e.link.href}>{e.link.text}</Link>}
-          {e.title && <b>{e.title}</b>}
+          {e.title && (e.kind === "burned" ? <b><s>{e.title}</s></b> : <b>{e.title}</b>)}
           {stmt ? (
             <span className="caption">
               {`format ${composed.format} · ${composed.credits} credits · cost ${eth(composed.cost)} ETH`}

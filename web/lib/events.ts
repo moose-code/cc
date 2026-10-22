@@ -327,7 +327,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         stats.buybacks++;
         // the buyback pools the buyback share of every sale, so the burn names no source statement
         const burned = inp.burns?.get(tx);
-        row({ kind: "burned", label: "$CC burned", title: burned != null ? `${commas(Number(formatUnits(burned, 18)))} $CC` : "$CC", detail: `bought with ${eth(a.amountIn)} ETH`, amount: ethAmount("−", a.amountIn) });
+        row({ kind: "burned", label: "$CC burned", title: burned != null ? `${commas(Number(formatUnits(burned, 18)))} $CC` : "$CC", detail: "", amount: ethAmount("−", a.amountIn) });
         break;
       }
       case "FeesAdded":

@@ -596,7 +596,7 @@ export function feedEvent(r: FeedRow, balance?: BalanceTokenInfo): FeedEvent {
         kind: "burned",
         label: "$CC burned",
         title: `${commas(Number(formatUnits(r.amount2 ?? 0n, 18)))} $CC`,
-        detail: `bought with ${eth(amount)} ETH`,
+        detail: "",
         amount: ethAmount("−", amount),
       };
     default:

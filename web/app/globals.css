@@ -918,19 +918,6 @@ a:hover {
   font-weight: 600;
 }
 /* a $CC burn: an ink square in place of art */
-.tile-burn {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: var(--ink);
-  color: var(--on-ink);
-  font-size: 9px;
-  font-style: normal;
-  font-weight: 700;
-}
 .ledger .ledger-full {
   display: none;
 }
@@ -2898,6 +2885,9 @@ button.slot:disabled {
 }
 .mark.k {
   background: var(--k);
+}
+.mark.r {
+  background: var(--down);
 }
 .mark.mx {
   background: linear-gradient(135deg, var(--m) 50%, var(--y) 50%);
