@@ -72,7 +72,7 @@ export const docPages: DocPage[] = [
     group: "Guides",
     title: "Credits",
     eyebrow: "Guide / Credits",
-    summary: "Read prices and scores, buy and sell Credits, exchange Credits for BALANCE, swap pile Credits, and sweep listings.",
+    summary: "Read prices and scores, buy and sell Credits, swap pile Credits, and sweep listings.",
     mainnetAddress: "0x97630aA70AB14ed9883B41dAfccBc11349723043",
     sections: [
       {
@@ -110,19 +110,6 @@ export const docPages: DocPage[] = [
         ],
       },
       {
-        id: "exchange-balance",
-        title: "Exchange Credits for BALANCE",
-        points: [
-          "Check Core.settings().balanceBidOn, the selected Core.balanceModule(), and Core.balanceToken(). The treasury's available() must cover the full batch payout plus artist royalties.",
-          "Approve the Core to transfer the selected Credits. Read balanceBidOf for each ID, set minOut in BALANCE base units, and pass the current balanceToken as expectedToken. Simulate the full batch before sending.",
-          "The Credits enter the Core pile and the treasury pays the seller in BALANCE. A return lock, changed quote, or insufficient treasury funds can stop the sale.",
-        ],
-        entries: [
-          { signature: "Core.balanceBidOf(uint256 id) → uint256", description: "Current payout quote for one Credit in BALANCE base units. Check balanceBidOn separately; a single-Credit quote does not guarantee the full batch can be paid." },
-          { signature: "Core.sellForBalance(uint256[] ids, uint256 minOut, address expectedToken)", description: "Exchange approved Credits for BALANCE, with a minimum total payout and a pinned payment token." },
-        ],
-      },
-      {
         id: "swap-credit",
         title: "Swap a Credit",
         points: [
@@ -148,7 +135,52 @@ export const docPages: DocPage[] = [
         id: "credit-events",
         title: "Credit events",
         points: [
-          "Use CreditBought and BalanceFill for a BALANCE exchange; CreditSold, CreditSwapped, and ListingBought cover the other Credit doors. Pair each log with its transaction and block.",
+          "Use CreditBought, CreditSold, CreditSwapped, and ListingBought for Credit activity. Pair each log with its transaction and block.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "guides/balance",
+    group: "Guides",
+    title: "Exchange Credits for BALANCE",
+    eyebrow: "Guide / BALANCE exchange",
+    summary: "Exchange approved Credit NFTs for BALANCE from the selected treasury.",
+    mainnetAddresses: [
+      { label: "Core", address: "0xcdb1889ae12074d750CD9B8531B692015465e0dD" },
+      { label: "Credits", address: "0x97630aA70AB14ed9883B41dAfccBc11349723043" },
+      { label: "Phase2BalanceTreasury", address: "0xB85CF439Ca57b4bfC28fA1Cb8a97Ee85555B0496" },
+      { label: "BALANCE", address: "0x3620540c994433D7B4a628C46d2ED5F92572eA07" },
+    ],
+    sections: [
+      {
+        id: "quote",
+        title: "Read a quote",
+        points: [
+          "Check Core.settings().balanceBidOn, the selected Core.balanceModule(), and Core.balanceToken(). The treasury's available() must cover the full batch payout plus artist royalties.",
+          "Read balanceBidOf for each Credit ID. A single-Credit quote does not guarantee the full batch can be paid, and balanceBidOn must be checked separately.",
+        ],
+        entries: [
+          { signature: "Core.balanceBidOf(uint256 id) → uint256", description: "Current payout quote for one Credit in BALANCE base units." },
+        ],
+      },
+      {
+        id: "exchange",
+        title: "Exchange Credits",
+        points: [
+          "Approve the Core to transfer the selected Credits. Set minOut in BALANCE base units and pass the current balanceToken as expectedToken. Simulate the full batch before sending.",
+          "A return lock, changed quote, or insufficient treasury funds can stop the sale.",
+        ],
+        entries: [
+          { signature: "Core.sellForBalance(uint256[] ids, uint256 minOut, address expectedToken)", description: "Exchange approved Credits for BALANCE, with a minimum total payout and a pinned payment token." },
+        ],
+      },
+      {
+        id: "result",
+        title: "Read the result",
+        points: [
+          "The Credits enter the Core pile and the treasury pays the seller in BALANCE. The artist royalty is paid separately.",
+          "Core emits CreditBought and BalanceFill for each Credit. Pair the logs with the transaction and block.",
         ],
       },
     ],

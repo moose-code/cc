@@ -50,14 +50,20 @@ assert.equal(docPages.find((page) => page.slug === "contracts/controller")?.sour
 assert.equal(docPages.find((page) => page.slug === "contracts/balance-module")?.mainnetAddress, phase2.treasury, "balance module address differs from deployment record");
 assert.deepEqual(docPages.find((page) => page.slug === "")?.mainnetAddresses, [{ label: "CC", address: deployment.coin }], "CC address differs from deployment record");
 assert.equal(docPages.find((page) => page.slug === "guides/credits")?.mainnetAddress, deployment.credits, "Credits address differs from deployment record");
+assert.deepEqual(docPages.find((page) => page.slug === "guides/balance")?.mainnetAddresses, [
+  { label: "Core", address: deployment.core },
+  { label: "Credits", address: deployment.credits },
+  { label: "Phase2BalanceTreasury", address: phase2.treasury },
+  { label: "BALANCE", address: phase2.balanceToken },
+], "BALANCE exchange guide addresses differ from deployment records");
 assert.equal(docPages.find((page) => page.slug === "guides/statements")?.mainnetAddress, deployment.statements, "Statements address differs from deployment record");
 assert.deepEqual(docPages.find((page) => page.slug === "contracts/adapters")?.mainnetAddresses, [
   { label: "CreditStrategyAdapter", address: deployment.strategyAdapter },
   { label: "SeaportBasicAdapter", address: deployment.seaportAdapter },
 ], "adapter addresses differ from deployment record");
-assert(!/\bbalance\b/i.test(JSON.stringify(docPages.filter((page) => !["guides/credits", "contracts/core", "contracts/balance-module"].includes(page.slug)))), "BALANCE flow appears outside the approved Credit guide and contract references");
+assert(!/\bbalance\b/i.test(JSON.stringify(docPages.filter((page) => !["guides/balance", "contracts/core", "contracts/balance-module"].includes(page.slug)))), "BALANCE flow appears outside its guide and contract references");
 assert(!/\b(?:redeem\w*|redemp\w*)\b/i.test(JSON.stringify(docPages.filter((page) => page.slug !== "contracts/balance-module"))), "deferred redemption flow appears in public docs");
 assert(!/ControllerV1|AnchorMoved|SaleSet\(sale\)|coin was not live/.test(JSON.stringify(docPages)), "outdated pre-launch copy appears in public docs");
-assert(!docPages.some((page) => page.slug === "guides/balance" || page.slug === "guides/claim" || page.slug === "guides/exchange"), "deferred guide must stay unpublished");
+assert(!docPages.some((page) => page.slug === "guides/claim" || page.slug === "guides/exchange"), "deferred guide must stay unpublished");
 assert(!Object.hasOwn(contractCatalog, "contracts/balance-module"), "module page must stay curated without the claim interface catalog");
 console.log(`docs: ${docPages.length} routes and contract reference names verified`);
