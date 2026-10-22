@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { CreditTile } from "./Tiles";
 import { Sk } from "./Skeleton";
 
@@ -57,6 +58,8 @@ export function ExchangeView({
   const selected = rows.filter((row) => row.selected);
   // mobile: the breakdown sheet opened from the bottom bar's total; it opens by itself for a receipt or an error
   const [sheet, setSheet] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   useEffect(() => { if (receipt || error) setSheet(true); }, [receipt, error]);
   useEffect(() => {
     if (!sheet) return;
@@ -186,7 +189,9 @@ export function ExchangeView({
         </>}
       </section>
 
-      {/* mobile only: a bar with the total (tap for the breakdown) and the sell button, and the breakdown sheet */}
+      {/* mobile only: a bar with the total (tap for the breakdown) and the sell button, and the breakdown sheet. Portaled
+          to <body>: the route's fade-in makes its own stacking context, which the footer would otherwise paint over */}
+      {mounted && createPortal(<>
       {!receipt && (
         <div className="exchange-bar">
           <button type="button" className="exchange-bar-total" onClick={() => setSheet(true)} aria-expanded={sheet} aria-controls="exchange-sheet">
@@ -214,11 +219,13 @@ export function ExchangeView({
           {error && <p className="exchange-error" role="alert">{error}</p>}
           <div className="exchange-sheet-action">{action}</div>
           <p className="exchange-sheet-note">
-            priced at {rate} of rating; price protection can lower it. you receive at least {minimum} $BALANCE ({slippageBps / 100}% slippage) or the sale reverts.
+            priced at {rate} of rating; price protection can lower it.
+            {selectionCount > 0 && quoteAvailable && ` you receive at least ${minimum} $BALANCE (${slippageBps / 100}% slippage) or the sale reverts.`}
             {available && ` ${available} $BALANCE available in the treasury.`}
           </p>
         </>}
       </section>
+      </>, document.body)}
     </main>
   );
 }
