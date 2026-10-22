@@ -1,4 +1,4 @@
-// promise: public docs track deployed references and keep deferred flows out of the guides.
+// promise: public docs track deployed references and publish only the approved BALANCE flow.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -55,7 +55,8 @@ assert.deepEqual(docPages.find((page) => page.slug === "contracts/adapters")?.ma
   { label: "CreditStrategyAdapter", address: deployment.strategyAdapter },
   { label: "SeaportBasicAdapter", address: deployment.seaportAdapter },
 ], "adapter addresses differ from deployment record");
-assert(!/\b(?:balance|redeem\w*|redemp\w*)\b/i.test(JSON.stringify(docPages.filter((page) => page.slug !== "contracts/balance-module"))), "deferred balance flow appears outside the module reference");
+assert(!/\bbalance\b/i.test(JSON.stringify(docPages.filter((page) => !["guides/credits", "contracts/core", "contracts/balance-module"].includes(page.slug)))), "BALANCE flow appears outside the approved Credit guide and contract references");
+assert(!/\b(?:redeem\w*|redemp\w*)\b/i.test(JSON.stringify(docPages.filter((page) => page.slug !== "contracts/balance-module"))), "deferred redemption flow appears in public docs");
 assert(!/ControllerV1|AnchorMoved|SaleSet\(sale\)|coin was not live/.test(JSON.stringify(docPages)), "outdated pre-launch copy appears in public docs");
 assert(!docPages.some((page) => page.slug === "guides/balance" || page.slug === "guides/claim" || page.slug === "guides/exchange"), "deferred guide must stay unpublished");
 assert(!Object.hasOwn(contractCatalog, "contracts/balance-module"), "module page must stay curated without the claim interface catalog");
