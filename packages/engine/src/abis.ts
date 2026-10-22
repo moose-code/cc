@@ -390,7 +390,7 @@ export const scoreAbi = parseAbi([
   "function traitsOf(bytes21 seed, uint64 paidAt) view returns (uint256 mask, uint256 active, uint256 occupied, uint256 eights, uint256 band)",
 ]);
 export const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (bytes21)", "function timestampOf(uint256 id) view returns (uint64)"]);
-export const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)"]);
+export const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)", "function getBlockNumber() view returns (uint256)"]);
 export const moduleAbi = parseAbi(["function unitPerPoint() view returns (uint256)", "function available() view returns (uint256)"]);
 
 export const strategyAbi = parseAbi([
