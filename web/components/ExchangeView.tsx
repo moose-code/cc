@@ -33,6 +33,7 @@ export type ExchangeViewProps = {
   sortDesc: boolean; // rows by rating, highest first
   onSortToggle: () => void;
   available?: string; // the treasury's $BALANCE free for the exchange, shown once the exchange is open
+  reserved?: string; // the treasury's claim reserve, held for $CC redemptions and not payable to sellers
   adjustment?: string;
   minimum: string;
   rate: string;
@@ -50,7 +51,7 @@ export type ExchangeViewProps = {
 };
 
 export function ExchangeView({
-  rows, walletReady, walletLoading, marketLoading, connected, selectionCount, quoteAvailable, selectedRating, total, fee, available, adjustment,
+  rows, walletReady, walletLoading, marketLoading, connected, selectionCount, quoteAvailable, selectedRating, total, fee, available, reserved, adjustment,
   grossTotal, discount, sortDesc, onSortToggle,
   minimum, rate, slippageBps, onSlippageChange, onToggle, onSelectAll,
   allSelected, busy, status, error, receipt, onReset, action,
@@ -158,7 +159,7 @@ export function ExchangeView({
           {status && <p className="exchange-quote-status" role="status">{status}</p>}
           {/* the treasury's free $BALANCE takes the status box when there is no status to show */}
           {marketLoading && <p className="exchange-available"><Sk w="90%" /></p>}
-          {available && <p className={status ? "exchange-available" : "exchange-quote-status"}>{available} $BALANCE available to exchange from the Credit Cycle treasury</p>}
+          {available && <p className={status ? "exchange-available" : "exchange-quote-status"}>{available} $BALANCE available to exchange from the Credit Cycle treasury{reserved && ` (another ${reserved} is reserved for $CC claims)`}</p>}
           <p className="exchange-eyebrow" id="exchange-receive-title">you receive</p>
           <div className="exchange-total" aria-live="polite" aria-atomic="true"><span>{marketLoading ? <Sk w="2ch" /> : total}</span><span className="exchange-currency">$BALANCE</span></div>
           <dl className="exchange-breakdown">
@@ -221,7 +222,7 @@ export function ExchangeView({
           <p className="exchange-sheet-note">
             priced at {rate} of rating; price protection can lower it.
             {selectionCount > 0 && quoteAvailable && ` you receive at least ${minimum} $BALANCE (${slippageBps / 100}% slippage) or the sale reverts.`}
-            {available && ` ${available} $BALANCE available in the treasury.`}
+            {available && ` ${available} $BALANCE available in the treasury${reserved ? `, plus ${reserved} reserved for $CC claims` : ""}.`}
           </p>
         </>}
       </section>

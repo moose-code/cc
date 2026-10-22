@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useAccount, useConfig, usePublicClient } from "wagmi";
+import { useAccount, useConfig, usePublicClient, useReadContract } from "wagmi";
+import { treasuryAbi } from "@cc/engine/abis";
 import { getAccount } from "wagmi/actions";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import type { Address } from "viem";
@@ -31,6 +32,9 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
   const wallet = useWalletCredits(account);
   const [selected, setSelected] = useState(new Set<number>());
   const [slippage, setSlippage] = useState(50);
+  // the treasury's claim reserve: held for $CC redemptions, so not part of what an exchange can pay
+  const module = snapshot.data?.balanceOn ? snapshot.data.balanceModule : undefined;
+  const reserve = useReadContract({ address: module, abi: treasuryAbi, functionName: "claimReserve", query: { enabled: Boolean(module), refetchInterval: 60_000 } });
   // display order of the wallet's Credits by rating; selection and the sale follow the ids, not this order
   const [sortDesc, setSortDesc] = useState(true);
   const [receipt, setReceipt] = useState<ExchangeReceipt>();
@@ -123,6 +127,7 @@ function Exchange({ account, chainId }: { account?: Address; chainId?: number })
     sortDesc={sortDesc}
     onSortToggle={() => setSortDesc((d) => !d)}
     available={available && market?.balanceAvailable !== undefined ? amount(market.balanceAvailable) : undefined}
+    reserved={available && reserve.data !== undefined && reserve.data > 0n ? amount(reserve.data) : undefined}
     adjustment={quoteAvailable && quote && order.length > 0 && quote.adjustment > 0n ? `−${amount(quote.adjustment)}` : undefined}
     minimum={amount(quoteAvailable && order.length > 0 ? quote?.minOut : undefined)}
     rate={market ? `${Number(market.balanceRate) / 100}%` : "the posted rate"}
