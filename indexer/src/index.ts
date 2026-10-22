@@ -112,11 +112,14 @@ ponder.on("Core:CreditBought", async ({ event, context }) => {
   const { id, from, cost, toArtist } = event.args;
   const fact = await context.db.find(transactionFact, { id: event.transaction.hash });
   const how = fact?.ethFillPending ? "eth_bid" : "balance_bid";
-  await context.db.insert(transactionFact).values({ id: event.transaction.hash }).onConflictDoUpdate({
+  // the same fields on insert and on conflict: a balance-bid sale has no earlier event in its tx, so the insert is
+  // the path that must mark it for the BalanceFill that follows
+  const buy = {
     ethFillPending: false,
     balanceBuyId: how === "balance_bid" ? id : null,
     balanceBuyActivityId: how === "balance_bid" ? idOf(event) : null,
-  });
+  };
+  await context.db.insert(transactionFact).values({ id: event.transaction.hash, ...buy }).onConflictDoUpdate(buy);
   await enterPile(context, event, id, how, cost, lc(from), how === "eth_bid" ? toArtist : null);
   await act(context, event, { kind: "credit_bought", creditId: id, account: lc(from), amount: cost, amount2: 0n });
   await bump(context, event, {
