@@ -8,7 +8,7 @@
     "codegen": "ponder codegen",
     "abis": "node scripts/gen-abis.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/lib/*.test.ts",
+    "test": "node --test src/lib/*.test.ts src/api/*.test.ts",
     "db": "ponder db"
   },
   "dependencies": {

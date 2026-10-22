@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { client, desc, graphql } from "ponder";
 
 import { rpcStats } from "../lib/rpc";
-import { startWatchdog } from "../lib/watchdog";
+import { startWatchdog } from "./watchdog";
 
 // Public and read only. GraphQL over the schema, SQL over HTTP for @ponder/client, and two health routes.
 // /health and /ready are reserved by Ponder.
