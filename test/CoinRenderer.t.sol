@@ -48,16 +48,14 @@ contract CoinRendererTest is LiveFixture {
         assertEq(r.image(), ICoinRenderer(renderer).image(), "the launch logo");
     }
 
-    // promise: contractURI carries the coin's name, symbol and description with the renderer's image
+    // promise: contractURI names Credit Cycle and carries the coin's symbol and description with the live image
     function test_contractURICarriesTheCoinFieldsAndTheImage() public view {
         string memory uri = r.contractURI(address(coin));
         string memory prefix = "data:application/json;base64,";
         assertTrue(LibString.startsWith(uri, prefix), "json data uri");
         string memory json = string(Base64.decode(LibString.slice(uri, bytes(prefix).length)));
         string memory expected = string.concat(
-            '{"name":"',
-            coin.name(),
-            '","symbol":"',
+            '{"name":"Credit Cycle","symbol":"',
             coin.symbol(),
             '","description":"',
             coin.description(),

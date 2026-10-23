@@ -43,12 +43,11 @@ contract CoinRenderer is ICoinRenderer {
         emit CoreBound(address(core_));
     }
 
-    /// the coin's metadata as a data URI: name, symbol and description read from `token`, the image `image()`
+    /// the coin's metadata: Credit Cycle, the symbol and description read from `token`, and the image `image()`
     function contractURI(address token) external view returns (string memory) {
         IArtCoinsTokenV2 t = IArtCoinsTokenV2(token);
         string memory json = string.concat(
-            '{"name":',
-            LibString.escapeJSON(t.name(), true),
+            '{"name":"Credit Cycle"',
             ',"symbol":',
             LibString.escapeJSON(t.symbol(), true),
             ',"description":',
