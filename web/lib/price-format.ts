@@ -4,8 +4,11 @@ import { formatUnits } from "viem";
 
 export const SUBSCRIPT_DIGITS = ["₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉"];
 
+// Two decimals from 1 up; under 1, three significant digits (0.00223, 0.0143), and subscript zeros under 0.0001, so
+// small ETH amounts read exactly instead of "<0.01"
 export function decimalAmount(n: number): string {
-  if (n > 0 && n < 0.01) return "<0.01";
+  if (n > 0 && n < 0.0001) return subscriptZeros(n);
+  if (n > 0 && n < 1) return n.toLocaleString("en-US", { maximumSignificantDigits: 3 });
   return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
