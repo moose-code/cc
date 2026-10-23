@@ -1,29 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {console2} from "forge-std/Test.sol";
+import {Test, console2} from "forge-std/Test.sol";
 import {Base64} from "solady/utils/Base64.sol";
 import {LibString} from "solady/utils/LibString.sol";
 import {LiveFixture} from "./utils/LiveFixture.sol";
-import {Fixture} from "./utils/Fixture.sol";
-import {CreditIds} from "./utils/CreditIds.sol";
-import {CoinRenderer} from "../src/CoinRenderer.sol";
+import {CoinRenderer, IBalancesArtwork} from "../src/CoinRenderer.sol";
 import {ICoinRenderer} from "../src/interfaces/ICoinRenderer.sol";
 import {ICore} from "../src/interfaces/ICore.sol";
 
-interface IStatementArt {
-    function svg(bytes21[80] memory seeds, uint64[80] memory timestamps) external pure returns (string memory);
-}
-
-/// the pile renderer: the pile as a page, whole under 80, sampled per block above, drawn by the live code. the launch
-/// deploys the LogoCoinRenderer (see LogoCoinRenderer.t.sol); this spec deploys a CoinRenderer bound to the live
-/// Core, so it holds whichever renderer the launch names
+/// the Balances renderer on the LiveFixture pin, where the live Core has no balance module: the binding rules, the
+/// metadata shape and the logo fallback. the launch deploys the LogoCoinRenderer; this spec deploys a CoinRenderer
+/// bound to the live Core
 contract CoinRendererTest is LiveFixture {
-    /// Statements.art() at the fork block, the drawing the live statements use
-    IStatementArt private constant LIVE_ART = IStatementArt(0x82D2000f7C7Bc14FCFAD82Dca47620eC017269f1);
-    string private constant BLANK =
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10000 12500" shape-rendering="crispEdges"><rect width="10000" height="12500" fill="#ffffff"/></svg>';
-
     CoinRenderer private r;
 
     function setUp() public override {
@@ -50,47 +39,23 @@ contract CoinRendererTest is LiveFixture {
         unbound.image();
     }
 
-    function _cells(string memory svg) private pure returns (uint256 n) {
-        bytes memory needle = bytes('<svg x="');
-        bytes memory hay = bytes(svg);
-        for (uint256 i; i + needle.length <= hay.length; ++i) {
-            bool hit = true;
-            for (uint256 k; k < needle.length && hit; ++k) {
-                hit = hay[i + k] == needle[k];
-            }
-            if (hit) ++n;
-        }
+    // promise: a balance module with no Balances artwork draws the CC logo, so the coin's metadata never reverts on it
+    function test_aModuleWithoutArtworkDrawsTheLogo() public view {
+        // stage B selects a fresh treasury whose artwork depends on the stage B funding; the zero module of the pin
+        // is the case under test
+        if (_liveStageB()) return;
+        assertEq(core.balanceModule(), address(0), "no balance module at the pin");
+        assertEq(r.image(), ICoinRenderer(renderer).image(), "the launch logo");
     }
 
-    function _pageOf(uint256[] memory ids, uint256 n) private view returns (string memory) {
-        bytes21[80] memory seeds;
-        uint64[80] memory paidAt;
-        for (uint256 i; i < n; ++i) {
-            seeds[i] = CREDITS.seedOf(ids[i]);
-            paidAt[i] = CREDITS.timestampOf(ids[i]);
-        }
-        return r.page(seeds, paidAt, n);
-    }
-
-    function test_anEmptyPileIsABlankPage() public view {
-        // the renderer draws the blank svg for a page with no cells; when the live pile is empty image() is that page.
-        // the live Core cannot be forced to an empty pile here, so the no-cells path is exercised directly and the
-        // pile tie is asserted only when the live pile happens to be empty at the pin
-        bytes21[80] memory seeds;
-        uint64[80] memory paidAt;
-        assertEq(r.page(seeds, paidAt, 0), BLANK, "no cells is the blank page");
-        if (core.pileSize() == 0) assertEq(r.image(), BLANK, "an empty pile draws the blank page");
-    }
-
+    // promise: contractURI names Credit Cycle and carries the coin's symbol and description with the live image
     function test_contractURICarriesTheCoinFieldsAndTheImage() public view {
         string memory uri = r.contractURI(address(coin));
         string memory prefix = "data:application/json;base64,";
         assertTrue(LibString.startsWith(uri, prefix), "json data uri");
         string memory json = string(Base64.decode(LibString.slice(uri, bytes(prefix).length)));
         string memory expected = string.concat(
-            '{"name":"',
-            coin.name(),
-            '","symbol":"',
+            '{"name":"Credit Cycle","symbol":"',
             coin.symbol(),
             '","description":"',
             coin.description(),
@@ -100,90 +65,55 @@ contract CoinRendererTest is LiveFixture {
         );
         assertEq(json, expected, "json");
     }
-
-    // the whole-page draw under 80 is a controlled-pile promise: the live pile is full (over 80) at the pin, so it is
-    // proven on the fresh fixture with a sub-80 pile in CoinRendererUnder80Test below
-
-    function test_aPileOver80IsSampledPerBlock() public {
-        _fillEthPile(90);
-        vm.prevrandao(bytes32(uint256(1)));
-        string memory a = r.image();
-        assertEq(_cells(a), 80, "80 cells");
-        assertEq(r.image(), a, "same block, same page");
-        vm.prevrandao(bytes32(uint256(2)));
-        string memory b = r.image();
-        assertEq(_cells(b), 80, "80 cells");
-        assertNotEq(keccak256(bytes(a)), keccak256(bytes(b)), "another block, another sample");
-        assertNotEq(
-            keccak256(bytes(a)), keccak256(bytes(_pageOf(core.pilePage(0, 80), 80))), "sampled, not the oldest 80"
-        );
-    }
-
-    function test_aFullPageMatchesTheLiveStatementArt() public view {
-        bytes21[80] memory seeds;
-        uint64[80] memory paidAt;
-        for (uint256 i; i < 80; ++i) {
-            // any existing credit serves: the page is compared over its seed and timestamp, the owner is not read
-            uint256 id = CreditIds.at(i);
-            seeds[i] = CREDITS.seedOf(id);
-            paidAt[i] = CREDITS.timestampOf(id);
-        }
-        assertEq(r.page(seeds, paidAt, 80), LIVE_ART.svg(seeds, paidAt), "live drawing");
-    }
-
-    function test_gasOfAFullPage() public {
-        _fillEthPile(90);
-        uint256 g = gasleft();
-        string memory uri = r.contractURI(address(coin));
-        g -= gasleft();
-        console2.log("contractURI gas at 80 cells", g, "bytes", bytes(uri).length);
-        assertLt(g, 40_000_000, "under a 50M eth_call cap with margin");
-    }
 }
 
-/// the whole-page draw under 80 cells is a controlled-pile promise: the live Core's pile is full (over 80) at the pin,
-/// so it is proven here on the fresh fixture with a sub-80 pile and a CoinRenderer bound to that Core
-contract CoinRendererUnder80Test is Fixture {
+interface IBalanceTransfer {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+
+/// the Balances renderer after stage C, where the live treasury is the Core's balance module and holds Balances #1670.
+/// a fork of its own: LiveFixture's pin predates the treasury
+contract CoinRendererTreasuryTest is Test {
+    /// @dev the post stage C fork block, overridable by `TREASURY_FORK_BLOCK`
+    uint256 internal constant FORK_BLOCK = 26250700;
+    ICore internal constant CORE = ICore(payable(0xcdb1889ae12074d750CD9B8531B692015465e0dD));
+    address internal constant COIN = 0x28ef14A55DC93CDCB9001FA038A184967146C789;
+    address internal constant TREASURY = 0xB85CF439Ca57b4bfC28fA1Cb8a97Ee85555B0496;
+    address internal constant BALANCE = 0x3620540c994433D7B4a628C46d2ED5F92572eA07;
+    address internal constant BALANCE_HOLDER = 0x5F7a8fb8cc29e795ba19191Dd74D69A90cDADB88;
+    IBalancesArtwork internal constant ARTWORK = IBalancesArtwork(0x3F2BA6C00c386986686A429c52099AaCD51b7e38);
+
     CoinRenderer private r;
 
-    function setUp() public override {
-        super.setUp();
-        r = new CoinRenderer(owner);
-        vm.prank(owner);
-        r.setCore(ICore(payable(address(core))));
+    function setUp() public {
+        vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envOr("TREASURY_FORK_BLOCK", FORK_BLOCK));
+        r = new CoinRenderer(address(this));
+        r.setCore(CORE);
     }
 
-    function _cells(string memory svg) private pure returns (uint256 n) {
-        bytes memory needle = bytes('<svg x="');
-        bytes memory hay = bytes(svg);
-        for (uint256 i; i + needle.length <= hay.length; ++i) {
-            bool hit = true;
-            for (uint256 k; k < needle.length && hit; ++k) {
-                hit = hay[i + k] == needle[k];
-            }
-            if (hit) ++n;
-        }
+    // promise: the image is the live Balances artwork of the Core's balance module
+    function test_theImageIsTheTreasuryArtwork() public view {
+        assertEq(CORE.balanceModule(), TREASURY, "the treasury is the module");
+        assertEq(ARTWORK.tokenIdOf(TREASURY), 1670, "the treasury's artwork");
+        assertEq(r.image(), ARTWORK.svg(1670), "the artwork's own drawing");
     }
 
-    function _pageOf(uint256[] memory ids, uint256 n) private view returns (string memory) {
-        bytes21[80] memory seeds;
-        uint64[80] memory paidAt;
-        for (uint256 i; i < n; ++i) {
-            seeds[i] = CREDITS.seedOf(ids[i]);
-            paidAt[i] = CREDITS.timestampOf(ids[i]);
-        }
-        return r.page(seeds, paidAt, n);
+    // promise: the image follows the treasury's BALANCE, read on every call
+    function test_theImageFollowsTheTreasuryBalance() public {
+        string memory before = r.image();
+        vm.prank(BALANCE_HOLDER);
+        IBalanceTransfer(BALANCE).transfer(TREASURY, 1_000e18);
+        string memory afterwards = r.image();
+        assertNotEq(keccak256(bytes(afterwards)), keccak256(bytes(before)), "a new balance, a new drawing");
+        assertEq(afterwards, ARTWORK.svg(1670), "still the artwork's own drawing");
     }
 
-    // promise: a pile under 80 is drawn whole in pile order, unchanged by prevrandao (decision 127)
-    function test_aPileUnder80IsDrawnWholeInPileOrder() public {
-        _fillEthPile(30);
-        uint256 n = core.pileSize();
-        assertEq(n, 30, "a sub-80 pile on the fresh fixture");
-        string memory svg = r.image();
-        assertEq(_cells(svg), n, "cells");
-        assertEq(svg, _pageOf(core.pilePage(0, n), n), "pile order");
-        vm.prevrandao(bytes32(uint256(7)));
-        assertEq(r.image(), svg, "prevrandao changes nothing under 80");
+    // promise: the coin's metadata answers within an eth_call gas cap
+    function test_gasOfContractURI() public view {
+        uint256 g = gasleft();
+        string memory uri = r.contractURI(COIN);
+        g -= gasleft();
+        console2.log("contractURI gas", g, "bytes", bytes(uri).length);
+        assertLt(g, 10_000_000, "well under a 50M eth_call cap");
     }
 }
