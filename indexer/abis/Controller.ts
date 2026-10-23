@@ -1542,6 +1542,19 @@ export const controllerLogAbi = [
   },
   {
     "type": "function",
+    "name": "balancePriorSample",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "ccPoolKey",
     "inputs": [],
     "outputs": [

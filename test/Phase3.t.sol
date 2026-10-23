@@ -335,7 +335,7 @@ contract Phase3Test is LiveFixture {
         (uint256 pCc, uint256 pBal, bool ok) = m.prices();
         assertTrue(ok, "priced");
         assertEq(pCc, _lowestCc(), "the CC side is the lowest of reference, prior block sample and spot");
-        assertEq(pBal, _highestBalance(), "the BALANCE side is the higher of reference and spot");
+        assertEq(pBal, _highestBalance(), "the BALANCE side is the highest of reference, prior block sample and spot");
         uint256 want = cc * 10_500 * pCc / (pBal * 10_000);
         uint256 bucket = _bucket(d.market);
         uint256 supply = IPhase3Coin(address(coin)).totalSupply();
@@ -403,6 +403,37 @@ contract Phase3Test is LiveFixture {
         assertEq(pCc, fallen, "CC is priced at the fallen spot, not the lagging reference");
         (uint256 paid,) = _redeemMarket(cc);
         assertEq(paid, cc * 10_500 * fallen / (pBal * 10_000), "paid at the fallen price plus the premium");
+    }
+
+    function test_marketRedeemerLaggingBalanceReferenceCannotBeMetByADump() public {
+        // promise: after a BALANCE rise the BALANCE reference lags below the price, but a refresh records the risen spot, so dumping the live spot back below the lagging reference in a later block does not price BALANCE under the risen price
+        IMarketRedeemer m = _marketOn();
+        uint256 cc = _userCc(0.05 ether);
+        address riser = _user("riser");
+        PoolKey memory k = _v3BalanceKey();
+        vm.deal(riser, 20 ether);
+        vm.prank(riser);
+        router.swap{value: 20 ether}(k, true, -int256(20 ether), riser);
+        vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
+        assertTrue(v3.refreshReference(), "a refresh after the rise");
+        (uint256 risen,) = v3.spotPrice();
+        uint256 balRef = v3.referencePrice();
+        assertLt(balRef * 105 / 100, risen, "the reference lags more than 5 percent below the risen price");
+
+        vm.roll(block.number + 1);
+        uint256 bal = _balanceOf(riser);
+        vm.startPrank(riser);
+        IPhase3Coin(liveBalanceToken).approve(address(router), type(uint256).max);
+        router.swap(k, false, -int256(bal), riser);
+        vm.stopPrank();
+        (uint256 live,) = v3.spotPrice();
+        assertLt(live, balRef, "the live spot is dumped below the lagging reference");
+        assertEq(v3.balancePriorSample(), risen, "the prior block sample is the risen spot");
+        (uint256 pCc, uint256 pBal,) = m.prices();
+        assertEq(pBal, risen, "BALANCE is priced at the risen spot, not the lagging reference");
+        (uint256 paid,) = _redeemMarket(cc);
+        assertEq(paid, cc * 10_500 * pCc / (risen * 10_000), "paid at the risen BALANCE price");
     }
 
     function test_marketRedeemerBucketAndDailyCap() public {
@@ -565,6 +596,8 @@ contract Phase3Test is LiveFixture {
         (high,) = v3.spotPrice();
         uint256 balRef = v3.referencePrice();
         if (balRef > high) high = balRef;
+        uint256 sample = v3.balancePriorSample();
+        if (sample > high) high = sample;
     }
 
     function _ccSpot() internal view returns (uint256) {

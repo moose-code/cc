@@ -49,6 +49,7 @@ interface IControllerV3 {
         view
         returns (Currency currency0, Currency currency1, uint24 fee, int24 tickSpacing, address hooks);
     function balancePoolKeySet() external view returns (bool);
+    function balancePriorSample() external view returns (uint256);
     function buy(uint256 sid) external payable;
     function buyCredit(uint256 id) external payable;
     function buyCredits(uint256[] memory ids) external payable;

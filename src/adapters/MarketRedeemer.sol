@@ -24,6 +24,7 @@ interface IMarketController {
         view
         returns (Currency currency0, Currency currency1, uint24 fee, int24 tickSpacing, IHooks hooks);
     function referencePrice() external view returns (uint256);
+    function balancePriorSample() external view returns (uint256);
     function spotPrice() external view returns (uint256 spot, bool ok);
     function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
 }
@@ -33,12 +34,13 @@ interface IMarketController {
 ///   amount = ccIn * P_cc / P_bal * (10_000 + premiumBps) / 10_000
 ///
 /// with `P_cc = min(the controller's CC reference, its prior block CC spot sample, the live CC spot)` and `P_bal =
-/// max(the controller's BALANCE reference, the live BALANCE spot)`, both wei per 1e18 base units and read at the burn.
-/// a one block pump of either pool can only lower the payout: the CC side never rises above its reference or the
-/// prior block sample, and the BALANCE side never falls below its reference. the sample closes the lagging reference
-/// case: after a CC fall the reference moves down only under its rate and step bounds, but the first refresh after the
-/// fall records the fallen spot, so a later same block pump of the live spot back up to the lagging reference still
-/// prices CC at the sample. the window left is the time between a fall and the next refresh. an unusable CC reference
+/// max(the controller's BALANCE reference, its prior block BALANCE spot sample, the live BALANCE spot)`, both wei per
+/// 1e18 base units and read at the burn. a one block move of either pool can only lower the payout: the CC side never
+/// rises above its reference or its prior block sample, and the BALANCE side never falls below its reference or its
+/// prior block sample. the samples close the lagging reference case: after a CC fall (or a BALANCE rise) the reference
+/// moves only under its rate and step bounds, but the first refresh after the move records the new spot, so a later
+/// same block swap of the live spot back to the lagging reference still prices at the sample. the window left is the
+/// time between the move and the next refresh. an unusable CC reference
 /// (stale, thin pool, no pool key) or an unusable BALANCE quote (`valuePerPoint(true)` not ok) refuses the burn. the
 /// treasury enforces the bucket, the caps, the burn, the recipient and its own epoch; this redeemer pins its premium
 /// with `configEpoch`, passed by the caller as the 32 byte `data`. the controller is the Core's current one, read at
@@ -99,6 +101,8 @@ contract MarketRedeemer is IRedeemer {
         ccPrice = ccRef < ccSpot ? ccRef : ccSpot;
         if (sample < ccPrice) ccPrice = sample;
         balancePrice = balRef > balSpot ? balRef : balSpot;
+        uint256 balSample = c.balancePriorSample();
+        if (balSample > balancePrice) balancePrice = balSample;
         ok = ccPrice != 0 && balancePrice != 0;
     }
 

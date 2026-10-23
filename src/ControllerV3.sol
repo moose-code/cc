@@ -57,7 +57,8 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 ///    return lock (the Core's own lock does not cover `adopt`)
 /// 6. a CC price reference on the native eth / CC pool for redeemers: an average toward the spot over
 ///    `ccQuote.avgSeconds`, moved at most `rateBpsPerHour` and `stepBps`, unusable when stale or thin, and the pool spot
-///    sampled at the two latest refreshes, so `ccPriorSample` is always a prior block's spot (redeemer 2 reads both)
+///    sampled at the two latest refreshes, so `ccPriorSample` is always a prior block's spot (redeemer 2 reads both, and
+///    `balancePriorSample`, the same view of the balance token pool's samples)
 interface ICoinOf {
     function COIN() external view returns (address);
 }
@@ -418,6 +419,14 @@ contract ControllerV3 is IController {
         // forge-lint: disable-next-line(unsafe-typecast)
         referenceTime = uint40(block.timestamp);
         emit ReferenceRefreshed(ref, spot);
+    }
+
+    /// the balance token pool spot sampled by a refresh in a prior block, wei per 1e18 base units: the previous sample
+    /// when the latest was taken this block, the sample `_protected` reads, so a swap and a refresh in the caller's own
+    /// block cannot set it. zero before the pool key is set
+    function balancePriorSample() external view returns (uint256) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint48(block.number) == lastRefreshBlock ? spotSampleB : spotSampleA;
     }
 
     /// @notice the pool spot of the balance token, wei per 1e18 base units. false as in `_spot`
