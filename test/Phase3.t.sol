@@ -49,8 +49,11 @@ contract Phase3Test is LiveFixture {
     IPhase2BalanceTreasury internal v1;
     address internal user;
 
+    function _liveForkBlock() internal pure override returns (uint256) {
+        return PIN;
+    }
+
     function setUp() public override {
-        vm.setEnv("LIVE_FORK_BLOCK", vm.toString(PIN));
         super.setUp();
         v1 = IPhase2BalanceTreasury(core.balanceModule());
         script = new Phase3();
