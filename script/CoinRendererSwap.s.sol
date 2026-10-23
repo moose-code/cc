@@ -13,7 +13,8 @@ interface IRendererSwapCoin {
     function contractURI() external view returns (string memory);
 }
 
-/// Each RENDERER_STEP creates one transaction: 1 deploy, 2 bind, 3 activate. Run each without --broadcast first.
+/// Runs deploy, bind and activate in order. RENDERER_STEP=1/2/3 retains individual steps; unset or 0 runs all.
+/// Preview without --broadcast; send with the explicit owner --sender, --account ripe0x and --slow.
 contract CoinRendererSwap is Script {
     address private constant OWNER = 0xCB43078C32423F5348Cab5885911C3B5faE217F9;
     ICore private constant CORE = ICore(payable(0xcdb1889ae12074d750CD9B8531B692015465e0dD));
@@ -22,12 +23,22 @@ contract CoinRendererSwap is Script {
     bytes32 private constant SALT = keccak256("credits.coinRenderer.balances.creditCycle.v1");
 
     function run() public {
+        uint256 step = vm.envOr("RENDERER_STEP", uint256(0));
+        if (step == 0) {
+            _runStep(1);
+            _runStep(2);
+            _runStep(3);
+        } else {
+            _runStep(step);
+        }
+    }
+
+    function _runStep(uint256 step) private {
         require(block.chainid == 1, "mainnet only");
         require(msg.sender == OWNER, "use the owner sender");
         require(CORE.owner() == OWNER && COIN.admin() == OWNER, "authority changed");
         bytes memory init = abi.encodePacked(type(CoinRenderer).creationCode, abi.encode(OWNER));
         address predicted = vm.computeCreate2Address(SALT, keccak256(init), CREATE2_DEPLOYER);
-        uint256 step = vm.envUint("RENDERER_STEP");
         require(step >= 1 && step <= 3, "RENDERER_STEP must be 1, 2 or 3");
         console2.log("chain", block.chainid);
         console2.log("signer", OWNER);
