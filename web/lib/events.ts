@@ -311,7 +311,7 @@ export function processLogs(inp: ScanInput): { stats: Stats; credits: Scan["cred
         stats.creditsSold++;
         stats.artistReceived += Number(formatUnits(a.toArtist, 18));
         stats.payeeReceived += Number(formatUnits(a.toOperator, 18));
-        row({ kind: "sold", label: "credit sold", detail: `credit #${id} bought from the credit sale by`, amount: ethAmount("+", a.price), addr: a.buyer, tile: { kind: "credit", id } });
+        row({ kind: "sold", label: "credit sold", link: { text: `credit #${id}`, href: `/credits/${id}` }, detail: "bought from the credit sale by", amount: ethAmount("+", a.price), addr: a.buyer, tile: { kind: "credit", id } });
         break;
       }
       case "StatementRedeemed": {
