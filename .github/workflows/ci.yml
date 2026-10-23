@@ -3,7 +3,7 @@
 # passes when every job succeeded or was skipped.
 # Contract changes run a bounded smoke selection plus changed test files. Tools use offline checks.
 # The full suite, deployment rehearsal and deep invariants run in the candidate workflow.
-# Fork fixtures use the verified mainnet block shared with the candidate workflow.
+# Fork fixtures use the live fixture pin, after the live Core.
 # UPSTREAM_RPC_URL is the repo secret FORK_URL when set, else public Tenderly. foundry-toolchain saves foundry's rpc cache.
 name: ci
 
@@ -85,7 +85,10 @@ jobs:
     env:
       UPSTREAM_RPC_URL: ${{ secrets.FORK_URL || 'https://mainnet.gateway.tenderly.co' }}
       MAINNET_RPC_URL: http://127.0.0.1:8545
-      FORK_BLOCK: "26208025"
+      # the fixture pin (LiveFixture, test/utils/Fixture.sol) and the anvil head, the newest suite pin
+      # (test/Phase3.t.sol); anvil serves the older pin from its upstream. both after the live Core (block 26229330)
+      FORK_BLOCK: "26242960"
+      ANVIL_BLOCK: "26251200"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,10 +104,9 @@ jobs:
             out
           key: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-${{ hashFiles('src/**', 'test/**', 'script/**') }}
           restore-keys: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-
-      # Fixed Strategy listing IDs and prices require the same verified block as the candidate workflow.
       - name: mainnet fork anvil
         run: |
-          nohup anvil --fork-url "$UPSTREAM_RPC_URL" --fork-block-number "$FORK_BLOCK" --chain-id 31337 --port 8545 \
+          nohup anvil --fork-url "$UPSTREAM_RPC_URL" --fork-block-number "$ANVIL_BLOCK" --chain-id 31337 --port 8545 \
             --auto-impersonate --retries 10 --timeout 60000 > anvil.log 2>&1 &
           for _ in $(seq 1 60); do cast chain-id --rpc-url "$MAINNET_RPC_URL" >/dev/null 2>&1 && break; sleep 1; done
           cast chain-id --rpc-url "$MAINNET_RPC_URL"
