@@ -123,6 +123,8 @@ export function useFeed(filter: FeedFilter, limit: number): { events: FeedEvent[
 export interface CreditSale {
   price: bigint;
   paid?: bigint; // what the engine paid
+  paidBalance?: bigint; // a $BALANCE purchase: the seller's payout plus the royalty, in the token it was paid in
+  paidBalanceToken?: string;
   toArtist: bigint;
   toOperator: bigint;
   toBuyback?: bigint;
@@ -174,7 +176,9 @@ export function useCreditDetail(id: number): CreditDetail {
 
   let sale: CreditSale | undefined;
   if (mode === "ix" && row?.state === "sold")
-    sale = { price: row.salePrice ?? 0n, paid: row.costBasis ?? undefined, toArtist: row.toArtist ?? 0n, toOperator: row.toOperator ?? 0n, toBuyback: row.toBuyback ?? undefined, toPot: row.toPot ?? undefined, approx: false };
+    sale = { price: row.salePrice ?? 0n, paid: row.costBasis ?? undefined,
+      paidBalance: row.acquiredHow === "balance_bid" && row.balancePaid != null ? row.balancePaid + (row.royalty ?? 0n) : undefined,
+      paidBalanceToken: row.balancePaidToken ?? undefined, toArtist: row.toArtist ?? 0n, toOperator: row.toOperator ?? 0n, toBuyback: row.toBuyback ?? undefined, toPot: row.toPot ?? undefined, approx: false };
   else if (mode === "chain" && saleEvt) {
     // Core.sellCreditTo: after the artist and operator cuts, min(cost * creditCostToPotBps / 10000, rest) goes to the pot
     const potBps = thenBps ?? (bpsLoading ? undefined : snap?.creditCostToPotBps);
