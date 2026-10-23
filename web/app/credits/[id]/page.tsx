@@ -19,6 +19,7 @@ import { useCreditDetail, useHistoryDown, useStatementView, type CreditSale } fr
 import type { CreditEvt } from "@/lib/events";
 import {
   countdown,
+  useBalanceToken,
   useCreditValues,
   useNow,
   usePile,
@@ -31,7 +32,7 @@ import {
 import { useTokenMeta } from "@/lib/art";
 import { buyCredits } from "@/lib/buy";
 import { etaLabel, windowLabel } from "@/lib/compose-eta";
-import { eth, evmNowTx, rating, shortAddr, tokens } from "@/lib/format";
+import { eth, evmNowTx, formatHistoricalBalance, rating, shortAddr, tokens } from "@/lib/format";
 import type { Write } from "@/lib/tx";
 
 const PLATES: { letter: string; bit: number }[] = [
@@ -379,6 +380,7 @@ function StatementCard({ sid }: { sid: number }) {
 // Indexer mode shows the split stored with the sale; chain mode computes it with creditCostToPotBps at the sale block
 // ("~" when that block cannot be read and the current value is used).
 function SoldSplit({ sale }: { sale: CreditSale }) {
+  const balance = useBalanceToken();
   const approx = sale.approx ? "~" : "";
   const line = (k: string, v: bigint | undefined, always = false, mark = "") =>
     v != null && (always || v > 0n) ? (
@@ -390,7 +392,12 @@ function SoldSplit({ sale }: { sale: CreditSale }) {
   return (
     <section className="side-sec">
       {line("sold for", sale.price, true)}
-      {line("engine paid", sale.paid, true)}
+      {sale.paidBalance != null ? (
+        <div className="kv">
+          <span className="muted">engine paid</span>
+          <span>{formatHistoricalBalance(sale.paidBalance, sale.paidBalanceToken, balance)}</span>
+        </div>
+      ) : line("engine paid", sale.paid, true)}
       {line("to artist", sale.toArtist)}
       {line("to operator", sale.toOperator)}
       {line("to buyback", sale.toBuyback, true, approx)}
