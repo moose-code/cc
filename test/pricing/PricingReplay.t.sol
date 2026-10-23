@@ -12,7 +12,7 @@ import {ControllerV2Floor} from "./ControllerV2Floor.sol";
 /// the fork replay of docs/reviews/PRICING-REVIEW-2026-10-23.md: the recorded sale of Credits 46817, 109607 and 29255
 /// to the bot at block 26,252,999, replayed on a fork pinned at 26,252,994 (29255 was taken at 26,252,995, the other two at 26,252,999) against the live Core and ControllerV2, then
 /// the same purchase under the proposed Credit floor reference (docs/specs/PRICING.md) on a controller that differs from
-/// the live one only by that term. run with LIVE_FORK_BLOCK=26252994
+/// the live one only by that term. the suite pins itself at 26,252,994 and skips on a node that cannot serve that block
 contract PricingReplayTest is LiveFixture {
     address internal constant BOT = 0x1F353219a4080268f2c8e5ba48880aBEb2714B9E;
     uint256 internal constant PAID = 0.00794 ether;
@@ -23,7 +23,17 @@ contract PricingReplayTest is LiveFixture {
     uint256 internal constant FLOOR_THEN = 0.0086 ether;
     IControllerV2 internal live;
 
+    uint256 internal constant PIN = 26252994;
+
+    /// the replay needs its own pin. a node that cannot serve it (the CI anvil forks at the LiveFixture pin) skips the
+    /// suite instead of failing it; the evidence run is local against the Tenderly gateway
     function setUp() public override {
+        try vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), PIN) returns (uint256) {}
+        catch {
+            vm.skip(true);
+            return;
+        }
+        vm.setEnv("LIVE_FORK_BLOCK", vm.toString(PIN));
         super.setUp();
         live = IControllerV2(core.controller());
         assertEq(address(live), 0xCD64e368b3d7033B2E2B22Fa5F67f554aB807d36, "ControllerV2 is live at the pin");

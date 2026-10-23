@@ -85,7 +85,7 @@ jobs:
     env:
       UPSTREAM_RPC_URL: ${{ secrets.FORK_URL || 'https://mainnet.gateway.tenderly.co' }}
       MAINNET_RPC_URL: http://127.0.0.1:8545
-      FORK_BLOCK: "26208025"
+      FORK_BLOCK: "26242960"
     steps:
       - uses: actions/checkout@v4
         with:
