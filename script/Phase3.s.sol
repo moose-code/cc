@@ -39,7 +39,7 @@ contract Phase3 is Script, LaunchChecks {
 
     address public constant MAINNET_CORE = 0xcdb1889ae12074d750CD9B8531B692015465e0dD;
 
-    /// the owner's choices: decisions 278 to 287
+    /// the owner's choices: decisions 279 to 288
     struct Params {
         uint256 cushion;
         BalanceBid bid;
