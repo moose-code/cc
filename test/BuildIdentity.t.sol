@@ -116,7 +116,7 @@ contract BuildIdentityTest is LiveFixture {
     /// computations of the masked hash
     // promise: the build pins preflight checks (script/Checks.sol) are the artifacts of this tree, by two independent computations of the masked hash
     function test_pinnedBuildHashesEqualTheArtifacts() public {
-        string[13] memory names = [
+        string[14] memory names = [
             "Core",
             "CoreLib",
             "CoreOpsLib",
@@ -129,9 +129,10 @@ contract BuildIdentityTest is LiveFixture {
             "ProRataRedemptionPolicy",
             "ControllerV3",
             "BalanceTreasuryV2",
-            "ProRataRedeemer"
+            "ProRataRedeemer",
+            "MarketRedeemer"
         ];
-        bytes32[13] memory pins = [
+        bytes32[14] memory pins = [
             BUILD_HASH_CORE,
             BUILD_HASH_CORELIB,
             BUILD_HASH_COREOPSLIB,
@@ -144,9 +145,10 @@ contract BuildIdentityTest is LiveFixture {
             BUILD_HASH_PRO_RATA_POLICY,
             BUILD_HASH_CONTROLLER_V3,
             BUILD_HASH_TREASURY_V2,
-            BUILD_HASH_PRO_RATA_REDEEMER
+            BUILD_HASH_PRO_RATA_REDEEMER,
+            BUILD_HASH_MARKET_REDEEMER
         ];
-        for (uint256 i; i < 13; ++i) {
+        for (uint256 i; i < 14; ++i) {
             assertEq(_maskedHash(names[i]), pins[i], string.concat(names[i], ": masked hash of the artifact"));
             assertEq(artifactHash(names[i]), pins[i], string.concat(names[i], ": hash the preflight row reads"));
         }
