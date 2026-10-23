@@ -18,6 +18,7 @@ interface IMarketCore {
 /// the ControllerV3 views this redeemer reads
 interface IMarketController {
     function ccPrice() external view returns (uint256 price, bool ok);
+    function ccPriorSample() external view returns (uint256);
     function ccPoolKey()
         external
         view
@@ -31,13 +32,17 @@ interface IMarketController {
 ///
 ///   amount = ccIn * P_cc / P_bal * (10_000 + premiumBps) / 10_000
 ///
-/// with `P_cc = min(the controller's CC reference, the live CC spot)` and `P_bal = max(the controller's BALANCE
-/// reference, the live BALANCE spot)`, both wei per 1e18 base units and read at the burn. a one block pump of either pool
-/// can only lower the payout: the CC side never rises above its reference and the BALANCE side never falls below its
-/// reference, and a reference moves only under its rate and step bounds. an unusable CC reference (stale, thin pool,
-/// no pool key) or an unusable BALANCE quote (`valuePerPoint(true)` not ok) refuses the burn. the treasury enforces the
-/// bucket, the caps, the burn, the recipient and its own epoch; this redeemer pins its premium with `configEpoch`,
-/// passed by the caller as the 32 byte `data`. the controller is the Core's current one, read at each use
+/// with `P_cc = min(the controller's CC reference, its prior block CC spot sample, the live CC spot)` and `P_bal =
+/// max(the controller's BALANCE reference, the live BALANCE spot)`, both wei per 1e18 base units and read at the burn.
+/// a one block pump of either pool can only lower the payout: the CC side never rises above its reference or the
+/// prior block sample, and the BALANCE side never falls below its reference. the sample closes the lagging reference
+/// case: after a CC fall the reference moves down only under its rate and step bounds, but the first refresh after the
+/// fall records the fallen spot, so a later same block pump of the live spot back up to the lagging reference still
+/// prices CC at the sample. the window left is the time between a fall and the next refresh. an unusable CC reference
+/// (stale, thin pool, no pool key) or an unusable BALANCE quote (`valuePerPoint(true)` not ok) refuses the burn. the
+/// treasury enforces the bucket, the caps, the burn, the recipient and its own epoch; this redeemer pins its premium
+/// with `configEpoch`, passed by the caller as the 32 byte `data`. the controller is the Core's current one, read at
+/// each use
 contract MarketRedeemer is IRedeemer {
     using StateLibrary for IPoolManager;
 
@@ -90,7 +95,9 @@ contract MarketRedeemer is IRedeemer {
         uint256 q = FixedPoint96.Q96;
         uint256 ccSpot = (1e18 * q / sqrtP) * q / sqrtP;
         uint256 balRef = c.referencePrice();
+        uint256 sample = c.ccPriorSample();
         ccPrice = ccRef < ccSpot ? ccRef : ccSpot;
+        if (sample < ccPrice) ccPrice = sample;
         balancePrice = balRef > balSpot ? balRef : balSpot;
         ok = ccPrice != 0 && balancePrice != 0;
     }

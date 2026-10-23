@@ -58,6 +58,7 @@ interface IControllerV3 {
         returns (Currency currency0, Currency currency1, uint24 fee, int24 tickSpacing, address hooks);
     function ccPoolKeySet() external view returns (bool);
     function ccPrice() external view returns (uint256 price, bool ok);
+    function ccPriorSample() external view returns (uint256);
     function ccQuote()
         external
         view

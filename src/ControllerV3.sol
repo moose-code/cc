@@ -55,8 +55,9 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 ///    shipped settings); below that the loosening can read up to the cap early
 /// 5. every credit this controller sells records `creditSoldAt`, so treasury v2's bid refuses a credit inside the Core's
 ///    return lock (the Core's own lock does not cover `adopt`)
-/// 6. a CC price reference on the native eth / CC pool for later redeemers: an average toward the spot over
-///    `ccQuote.avgSeconds`, moved at most `rateBpsPerHour` and `stepBps`, unusable when stale or thin. nothing reads it yet
+/// 6. a CC price reference on the native eth / CC pool for redeemers: an average toward the spot over
+///    `ccQuote.avgSeconds`, moved at most `rateBpsPerHour` and `stepBps`, unusable when stale or thin, and the pool spot
+///    sampled at the two latest refreshes, so `ccPriorSample` is always a prior block's spot (redeemer 2 reads both)
 interface ICoinOf {
     function COIN() external view returns (address);
 }
@@ -160,6 +161,9 @@ contract ControllerV3 is IController {
     uint256 public ccReferencePrice;
     uint40 public ccReferenceTime;
     uint48 private ccLastRefreshBlock;
+    /// the CC pool spot sampled at the two most recent refreshes (or the seed), newest in `ccSpotSampleA`
+    uint256 private ccSpotSampleA;
+    uint256 private ccSpotSampleB;
 
     constructor(
         address core,
@@ -741,6 +745,8 @@ contract ControllerV3 is IController {
         ccPoolKey = key;
         ccPoolKeySet = true;
         emit CcPoolKeySet(address(0), Currency.unwrap(key.currency1), key.fee, key.tickSpacing, address(key.hooks));
+        ccSpotSampleA = spot;
+        ccSpotSampleB = spot;
         _setCcRef(spot, spot);
     }
 
@@ -777,6 +783,8 @@ contract ControllerV3 is IController {
         uint256 lo = ref * (BPS - move) / BPS;
         // forge-lint: disable-next-line(unsafe-typecast)
         ccLastRefreshBlock = uint48(block.number);
+        ccSpotSampleB = ccSpotSampleA;
+        ccSpotSampleA = spot;
         _setCcRef(target > hi ? hi : target < lo ? lo : target, spot);
         return true;
     }
@@ -786,6 +794,14 @@ contract ControllerV3 is IController {
         // forge-lint: disable-next-line(unsafe-typecast)
         ccReferenceTime = uint40(block.timestamp);
         emit CcReferenceRefreshed(ref, spot);
+    }
+
+    /// the CC pool spot sampled by a refresh in a prior block, wei per 1e18 CC base units: the previous sample when the
+    /// latest was taken this block, so a swap and a refresh in the caller's own block cannot set it. it is as old as the
+    /// latest refresh; a refresh moves it even where the reference's step bound holds the reference back
+    function ccPriorSample() external view returns (uint256) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint48(block.number) == ccLastRefreshBlock ? ccSpotSampleB : ccSpotSampleA;
     }
 
     /// the CC reference, wei per 1e18 CC base units, and whether it is usable: set, at most `maxStale` old and the live

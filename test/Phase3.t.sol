@@ -332,14 +332,10 @@ contract Phase3Test is LiveFixture {
         // promise: redeemer 2 burns CC and pays at once ccIn * min(CC reference, CC spot) / max(BALANCE reference, BALANCE spot) * 1.05 from its own bucket
         IMarketRedeemer m = _marketOn();
         uint256 cc = _userCc(0.05 ether);
-        (uint256 ccRef,) = v3.ccPrice();
-        uint256 ccSpot = _ccSpot();
-        (uint256 balSpot,) = v3.spotPrice();
-        uint256 balRef = v3.referencePrice();
         (uint256 pCc, uint256 pBal, bool ok) = m.prices();
         assertTrue(ok, "priced");
-        assertEq(pCc, ccRef < ccSpot ? ccRef : ccSpot, "the CC side is the lower of reference and spot");
-        assertEq(pBal, balRef > balSpot ? balRef : balSpot, "the BALANCE side is the higher of reference and spot");
+        assertEq(pCc, _lowestCc(), "the CC side is the lowest of reference, prior block sample and spot");
+        assertEq(pBal, _highestBalance(), "the BALANCE side is the higher of reference and spot");
         uint256 want = cc * 10_500 * pCc / (pBal * 10_000);
         uint256 bucket = _bucket(d.market);
         uint256 supply = IPhase3Coin(address(coin)).totalSupply();
@@ -377,6 +373,36 @@ contract Phase3Test is LiveFixture {
         assertLe(afterBoth, before, "a BALANCE dump and a same block refresh do not raise the payout");
         (uint256 paid,) = _redeemMarket(cc);
         assertLe(paid, before, "the burn pays no more than before the pumps");
+    }
+
+    function test_marketRedeemerLaggingReferenceCannotBeMetByAPump() public {
+        // promise: after a CC fall the reference lags above the price, but a refresh records the fallen spot, so pumping the live spot back to the lagging reference in a later block does not raise redeemer 2's payout above the fallen price
+        IMarketRedeemer m = _marketOn();
+        uint256 cc = _userCc(0.05 ether);
+        address whale = _user("whale");
+        uint256 whaleCc = _buyCoin(whale, 10 ether);
+        for (uint256 i; i < 6; ++i) {
+            vm.warp(block.timestamp + 1 hours);
+            vm.roll(block.number + 1);
+            assertTrue(v3.refreshCcReference(), "the reference follows the rise");
+        }
+        _sellCoin(whale, whaleCc);
+        vm.warp(block.timestamp + 600);
+        vm.roll(block.number + 1);
+        assertTrue(v3.refreshCcReference(), "a refresh after the fall");
+        (uint256 ccRef, bool ok) = v3.ccPrice();
+        uint256 fallen = _ccSpot();
+        assertTrue(ok, "the reference is usable");
+        assertGt(ccRef, fallen * 120 / 100, "the reference lags more than 20 percent above the fallen price");
+
+        vm.roll(block.number + 1);
+        _buyCoin(_user("attacker"), 10 ether);
+        assertGt(_ccSpot(), ccRef, "the live spot is pumped past the lagging reference");
+        assertEq(v3.ccPriorSample(), fallen, "the prior block sample is the fallen spot");
+        (uint256 pCc, uint256 pBal,) = m.prices();
+        assertEq(pCc, fallen, "CC is priced at the fallen spot, not the lagging reference");
+        (uint256 paid,) = _redeemMarket(cc);
+        assertEq(paid, cc * 10_500 * fallen / (pBal * 10_000), "paid at the fallen price plus the premium");
     }
 
     function test_marketRedeemerBucketAndDailyCap() public {
@@ -525,6 +551,20 @@ contract Phase3Test is LiveFixture {
             tickSpacing: spacing,
             hooks: IHooks(hooks)
         });
+    }
+
+    function _lowestCc() internal view returns (uint256 low) {
+        (uint256 ccRef,) = v3.ccPrice();
+        low = _ccSpot();
+        if (ccRef < low) low = ccRef;
+        uint256 sample = v3.ccPriorSample();
+        if (sample < low) low = sample;
+    }
+
+    function _highestBalance() internal view returns (uint256 high) {
+        (high,) = v3.spotPrice();
+        uint256 balRef = v3.referencePrice();
+        if (balRef > high) high = balRef;
     }
 
     function _ccSpot() internal view returns (uint256) {
