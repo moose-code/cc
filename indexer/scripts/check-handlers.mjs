@@ -16,6 +16,7 @@ const SOURCE_ABI = {
   Core: ["abis/Core.ts", "coreAbi"],
   Controller: ["abis/Controller.ts", "controllerLogAbi"],
   Treasury: ["abis/Treasury.ts", "treasuryLogAbi"],
+  MarketRedeemer: ["abis/MarketRedeemer.ts", "marketRedeemerAbi"],
   Coin: ["abis/external.ts", "erc20Abi"],
   Credits: ["abis/external.ts", "creditsAbi"],
   Statements: ["abis/external.ts", "statementsAbi"],

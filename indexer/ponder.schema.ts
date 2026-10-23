@@ -325,6 +325,7 @@ export const treasuryState = onchainTable("treasury_state", (t) => ({
  * (treasury.redeemers(address): bucket, totalIn, totalOut) because a sweep funds buckets in a lump by share with no
  * per-redeemer breakdown in the event (docs/INDEXER.md section 9.6). The running totals here are the event-derived
  * redemption and allocation history. A redeemer is scoped to its treasury (a later treasury re-registers its own).
+ * Redeemer 2 (MarketRedeemer) also projects its `premiumBps` / `premiumEpoch` here from its own PremiumSet event.
  */
 export const redeemer = onchainTable(
   "redeemer",
@@ -340,6 +341,8 @@ export const redeemer = onchainTable(
     perCall: t.bigint(), // RedeemerCapsSet caps
     perPeriod: t.bigint(),
     lifetime: t.bigint(),
+    premiumBps: t.integer(), // redeemer 2 (MarketRedeemer) only: PremiumSet.premiumBps, the spread over the market rate
+    premiumEpoch: t.bigint(), // redeemer 2 only: PremiumSet.configEpoch, the premium's epoch (distinct from the caps `epoch`)
     redeemedCcTotal: t.bigint().notNull().default(0n), // CCRedeemed.ccIn to this redeemer
     paidBalanceTotal: t.bigint().notNull().default(0n), // CCRedeemed.amount through this redeemer
     redemptions: t.bigint().notNull().default(0n),

@@ -1,7 +1,7 @@
 import { ponder } from "ponder:registry";
 import { zeroAddress, type Hex } from "viem";
 
-import { COLLECTIONS, CORE_ADDRESS, STRATEGY_ADDRESS } from "../ponder.config";
+import { COLLECTIONS, CORE_ADDRESS, MARKET_REDEEMER, STRATEGY_ADDRESS } from "../ponder.config";
 import {
   activity,
   anchorMove,
@@ -860,6 +860,28 @@ ponder.on("Treasury:SharesSet", async ({ event, context }) => {
   );
   await bumpRedeemer(context, event, addr, { shareBps: Number(shareBps) });
 });
+
+// Redeemer 2 (MarketRedeemer, a static source, ponder.config.ts) sets its premium; PremiumSet also fires at
+// construction, before the treasury registers it. The premium and epoch land on the same `treasury:redeemer` row the
+// treasury's RedeemerRegistered writes, so this upserts (creating the row if it arrives first). The row's treasury is
+// taken from the deployment record because PremiumSet is emitted by the redeemer, not the treasury. Registered only
+// when MARKET_REDEEMER is configured; otherwise the source indexes nothing (ponder.config.ts).
+if (MARKET_REDEEMER) {
+  const { address: marketAddr, treasury: marketTreasury } = MARKET_REDEEMER;
+  const marketRowId = `${marketTreasury}:${marketAddr}`;
+  ponder.on("MarketRedeemer:PremiumSet", async ({ event, context }) => {
+    const patch = { premiumBps: Number(event.args.premiumBps), premiumEpoch: BigInt(event.args.configEpoch) };
+    const cur = await context.db.find(redeemer, { id: marketRowId });
+    if (!cur) {
+      await context.db.insert(redeemer).values({
+        id: marketRowId, treasury: marketTreasury, redeemer: marketAddr,
+        firstBlock: event.block.number, lastEventBlock: event.block.number, ...patch,
+      });
+      return;
+    }
+    await context.db.update(redeemer, { id: marketRowId }).set({ ...patch, lastEventBlock: event.block.number });
+  });
+}
 
 // a vesting or deferred claim paid out to its recipient; the claim was created in full at redemption time
 ponder.on("Treasury:ClaimReleased", async ({ event, context }) => {
