@@ -85,7 +85,8 @@ jobs:
     env:
       UPSTREAM_RPC_URL: ${{ secrets.FORK_URL || 'https://mainnet.gateway.tenderly.co' }}
       MAINNET_RPC_URL: http://127.0.0.1:8545
-      FORK_BLOCK: "26242960"
+      FORK_BLOCK: "26208025"
+      RPC_FORK_BLOCK: "26250700"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,10 +102,10 @@ jobs:
             out
           key: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-${{ hashFiles('src/**', 'test/**', 'script/**') }}
           restore-keys: forge-${{ hashFiles('foundry.toml', 'foundry.lock', 'remappings.txt') }}-
-      # Fixed Strategy listing IDs and prices require the same verified block as the candidate workflow.
+      # The RPC snapshot must reach the newest explicit test pin; FORK_BLOCK keeps legacy fixture inputs unchanged.
       - name: mainnet fork anvil
         run: |
-          nohup anvil --fork-url "$UPSTREAM_RPC_URL" --fork-block-number "$FORK_BLOCK" --chain-id 31337 --port 8545 \
+          nohup anvil --fork-url "$UPSTREAM_RPC_URL" --fork-block-number "$RPC_FORK_BLOCK" --chain-id 31337 --port 8545 \
             --auto-impersonate --retries 10 --timeout 60000 > anvil.log 2>&1 &
           for _ in $(seq 1 60); do cast chain-id --rpc-url "$MAINNET_RPC_URL" >/dev/null 2>&1 && break; sleep 1; done
           cast chain-id --rpc-url "$MAINNET_RPC_URL"
