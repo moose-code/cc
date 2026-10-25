@@ -25,6 +25,7 @@ const policy: Policy = {
   bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec,
   // a high cost cap so the executor-mechanics tests exercise the send path; the drift gate lives in decide, not here
   refresh: { ...cfg.refresh, maxCostEth: parseEther("1") },
+  floor: { poster: keeper, tolBps: cfg.floor.tolBps },
 };
 const call: Intended = {
   door: "refreshReference", functionName: "refreshReference", args: [], gas: 60_000n,

@@ -189,6 +189,14 @@ export const controllerV3Abi = parseAbi([
   "function ccReferenceTime() view returns (uint40)",
   "function ccQuote() view returns (uint32 rateBpsPerHour, uint16 stepBps, uint32 maxStale, uint32 minSeconds, uint32 avgSeconds, uint128 minLiquidity)",
   "function refreshCcReference() returns (bool)",
+  // the market floor reference (ControllerV3 7.): the collection's flat bid the keeper posts, the spread the credit
+  // sale asks over it, the poster's step and cadence clamps and the staleness past which a lifted credit is not for sale
+  "function marketFloor() view returns (address poster, uint16 spreadBps, uint16 stepBps, uint32 minSeconds, uint32 maxStale)",
+  "function marketFloorWei() view returns (uint128)",
+  "function marketFloorTime() view returns (uint40)",
+  "function marketFloorAsk() view returns (uint256 ask, bool fresh)",
+  "function postMarketFloor(uint256 floorWei)",
+  "event MarketFloorPosted(uint256 floorWei, address indexed by)",
 ]);
 
 // The phase 2 balance module (src/interfaces/IPhase2BalanceTreasury.sol): the views the web claim panel and the keeper

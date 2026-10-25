@@ -463,3 +463,46 @@ export function basicParams(p) {
     signature: p.signature,
   };
 }
+
+// the collection's best flat bid: the highest active collection offer (no trait criteria) in ETH or WETH, per item,
+// from OpenSea's offers endpoint. `slug` is read from the contract when not given. returns undefined when OpenSea does
+// not answer, so a caller keeps its last observation and never posts a floor it did not see. no listing book is
+// touched; the call is one GET, retried once on 429
+export async function fetchCollectionBid({ key, slug, signal } = {}) {
+  if (!key) return undefined;
+  const headers = { accept: "application/json", "x-api-key": key };
+  const get = async (url) => {
+    for (let attempt = 0; attempt < 2; ++attempt) {
+      const res = await fetch(url, { headers, signal: signal ?? AbortSignal.timeout(10_000) });
+      if (res.status === 429 && attempt === 0) {
+        await res.body?.cancel();
+        await new Promise(r => setTimeout(r, 1500));
+        continue;
+      }
+      if (!res.ok) { await res.body?.cancel(); return undefined; }
+      return res.json();
+    }
+    return undefined;
+  };
+  const s = slug ?? (await get(new URL(`https://api.opensea.io/api/v2/chain/ethereum/contract/${CREDITS}`)))?.collection;
+  if (!s) return undefined;
+  const url = new URL(`https://api.opensea.io/api/v2/offers/collection/${s}`);
+  const body = await get(url);
+  const offers = Array.isArray(body?.offers) ? body.offers : undefined;
+  if (!offers) return undefined;
+  let best;
+  for (const o of offers) {
+    if (o?.criteria?.trait) continue;
+    const currency = String(o?.price?.currency ?? "").toUpperCase();
+    if (currency !== "ETH" && currency !== "WETH") continue;
+    if (Number(o?.price?.decimals ?? 18) !== 18) continue;
+    const value = o?.price?.value;
+    if (typeof value !== "string" || !/^\d+$/.test(value)) continue;
+    const qtyRaw = o?.protocol_data?.parameters?.consideration?.[0]?.startAmount;
+    const qty = typeof qtyRaw === "string" && /^\d+$/.test(qtyRaw) && BigInt(qtyRaw) > 0n ? BigInt(qtyRaw) : 1n;
+    const perItem = BigInt(value) / qty;
+    if (perItem === 0n) continue;
+    if (!best || perItem > best.bidWei) best = { bidWei: perItem, hash: typeof o.order_hash === "string" ? o.order_hash : undefined, slug: s };
+  }
+  return best;
+}

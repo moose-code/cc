@@ -26,6 +26,8 @@ export const GAS_GUESS: { [d in Door]: bigint } = {
   // mirrors refreshReference. both are measured by the simulation; these only decide whether the pre-sim cost cap passes
   syncFill: 120_000n,
   refreshCcReference: 80_000n,
+  // postMarketFloor writes two slots and emits one event
+  postMarketFloor: 60_000n,
   // a Splits v2 push distribute to two recipients: the hash check, the incentive and two transfers (ETH or ERC20),
   // each with a warehouse deposit fallback. a guess until the simulation measures it
   distributeSplit: 150_000n,
@@ -115,6 +117,16 @@ export interface State {
   ccMinSeconds: bigint;
   ccRateBpsPerHour: bigint;
   ccStepBps: bigint;
+  // the market floor reference of ControllerV3 (7.): the poster the owner named and its clamps, read from the
+  // controller, and the last posted floor. marketBidWei is the collection's best flat bid the keeper observed on
+  // OpenSea (per item, ETH or WETH), undefined when it has no fresh observation; the door never posts without one
+  floorPoster: Address;
+  floorStepBps: bigint;
+  floorMinSeconds: bigint;
+  floorMaxStale: bigint;
+  floorPostedWei: bigint;
+  floorPostedTime: bigint;
+  marketBidWei?: bigint;
   // Core.balanceToken() at the block: the token of the split's BALANCE leg, zero while no module is bound
   balanceToken: Address;
   // the split's ETH and balance token holdings at the block, read only while the distributeSplit door is configured;
@@ -143,7 +155,7 @@ export interface Gas {
 
 export interface Intended {
   door: Door;
-  functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "syncFill" | "refreshCcReference" | "distribute";
+  functionName: "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "syncFill" | "refreshCcReference" | "postMarketFloor" | "distribute";
   // the contract the call goes to: the Core by default (every Core door, including the refreshReference door that
   // forwards to the controller); "split" is the artist and operator split of the distributeSplit door
   target?: "controller" | "split";
@@ -174,6 +186,10 @@ export interface Policy {
   // the refreshReference door: driftBps is the spot-to-reference gap (bps) that counts as drift, persistSec how long
   // that drift must persist before a refresh, maxCostEth the ceiling on the keeper's own gas for the unpaid call
   refresh: { driftBps: number; persistSec: number; maxCostEth: bigint };
+  // the postMarketFloor door: poster is the keeper's own address (the controller refuses any other), tolBps the
+  // bid move under which a fresh post is not worth its gas; a post goes anyway once the last one is past half its
+  // staleness so the lifted credits never fall out of sale on a quiet market
+  floor: { poster: Address; tolBps: number };
   // the distributeSplit door's split and the distributor the call names (the keeper address); undefined leaves the door off
   split?: SplitPolicy;
 }
@@ -345,6 +361,38 @@ export function refreshCcReferenceNeeded(s: State): { ok: boolean; reason: strin
   const move = (s.ccRateBpsPerHour * elapsed) / 3_600n;
   if (move === 0n || s.ccStepBps === 0n) return { ok: false, reason: "CC reference move rounds to zero" };
   return { ok: true, reason: `CC reference ${elapsed} s old, past ccMaxStale ${s.ccMaxStale} s` };
+}
+
+// whether the keeper should post the collection bid to ControllerV3's postMarketFloor now. gates in order: V3 only,
+// the term switched on (maxStale nonzero), the keeper named as the poster (anyone else reverts OnlyPoster), a bid
+// observed on OpenSea this tick, minSeconds since the last post (the contract reverts TooSoon), and then either the
+// clamped target differs from the posted floor by more than tolBps or the post is past half of maxStale (a refresh of
+// the same number, so the lifted credits stay for sale). the target is clamped here the way the contract clamps it,
+// so the posted number is known before the send and a bid that jumped far takes several posts to reach, one step
+// each. the cost cap and the ceiling are applied by the caller, the same as the other unpaid doors
+export function postMarketFloorNeeded(
+  s: Pick<State, "isV3" | "timestamp" | "floorPoster" | "floorStepBps" | "floorMinSeconds" | "floorMaxStale" | "floorPostedWei" | "floorPostedTime" | "marketBidWei">,
+  f: Policy["floor"],
+): { ok: boolean; reason: string; target?: bigint } {
+  if (!s.isV3) return { ok: false, reason: "not ControllerV3: idleSince() did not answer" };
+  if (s.floorMaxStale === 0n) return { ok: false, reason: "market floor off: maxStale is 0" };
+  if (s.floorPoster.toLowerCase() !== f.poster.toLowerCase()) return { ok: false, reason: `the poster is ${s.floorPoster}, not the keeper` };
+  if (s.marketBidWei === undefined || s.marketBidWei === 0n) return { ok: false, reason: "no collection bid observed on OpenSea" };
+  const elapsed = s.timestamp - s.floorPostedTime;
+  if (elapsed < s.floorMinSeconds) return { ok: false, reason: `floor posted at ${s.floorPostedTime}, next post at ${s.floorPostedTime + s.floorMinSeconds}` };
+  let target = s.marketBidWei;
+  const last = s.floorPostedWei;
+  if (last !== 0n) {
+    const lo = (last * (10_000n - s.floorStepBps)) / 10_000n;
+    const hi = (last * (10_000n + s.floorStepBps)) / 10_000n;
+    if (target < lo) target = lo;
+    if (target > hi) target = hi;
+  }
+  const diff = target > last ? target - last : last - target;
+  const moved = last === 0n || diff * 10_000n > last * BigInt(f.tolBps);
+  const aging = elapsed * 2n >= s.floorMaxStale;
+  if (!moved && !aging) return { ok: false, reason: `bid ${s.marketBidWei} within FLOOR_TOL_BPS ${f.tolBps} of the posted floor ${last}, posted ${elapsed} s ago` };
+  return { ok: true, reason: moved ? `bid ${s.marketBidWei}: floor ${last} to ${target}` : `floor ${last} posted ${elapsed} s ago, refreshed before maxStale ${s.floorMaxStale} s`, target };
 }
 
 // the legs of the artist and operator split that are due: ETH when the split holds at least minEth, the balance token
@@ -543,6 +591,24 @@ export function decide(
         skips.push({ door: "syncFill", reason: `gas over cap: own cost ${cost} over REFRESH_MAX_COST_ETH ${p.refresh.maxCostEth}` });
       } else {
         calls.push({ door: "syncFill", functionName: "syncFill", target: "controller", args: [], gas: GAS_GUESS.syncFill, payment: 0n, cost, key: "syncFill", note: { controller: s.controller } });
+      }
+    }
+  }
+
+  // 7d. postMarketFloor: a direct, unpaid call to ControllerV3's postMarketFloor(bid), under the same door policy and
+  // cost cap. it keeps the market floor reference (the collection's flat bid) fresh and stepping toward OpenSea, so
+  // the credit sale never asks under the collection bid and never stops selling lifted credits for staleness.
+  // inert on ControllerV2 and V1, while the term is off, and while the keeper is not the named poster
+  if (on("postMarketFloor")) {
+    const need = postMarketFloorNeeded(s, p.floor);
+    if (!need.ok) skips.push({ door: "postMarketFloor", reason: need.reason });
+    else if (ceiling("postMarketFloor")) {
+      const pol = p.doors.postMarketFloor;
+      const cost = ownCost(GAS_GUESS.postMarketFloor, gas, pol);
+      if (cost > p.refresh.maxCostEth) {
+        skips.push({ door: "postMarketFloor", reason: `gas over cap: own cost ${cost} over REFRESH_MAX_COST_ETH ${p.refresh.maxCostEth}` });
+      } else {
+        calls.push({ door: "postMarketFloor", functionName: "postMarketFloor", target: "controller", args: [s.marketBidWei!], gas: GAS_GUESS.postMarketFloor, payment: 0n, cost, key: "postMarketFloor", note: { controller: s.controller, bid: s.marketBidWei, posted: s.floorPostedWei, target: need.target, why: need.reason } });
       }
     }
   }

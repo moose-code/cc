@@ -27,7 +27,7 @@ const fail: Result = { status: "failure", error: new Error("function selector no
 
 test("readControllerV3: a non-V3 controller reads as inert, pinned to the block", async () => {
   // idleSince() reverts on V2/V1, so every read fails
-  const { c, calls } = client({ idleSince: fail, ccPoolKeySet: fail, ccReferencePrice: fail, ccReferenceTime: fail, ccQuote: fail });
+  const { c, calls } = client({ idleSince: fail, ccPoolKeySet: fail, ccReferencePrice: fail, ccReferenceTime: fail, ccQuote: fail, marketFloor: fail, marketFloorWei: fail, marketFloorTime: fail });
   const v3 = await readControllerV3(c, controller, 42n);
   assert.deepEqual(v3, {
     isV3: false,
@@ -39,6 +39,12 @@ test("readControllerV3: a non-V3 controller reads as inert, pinned to the block"
     ccMinSeconds: 0n,
     ccRateBpsPerHour: 0n,
     ccStepBps: 0n,
+    floorPoster: "0x0000000000000000000000000000000000000000",
+    floorStepBps: 0n,
+    floorMinSeconds: 0n,
+    floorMaxStale: 0n,
+    floorPostedWei: 0n,
+    floorPostedTime: 0n,
   });
   assert.ok(calls.every((x) => x.address === controller && x.blockNumber === 42n), "every read hits the controller at the pinned block");
   assert.ok(calls.some((x) => x.functionName === "idleSince"), "the V3 probe is idleSince");
@@ -52,6 +58,10 @@ test("readControllerV3: a V3 controller maps idle known and the CC reference and
     ccReferenceTime: { status: "success", result: 1_700_000_500 },
     // ccQuote(): rateBpsPerHour, stepBps, maxStale, minSeconds, avgSeconds, minLiquidity
     ccQuote: { status: "success", result: [1_200, 200, 600, 300, 1_800, 5_000_000_000_000_000_000n] },
+    // marketFloor(): poster, spreadBps, stepBps, minSeconds, maxStale
+    marketFloor: { status: "success", result: ["0x6b9411DD51DF1E41015cD8293C1BBC3E881a4aee", 300, 1_000, 600, 21_600] },
+    marketFloorWei: { status: "success", result: 8_700_000_000_000_000n },
+    marketFloorTime: { status: "success", result: 1_700_000_400 },
   });
   const v3 = await readControllerV3(c, controller, 7n);
   assert.deepEqual(v3, {
@@ -64,6 +74,12 @@ test("readControllerV3: a V3 controller maps idle known and the CC reference and
     ccMinSeconds: 300n,
     ccRateBpsPerHour: 1_200n,
     ccStepBps: 200n,
+    floorPoster: "0x6b9411DD51DF1E41015cD8293C1BBC3E881a4aee",
+    floorStepBps: 1_000n,
+    floorMinSeconds: 600n,
+    floorMaxStale: 21_600n,
+    floorPostedWei: 8_700_000_000_000_000n,
+    floorPostedTime: 1_700_000_400n,
   });
 });
 

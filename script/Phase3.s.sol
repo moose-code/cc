@@ -56,6 +56,10 @@ contract Phase3 is Script, LaunchChecks {
         uint128 marketLifetime;
         uint16 marketShareBps;
         CcQuote ccQuote;
+        /// the market floor settings (ControllerV3 7.): the keeper posts the collection's top bid
+        IControllerV3.MarketFloor floor;
+        /// the first posted floor, wei per Credit, set by the owner in `migrate` so the term is live from the switch
+        uint256 floorWei;
     }
 
     struct Deployed {
@@ -97,6 +101,17 @@ contract Phase3 is Script, LaunchChecks {
             avgSeconds: 3_600,
             minLiquidity: 1.5e22
         });
+        // the keeper's signer posts; a post moves at most 10 percent and at most every 10 minutes; a post older than
+        // 6 hours blocks the sales it binds on. the spread over the top bid is 300 bps (PRICING-REVIEW section 7)
+        p.floor = IControllerV3.MarketFloor({
+            poster: 0x6b9411DD51DF1E41015cD8293C1BBC3E881a4aee,
+            spreadBps: 300,
+            stepBps: 1_000,
+            minSeconds: 600,
+            maxStale: 6 hours
+        });
+        // the collection's top bid on 2026-10-25, 0.0087 ETH; the owner's first post, the keeper moves it from there
+        p.floorWei = 0.0087 ether;
     }
 
     function run() external {
@@ -191,6 +206,8 @@ contract Phase3 is Script, LaunchChecks {
         v3.setCcPoolKey(ccKey, ccSpot);
         v3.setCcQuote(p.ccQuote);
         v3.setStatementSales(true);
+        v3.setMarketFloor(p.floor);
+        v3.postMarketFloor(p.floorWei);
         c.setController(d.controller);
         _stop(broadcast);
         readback(core, d, p);
@@ -287,10 +304,20 @@ contract Phase3 is Script, LaunchChecks {
         _check("V3 legacy views", v3.markupBps() == p.statementSaleMultiplierBps && v3.decayHours() == 1 && v3.ageEligibilityOn(), "");
         (bool ready,,) = v3.nextPage();
         _info("V3 nextPage", ready ? "ready" : "not ready");
+        _readbackFloor(v3, p);
         _info("v2 bid now (bps of par)", vm.toString(t.bidBpsNow()));
         _readbackRedeemers(t, IControllerV3(d.controller), d, p);
         _print("phase 3 readback");
         _require();
+    }
+
+    /// @dev the market floor reference: set to the params and posted fresh
+    function _readbackFloor(IControllerV3 v3, Params memory p) private {
+        (address poster, uint16 fSpread, uint16 fStep, uint32 fMin, uint32 fStale) = v3.marketFloor();
+        (uint256 floorAsk, bool floorFresh) = v3.marketFloorAsk();
+        bool setOk = poster == p.floor.poster && fSpread == p.floor.spreadBps && fStep == p.floor.stepBps && fMin == p.floor.minSeconds && fStale == p.floor.maxStale;
+        _check("V3 market floor set", setOk, "");
+        _check("V3 market floor posted and fresh", floorFresh && floorAsk == p.floorWei * (10_000 + p.floor.spreadBps) / 10_000, vm.toString(floorAsk));
     }
 
     /// @dev the bid band, the sweep shares, redeemer 2 and the CC reference

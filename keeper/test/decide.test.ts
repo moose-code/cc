@@ -28,6 +28,7 @@ import { candidatesOrEmpty } from "../src/main.ts";
 
 const CORE = "0x00000000000000000000000000000000000000c0" as Address;
 const SEAPORT_ADAPTER = "0x00000000000000000000000000000000000000a1" as Address;
+const KEEPER = "0x00000000000000000000000000000000000000ee" as Address;
 
 // launch values of script/config/mainnet.json (decisions 119 and 138)
 function state(over: Partial<State> = {}): State {
@@ -87,6 +88,12 @@ function state(over: Partial<State> = {}): State {
     ccMinSeconds: 0n,
     ccRateBpsPerHour: 0n,
     ccStepBps: 0n,
+    floorPoster: zeroAddress,
+    floorStepBps: 0n,
+    floorMinSeconds: 0n,
+    floorMaxStale: 0n,
+    floorPostedWei: 0n,
+    floorPostedTime: 0n,
     balanceToken: zeroAddress,
     ...over,
   };
@@ -95,7 +102,7 @@ function state(over: Partial<State> = {}): State {
 function policy(over: Partial<{ [d in Door]: { maxBaseFee: bigint; tip: bigint } }> = {}, delay = 120): Policy {
   const doors = {} as Policy["doors"];
   for (const d of DOORS) doors[d] = { maxBaseFee: d === "buyListing" || d === "buyback" ? parseGwei("5") : parseGwei("3"), tip: parseGwei(d === "compose" ? "0.02" : "0.05") };
-  return { doors: { ...doors, ...over }, doorsOn: new Set(DOORS), margin: parseEther("0.00005"), listingDelaySec: delay, bookMinWei: parseEther("0.01"), bookMinSec: 600, refresh: { driftBps: 300, persistSec: 600, maxCostEth: parseEther("0.00005") } };
+  return { doors: { ...doors, ...over }, doorsOn: new Set(DOORS), margin: parseEther("0.00005"), listingDelaySec: delay, bookMinWei: parseEther("0.01"), bookMinSec: 600, refresh: { driftBps: 300, persistSec: 600, maxCostEth: parseEther("0.00005") }, floor: { poster: KEEPER, tolBps: 200 } };
 }
 
 const gas = (g: string) => ({ baseFee: parseGwei(g) });
@@ -592,4 +599,62 @@ test("listing: the bid comes from a bidOf derivation (ethRate scaled by score), 
   assert.deepEqual(under.calls[0].args, [SEAPORT_ADAPTER, 7n, "0x1234"]);
   const over = decide(state(), [listing({ bid: bidOf, price: bidOf + 1n })], gas("1"), p, new Map());
   assert.deepEqual(doorsOf(over), []);
+});
+
+// ------------------------------------------------------------------ ControllerV3: postMarketFloor
+// the market floor reference: the keeper posts the collection's flat bid it saw on OpenSea, clamped the way the
+// controller clamps it, once minSeconds have passed, when the bid moved past FLOOR_TOL_BPS or the post is past half
+// its staleness. floorPostedTime 1 and timestamp 10_000 put the last post well past a 600 s cadence
+const v3Floor = {
+  isV3: true,
+  floorPoster: KEEPER,
+  floorStepBps: 1_000n,
+  floorMinSeconds: 600n,
+  floorMaxStale: 21_600n,
+  floorPostedWei: parseEther("0.0087"),
+  floorPostedTime: 1n,
+  marketBidWei: parseEther("0.0095"),
+};
+
+// promise: a moved bid on V3 makes one unpaid controller call to postMarketFloor with the observed bid, and the note
+// carries the clamped target the controller will store
+test("postMarketFloor: a moved collection bid makes one unpaid controller call", () => {
+  const p = policy();
+  const r = decide(state({ ...v3Floor, timestamp: 10_000n }), [], gas("0.3"), p, new Map());
+  assert.deepEqual(doorsOf(r), ["postMarketFloor"]);
+  const c = r.calls[0];
+  assert.equal(c.target, "controller", "the call goes to the controller");
+  assert.equal(c.functionName, "postMarketFloor");
+  assert.deepEqual(c.args, [parseEther("0.0095")], "the observed bid is the argument");
+  assert.equal(c.payment, 0n, "postMarketFloor is unpaid");
+  assert.equal(c.note?.target, parseEther("0.0095"), "a bid inside one step is the target itself");
+  const far = decide(state({ ...v3Floor, marketBidWei: parseEther("0.02"), timestamp: 10_000n }), [], gas("0.3"), p, new Map());
+  assert.equal(far.calls[0]?.note?.target, parseEther("0.0087") * 11_000n / 10_000n, "a bid past one step is clamped to one step up");
+});
+
+// promise: the door waits off V3, while the term is off, when the keeper is not the poster, without an observed bid,
+// inside minSeconds, and while the bid sits within the tolerance of a recent post; a tolerated bid still posts once
+// the last post is past half of maxStale
+test("postMarketFloor: the gates", () => {
+  const p = policy();
+  const at = (over: Partial<State>) => reason(decide(state({ ...v3Floor, timestamp: 10_000n, ...over }), [], gas("0.5"), p, new Map()), "postMarketFloor");
+  assert.match(at({ isV3: false }), /not ControllerV3/);
+  assert.match(at({ floorMaxStale: 0n }), /market floor off/);
+  assert.match(at({ floorPoster: CORE }), /not the keeper/);
+  assert.match(at({ marketBidWei: undefined }), /no collection bid observed/);
+  assert.match(at({ floorPostedTime: 9_900n }), /next post at 10500/);
+  assert.match(at({ marketBidWei: parseEther("0.0088"), floorPostedTime: 9_000n }), /within FLOOR_TOL_BPS 200/);
+  const r = decide(state({ ...v3Floor, marketBidWei: parseEther("0.0088"), floorPostedTime: 10_000n - 11_000n, timestamp: 10_000n }), [], gas("0.3"), p, new Map());
+  assert.deepEqual(doorsOf(r), ["postMarketFloor"], "a post past half of maxStale refreshes the same number");
+  assert.match(String(r.calls[0].note?.why), /refreshed before maxStale/);
+});
+
+// promise: a first post (nothing posted yet) is never clamped and always goes, and a bid far below the posted floor
+// steps down one step at a time
+test("postMarketFloor: the first post goes unclamped and a drop steps down", () => {
+  const p = policy();
+  const first = decide(state({ ...v3Floor, floorPostedWei: 0n, floorPostedTime: 0n, timestamp: 10_000n }), [], gas("0.3"), p, new Map());
+  assert.equal(first.calls[0]?.note?.target, parseEther("0.0095"), "the first post is the bid itself");
+  const drop = decide(state({ ...v3Floor, marketBidWei: parseEther("0.004"), timestamp: 10_000n }), [], gas("0.3"), p, new Map());
+  assert.equal(drop.calls[0]?.note?.target, parseEther("0.0087") * 9_000n / 10_000n, "a drop is clamped to one step down");
 });

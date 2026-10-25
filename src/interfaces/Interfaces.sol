@@ -129,6 +129,20 @@ struct CcQuote {
     uint128 minLiquidity;
 }
 
+/// ControllerV3's market floor settings (docs/reviews/PRICING-REVIEW-2026-10-23.md section 7). the market pays a flat
+/// collection offer for any Credit whatever its points, so a per point ask under that offer gives the Credit away. the
+/// controller keeps a posted market floor, wei per Credit, and a pile credit asks at least `floor * (10_000 +
+/// spreadBps) / 10_000`. `poster` may post beside the owner; a post moves the floor at most `stepBps` from the last
+/// value and at most once per `minSeconds`. a floor older than `maxStale` seconds blocks the sale of every credit the
+/// floor term binds on (its per point ask is under the floor) until a fresh post; `maxStale` 0 turns the term off
+struct MarketFloor {
+    address poster;
+    uint16 spreadBps;
+    uint16 stepBps;
+    uint32 minSeconds;
+    uint32 maxStale;
+}
+
 /// a redemption design of treasury v2, registered by the owner. the treasury calls `quote` once per redemption, before
 /// it burns `ccIn` of `burner`'s CC, with the redeemer's own `bucket` and the CC supply before the burn. it answers the
 /// payout and its mode: 0 immediate, 1 linear vesting over `duration` seconds, 2 claimable after `duration` seconds. the

@@ -117,6 +117,13 @@ export interface ControllerV3State {
   ccMinSeconds: bigint;
   ccRateBpsPerHour: bigint;
   ccStepBps: bigint;
+  // the market floor reference (ControllerV3 7.): the poster the owner named, its clamps, and the last post
+  floorPoster: Address;
+  floorStepBps: bigint;
+  floorMinSeconds: bigint;
+  floorMaxStale: bigint;
+  floorPostedWei: bigint;
+  floorPostedTime: bigint;
 }
 
 export async function readControllerV3(
@@ -125,7 +132,7 @@ export async function readControllerV3(
   blockNumber?: bigint,
 ): Promise<ControllerV3State> {
   const k = { address: controller, abi: controllerV3Abi } as const;
-  const [idle, poolKeySet, refPrice, refTime, quote] = await client.multicall({
+  const [idle, poolKeySet, refPrice, refTime, quote, floor, floorWei, floorTime] = await client.multicall({
     ...mc,
     blockNumber,
     allowFailure: true,
@@ -135,6 +142,9 @@ export async function readControllerV3(
       { ...k, functionName: "ccReferencePrice" },
       { ...k, functionName: "ccReferenceTime" },
       { ...k, functionName: "ccQuote" },
+      { ...k, functionName: "marketFloor" },
+      { ...k, functionName: "marketFloorWei" },
+      { ...k, functionName: "marketFloorTime" },
     ] as const,
   });
   // idleSince() answering is the V3 probe. known defaults false, but isV3 gates the door, so the loosening is never
@@ -143,6 +153,7 @@ export async function readControllerV3(
   const known = idle.status === "success" ? (idle.result as readonly [bigint, boolean])[1] : false;
   // ccQuote(): rateBpsPerHour, stepBps, maxStale, minSeconds, avgSeconds, minLiquidity (src/interfaces/Interfaces.sol)
   const q = quote.status === "success" ? (quote.result as readonly [number, number, number, number, number, bigint]) : undefined;
+  const f = floor.status === "success" ? (floor.result as readonly [Address, number, number, number, number]) : undefined;
   return {
     isV3,
     idleKnown: known,
@@ -153,6 +164,13 @@ export async function readControllerV3(
     ccMinSeconds: q ? BigInt(q[3]) : 0n,
     ccRateBpsPerHour: q ? BigInt(q[0]) : 0n,
     ccStepBps: q ? BigInt(q[1]) : 0n,
+    // marketFloor(): poster, spreadBps, stepBps, minSeconds, maxStale
+    floorPoster: f ? f[0] : zeroAddress,
+    floorStepBps: f ? BigInt(f[2]) : 0n,
+    floorMinSeconds: f ? BigInt(f[3]) : 0n,
+    floorMaxStale: f ? BigInt(f[4]) : 0n,
+    floorPostedWei: floorWei.status === "success" ? BigInt(floorWei.result as bigint) : 0n,
+    floorPostedTime: floorTime.status === "success" ? BigInt(floorTime.result as bigint | number) : 0n,
   };
 }
 
@@ -255,6 +273,12 @@ export async function readState(client: PublicClient, core: Address, fixed: Fixe
     ccMinSeconds: v3.ccMinSeconds,
     ccRateBpsPerHour: v3.ccRateBpsPerHour,
     ccStepBps: v3.ccStepBps,
+    floorPoster: v3.floorPoster,
+    floorStepBps: v3.floorStepBps,
+    floorMinSeconds: v3.floorMinSeconds,
+    floorMaxStale: v3.floorMaxStale,
+    floorPostedWei: v3.floorPostedWei,
+    floorPostedTime: v3.floorPostedTime,
     balanceToken: snap.balanceToken,
     splitEth: splitBalances?.eth,
     splitBalance: splitBalances?.balance,

@@ -326,6 +326,107 @@ contract Phase3Test is LiveFixture {
         assertGt(v3.valueOf(10_000), 0, "valueOf");
     }
 
+    // ------------------------------------------------------------------ market floor reference
+
+    function test_marketFloorLiftsSmallCreditsToTheCollectionBidPlusSpread() public {
+        // promise: a pile credit whose points price under the posted collection bid asks the bid plus the spread instead, a credit above it is unchanged, and the migrate run posts the floor fresh
+        _migrate();
+        Phase3.Params memory p = script.params();
+        (address poster, uint16 spread,,, uint32 maxStale) = v3.marketFloor();
+        assertEq(poster, p.floor.poster, "the poster of the params");
+        assertEq(spread, p.floor.spreadBps, "the spread of the params");
+        assertEq(maxStale, p.floor.maxStale, "the staleness of the params");
+        (uint256 ask0, bool fresh0) = v3.marketFloorAsk();
+        assertTrue(fresh0, "posted fresh by the migrate run");
+        assertEq(ask0, p.floorWei * (10_000 + p.floor.spreadBps) / 10_000, "ask = posted floor plus the spread");
+
+        uint256 id = _ethFill(1)[0];
+        vm.warp(block.timestamp + v3.creditWindow() + 1);
+        uint256 byPoints = _pointsPrice(id);
+        vm.prank(owner);
+        v3.postMarketFloor(1);
+        assertEq(v3.creditPrice(id), byPoints, "a floor under the points price changes nothing");
+        vm.prank(owner);
+        v3.postMarketFloor(byPoints * 2);
+        (uint256 ask,) = v3.marketFloorAsk();
+        assertEq(v3.creditPrice(id), ask, "a floor above the points price binds at the bid plus the spread");
+        assertGt(ask, byPoints, "the lifted ask is above the points price");
+
+        uint256 before = core.ethPot() + core.ethToBuyback();
+        vm.deal(user, ask);
+        vm.prank(user);
+        v3.buyCredit{value: ask}(id);
+        assertEq(CREDITS.ownerOf(id), user, "the buyer holds the credit");
+        assertGt(core.ethPot() + core.ethToBuyback() - before, byPoints, "the engine took more than the points price");
+    }
+
+    function test_marketFloorPosterIsClampedAndPacedAndTheOwnerIsNot() public {
+        // promise: the poster moves the floor at most stepBps per post and at most once per minSeconds, anyone else is refused, and the owner posts any floor at any time
+        _migrate();
+        Phase3.Params memory p = script.params();
+        uint256 last = v3.marketFloorWei();
+        vm.expectRevert(IControllerV3.OnlyPoster.selector);
+        vm.prank(user);
+        v3.postMarketFloor(last);
+        vm.expectRevert(IControllerV3.TooSoon.selector);
+        vm.prank(p.floor.poster);
+        v3.postMarketFloor(last);
+        vm.warp(block.timestamp + p.floor.minSeconds);
+        vm.prank(p.floor.poster);
+        v3.postMarketFloor(last * 3);
+        assertEq(v3.marketFloorWei(), last * (10_000 + p.floor.stepBps) / 10_000, "a jump up is clamped to one step");
+        last = v3.marketFloorWei();
+        vm.warp(block.timestamp + p.floor.minSeconds);
+        vm.prank(p.floor.poster);
+        v3.postMarketFloor(1);
+        assertEq(v3.marketFloorWei(), last * (10_000 - p.floor.stepBps) / 10_000, "a drop is clamped to one step");
+        vm.prank(owner);
+        v3.postMarketFloor(last * 3);
+        assertEq(v3.marketFloorWei(), last * 3, "the owner is neither clamped nor paced");
+        vm.expectRevert(abi.encodeWithSelector(IControllerV3.BadSetting.selector, bytes32("floorStepBps")));
+        vm.prank(owner);
+        v3.setMarketFloor(IControllerV3.MarketFloor({poster: p.floor.poster, spreadBps: 300, stepBps: 0, minSeconds: 600, maxStale: 6 hours}));
+    }
+
+    function test_marketFloorStaleOnlyRefusesTheCreditsItBinds() public {
+        // promise: past maxStale a credit the floor lifts is not for sale (StaleFloor) while a credit priced above the floor by points still sells; maxStale 0 switches the term off
+        _migrate();
+        Phase3.Params memory p = script.params();
+        uint256 id = _ethFill(1)[0];
+        vm.warp(block.timestamp + v3.creditWindow() + 1);
+        uint256 byPoints = _pointsPrice(id);
+        vm.prank(owner);
+        v3.postMarketFloor(byPoints * 2);
+        vm.warp(block.timestamp + p.floor.maxStale + 1);
+        (, bool fresh) = v3.marketFloorAsk();
+        assertFalse(fresh, "stale past maxStale");
+        vm.expectRevert(IControllerV3.StaleFloor.selector);
+        v3.creditPrice(id);
+        vm.deal(user, byPoints * 3);
+        vm.expectRevert(IControllerV3.StaleFloor.selector);
+        vm.prank(user);
+        v3.buyCredit{value: byPoints * 3}(id);
+        vm.prank(owner);
+        v3.postMarketFloor(1);
+        vm.warp(block.timestamp + p.floor.maxStale + 1);
+        assertEq(v3.creditPrice(id), byPoints, "a stale floor that does not bind is ignored");
+        vm.prank(owner);
+        v3.postMarketFloor(byPoints * 2);
+        vm.prank(owner);
+        v3.setMarketFloor(IControllerV3.MarketFloor({poster: p.floor.poster, spreadBps: 300, stepBps: 1_000, minSeconds: 600, maxStale: 0}));
+        assertEq(v3.creditPrice(id), byPoints, "maxStale 0 switches the term off");
+        (uint256 ask, bool fresh2) = v3.marketFloorAsk();
+        assertTrue(ask == 0 && fresh2, "off: no ask, never stale");
+    }
+
+    /// the credit sale floor of `id` by points alone: valueOf(score) times floorMultBps, at least saleFloorBps of cost
+    function _pointsPrice(uint256 id) internal view returns (uint256 floor) {
+        (, uint256 cost,) = core.creditInfo(id);
+        floor = v3.valueOf(_scoreOf(id)) * v3.floorMultBps() / 10_000;
+        uint256 coreFloor = cost * core.settings().saleFloorBps / 10_000;
+        if (floor < coreFloor) floor = coreFloor;
+    }
+
     // ------------------------------------------------------------------ redeemer 2 (MarketRedeemer)
 
     function test_marketRedeemerPaysTheProtectedRatePlusPremium() public {

@@ -7,6 +7,7 @@ import {
     Quote,
     IdleLoosening,
     CcQuote,
+    MarketFloor,
     Settings,
     IController,
     ICoreViews,
@@ -59,6 +60,11 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 ///    `ccQuote.avgSeconds`, moved at most `rateBpsPerHour` and `stepBps`, unusable when stale or thin, and the pool spot
 ///    sampled at the two latest refreshes, so `ccPriorSample` is always a prior block's spot (redeemer 2 reads both, and
 ///    `balancePriorSample`, the same view of the balance token pool's samples)
+/// 7. a market floor on credit asks: the market pays a flat collection bid for any Credit whatever its points (about
+///    0.0087 ETH on 2026-10-23 against 0.0022 ETH of points for a 100 point Credit), so a per point ask under that bid
+///    gives the Credit to a bot that fills the bid within the hour. a posted floor (the owner, or a poster the owner
+///    names, under a step and a cadence) times a spread is the least any pile credit asks; a credit the term binds on
+///    does not sell while the post is older than `maxStale`. the term never lowers an ask
 interface ICoinOf {
     function COIN() external view returns (address);
 }
@@ -85,6 +91,12 @@ contract ControllerV3 is IController {
     error StatementSalesOff();
     /// a value mode price was read while the quote is unusable
     error NoQuote();
+    /// `postMarketFloor` by an address that is neither the owner nor the poster
+    error OnlyPoster();
+    /// `postMarketFloor` before `minSeconds` have passed since the last post
+    error TooSoon();
+    /// a credit sale the market floor term binds on while the posted floor is older than `maxStale`
+    error StaleFloor();
 
     event CreditSaleSet(CreditSale credit);
     event StatementSalesSet(bool enabled);
@@ -103,6 +115,9 @@ contract ControllerV3 is IController {
     event CcQuoteSet(CcQuote quote);
     /// a refresh of the CC reference, wei per 1e18 CC base units
     event CcReferenceRefreshed(uint256 referencePrice, uint256 spot);
+    event MarketFloorSet(MarketFloor floor);
+    /// the market floor was posted: wei per Credit, by `by` (the owner or the poster)
+    event MarketFloorPosted(uint256 floorWei, address indexed by);
 
     ICoreViews public immutable CORE;
 
@@ -165,6 +180,12 @@ contract ControllerV3 is IController {
     /// the CC pool spot sampled at the two most recent refreshes (or the seed), newest in `ccSpotSampleA`
     uint256 private ccSpotSampleA;
     uint256 private ccSpotSampleB;
+
+    /// the market floor settings (7.)
+    MarketFloor public marketFloor;
+    /// the posted market floor, wei per Credit, 0 until the first post, and the time of that post
+    uint128 public marketFloorWei;
+    uint40 public marketFloorTime;
 
     constructor(
         address core,
@@ -538,6 +559,53 @@ contract ControllerV3 is IController {
         creditStartBps = v.startBps;
     }
 
+    // ------------------------------------------------------------------ market floor (7.)
+
+    /// sets the market floor settings at once. `spreadBps` 0 to 10_000, `stepBps` 1 to 10_000, `minSeconds` at least
+    /// 1. `maxStale` 0 turns the floor term off without clearing the posted floor
+    function setMarketFloor(MarketFloor calldata v) external onlyOwner {
+        if (v.spreadBps > BPS) revert BadSetting("floorSpreadBps");
+        if (v.stepBps == 0 || v.stepBps > BPS) revert BadSetting("floorStepBps");
+        if (v.minSeconds == 0) revert BadSetting("floorMinSeconds");
+        marketFloor = v;
+        emit MarketFloorSet(v);
+    }
+
+    /// posts the market floor, wei per Credit: the collection's top bid, as the poster observes it. the owner may post
+    /// any value at any time; the poster at most once per `minSeconds`, and at most `stepBps` above or below the last
+    /// posted value (the first post is unbounded). a zero post clears the floor
+    function postMarketFloor(uint256 floorWei) external {
+        if (floorWei > type(uint128).max) revert BadSetting("floorWei");
+        MarketFloor memory f = marketFloor;
+        bool isOwner = msg.sender == ICoreSale(address(CORE)).owner();
+        if (!isOwner) {
+            if (msg.sender != f.poster || f.poster == address(0)) revert OnlyPoster();
+            if (block.timestamp < uint256(marketFloorTime) + f.minSeconds) revert TooSoon();
+            uint256 last = marketFloorWei;
+            if (last != 0) {
+                uint256 lo = last * (BPS - f.stepBps) / BPS;
+                uint256 hi = last * (BPS + f.stepBps) / BPS;
+                if (floorWei < lo) floorWei = lo;
+                if (floorWei > hi) floorWei = hi;
+            }
+        }
+        // forge-lint: disable-next-line(unsafe-typecast)
+        marketFloorWei = uint128(floorWei);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        marketFloorTime = uint40(block.timestamp);
+        emit MarketFloorPosted(floorWei, msg.sender);
+    }
+
+    /// the market floor term of a credit ask now, wei: the posted floor times `10_000 + spreadBps`, or 0 while the term
+    /// is off (`maxStale` 0) or nothing is posted. `fresh` is false when the post is older than `maxStale`
+    function marketFloorAsk() public view returns (uint256 ask, bool fresh) {
+        MarketFloor memory f = marketFloor;
+        uint256 posted = marketFloorWei;
+        if (f.maxStale == 0 || posted == 0) return (0, true);
+        ask = posted * (BPS + f.spreadBps) / BPS;
+        fresh = block.timestamp <= uint256(marketFloorTime) + f.maxStale;
+    }
+
     // ------------------------------------------------------------------ pricing and sale
 
     /// wei per score unit: `core.floorRate()` over `RATE_SCORE` (100 points in score units), rounded down
@@ -608,7 +676,8 @@ contract ControllerV3 is IController {
 
     /// the sale price of pile credit `id` now, wei. the floor is the larger of the credit's cost and `valueOf` of its
     /// score, times `floorMultBps()`; in value mode `valueOf` alone, the cost term dropped. the floor is at least
-    /// `saleFloorBps` of the cost, the Core's floor of `sellCreditTo`. the start is the floor times `creditStartBps`.
+    /// `saleFloorBps` of the cost, the Core's floor of `sellCreditTo`, and at least the market floor ask (7.), which
+    /// reverts `StaleFloor` when it binds on a stale post. the start is the floor times `creditStartBps`.
     /// the price falls in a straight line from the start at the acquisition time to the floor at the acquisition time
     /// plus `creditWindow`, and rests at the floor after. reverts `NotForSale` for a credit not in the pile
     function creditPrice(uint256 id) public view returns (uint256 price) {
@@ -623,6 +692,13 @@ contract ControllerV3 is IController {
         uint256 floor = hi * _floorMult(cfg) / BPS;
         uint256 coreFloor = cost * cfg.saleFloorBps / BPS;
         if (floor < coreFloor) floor = coreFloor;
+        // the market floor term: a credit worth less by points than the collection's flat bid asks the bid plus the
+        // spread instead, and not at all while that bid is stale
+        (uint256 marketAsk, bool fresh) = marketFloorAsk();
+        if (floor < marketAsk) {
+            if (!fresh) revert StaleFloor();
+            floor = marketAsk;
+        }
         uint256 start = floor * creditStartBps / BPS;
         uint256 age = block.timestamp - acquiredAt;
         if (age >= creditWindow) return floor;

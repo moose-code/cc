@@ -7,6 +7,14 @@ import {CreditSale, Quote, IdleLoosening, CcQuote} from "./Interfaces.sol";
 interface IControllerV3 {
     type Currency is address;
 
+    struct MarketFloor {
+        address poster;
+        uint16 spreadBps;
+        uint16 stepBps;
+        uint32 minSeconds;
+        uint32 maxStale;
+    }
+
     struct PoolKey {
         Currency currency0;
         Currency currency1;
@@ -20,8 +28,11 @@ interface IControllerV3 {
     error NoQuote();
     error NotForSale();
     error OnlyOwner();
+    error OnlyPoster();
     error Reentrant();
+    error StaleFloor();
     error StatementSalesOff();
+    error TooSoon();
     error Underpaid();
 
     event BalancePoolKeySet(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks);
@@ -33,6 +44,8 @@ interface IControllerV3 {
     event CreditSoldRecorded(uint256 indexed id, address indexed buyer, uint256 price);
     event FillSynced(uint256 indexed tail, uint64 acquiredAt);
     event IdleLooseningSet(IdleLoosening idle);
+    event MarketFloorPosted(uint256 floorWei, address indexed by);
+    event MarketFloorSet(MarketFloor floor);
     event QuoteSet(Quote quote);
     event ReferenceRefreshed(uint256 referencePrice, uint256 spot);
     event StatementRedeemDelaySet(uint32 delaySeconds);
@@ -86,10 +99,18 @@ interface IControllerV3 {
     function idleLoosenBps() external view returns (uint256 b);
     function idleSince() external view returns (uint256 t, bool known);
     function lastFillSeen() external view returns (uint64);
+    function marketFloor()
+        external
+        view
+        returns (address poster, uint16 spreadBps, uint16 stepBps, uint32 minSeconds, uint32 maxStale);
+    function marketFloorAsk() external view returns (uint256 ask, bool fresh);
+    function marketFloorTime() external view returns (uint40);
+    function marketFloorWei() external view returns (uint128);
     function markupBps() external view returns (uint16);
     function nextPage() external view returns (bool ready, uint256[80] memory ids, uint8 format);
     function pastWindow(uint64 acquiredAt) external view returns (bool);
     function pointRate() external view returns (uint256);
+    function postMarketFloor(uint256 floorWei) external;
     function priceOf(uint256 sid) external view returns (uint256 price);
     function quote()
         external
@@ -112,6 +133,7 @@ interface IControllerV3 {
     function setCcQuote(CcQuote memory v) external;
     function setCredit(CreditSale memory v) external;
     function setIdleLoosening(IdleLoosening memory v) external;
+    function setMarketFloor(MarketFloor memory v) external;
     function setQuote(Quote memory v) external;
     function setStatementRedeemDelaySeconds(uint32 v) external;
     function setStatementSaleMultiplierBps(uint32 v) external;
