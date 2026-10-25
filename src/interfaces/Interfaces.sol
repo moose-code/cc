@@ -66,10 +66,11 @@ interface IRedemptionPolicy {
     function isRedemptionPolicy() external pure returns (bool);
 }
 
-/// treasury v2's balance bid. the price is `bidBps` of par (a credit's score times `unitPerPoint`): it climbs `climbBps` per
-/// full `stepSeconds` since the last fill and drops `dropPer100PointsBps` per 100 points filled, inside [floorBps,
-/// capBps]. each payout is also capped so its eth value at the controller's protected sale price is at most the
-/// Core's eth price for the credit plus `overEthBps`. `maxPerCall` and `maxPerPeriod` cap the payouts and royalties
+/// the credit bid module's band (src/adapters/CreditBid.sol). the price is `bidBps` of par (a credit's score times
+/// `unitPerPoint`): it climbs `climbBps` per full `stepSeconds` since the last fill and drops `dropPer100PointsBps` per
+/// 100 points filled, inside [floorBps, capBps]. each payout is also capped so its eth value at the controller's
+/// protected sale price is at most the Core's eth price for the credit plus `overEthBps`. the per call, per period and
+/// lifetime caps on what the bid pays are the module's spender caps in the treasury
 struct BalanceBid {
     uint16 floorBps;
     uint16 capBps;
@@ -77,13 +78,13 @@ struct BalanceBid {
     uint32 stepSeconds;
     uint16 dropPer100PointsBps;
     uint16 overEthBps;
-    uint128 maxPerCall;
-    uint128 maxPerPeriod;
 }
 
-/// a treasury v2 registered redeemer. it draws only from `bucket`, only while `on`, from `activeAt`, at most `perCall` per
-/// redemption, `perPeriod` per day and `lifetime` in all. `epoch` advances on every change to its terms here
-struct RedeemerState {
+/// a treasury v2 registered spender: a redeemer (a contract the treasury quotes through `IRedeemer` for a CC burn) or a
+/// module that draws itself (`draw`), the credit bid among them. it draws only from `bucket`, only while `on`, from
+/// `activeAt`, at most `perCall` per draw, `perPeriod` per day and `lifetime` in all. `epoch` advances on every change
+/// to its terms here
+struct SpenderState {
     bool registered;
     bool on;
     uint16 shareBps;

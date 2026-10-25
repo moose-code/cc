@@ -8,7 +8,8 @@ import {IControllerV3} from "../src/interfaces/IControllerV3.sol";
 import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.sol";
 import {IBalanceTreasuryV2} from "../src/interfaces/IBalanceTreasuryV2.sol";
 import {IMarketRedeemer} from "../src/interfaces/IMarketRedeemer.sol";
-import {CreditSale, Quote, IdleLoosening, BalanceBid, CcQuote, RedeemerState, Mainnet} from "../src/interfaces/Interfaces.sol";
+import {ICreditBid} from "../src/interfaces/ICreditBid.sol";
+import {CreditSale, Quote, IdleLoosening, BalanceBid, CcQuote, SpenderState, Mainnet} from "../src/interfaces/Interfaces.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
@@ -20,15 +21,15 @@ import {LaunchChecks} from "./Checks.sol";
 /// simulates exactly the sends and prints their gas.
 ///
 /// - `deploy`: ProRataRedeemer (fee 0), BalanceTreasuryV2 (v1 as predecessor), ControllerV3 (the live credit sale,
-///   the live quote at step 900, Statement ask 1.1x, Statement redemption delay 1 hour, idle loosening at cap 0) and
-///   MarketRedeemer (premium 500 bps). nothing live changes
-/// - `migrate` (`TREASURY_V2`, `CONTROLLER_V3`, `MARKET_REDEEMER`): v1 switches off, `setBalanceModule(v2)`, v1
-///   `migrateTo(v2)`, the v2 settings, redeemer 2 registered with its caps and sweep share, v2 conversion and working
-///   payments on (bid and redeemers off), `sweep`, the V3 pool key, CC reference and Statement sales,
-///   `setController(V3)`. the v1 `migrateTo` requires its successor to be the selected module, so the module changes
-///   before the funds move
-/// - `bid`: v2 bid on. run at least the Core's `returnLockSeconds` after `setController(V3)`: credits ControllerV2 sold
-///   before the switch carry no V3 sale record
+///   the live quote at step 900, Statement ask 1.1x, Statement redemption delay 1 hour, idle loosening at cap 0),
+///   MarketRedeemer (premium 500 bps) and CreditBid (the balance bid, a spender of v2). nothing live changes
+/// - `migrate` (`TREASURY_V2`, `CONTROLLER_V3`, `MARKET_REDEEMER`, `CREDIT_BID`): v1 switches off,
+///   `setBalanceModule(v2)`, v1 `migrateTo(v2)`, the v2 settings, the bid and redeemer 2 registered as spenders with
+///   their caps and sweep shares, the bid band, v2 conversion and working payments on (every spender off), `sweep`,
+///   the V3 pool key, CC reference, Statement sales and market floor, `setController(V3)`. the v1 `migrateTo` requires
+///   its successor to be the selected module, so the module changes before the funds move
+/// - `bid`: the bid spender on. run at least the Core's `returnLockSeconds` after `setController(V3)`: credits
+///   ControllerV2 sold before the switch carry no V3 sale record
 /// - `readback`: the checks alone
 ///
 /// `STEP=deploy forge script script/Phase3.s.sol --rpc-url https://gateway.tenderly.co/public/mainnet --sender <owner>`
@@ -44,6 +45,8 @@ contract Phase3 is Script, LaunchChecks {
         uint256 cushion;
         BalanceBid bid;
         uint16 bidShareBps;
+        uint128 bidPerCall;
+        uint128 bidPerPeriod;
         uint16 proRataShareBps;
         uint128 proRataPerPeriod;
         uint16 statementSaleMultiplierBps;
@@ -67,6 +70,7 @@ contract Phase3 is Script, LaunchChecks {
         address treasury;
         address controller;
         address market;
+        address bid;
     }
 
     function params() public pure returns (Params memory p) {
@@ -77,11 +81,11 @@ contract Phase3 is Script, LaunchChecks {
             climbBps: 50,
             stepSeconds: 600,
             dropPer100PointsBps: 29,
-            overEthBps: 500,
-            maxPerCall: 20_000 ether,
-            maxPerPeriod: 60_000 ether
+            overEthBps: 500
         });
         p.bidShareBps = 2_500;
+        p.bidPerCall = 20_000 ether;
+        p.bidPerPeriod = 60_000 ether;
         p.proRataShareBps = 0;
         p.proRataPerPeriod = 50_000 ether;
         p.statementSaleMultiplierBps = 11_000;
@@ -126,7 +130,8 @@ contract Phase3 is Script, LaunchChecks {
             redeemer: address(0),
             treasury: vm.envAddress("TREASURY_V2"),
             controller: vm.envAddress("CONTROLLER_V3"),
-            market: vm.envAddress("MARKET_REDEEMER")
+            market: vm.envAddress("MARKET_REDEEMER"),
+            bid: vm.envAddress("CREDIT_BID")
         });
         d.redeemer = IBalanceTreasuryV2(d.treasury).proRataRedeemer();
         if (step == keccak256("migrate")) migrate(core, d, p, true);
@@ -170,6 +175,7 @@ contract Phase3 is Script, LaunchChecks {
             abi.encode(core, credit, q, uint32(p.statementSaleMultiplierBps), p.statementRedeemDelaySeconds, p.idle)
         );
         d.market = _create("MarketRedeemer", abi.encode(core, p.marketPremiumBps));
+        d.bid = _create("CreditBid", abi.encode(d.treasury));
         _stop(broadcast);
         console.log(
             string.concat(
@@ -181,6 +187,8 @@ contract Phase3 is Script, LaunchChecks {
                 vm.toString(d.controller),
                 '","marketRedeemer":"',
                 vm.toString(d.market),
+                '","creditBid":"',
+                vm.toString(d.bid),
                 '"}'
             )
         );
@@ -221,7 +229,8 @@ contract Phase3 is Script, LaunchChecks {
         _eq("preview: v2 core", t.core(), address(c));
         _eq("preview: v2 predecessor is the live module", t.predecessor(), address(v1));
         _eq("preview: V3 CORE", v3.CORE(), address(c));
-        _check("preview: v2 switches off", !t.conversionEnabled() && !t.workingPaymentsEnabled() && !t.bidEnabled(), "");
+        _check("preview: v2 switches off, no spender on", !t.conversionEnabled() && !t.workingPaymentsEnabled() && !t.ccRedemptionEnabled(), "");
+        _eq("preview: CreditBid treasury", ICreditBid(d.bid).treasury(), d.treasury);
         _check("preview: V3 pool key unset", !v3.balancePoolKeySet(), "");
         _check("preview: Core module and controller unlocked", !c.balanceModuleLocked() && !c.controllerLocked(), "");
         _check("preview: v1 CC redemption off", !v1.ccRedemptionEnabled(), "");
@@ -246,7 +255,8 @@ contract Phase3 is Script, LaunchChecks {
         (spot,) = v2c.spotPrice();
     }
 
-    /// @dev v1 off, the module switch, v1 `migrateTo`, the v2 settings and redeemer 2, v2 on, the sweep
+    /// @dev v1 off, the module switch, v1 `migrateTo`, the v2 settings, the bid and redeemer 2 registered as spenders,
+    /// the bid band, v2 on, the sweep
     function _moveTreasury(ICore c, Deployed memory d, Params memory p) private {
         IPhase2BalanceTreasury v1 = IPhase2BalanceTreasury(c.balanceModule());
         IBalanceTreasuryV2 t = IBalanceTreasuryV2(d.treasury);
@@ -254,20 +264,21 @@ contract Phase3 is Script, LaunchChecks {
         c.setBalanceModule(d.treasury);
         v1.migrateTo(d.treasury);
         t.setCushion(p.cushion);
-        t.setBid(p.bid);
-        t.setBidShare(p.bidShareBps);
-        if (p.proRataShareBps != 0) t.setRedeemerShare(d.redeemer, p.proRataShareBps);
-        t.registerRedeemer(d.market, p.marketPerCall, p.marketPerPeriod, p.marketLifetime);
-        t.setRedeemerShare(d.market, p.marketShareBps);
-        t.setSwitches(true, true, false);
+        t.registerSpender(d.bid, p.bidPerCall, p.bidPerPeriod, type(uint128).max);
+        t.setSpenderShare(d.bid, p.bidShareBps);
+        if (p.proRataShareBps != 0) t.setSpenderShare(d.redeemer, p.proRataShareBps);
+        t.registerSpender(d.market, p.marketPerCall, p.marketPerPeriod, p.marketLifetime);
+        t.setSpenderShare(d.market, p.marketShareBps);
+        ICreditBid(d.bid).setBid(p.bid);
+        t.setSwitches(true, true);
         t.sweep();
     }
 
-    /// @notice the send of `bid`
+    /// @notice the send of `bid`: the bid spender on
     function enableBid(address core, Deployed memory d, bool broadcast) public {
         ICore c = ICore(payable(core));
         _start(c, broadcast);
-        IBalanceTreasuryV2(d.treasury).setSwitches(true, true, true);
+        IBalanceTreasuryV2(d.treasury).setSpenderOn(d.bid, true);
         _stop(broadcast);
     }
 
@@ -283,15 +294,13 @@ contract Phase3 is Script, LaunchChecks {
         _pin("BalanceTreasuryV2", BUILD_HASH_TREASURY_V2, d.treasury);
         _pin("ProRataRedeemer", BUILD_HASH_PRO_RATA_REDEEMER, d.redeemer);
         _pin("MarketRedeemer", BUILD_HASH_MARKET_REDEEMER, d.market);
+        _pin("CreditBid", BUILD_HASH_CREDIT_BID, d.bid);
         _eq("Core module is v2", c.balanceModule(), d.treasury);
         _eq("Core controller is V3", c.controller(), d.controller);
         _check("v1 migrated, holding only its debt", v1.migrated() && v1.custody() == v1.totalOwed(), vm.toString(v1.custody()));
-        _check("v2 solvent", t.solvent(), vm.toString(t.custody()));
-        uint256 bucket = t.redeemers(d.redeemer).bucket;
-        _info("v2 custody / pro-rata bucket / bid budget", string.concat(vm.toString(t.custody()), " / ", vm.toString(bucket), " / ", vm.toString(t.bidBudget())));
-        _eq("v2 cushion", t.cushion(), p.cushion);
+        _readbackFunds(t, d, p);
         _check("v2 working at or above the cushion", t.working() >= t.cushion(), vm.toString(t.working()));
-        _check("v2 conversion and working payments on, redeemers off", t.conversionEnabled() && t.workingPaymentsEnabled() && !t.ccRedemptionEnabled(), "");
+        _check("v2 conversion and working payments on, every spender off", t.conversionEnabled() && t.workingPaymentsEnabled() && !t.ccRedemptionEnabled(), "");
         _check("v2 available answers", t.available() == t.working(), vm.toString(t.available()));
         (uint256 vb, bool okb) = v3.valuePerPoint(false);
         (uint256 vs, bool oks) = v3.valuePerPoint(true);
@@ -305,10 +314,18 @@ contract Phase3 is Script, LaunchChecks {
         (bool ready,,) = v3.nextPage();
         _info("V3 nextPage", ready ? "ready" : "not ready");
         _readbackFloor(v3, p);
-        _info("v2 bid now (bps of par)", vm.toString(t.bidBpsNow()));
         _readbackRedeemers(t, IControllerV3(d.controller), d, p);
         _print("phase 3 readback");
         _require();
+    }
+
+    /// @dev the solvency, the buckets and the cushion
+    function _readbackFunds(IBalanceTreasuryV2 t, Deployed memory d, Params memory p) private {
+        _check("v2 solvent", t.solvent(), vm.toString(t.custody()));
+        uint256 bucket = t.spenders(d.redeemer).bucket;
+        _info("v2 custody / pro-rata bucket / bid bucket", string.concat(vm.toString(t.custody()), " / ", vm.toString(bucket), " / ", vm.toString(ICreditBid(d.bid).bidBudget())));
+        _eq("v2 cushion", t.cushion(), p.cushion);
+        _info("bid now (bps of par)", vm.toString(ICreditBid(d.bid).bidBpsNow()));
     }
 
     /// @dev the market floor reference: set to the params and posted fresh
@@ -320,15 +337,21 @@ contract Phase3 is Script, LaunchChecks {
         _check("V3 market floor posted and fresh", floorFresh && floorAsk == p.floorWei * (10_000 + p.floor.spreadBps) / 10_000, vm.toString(floorAsk));
     }
 
-    /// @dev the bid band, the sweep shares, redeemer 2 and the CC reference
+    /// @dev the bid band and spender, the sweep shares, redeemer 2 and the CC reference
     function _readbackRedeemers(IBalanceTreasuryV2 t, IControllerV3 v3, Deployed memory d, Params memory p) private {
-        (uint16 floorBps, uint16 capBps,,,,,,) = t.bid();
-        _check("v2 bid 8,000 to 10,000 bps of par", floorBps == p.bid.floorBps && capBps == p.bid.capBps, "");
-        RedeemerState memory r2 = t.redeemers(d.market);
+        (uint16 floorBps, uint16 capBps,,,,) = ICreditBid(d.bid).bid();
+        _check("bid 8,000 to 10,000 bps of par", floorBps == p.bid.floorBps && capBps == p.bid.capBps, "");
+        SpenderState memory rb = t.spenders(d.bid);
+        _check(
+            "bid registered as a spender, off, caps",
+            rb.registered && !rb.on && rb.perCall == p.bidPerCall && rb.perPeriod == p.bidPerPeriod,
+            ""
+        );
+        SpenderState memory r2 = t.spenders(d.market);
         _check(
             "v2 sweep shares: bid 2,500, redeemer 2 7,500, redeemer 1 0",
-            t.bidShareBps() == p.bidShareBps && r2.shareBps == p.marketShareBps
-                && t.redeemers(d.redeemer).shareBps == p.proRataShareBps,
+            rb.shareBps == p.bidShareBps && r2.shareBps == p.marketShareBps
+                && t.spenders(d.redeemer).shareBps == p.proRataShareBps,
             ""
         );
         _check(

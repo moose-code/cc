@@ -10,6 +10,7 @@ import {IRedeemer, CcQuote, Mainnet, Settings} from "../src/interfaces/Interface
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Phase3} from "../script/Phase3.s.sol";
 import {IMarketRedeemer} from "../src/interfaces/IMarketRedeemer.sol";
+import {ICreditBid} from "../src/interfaces/ICreditBid.sol";
 import {IdleLoosening, BalanceBid} from "../src/interfaces/Interfaces.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -39,6 +40,13 @@ contract FixedRedeemer is IRedeemer {
     }
 }
 
+/// a spender that draws on command: the shape of any later module (a new bid rule, say)
+contract DrawingSpender {
+    function pull(address treasury, address to, uint256 amount, bool accrue) external {
+        IBalanceTreasuryV2(treasury).draw(to, amount, accrue);
+    }
+}
+
 /// phase 3 acceptance (docs/specs/PHASE3.md) on a fork of the head against the live Core, ControllerV2, v1 treasury,
 /// BALANCE token and coin, driven through the owner script `script/Phase3.s.sol`
 contract Phase3Test is LiveFixture {
@@ -51,6 +59,7 @@ contract Phase3Test is LiveFixture {
     Phase3.Deployed internal d;
     IBalanceTreasuryV2 internal t;
     IControllerV3 internal v3;
+    ICreditBid internal bidm;
     IPhase2BalanceTreasury internal v1;
     address internal user;
 
@@ -65,6 +74,7 @@ contract Phase3Test is LiveFixture {
         d = script.deploy(address(core), script.params(), false);
         t = IBalanceTreasuryV2(d.treasury);
         v3 = IControllerV3(d.controller);
+        bidm = ICreditBid(d.bid);
         user = _user("phase3 user");
     }
 
@@ -109,23 +119,24 @@ contract Phase3Test is LiveFixture {
     function test_bidBuysAdoptsAndRefusesTheResaleLoop() public {
         // promise: a real Credit sold to sellCredit is adopted, composed and converted with BALANCE back in v2, and a credit the engine resold inside the return lock is refused
         _migrate();
-        vm.warp(block.timestamp + core.settings().returnLockSeconds + 1);
+        // the bid is a newly registered spender: it draws nothing for a day, which also covers the return lock
+        vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
-        assertGt(t.bidBudget(), 0, "the sweep funded the bid");
+        assertGt(bidm.bidBudget(), 0, "the sweep funded the bid");
 
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
-        CREDITS.setApprovalForAll(address(t), true);
-        (uint256 q, uint256 toArtist) = t.quoteCredit(ids[0]);
+        CREDITS.setApprovalForAll(address(bidm), true);
+        (uint256 q, uint256 toArtist) = bidm.quoteCredit(ids[0]);
         assertGt(q, 0, "the bid quotes a real credit");
-        uint256 budget = t.bidBudget();
+        uint256 budget = bidm.bidBudget();
         uint256 held = _balanceOf(seller);
         uint256 splitHeld = _balanceOf(core.artist());
         vm.prank(seller);
-        t.sellCredit(ids, q);
+        bidm.sellCredit(ids, q);
         assertEq(_balanceOf(seller) - held, q, "the seller got the quote");
         assertEq(_balanceOf(core.artist()) - splitHeld, toArtist, "the split got the royalty on top");
-        assertEq(budget - t.bidBudget(), q + toArtist, "both came from the bid budget");
+        assertEq(budget - bidm.bidBudget(), q + toArtist, "both came from the bid bucket");
         (bool inPile,,) = core.creditInfo(ids[0]);
         assertTrue(inPile, "the credit was adopted");
 
@@ -142,10 +153,10 @@ contract Phase3Test is LiveFixture {
         vm.prank(user);
         v3.buyCredit{value: price}(id);
         vm.prank(user);
-        CREDITS.setApprovalForAll(address(t), true);
+        CREDITS.setApprovalForAll(address(bidm), true);
         vm.expectRevert(abi.encodeWithSignature("ReturnLocked(uint256)", id));
         vm.prank(user);
-        t.sellCredit(_one(id), 0);
+        bidm.sellCredit(_one(id), 0);
     }
 
     function test_bidNeverPaysAbovePar() public {
@@ -153,17 +164,17 @@ contract Phase3Test is LiveFixture {
         _migrate();
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
-        assertEq(t.bidBpsNow(), 10_000, "the bid climbed to its cap, par");
-        assertLt(t.bidBpsNow(), v3.floorMultBps(), "under the resale floor multiplier");
+        assertEq(bidm.bidBpsNow(), 10_000, "the bid climbed to its cap, par");
+        assertLt(bidm.bidBpsNow(), v3.floorMultBps(), "under the resale floor multiplier");
         uint256 id = _credits(seller, 1)[0];
-        (uint256 q,) = t.quoteCredit(id);
+        (uint256 q,) = bidm.quoteCredit(id);
         assertGt(q, 0, "the bid quotes");
         assertLe(q, _scoreOf(id) * 1e14, "never above par");
         BalanceBid memory b = script.params().bid;
         b.capBps = 10_001;
         vm.expectRevert(abi.encodeWithSignature("BadSetting(bytes32)", bytes32("bidBand")));
         vm.prank(owner);
-        t.setBid(b);
+        bidm.setBid(b);
     }
 
     function test_redeemersPayFromTheirBucketInsideTheirCaps() public {
@@ -173,7 +184,7 @@ contract Phase3Test is LiveFixture {
         vm.prank(user);
         IPhase3Coin(address(coin)).approve(address(t), type(uint256).max);
         vm.prank(owner);
-        t.setRedeemerOn(d.redeemer, true);
+        t.setSpenderOn(d.redeemer, true);
         uint64 epoch = _epoch(d.redeemer);
         vm.expectRevert(abi.encodeWithSignature("RedemptionOff()"));
         vm.prank(user);
@@ -194,10 +205,10 @@ contract Phase3Test is LiveFixture {
 
         FixedRedeemer r = new FixedRedeemer();
         vm.startPrank(owner);
-        t.registerRedeemer(address(r), 1_000 ether, 1_500 ether, 2_000 ether);
-        t.unallocate(address(0), 2_500 ether); // the sweep shared the whole surplus; the bid budget gives some back
+        t.registerSpender(address(r), 1_000 ether, 1_500 ether, 2_000 ether);
+        t.unallocate(d.bid, 2_500 ether); // the sweep shared the whole surplus; the bid's bucket (off) gives some back
         t.allocate(address(r), 2_500 ether);
-        t.setRedeemerOn(address(r), true);
+        t.setSpenderOn(address(r), true);
         vm.stopPrank();
         vm.warp(block.timestamp + 1 days);
         epoch = _epoch(address(r));
@@ -239,17 +250,17 @@ contract Phase3Test is LiveFixture {
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
         vm.prank(owner);
-        t.setRedeemerOn(d.redeemer, true);
+        t.setSpenderOn(d.redeemer, true);
         uint256 cc = _buyCoin(user, 1 ether);
         vm.prank(user);
         IPhase3Coin(address(coin)).approve(address(t), type(uint256).max);
         vm.prank(seller);
-        CREDITS.setApprovalForAll(address(t), true);
+        CREDITS.setApprovalForAll(address(bidm), true);
         _assertAboveCushion("after the migration");
         for (uint256 round; round < 2; ++round) {
             uint256[] memory ids = _credits(seller, 3);
             vm.prank(seller);
-            t.sellCredit(ids, 0);
+            bidm.sellCredit(ids, 0);
             _assertAboveCushion("after bid fills");
             uint256 sid = _compose();
             vm.warp(block.timestamp + 7 days);
@@ -324,6 +335,131 @@ contract Phase3Test is LiveFixture {
         assertTrue(v3.ageEligibilityOn(), "ageEligibilityOn");
         assertGt(v3.pointRate(), 0, "pointRate");
         assertGt(v3.valueOf(10_000), 0, "valueOf");
+    }
+
+    // ------------------------------------------------------------------ spenders and the exit
+
+    function test_aNewRuleIsASpenderTheTreasuryCages() public {
+        // promise: a module registered as a spender draws only from its own bucket, only while on and active, inside its caps, never from working funds, the cushion, another bucket or the debt; an unregistered contract draws nothing
+        _migrate();
+        DrawingSpender m = new DrawingSpender();
+        vm.expectRevert(abi.encodeWithSignature("SpenderOff()"));
+        m.pull(address(t), user, 1 ether, false);
+        vm.startPrank(owner);
+        t.registerSpender(address(m), 1_000 ether, 1_500 ether, type(uint128).max);
+        t.unallocate(d.bid, 2_000 ether);
+        t.allocate(address(m), 2_000 ether);
+        vm.stopPrank();
+        vm.expectRevert(abi.encodeWithSignature("SpenderOff()"));
+        m.pull(address(t), user, 1 ether, false);
+        vm.prank(owner);
+        t.setSpenderOn(address(m), true);
+        vm.expectRevert(abi.encodeWithSignature("SpenderOff()"));
+        m.pull(address(t), user, 1 ether, false);
+        vm.warp(block.timestamp + 1 days);
+        assertEq(t.drawable(address(m)), 1_000 ether, "one call at most perCall");
+        uint256 working = t.working();
+        uint256 held = _balanceOf(user);
+        m.pull(address(t), user, 1_000 ether, false);
+        assertEq(_balanceOf(user) - held, 1_000 ether, "paid exactly");
+        assertEq(t.working(), working, "working funds untouched");
+        assertEq(_bucket(address(m)), 1_000 ether, "only its bucket fell");
+        vm.expectRevert(abi.encodeWithSignature("OverCap()"));
+        m.pull(address(t), user, 600 ether, false); // 1,500 per period, 1,000 used
+        m.pull(address(t), user, 500 ether, false);
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(abi.encodeWithSignature("InsufficientBucket()"));
+        m.pull(address(t), user, 501 ether, false); // 500 left; the pro-rata and market buckets are not its to draw
+        vm.expectRevert(abi.encodeWithSignature("InvalidRecipient()"));
+        m.pull(address(t), address(t), 1 ether, false);
+        vm.prank(owner);
+        t.setPaused(true);
+        vm.expectRevert(abi.encodeWithSignature("Paused()"));
+        m.pull(address(t), user, 1 ether, false);
+        vm.prank(owner);
+        t.setPaused(false);
+        vm.prank(owner);
+        t.setSpenderOn(address(m), false);
+        vm.expectRevert(abi.encodeWithSignature("SpenderOff()"));
+        m.pull(address(t), user, 1 ether, false);
+        assertTrue(t.solvent(), "solvent throughout");
+    }
+
+    function test_theBidIsOnlyASpenderOfTheTreasury() public {
+        // promise: the bid module holds no BALANCE and no rule of the treasury's: its budget is its bucket, switching the spender off stops it, and a second bid module can be registered beside it without touching the treasury
+        _migrate();
+        vm.warp(block.timestamp + 1 days);
+        script.enableBid(address(core), d, false);
+        assertEq(_balanceOf(address(bidm)), 0, "the module holds nothing");
+        assertEq(bidm.bidBudget(), _bucket(d.bid), "its budget is its bucket");
+        assertTrue(bidm.bidEnabled(), "on through the spender switch");
+        vm.prank(owner);
+        t.setSpenderOn(d.bid, false);
+        assertFalse(bidm.bidEnabled(), "off through the spender switch");
+        uint256[] memory ids = _credits(seller, 1);
+        vm.prank(seller);
+        CREDITS.setApprovalForAll(address(bidm), true);
+        vm.expectRevert(abi.encodeWithSignature("BidOff()"));
+        vm.prank(seller);
+        bidm.sellCredit(ids, 0);
+        // the next pricing rule: a second module, registered beside the first; the treasury does not change
+        ICreditBid next = ICreditBid(_deployArtifact("CreditBid", abi.encode(address(t))));
+        vm.startPrank(owner);
+        t.registerSpender(address(next), 20_000 ether, 60_000 ether, type(uint128).max);
+        t.unallocate(d.bid, _bucket(d.bid));
+        t.allocate(address(next), 5_000 ether);
+        next.setBid(script.params().bid);
+        t.setSpenderOn(address(next), true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(seller);
+        CREDITS.setApprovalForAll(address(next), true);
+        (uint256 q,) = next.quoteCredit(ids[0]);
+        assertGt(q, 0, "the second module quotes");
+        uint256 held = _balanceOf(seller);
+        vm.prank(seller);
+        next.sellCredit(ids, q);
+        assertEq(_balanceOf(seller) - held, q, "the second module fills from its own bucket");
+        (bool inPile,,) = core.creditInfo(ids[0]);
+        assertTrue(inPile, "and adopts into the pile");
+    }
+
+    function test_theLastResortMigrationMovesCustodyToASuccessor() public {
+        // promise: a v2 treasury can hand its custody and pro-rata bucket to a successor through the v1 handshake once every switch and spender is off and every other bucket is returned, leaving only its debt and committed payouts behind; it refuses while a spender is on or a bucket is still funded, and refuses every switch after
+        _migrate();
+        IBalanceTreasuryV2 v3t = IBalanceTreasuryV2(
+            _deployArtifact("BalanceTreasuryV2", abi.encode(address(core), t.balanceToken(), d.redeemer, uint128(50_000 ether), address(t)))
+        );
+        vm.startPrank(owner);
+        t.setSwitches(false, false);
+        core.setBalanceModule(address(v3t));
+        vm.expectRevert(abi.encodeWithSignature("InsufficientBucket()"));
+        t.migrateTo(address(v3t)); // the market bucket is still funded
+        t.unallocate(d.market, _bucket(d.market));
+        t.unallocate(d.bid, _bucket(d.bid));
+        t.setSpenderOn(d.redeemer, true);
+        vm.expectRevert(abi.encodeWithSignature("SwitchesOn()"));
+        t.migrateTo(address(v3t));
+        t.setSpenderOn(d.redeemer, false);
+        uint256 custody = t.custody();
+        uint256 claims = _bucket(d.redeemer);
+        uint256 debt = t.totalOwed() + t.totalCommitted();
+        uint256 moved = t.migrateTo(address(v3t));
+        vm.stopPrank();
+        assertEq(moved, custody - debt, "custody less the debt moved");
+        assertEq(t.custody(), debt, "v2 keeps only its debt");
+        assertEq(v3t.custody(), moved, "the successor holds the rest");
+        assertEq(v3t.spenders(d.redeemer).bucket, claims, "the pro-rata bucket landed in the successor");
+        assertTrue(t.migrated() && t.solvent() && v3t.solvent(), "both solvent, v2 migrated");
+        vm.expectRevert(abi.encodeWithSignature("Migrated()"));
+        vm.prank(owner);
+        t.setSwitches(true, true);
+        vm.expectRevert(abi.encodeWithSignature("Migrated()"));
+        vm.prank(owner);
+        t.setSpenderOn(d.redeemer, true);
+        vm.prank(owner);
+        v3t.setSwitches(true, true);
+        assertEq(v3t.available(), v3t.working(), "the successor answers the Core");
     }
 
     // ------------------------------------------------------------------ market floor reference
@@ -552,9 +688,9 @@ contract Phase3Test is LiveFixture {
         v3.refreshCcReference();
         uint256 bucket = _bucket(d.market);
         vm.startPrank(owner);
-        t.setRedeemerOn(d.market, false);
+        t.setSpenderOn(d.market, false);
         t.unallocate(d.market, bucket - 1_000 ether);
-        t.setRedeemerOn(d.market, true);
+        t.setSpenderOn(d.market, true);
         vm.stopPrank();
         per = _ccFor(m, 1_000 ether);
         _redeemMarketReverts(per * 11 / 10, 0, abi.encodeWithSignature("InsufficientBucket()")); // 1,100, 1,000 left
@@ -587,12 +723,22 @@ contract Phase3Test is LiveFixture {
 
     // ------------------------------------------------------------------ helpers
 
+    /// a plain create of production artifact `name`, the way the script deploys: tests reach the production contracts
+    /// only through their artifacts and interfaces
+    function _deployArtifact(string memory name, bytes memory args) internal returns (address at) {
+        bytes memory init = abi.encodePacked(vm.getCode(string.concat(name, ".sol:", name)), args);
+        assembly {
+            at := create(0, add(init, 0x20), mload(init))
+        }
+        require(at.code.length != 0, "create failed");
+    }
+
     function _bucket(address r) internal view returns (uint256 b) {
-        b = t.redeemers(r).bucket;
+        b = t.spenders(r).bucket;
     }
 
     function _epoch(address r) internal view returns (uint64 e) {
-        e = t.redeemers(r).epoch;
+        e = t.spenders(r).epoch;
     }
 
     function _redeem(address r, uint256 ccIn, uint64 epoch) internal returns (uint256 amount, uint256 claimId) {
@@ -636,7 +782,7 @@ contract Phase3Test is LiveFixture {
         vm.roll(block.number + 1);
         assertTrue(v3.refreshCcReference(), "the CC reference refreshed");
         vm.prank(owner);
-        t.setRedeemerOn(d.market, true);
+        t.setSpenderOn(d.market, true);
     }
 
     /// CC bought by the user for `eth`, approved to the treasury for `burnFrom`

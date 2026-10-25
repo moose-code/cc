@@ -418,25 +418,25 @@ export const seedAbi = parseAbi(["function seedOf(uint256 id) view returns (byte
 export const multicallAbi = parseAbi(["function getEthBalance(address a) view returns (uint256)", "function getBlockNumber() view returns (uint256)"]);
 export const moduleAbi = parseAbi(["function unitPerPoint() view returns (uint256)", "function available() view returns (uint256)"]);
 
-// ---- treasury v2 and redeemer 1 (phase 3, web/) ------------------------------------------------------------------
-// The Core's balance module after the phase 3 migration (out/BalanceTreasuryV2.sol). A separate export so the phase 2
-// treasuryAbi above keeps working against the live v1 treasury: the web reads core.balanceModule() and detects v2 by
-// probing bidBpsNow() (a view v1 does not have). Only the surface web/ reads: the $BALANCE bid (quoteCredit/sellCredit
-// with bidBpsNow/bidBudget), redeemer 1 (redeemers/proRataRedeemer/redeemCC) and the receipt events and errors.
+// ---- treasury v2, the credit bid and redeemer 1 (phase 3, web/) -------------------------------------------------
+// The Core's balance module after the phase 3 migration (out/BalanceTreasuryV2.sol): the custodian. every rule that
+// spends the backing is a registered spender with its own bucket, switch and caps: the credit bid (creditBidAbi below)
+// and the redeemers. A separate export so the phase 2 treasuryAbi above keeps working against the live v1 treasury:
+// the web reads core.balanceModule() and detects v2 by probing spenderCount() (a view v1 does not have). Only the
+// surface web/ reads: the buckets (spenders), redeemer 1 (proRataRedeemer/redeemCC) and the receipt events and errors.
 export const treasuryV2Abi = parseAbi([
-  // $BALANCE bid (the treasury's own bid, separate from the Core's balanceBidOf 80% exchange)
-  "function quoteCredit(uint256 id) view returns (uint256 paid, uint256 toArtist)",
-  "function sellCredit(uint256[] ids, uint256 minOut) returns (uint256 total)",
-  "function bidEnabled() view returns (bool)",
-  "function bidBpsNow() view returns (uint256)",
-  "function bidBudget() view returns (uint256)",
   "function available() view returns (uint256)",
   "function working() view returns (uint256)",
+  "function surplus() view returns (uint256)",
+  "function cushion() view returns (uint256)",
   "function conversionToClaimBps() view returns (uint16)",
   "function paused() view returns (bool)",
-  // pluggable CC burn; redeemer 1 is proRataRedeemer()
+  // spenders: the credit bid and the redeemers; redeemer 1 is proRataRedeemer()
   "function proRataRedeemer() view returns (address)",
-  "function redeemers(address redeemer) view returns ((bool registered, bool on, uint16 shareBps, uint64 epoch, uint40 activeAt, uint40 periodStart, uint128 perCall, uint128 perPeriod, uint128 lifetime, uint128 periodUsed, uint128 lifetimeUsed, uint256 bucket, uint256 totalIn, uint256 totalOut))",
+  "function spenderCount() view returns (uint256)",
+  "function spenderList(uint256 i) view returns (address)",
+  "function spenders(address spender) view returns ((bool registered, bool on, uint16 shareBps, uint64 epoch, uint40 activeAt, uint40 periodStart, uint128 perCall, uint128 perPeriod, uint128 lifetime, uint128 periodUsed, uint128 lifetimeUsed, uint256 bucket, uint256 totalIn, uint256 totalOut))",
+  "function drawable(address spender) view returns (uint256)",
   "function redeemCC(address redeemer, uint256 ccIn, address recipient, uint256 minOut, uint256 deadline, uint64 expectedEpoch, bytes data) returns (uint256 amount, uint256 claimId)",
   // shared module views
   "function unitPerPoint() view returns (uint256)",
@@ -446,15 +446,11 @@ export const treasuryV2Abi = parseAbi([
   "function selected() view returns (bool)",
   "function migrated() view returns (bool)",
   // receipts the web decodes
-  "event BidFill(address indexed seller, uint256 credits, uint256 paid, uint256 toArtist, uint256 bidBudget)",
+  "event Drawn(address indexed spender, address indexed to, uint256 amount, uint256 accrued, uint256 bucket)",
   "event CCRedeemed(address indexed redeemer, address indexed burner, address indexed recipient, uint256 ccIn, uint256 amount, uint8 mode, uint32 duration, uint256 claimId, uint64 epoch)",
   // errors a simulation decodes
-  "error BidOff()",
-  "error BidUnpriced()",
   "error Paused()",
-  "error ReturnLocked(uint256 id)",
-  "error NotInPile(uint256 id)",
-  "error NotOwner(uint256 id)",
+  "error SpenderOff()",
   "error Slippage()",
   "error StaleEpoch()",
   "error RedemptionOff()",
@@ -463,7 +459,29 @@ export const treasuryV2Abi = parseAbi([
   "error Expired()",
   "error BurnMismatch()",
   "error Insolvent()",
-  "error UnknownRedeemer()",
+  "error UnknownSpender()",
+  "error ZeroAmount()",
+]);
+
+// the credit bid module (out/CreditBid.sol), a spender of treasury v2: the $BALANCE bid, separate from the Core's
+// balanceBidOf exchange. its budget is its bucket in the treasury
+export const creditBidAbi = parseAbi([
+  "function quoteCredit(uint256 id) view returns (uint256 paid, uint256 toArtist)",
+  "function sellCredit(uint256[] ids, uint256 minOut) returns (uint256 total)",
+  "function bidEnabled() view returns (bool)",
+  "function bidBpsNow() view returns (uint256)",
+  "function bidBudget() view returns (uint256)",
+  "function bidOut() view returns (uint256)",
+  "function treasury() view returns (address)",
+  "function core() view returns (address)",
+  "event CreditSold(uint256 indexed id, address indexed seller, uint256 score, uint256 paid, uint256 toArtist, uint256 bidBps)",
+  "event BidFill(address indexed seller, uint256 credits, uint256 paid, uint256 toArtist, uint256 bidBudget)",
+  "error BidOff()",
+  "error BidUnpriced()",
+  "error ReturnLocked(uint256 id)",
+  "error NotInPile(uint256 id)",
+  "error NotOwner(uint256 id)",
+  "error Slippage()",
   "error ZeroAmount()",
 ]);
 

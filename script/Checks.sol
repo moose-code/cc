@@ -97,10 +97,11 @@ abstract contract LaunchChecks is PostflightChecks {
     bytes32 internal constant BUILD_HASH_CONTROLLER_V3 =
         0xdcb119f14a278632dcb8913ef18113bf3132b489df5eb4867709510919673c5b;
     bytes32 internal constant BUILD_HASH_TREASURY_V2 =
-        0x1626384252b77cd4080b76915fa46f77ca56d219c6fc28af48b7c247460fcd22;
+        0xd3693a848713bffe879e0b1948582f7505dee8ec055800c6ab94c60efa5b4b26;
     bytes32 internal constant BUILD_HASH_PRO_RATA_REDEEMER =
         0x6b3fd5f451dbdabb462a8a663f1fc25dc2e351353124578fb6cc2d45f2d8097d;
     bytes32 internal constant BUILD_HASH_MARKET_REDEEMER = 0x0db377f228014847f589654f557474af5a15481e9307752ff7e32a1be860c475;
+    bytes32 internal constant BUILD_HASH_CREDIT_BID = 0xd20a4d872f2afbc8b578703d6e7e4b193e872cbd764d64922492aa88014bc2d9;
     bytes32 internal constant BUILD_CREATION_HASH_CORELIB =
         0x78ce8391ad8231ed4eb1cc80a783918ce33ae558b72a28558bb20014f96c46c8;
     bytes32 internal constant BUILD_CREATION_HASH_COREOPSLIB =

@@ -2,19 +2,12 @@
 pragma solidity ^0.8.28;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
-import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 import {
     IBalanceModule,
     IRedeemer,
-    ICreditScore,
-    ICredits,
     Mainnet,
-    Settings,
-    BalanceBid,
     CommittedPayout,
-    RedeemerState,
-    RATE_SCORE,
-    POINT_UNIT
+    SpenderState
 } from "../interfaces/Interfaces.sol";
 
 /// the InterfaceAuctionWithdrawals surface this treasury reads
@@ -39,29 +32,12 @@ interface IV2Statements {
     function ownerOf(uint256 id) external view returns (address);
 }
 
-interface IV2Credits {
-    function ownerOf(uint256 id) external view returns (address);
-    function transferFrom(address from, address to, uint256 id) external;
-}
-
 interface IV2Core {
     function owner() external view returns (address);
     function COIN() external view returns (address);
     function retired() external view returns (bool);
+    function successor() external view returns (address);
     function balanceModule() external view returns (address);
-    function controller() external view returns (address);
-    function artist() external view returns (address);
-    function settings() external view returns (Settings memory);
-    function ethPrice() external view returns (uint256);
-    function creditInfo(uint256 id) external view returns (bool inPile, uint256 cost, uint64 acquiredAt);
-    function adopt(uint256[] calldata ids) external;
-}
-
-/// the ControllerV3 views the bid reads
-interface IV2Controller {
-    function valuePerPoint(bool forSale) external view returns (uint256 value, bool ok);
-    function creditSoldAt(uint256 id) external view returns (uint64);
-    function floorMultBps() external view returns (uint256);
 }
 
 interface IV2Coin {
@@ -69,17 +45,35 @@ interface IV2Coin {
     function burnFrom(address account, uint256 amount) external;
 }
 
+/// the surface of a successor this treasury migrates to: a later BalanceTreasuryV2 or a treasury built on the same
+/// handshake
+interface IV2Successor {
+    function core() external view returns (address);
+    function balanceToken() external view returns (address);
+    function ccToken() external view returns (address);
+    function predecessor() external view returns (address);
+    function migrated() external view returns (bool);
+    function conversionEnabled() external view returns (bool);
+    function workingPaymentsEnabled() external view returns (bool);
+    function ccRedemptionEnabled() external view returns (bool);
+    function receiveMigration(uint256 claimAmount) external;
+}
+
 /// treasury v2, the balance module and the custodian of the balance token. the Core faces the v1 surface unchanged
 /// (`unitPerPoint` 1e14, `available`, `pay`, `redeem`). custody `B` is split into earmarks and working funds:
 ///
-///   D = totalOwed, recorded unpaid payments; G = bidBudget, the balance bid's funds; K = totalBuckets, the redeemer
-///   buckets; L = totalCommitted, vesting and deferred payouts; W = B - D - G - K - L, working funds
+///   D = totalOwed, recorded unpaid payments; K = totalBuckets, the spender buckets; L = totalCommitted, vesting and
+///   deferred payouts; W = B - D - K - L, working funds
 ///
-/// the rule is B >= D + G + K + L. the Core's exchange pays from W (`available()`). `cushion` is the part of W kept for
-/// the Core's exchange: `sweep`, allocation and withdrawal take only `surplus()`, W above the cushion. no earmark pays
-/// from another: the bid pays from G, a redeemer from its own bucket, a committed payout from L. every committed payout
-/// is reserved in full when it is created. the owner is the Core's owner and manages the backing: it can pause, return
-/// a switched off redeemer's bucket or the bid budget to working funds and withdraw the surplus
+/// the rule is B >= D + K + L. the Core's exchange pays from W (`available()`). `cushion` is the part of W kept for the
+/// Core's exchange: `sweep`, allocation and withdrawal take only `surplus()`, W above the cushion. every rule that
+/// spends the backing is a registered spender with its own bucket, switch, caps and share of each sweep: a redeemer
+/// (quoted through `IRedeemer` for a CC burn in `redeemCC`) or a module that draws itself (`draw`), the credit bid
+/// (src/adapters/CreditBid.sol) among them. no bucket pays from another, the debt or the cushion; every committed
+/// payout is reserved in full when it is created. the treasury itself holds no pricing rule, so a new rule is a new
+/// spender: deploy, register, fund its bucket, switch it on. the owner is the Core's owner and manages the backing:
+/// it can pause, return a switched off spender's bucket to working funds, withdraw the surplus and, as a last resort,
+/// migrate the custody to a successor through the same handshake v1 used
 contract BalanceTreasuryV2 is IBalanceModule {
     address public immutable core;
     address public immutable override balanceToken;
@@ -94,11 +88,11 @@ contract BalanceTreasuryV2 is IBalanceModule {
     uint256 private constant BPS = 10_000;
     /// gas kept back from a payment transfer so an unpaid amount can still be recorded: two storage writes and an event
     uint256 private constant ACCRUE_RESERVE = 60_000;
-    /// the period of the per-period caps of the bid and the redeemers
+    /// the period of the per-period caps of the spenders
     uint256 private constant PERIOD = 1 days;
-    /// a newly registered redeemer draws nothing before this delay
-    uint256 private constant NEW_REDEEMER_DELAY = 1 days;
-    uint256 private constant MAX_REDEEMERS = 8;
+    /// a newly registered spender draws nothing before this delay
+    uint256 private constant NEW_SPENDER_DELAY = 1 days;
+    uint256 private constant MAX_SPENDERS = 8;
     uint256 private constant MAX_DURATION = 4 * 365 days;
     /// transient reentrancy lock slot, keccak256("BalanceTreasuryV2.lock") less one
     uint256 private constant LOCK_SLOT = 0xacad7041682364bcd8282b25bcb22caf85f0b515f60f41b113151841b24681ad;
@@ -110,12 +104,8 @@ contract BalanceTreasuryV2 is IBalanceModule {
     error Reentrant();
     error Paused();
     error ConversionOff();
-    error BidOff();
-    error BidUnpriced();
-    error ReturnLocked(uint256 id);
-    error NotInPile(uint256 id);
-    error NotOwner(uint256 id);
     error RedemptionOff();
+    error SpenderOff();
     error NotHeld();
     error RedeemedBelowRating();
     error InsufficientAvailable();
@@ -124,7 +114,7 @@ contract BalanceTreasuryV2 is IBalanceModule {
     error OverCap();
     error BadSetting(bytes32 field);
     error BadPayout();
-    error UnknownRedeemer();
+    error UnknownSpender();
     error ZeroAmount();
     error InvalidAmount();
     error InvalidRecipient();
@@ -133,25 +123,25 @@ contract BalanceTreasuryV2 is IBalanceModule {
     error Slippage();
     error BurnMismatch();
     error ShortPayment();
-    error RedeemerOn();
+    error SpenderOn();
     error Insolvent();
     error ProtectedAsset();
     error NothingDue();
+    error Migrated();
+    error SwitchesOn();
+    error InvalidSuccessor();
 
     event StatementConverted(uint256 indexed statementId, uint256 received, uint256 toProRata, uint16 contributionBps);
     event PaymentAccrued(address indexed to, uint256 amount);
     event OwedClaimed(address indexed to, uint256 amount);
-    event CreditSold(
-        uint256 indexed id, address indexed seller, uint256 score, uint256 paid, uint256 toArtist, uint256 bidBps
-    );
-    event BidFill(address indexed seller, uint256 credits, uint256 paid, uint256 toArtist, uint256 bidBudget);
-    event Swept(uint256 surplus, uint256 toBid, uint256 toBuckets);
-    event Allocated(address indexed redeemer, uint256 amount);
-    event Unallocated(address indexed redeemer, uint256 amount);
-    event RedeemerRegistered(address indexed redeemer, uint40 activeAt);
-    event RedeemerCapsSet(address indexed redeemer, uint128 perCall, uint128 perPeriod, uint128 lifetime, uint64 epoch);
-    event RedeemerSwitched(address indexed redeemer, bool on);
-    event SharesSet(address indexed redeemer, uint16 shareBps, uint16 bidShareBps, uint16 totalShareBps);
+    event Drawn(address indexed spender, address indexed to, uint256 amount, uint256 accrued, uint256 bucket);
+    event Swept(uint256 surplus, uint256 toBuckets);
+    event Allocated(address indexed spender, uint256 amount);
+    event Unallocated(address indexed spender, uint256 amount);
+    event SpenderRegistered(address indexed spender, uint40 activeAt);
+    event SpenderCapsSet(address indexed spender, uint128 perCall, uint128 perPeriod, uint128 lifetime, uint64 epoch);
+    event SpenderSwitched(address indexed spender, bool on);
+    event SharesSet(address indexed spender, uint16 shareBps, uint16 totalShareBps);
     event CCRedeemed(
         address indexed redeemer,
         address indexed burner,
@@ -164,45 +154,34 @@ contract BalanceTreasuryV2 is IBalanceModule {
         uint64 epoch
     );
     event ClaimReleased(uint256 indexed claimId, address indexed recipient, uint256 amount);
-    event SwitchesSet(bool conversionEnabled, bool workingPaymentsEnabled, bool bidEnabled);
+    event SwitchesSet(bool conversionEnabled, bool workingPaymentsEnabled);
     event PausedSet(bool paused);
     event CushionSet(uint256 cushion);
     event ConversionToClaimBpsSet(uint16 bps);
-    event BidSet(BalanceBid bid);
     event WorkingWithdrawn(address indexed to, uint256 amount);
     event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event MigrationReceived(address indexed predecessor, uint256 claimsImported, uint256 custody);
+    event TreasuryMigrated(address indexed successor, uint256 moved, uint256 claimsExported);
 
     mapping(address => uint256) public owed;
     uint256 public totalOwed;
-    uint256 public bidBudget;
     uint256 public totalBuckets;
     uint256 public totalCommitted;
     /// working funds kept for the Core's exchange
     uint256 public cushion;
-    /// cumulative inflow and outflow of the bid budget
-    uint256 public bidIn;
-    uint256 public bidOut;
 
     /// share of each measured conversion receipt added to the pro-rata redeemer's bucket, bps
     uint16 public conversionToClaimBps;
-    /// share of each sweep added to the bid budget, bps. with the redeemer shares at most 10,000 in all
-    uint16 public bidShareBps;
+    /// the sum of the spender shares of a sweep, bps, at most 10,000
     uint16 public totalShareBps;
     bool public conversionEnabled;
     bool public workingPaymentsEnabled;
-    bool public bidEnabled;
     bool public paused;
+    /// set by `migrateTo`: every switch and spender stays off forever after
+    bool public migrated;
 
-    BalanceBid public bid;
-    /// the bid price at the last fill or setting, bps of par, and its time
-    uint16 public bidAnchorBps;
-    uint40 public bidAnchorTime;
-    uint40 public bidPeriodStart;
-    uint128 public bidPeriodUsed;
-
-    mapping(address => RedeemerState) internal _redeemers;
-    address[] public redeemerList;
+    mapping(address => SpenderState) internal _spenders;
+    address[] public spenderList;
     CommittedPayout[] private _claims;
 
     constructor(
@@ -240,7 +219,7 @@ contract BalanceTreasuryV2 is IBalanceModule {
     }
 
     /// one transient lock over every mutation and outflow, so the Core's two sequential `pay` calls of one sale both
-    /// pass while a token, artwork or redeemer callback cannot enter a second outflow
+    /// pass while a token, artwork or spender callback cannot enter a second outflow
     modifier nonReentrant() {
         uint256 locked;
         assembly ("memory-safe") {
@@ -273,9 +252,9 @@ contract BalanceTreasuryV2 is IBalanceModule {
         return SafeTransferLib.balanceOf(balanceToken, address(this));
     }
 
-    /// D + G + K + L
+    /// D + K + L
     function earmarked() public view returns (uint256) {
-        return totalOwed + bidBudget + totalBuckets + totalCommitted;
+        return totalOwed + totalBuckets + totalCommitted;
     }
 
     /// `W`, custody less every earmark, floored at zero
@@ -295,14 +274,14 @@ contract BalanceTreasuryV2 is IBalanceModule {
         return custody() >= earmarked();
     }
 
-    /// this treasury is the bound Core's module and the Core has not retired: the gate of conversions, working
-    /// payments and the bid, which need the Core
+    /// this treasury is the bound Core's module and the Core has not retired: the gate of conversions and working
+    /// payments, which need the Core. a spender that needs the Core (the credit bid adopts into the pile) reads it too
     function selected() public view returns (bool) {
         return IV2Core(core).balanceModule() == address(this) && !IV2Core(core).retired();
     }
 
-    /// this treasury is the bound Core's module: the gate of redemptions, which need no Core interaction, so a retired
-    /// Core does not strand the buckets. a module replacement closes them
+    /// this treasury is the bound Core's module: the gate of every spender draw, which needs no Core interaction, so a
+    /// retired Core does not strand the buckets. a module replacement closes them
     function selectedForClaims() public view returns (bool) {
         return IV2Core(core).balanceModule() == address(this);
     }
@@ -325,25 +304,35 @@ contract BalanceTreasuryV2 is IBalanceModule {
         return working();
     }
 
-    /// false: this treasury has no `migrateTo`. read by the v1 `migrateTo` handshake
-    function migrated() external pure returns (bool) {
-        return false;
-    }
-
-    /// whether any redeemer is on. read by the v1 `migrateTo` handshake, which requires false
+    /// whether any spender is on. read by a predecessor's `migrateTo` handshake, which requires false
     function ccRedemptionEnabled() public view returns (bool) {
-        for (uint256 i; i < redeemerList.length; ++i) {
-            if (_redeemers[redeemerList[i]].on) return true;
+        for (uint256 i; i < spenderList.length; ++i) {
+            if (_spenders[spenderList[i]].on) return true;
         }
         return false;
     }
 
-    function redeemers(address redeemer) external view returns (RedeemerState memory) {
-        return _redeemers[redeemer];
+    function spenders(address spender) external view returns (SpenderState memory) {
+        return _spenders[spender];
     }
 
-    function redeemerCount() external view returns (uint256) {
-        return redeemerList.length;
+    function spenderCount() external view returns (uint256) {
+        return spenderList.length;
+    }
+
+    /// what `spender` may draw now in one call: its bucket inside its caps, zero while it is off, not yet active, the
+    /// treasury is paused or not the module
+    function drawable(address spender) external view returns (uint256) {
+        SpenderState storage r = _spenders[spender];
+        if (!r.registered || !r.on || paused || block.timestamp < r.activeAt || !selectedForClaims()) return 0;
+        uint256 x = r.bucket;
+        if (x > r.perCall) x = r.perCall;
+        uint256 used = block.timestamp >= uint256(r.periodStart) + PERIOD ? 0 : r.periodUsed;
+        uint256 period = r.perPeriod > used ? r.perPeriod - used : 0;
+        if (x > period) x = period;
+        uint256 life = r.lifetime > r.lifetimeUsed ? r.lifetime - r.lifetimeUsed : 0;
+        if (x > life) x = life;
+        return x;
     }
 
     function claimCount() external view returns (uint256) {
@@ -354,35 +343,6 @@ contract BalanceTreasuryV2 is IBalanceModule {
     function claimOf(uint256 claimId) external view returns (CommittedPayout memory c, uint256 due) {
         c = _claims[claimId - 1];
         due = _vested(c) - c.released;
-    }
-
-    /// the bid price now, bps of par: the anchor climbed `climbBps` per full step, inside [floorBps, capBps]
-    function bidBpsNow() public view returns (uint256 x) {
-        BalanceBid memory b = bid;
-        x = bidAnchorBps;
-        if (b.stepSeconds != 0) x += (block.timestamp - bidAnchorTime) / b.stepSeconds * b.climbBps;
-        if (x > b.capBps) x = b.capBps;
-        if (x < b.floorBps) x = b.floorBps;
-    }
-
-    /// `bidBpsNow()` below the controller's credit floor multiplier, read at each fill: the Core's `balanceBidCapBps`
-    /// can fall after `setBid`, and a credit the engine resells after its return lock must stay worth more at the
-    /// engine than here
-    function _fillBps() private view returns (uint256 bps) {
-        bps = bidBpsNow();
-        uint256 floorMult = IV2Controller(IV2Core(core).controller()).floorMultBps();
-        if (bps >= floorMult) bps = floorMult - 1;
-    }
-
-    /// what `sellCredit([id])` would pay the seller and the artist now, zero when the bid could not price or fund it.
-    /// the return lock, the caps and the holder are checked only by the fill
-    function quoteCredit(uint256 id) external view returns (uint256 paid, uint256 toArtist) {
-        if (paused || !bidEnabled || !selected()) return (0, 0);
-        (bool ok, uint256 ethPrice, uint256 vSell) = _ethTerms();
-        if (!ok) return (0, 0);
-        paid = _price(_scoreOf(id), _fillBps(), ethPrice, vSell, bid.overEthBps);
-        toArtist = paid * IV2Core(core).settings().buyToArtistBps / BPS;
-        if (paid + toArtist > bidBudget) return (0, 0);
     }
 
     // ------------------------------------------------------------------ the Core's module calls
@@ -404,7 +364,7 @@ contract BalanceTreasuryV2 is IBalanceModule {
         if (out < required) revert RedeemedBelowRating();
         uint16 bps = conversionToClaimBps;
         uint256 toProRata = out * bps / BPS;
-        if (toProRata != 0) _fill(_redeemers[proRataRedeemer], toProRata);
+        if (toProRata != 0) _fill(_spenders[proRataRedeemer], toProRata);
         emit StatementConverted(statementId, out, toProRata, bps);
     }
 
@@ -427,123 +387,47 @@ contract BalanceTreasuryV2 is IBalanceModule {
         }
     }
 
-    // ------------------------------------------------------------------ the balance bid
+    // ------------------------------------------------------------------ the spender draw
 
-    /// sells the caller's credits `ids` to the balance bid. each credit is paid `bidBps` of par, capped at its eth
-    /// terms, and the artist `buyToArtistBps` of that on top, all from the bid budget. the credits go to the Core and are
-    /// adopted into its pile in the same call. a credit this controller sold inside the Core's return lock is refused, so
-    /// a credit bought from the engine's resale cannot come straight back through adoption. the caller has approved this
-    /// treasury on Credits
-    function sellCredit(uint256[] calldata ids, uint256 minOut)
-        external
-        nonReentrant
-        notPaused
-        returns (uint256 total)
-    {
-        if (!bidEnabled || !selected()) revert BidOff();
-        if (ids.length == 0) revert InvalidAmount();
-        IV2Core c = IV2Core(core);
-        (bool ok, uint256 ethPrice, uint256 vSell) = _ethTerms();
-        if (!ok) revert BidUnpriced();
-        Settings memory cfg = c.settings();
-        IV2Controller ctrl = IV2Controller(c.controller());
-        BalanceBid memory b = bid;
-        uint256 bps = _fillBps();
-        uint256 artistTotal;
-        for (uint256 i; i < ids.length; ++i) {
-            uint256 id = ids[i];
-            if (IV2Credits(Mainnet.CREDITS).ownerOf(id) != msg.sender) revert NotOwner(id);
-            uint256 soldAt = ctrl.creditSoldAt(id);
-            if (soldAt != 0 && block.timestamp < soldAt + cfg.returnLockSeconds) revert ReturnLocked(id);
-            uint256 score = _scoreOf(id);
-            uint256 paid = _price(score, bps, ethPrice, vSell, b.overEthBps);
-            if (paid == 0) revert ZeroAmount();
-            uint256 toArtist = paid * cfg.buyToArtistBps / BPS;
-            total += paid;
-            artistTotal += toArtist;
-            emit CreditSold(id, msg.sender, score, paid, toArtist, bps);
-            uint256 drop = uint256(b.dropPer100PointsBps) * score / RATE_SCORE;
-            bps = bps > b.floorBps + drop ? bps - drop : b.floorBps;
-            IV2Credits(Mainnet.CREDITS).transferFrom(msg.sender, core, id);
-        }
-        if (total < minOut) revert Slippage();
-        uint256 out = total + artistTotal;
-        if (out > b.maxPerCall) revert OverCap();
-        if (block.timestamp >= uint256(bidPeriodStart) + PERIOD) {
-            bidPeriodStart = uint40(block.timestamp);
-            bidPeriodUsed = 0;
-        }
-        if (uint256(bidPeriodUsed) + out > b.maxPerPeriod) revert OverCap();
-        if (out > bidBudget) revert InsufficientBucket();
-        bidPeriodUsed += uint128(out);
-        bidBudget -= out;
-        bidOut += out;
-        // forge-lint: disable-next-line(unsafe-typecast)
-        bidAnchorBps = uint16(bps);
-        bidAnchorTime = uint40(block.timestamp);
-
-        c.adopt(ids);
-        for (uint256 i; i < ids.length; ++i) {
-            (bool inPile,,) = c.creditInfo(ids[i]);
-            if (!inPile) revert NotInPile(ids[i]);
-        }
-        _transferExact(msg.sender, total);
-        if (artistTotal != 0) _payOrAccrue(c.artist(), artistTotal);
-        emit BidFill(msg.sender, ids.length, total, artistTotal, bidBudget);
-    }
-
-    /// the eth terms of the bid: the Core's eth price per 100 points and the controller's value of one point at the
-    /// protected sale price. false on a zero price or an unusable quote, which pauses the bid
-    function _ethTerms() private view returns (bool ok, uint256 ethPrice, uint256 vSell) {
-        ethPrice = IV2Core(core).ethPrice();
-        (vSell, ok) = IV2Controller(IV2Core(core).controller()).valuePerPoint(true);
-        ok = ok && ethPrice != 0 && vSell != 0;
-    }
-
-    /// `score * unitPerPoint * bps / 10_000`, at most the balance token worth `ethPrice * score / RATE_SCORE * (10_000 +
-    /// overEthBps) / 10_000` wei at the protected sale price (`vSell` wei per `POINT_UNIT * unitPerPoint` base units)
-    function _price(uint256 score, uint256 bps, uint256 ethPrice, uint256 vSell, uint256 overEthBps)
-        private
-        pure
-        returns (uint256 paid)
-    {
-        paid = score * unitPerPoint * bps / BPS;
-        uint256 ethCap = FixedPointMathLib.fullMulDiv(ethPrice * score, BPS + overEthBps, RATE_SCORE * BPS);
-        uint256 cap = FixedPointMathLib.fullMulDiv(ethCap, POINT_UNIT * unitPerPoint, vSell);
-        if (cap < paid) paid = cap;
-    }
-
-    function _scoreOf(uint256 id) private view returns (uint256) {
-        return ICreditScore(Mainnet.CREDIT_SCORE)
-            .scoreOf(ICredits(Mainnet.CREDITS).seedOf(id), ICredits(Mainnet.CREDITS).timestampOf(id));
+    /// the calling spender pays `to` `amount` from its own bucket, inside its caps, while it is on and active and this
+    /// treasury is the module. `accrue` false requires exact delivery; true transfers with bounded gas and records the
+    /// undelivered part in `owed[to]`, for a recipient that may revert or burn gas (the artist split). the treasury
+    /// checks only the bucket, the caps and the recipient: what the spender got for the payment is the spender's rule
+    function draw(address to, uint256 amount, bool accrue) external nonReentrant notPaused {
+        SpenderState storage r = _spenders[msg.sender];
+        if (!r.registered || !r.on || block.timestamp < r.activeAt || !selectedForClaims()) revert SpenderOff();
+        if (to == address(0) || to == address(this)) revert InvalidRecipient();
+        if (amount == 0) revert ZeroAmount();
+        if (amount > r.bucket) revert InsufficientBucket();
+        _useCaps(r, amount);
+        r.bucket -= amount;
+        r.totalOut += amount;
+        totalBuckets -= amount;
+        uint256 accrued;
+        if (accrue) accrued = _payOrAccrue(to, amount);
+        else _transferExact(to, amount);
+        emit Drawn(msg.sender, to, amount, accrued, r.bucket);
     }
 
     // ------------------------------------------------------------------ funding
 
-    /// moves the surplus (working funds above the cushion) into the bid budget and the redeemer buckets in the owner's
-    /// shares; the unshared rest stays working. anyone may call
+    /// moves the surplus (working funds above the cushion) into the spender buckets in the owner's shares; the
+    /// unshared rest stays working. anyone may call
     function sweep() external nonReentrant notPaused returns (uint256 moved) {
         uint256 s = surplus();
         if (s == 0) return 0;
-        uint256 toBid = s * bidShareBps / BPS;
-        if (toBid != 0) {
-            bidBudget += toBid;
-            bidIn += toBid;
-        }
-        uint256 toBuckets;
-        for (uint256 i; i < redeemerList.length; ++i) {
-            RedeemerState storage r = _redeemers[redeemerList[i]];
+        for (uint256 i; i < spenderList.length; ++i) {
+            SpenderState storage r = _spenders[spenderList[i]];
             uint256 x = s * r.shareBps / BPS;
             if (x != 0) {
                 _fill(r, x);
-                toBuckets += x;
+                moved += x;
             }
         }
-        moved = toBid + toBuckets;
-        emit Swept(s, toBid, toBuckets);
+        emit Swept(s, moved);
     }
 
-    function _fill(RedeemerState storage r, uint256 x) private {
+    function _fill(SpenderState storage r, uint256 x) private {
         r.bucket += x;
         r.totalIn += x;
         totalBuckets += x;
@@ -565,7 +449,7 @@ contract BalanceTreasuryV2 is IBalanceModule {
         bytes calldata data
     ) external nonReentrant notPaused returns (uint256 amount, uint256 claimId) {
         if (block.timestamp > deadline) revert Expired();
-        RedeemerState storage r = _redeemers[redeemer];
+        SpenderState storage r = _spenders[redeemer];
         if (!r.on || block.timestamp < r.activeAt || !selectedForClaims()) revert RedemptionOff();
         if (expectedEpoch != r.epoch) revert StaleEpoch();
         if (recipient == address(0) || recipient == address(this)) revert InvalidRecipient();
@@ -605,7 +489,7 @@ contract BalanceTreasuryV2 is IBalanceModule {
         emit CCRedeemed(redeemer, msg.sender, recipient, ccIn, amount, mode, duration, claimId, r.epoch);
     }
 
-    function _useCaps(RedeemerState storage r, uint256 amount) private {
+    function _useCaps(SpenderState storage r, uint256 amount) private {
         if (amount > r.perCall) revert OverCap();
         if (block.timestamp >= uint256(r.periodStart) + PERIOD) {
             r.periodStart = uint40(block.timestamp);
@@ -637,8 +521,9 @@ contract BalanceTreasuryV2 is IBalanceModule {
 
     // ------------------------------------------------------------------ payments
 
-    /// transfers `amount` with all gas but `ACCRUE_RESERVE` and records the undelivered part in `owed[to]`
-    function _payOrAccrue(address to, uint256 amount) private {
+    /// transfers `amount` with all gas but `ACCRUE_RESERVE` and records the undelivered part in `owed[to]`. returns
+    /// the part recorded
+    function _payOrAccrue(address to, uint256 amount) private returns (uint256 short) {
         uint256 before = custody();
         uint256 g = gasleft();
         if (g > ACCRUE_RESERVE) {
@@ -648,7 +533,7 @@ contract BalanceTreasuryV2 is IBalanceModule {
         uint256 afterBal = custody();
         uint256 delivered = before > afterBal ? before - afterBal : 0;
         if (delivered < amount) {
-            uint256 short = amount - delivered;
+            short = amount - delivered;
             owed[to] += short;
             totalOwed += short;
             emit PaymentAccrued(to, short);
@@ -667,14 +552,15 @@ contract BalanceTreasuryV2 is IBalanceModule {
 
     // ------------------------------------------------------------------ owner
 
-    function setSwitches(bool conversion, bool workingPayments, bool bidOn) external onlyOwner {
+    /// refused forever after `migrateTo`
+    function setSwitches(bool conversion, bool workingPayments) external onlyOwner {
+        if (migrated) revert Migrated();
         conversionEnabled = conversion;
         workingPaymentsEnabled = workingPayments;
-        bidEnabled = bidOn;
-        emit SwitchesSet(conversion, workingPayments, bidOn);
+        emit SwitchesSet(conversion, workingPayments);
     }
 
-    /// stops the bid, redemptions and sweeps. the Core's calls, `claim` and `release` keep running
+    /// stops every spender draw, redemption and sweep. the Core's calls, `claim` and `release` keep running
     function setPaused(bool on) external onlyOwner {
         paused = on;
         emit PausedSet(on);
@@ -692,73 +578,49 @@ contract BalanceTreasuryV2 is IBalanceModule {
         emit ConversionToClaimBpsSet(v);
     }
 
-    /// sets the bid and restarts its price at `floorBps`. the cap is at most par and must stay below the controller's
-    /// credit floor multiplier, so a credit the engine resells after its return lock is still worth more at the engine
-    /// than here
-    function setBid(BalanceBid calldata v) external onlyOwner {
-        // par is the ceiling: a credit bought above par loses BALANCE on conversion
-        if (v.floorBps > v.capBps || v.capBps == 0 || v.capBps > BPS) revert BadSetting("bidBand");
-        if (v.climbBps != 0 && v.stepSeconds == 0) revert BadSetting("bidStep");
-        if (v.capBps >= IV2Controller(IV2Core(core).controller()).floorMultBps()) revert BadSetting("bidCap");
-        bid = v;
-        bidAnchorBps = v.floorBps;
-        bidAnchorTime = uint40(block.timestamp);
-        emit BidSet(v);
-    }
-
-    /// the sweep share of the bid budget, bps
-    function setBidShare(uint16 v) external onlyOwner {
-        _setShares(address(0), v);
-    }
-
-    /// the sweep share of a registered redeemer's bucket, bps
-    function setRedeemerShare(address redeemer, uint16 v) external onlyOwner {
-        if (!_redeemers[redeemer].registered) revert UnknownRedeemer();
-        _setShares(redeemer, v);
-    }
-
-    function _setShares(address redeemer, uint16 v) private {
-        uint256 old = redeemer == address(0) ? bidShareBps : _redeemers[redeemer].shareBps;
-        uint256 total = totalShareBps - old + v;
+    /// the sweep share of a registered spender's bucket, bps. the shares sum to at most 10,000
+    function setSpenderShare(address spender, uint16 v) external onlyOwner {
+        SpenderState storage r = _spenders[spender];
+        if (!r.registered) revert UnknownSpender();
+        uint256 total = totalShareBps - r.shareBps + v;
         if (total > BPS) revert BadSetting("shares");
-        if (redeemer == address(0)) bidShareBps = v;
-        else _redeemers[redeemer].shareBps = v;
+        r.shareBps = v;
         // forge-lint: disable-next-line(unsafe-typecast)
         totalShareBps = uint16(total);
-        emit SharesSet(redeemer, redeemer == address(0) ? 0 : v, bidShareBps, uint16(total));
+        emit SharesSet(spender, v, uint16(total));
     }
 
-    /// registers a redeemer, switched off, drawing nothing for `NEW_REDEEMER_DELAY`, with a nonzero per-period cap
-    function registerRedeemer(address redeemer, uint128 perCall, uint128 perPeriod, uint128 lifetime)
+    /// registers a spender, switched off, drawing nothing for `NEW_SPENDER_DELAY`, with a nonzero per-period cap
+    function registerSpender(address spender, uint128 perCall, uint128 perPeriod, uint128 lifetime)
         external
         onlyOwner
     {
-        _register(redeemer, perCall, perPeriod, lifetime);
+        _register(spender, perCall, perPeriod, lifetime);
     }
 
-    function _register(address redeemer, uint128 perCall, uint128 perPeriod, uint128 lifetime) private {
-        if (redeemer.code.length == 0 || _redeemers[redeemer].registered || redeemerList.length == MAX_REDEEMERS) {
-            revert BadSetting("redeemer");
+    function _register(address spender, uint128 perCall, uint128 perPeriod, uint128 lifetime) private {
+        if (spender.code.length == 0 || _spenders[spender].registered || spenderList.length == MAX_SPENDERS) {
+            revert BadSetting("spender");
         }
-        RedeemerState storage r = _redeemers[redeemer];
+        SpenderState storage r = _spenders[spender];
         r.registered = true;
-        r.activeAt = uint40(block.timestamp + NEW_REDEEMER_DELAY);
-        redeemerList.push(redeemer);
-        emit RedeemerRegistered(redeemer, r.activeAt);
-        _setCaps(r, redeemer, perCall, perPeriod, lifetime);
+        r.activeAt = uint40(block.timestamp + NEW_SPENDER_DELAY);
+        spenderList.push(spender);
+        emit SpenderRegistered(spender, r.activeAt);
+        _setCaps(r, spender, perCall, perPeriod, lifetime);
     }
 
-    /// a redeemer's caps. the per-period cap is never zero; the epoch advances
-    function setRedeemerCaps(address redeemer, uint128 perCall, uint128 perPeriod, uint128 lifetime)
+    /// a spender's caps. the per-period cap is never zero; the epoch advances
+    function setSpenderCaps(address spender, uint128 perCall, uint128 perPeriod, uint128 lifetime)
         external
         onlyOwner
     {
-        RedeemerState storage r = _redeemers[redeemer];
-        if (!r.registered) revert UnknownRedeemer();
-        _setCaps(r, redeemer, perCall, perPeriod, lifetime);
+        SpenderState storage r = _spenders[spender];
+        if (!r.registered) revert UnknownSpender();
+        _setCaps(r, spender, perCall, perPeriod, lifetime);
     }
 
-    function _setCaps(RedeemerState storage r, address redeemer, uint128 perCall, uint128 perPeriod, uint128 lifetime)
+    function _setCaps(SpenderState storage r, address spender, uint128 perCall, uint128 perPeriod, uint128 lifetime)
         private
     {
         if (perPeriod == 0) revert BadSetting("perPeriod");
@@ -766,48 +628,39 @@ contract BalanceTreasuryV2 is IBalanceModule {
         r.perPeriod = perPeriod;
         r.lifetime = lifetime;
         ++r.epoch;
-        emit RedeemerCapsSet(redeemer, perCall, perPeriod, lifetime, r.epoch);
+        emit SpenderCapsSet(spender, perCall, perPeriod, lifetime, r.epoch);
     }
 
-    function setRedeemerOn(address redeemer, bool on) external onlyOwner {
-        RedeemerState storage r = _redeemers[redeemer];
-        if (!r.registered) revert UnknownRedeemer();
+    /// switching on is refused forever after `migrateTo`
+    function setSpenderOn(address spender, bool on) external onlyOwner {
+        SpenderState storage r = _spenders[spender];
+        if (!r.registered) revert UnknownSpender();
+        if (on && migrated) revert Migrated();
         r.on = on;
-        emit RedeemerSwitched(redeemer, on);
+        emit SpenderSwitched(spender, on);
     }
 
-    /// moves `amount` of the surplus into the bid budget (`redeemer` zero) or a registered redeemer's bucket
-    function allocate(address redeemer, uint256 amount) external onlyOwner nonReentrant {
+    /// moves `amount` of the surplus into a registered spender's bucket
+    function allocate(address spender, uint256 amount) external onlyOwner nonReentrant {
         if (amount == 0 || amount > surplus()) revert InsufficientSurplus();
-        if (redeemer == address(0)) {
-            bidBudget += amount;
-            bidIn += amount;
-        } else {
-            RedeemerState storage r = _redeemers[redeemer];
-            if (!r.registered) revert UnknownRedeemer();
-            _fill(r, amount);
-        }
-        emit Allocated(redeemer, amount);
+        SpenderState storage r = _spenders[spender];
+        if (!r.registered) revert UnknownSpender();
+        _fill(r, amount);
+        emit Allocated(spender, amount);
     }
 
-    /// returns `amount` of the bid budget (`redeemer` zero) or of a switched off redeemer's bucket to working funds.
-    /// a bucket return advances the redeemer's epoch so a pinned quote cannot execute against the smaller bucket
-    function unallocate(address redeemer, uint256 amount) external onlyOwner nonReentrant {
-        if (redeemer == address(0)) {
-            if (amount == 0 || amount > bidBudget) revert InsufficientBucket();
-            bidBudget -= amount;
-            bidOut += amount;
-        } else {
-            RedeemerState storage r = _redeemers[redeemer];
-            if (!r.registered) revert UnknownRedeemer();
-            if (r.on) revert RedeemerOn();
-            if (amount == 0 || amount > r.bucket) revert InsufficientBucket();
-            r.bucket -= amount;
-            r.totalOut += amount;
-            totalBuckets -= amount;
-            ++r.epoch;
-        }
-        emit Unallocated(redeemer, amount);
+    /// returns `amount` of a switched off spender's bucket to working funds. the return advances the spender's epoch
+    /// so a pinned quote cannot execute against the smaller bucket
+    function unallocate(address spender, uint256 amount) external onlyOwner nonReentrant {
+        SpenderState storage r = _spenders[spender];
+        if (!r.registered) revert UnknownSpender();
+        if (r.on) revert SpenderOn();
+        if (amount == 0 || amount > r.bucket) revert InsufficientBucket();
+        r.bucket -= amount;
+        r.totalOut += amount;
+        totalBuckets -= amount;
+        ++r.epoch;
+        emit Unallocated(spender, amount);
     }
 
     /// sends `amount` of the surplus to `to`. never an earmark or the cushion
@@ -828,16 +681,59 @@ contract BalanceTreasuryV2 is IBalanceModule {
         emit TokenRescued(token, to, amount);
     }
 
-    // ------------------------------------------------------------------ migration from v1
+    // ------------------------------------------------------------------ migration
 
-    /// the successor side of the v1 `migrateTo`: the custody has already landed; `claimAmount`, the v1 claim reserve,
-    /// fills the pro-rata redeemer's bucket once custody covers it with every existing earmark
+    /// the successor side of a predecessor's `migrateTo`: the custody has already landed; `claimAmount`, the
+    /// predecessor's claim reserve or pro-rata bucket, fills the pro-rata redeemer's bucket once custody covers it
+    /// with every existing earmark
     function receiveMigration(uint256 claimAmount) external nonReentrant {
         if (predecessor == address(0) || msg.sender != predecessor) revert OnlyPredecessor();
         if (custody() < earmarked() + claimAmount) revert Insolvent();
-        RedeemerState storage r = _redeemers[proRataRedeemer];
+        SpenderState storage r = _spenders[proRataRedeemer];
         _fill(r, claimAmount);
         ++r.epoch;
         emit MigrationReceived(msg.sender, claimAmount, custody());
+    }
+
+    /// the last resort, the v1 handshake again: moves custody less the recorded debt and the committed payouts to
+    /// `successor` and exports the pro-rata bucket there. every switch and spender must be off here, every other
+    /// bucket returned to working funds first (`unallocate`), and the successor must bind the same coin and token and
+    /// either the same Core or, once this Core has retired, the Core's successor, name this treasury as its
+    /// predecessor, not have migrated itself, have every switch off and already be the selected module of its Core,
+    /// so the order is select the successor, migrate, enable it. this treasury then refuses every switch and spender
+    /// forever; `claim` and `release` keep paying what it left behind, and later inflows leave through
+    /// `withdrawWorking`. a rule change never needs this: a new rule is a new spender
+    function migrateTo(address successor) external onlyOwner nonReentrant returns (uint256 moved) {
+        if (migrated) revert Migrated();
+        if (conversionEnabled || workingPaymentsEnabled || ccRedemptionEnabled()) revert SwitchesOn();
+        if (successor == address(this) || successor.code.length == 0) revert InvalidSuccessor();
+        IV2Successor next = IV2Successor(successor);
+        address nextCore = next.core();
+        if (nextCore != core) {
+            IV2Core c = IV2Core(core);
+            address heir = c.successor();
+            if (!c.retired() || heir == address(0) || nextCore != heir) revert InvalidSuccessor();
+        }
+        if (IV2Core(nextCore).balanceModule() != successor) revert InvalidSuccessor();
+        if (
+            next.balanceToken() != balanceToken || next.ccToken() != ccToken || next.predecessor() != address(this)
+                || next.migrated() || next.conversionEnabled() || next.workingPaymentsEnabled()
+                || next.ccRedemptionEnabled()
+        ) revert InvalidSuccessor();
+        SpenderState storage r = _spenders[proRataRedeemer];
+        uint256 claims = r.bucket;
+        if (totalBuckets != claims) revert InsufficientBucket();
+        uint256 bal = custody();
+        uint256 kept = totalOwed + totalCommitted;
+        moved = bal > kept ? bal - kept : 0;
+        if (claims > moved) revert Insolvent();
+        r.bucket = 0;
+        r.totalOut += claims;
+        totalBuckets = 0;
+        ++r.epoch;
+        migrated = true;
+        if (moved != 0) SafeTransferLib.safeTransfer(balanceToken, successor, moved);
+        next.receiveMigration(claims);
+        emit TreasuryMigrated(successor, moved, claims);
     }
 }
