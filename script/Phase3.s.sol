@@ -107,7 +107,10 @@ contract Phase3 is Script, LaunchChecks {
         p.creditSpreadBps = 2_500;
         p.statementSaleMultiplierBps = 11_000;
         p.statementRedeemDelaySeconds = 3_600;
-        p.quoteStepBps = 900;
+        // the reference step. the deploy preview requires (1 + step)(1 + tol)(1 - margin) < 1 with the Core's live
+        // margin and the controller's tol: at the live margin 500 (decision C12, the 95 percent exchange) and tol 100
+        // the step is at most 370, and the test keeps 50 bps of headroom, so 300. 900 was chosen at margin 1,000
+        p.quoteStepBps = 300;
         p.idle = IdleLoosening({stepSeconds: 600, bps: 0, capBps: 0});
         p.marketPremiumBps = 500;
         p.marketPerCall = 5_000 ether;

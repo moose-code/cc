@@ -563,19 +563,22 @@ contract ControllerV3 is IController {
 
     // ------------------------------------------------------------------ market floor (7.)
 
-    /// sets the market floor settings at once. `spreadBps` 0 to 10_000, `stepBps` 1 to 10_000, `minSeconds` at least
+    /// sets the market floor settings at once. `spreadBps` 0 to 10_000, `stepBps` 1 to 9_999, `minSeconds` at least
     /// 1. `maxStale` 0 turns the floor term off without clearing the posted floor
     function setMarketFloor(MarketFloor calldata v) external onlyOwner {
         if (v.spreadBps > BPS) revert BadSetting("floorSpreadBps");
-        if (v.stepBps == 0 || v.stepBps > BPS) revert BadSetting("floorStepBps");
+        // a step of 10_000 would let a poster round the floor to zero in one drop; below it the rounded up bound is
+        // never zero
+        if (v.stepBps == 0 || v.stepBps >= BPS) revert BadSetting("floorStepBps");
         if (v.minSeconds == 0) revert BadSetting("floorMinSeconds");
         marketFloor = v;
         emit MarketFloorSet(v);
     }
 
     /// posts the market floor, wei per Credit: the collection's top bid, as the poster observes it. the owner may post
-    /// any value at any time; the poster at most once per `minSeconds`, and at most `stepBps` above or below the last
-    /// posted value (the first post is unbounded). a zero post clears the floor
+    /// any value at any time; the poster at most once per `minSeconds`, any value above the last post, and at most
+    /// `stepBps` below it, rounded up (only the first post, `marketFloorTime` zero, is unbounded; from a nonzero floor
+    /// the poster can never reach zero). the owner's zero post clears the floor
     function postMarketFloor(uint256 floorWei) external {
         if (floorWei > type(uint128).max) revert BadSetting("floorWei");
         MarketFloor memory f = marketFloor;

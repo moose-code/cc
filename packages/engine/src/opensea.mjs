@@ -490,14 +490,24 @@ export async function fetchCollectionBid({ key, slug, signal } = {}) {
   const body = await get(url);
   const offers = Array.isArray(body?.offers) ? body.offers : undefined;
   if (!offers) return undefined;
+  const isEth = (p) => {
+    const currency = String(p?.currency ?? "").toUpperCase();
+    return (currency === "ETH" || currency === "WETH") && Number(p?.decimals ?? 18) === 18
+      && typeof p?.value === "string" && /^\d+$/.test(p.value);
+  };
   let best;
   for (const o of offers) {
-    if (o?.criteria?.trait) continue;
-    const currency = String(o?.price?.currency ?? "").toUpperCase();
-    if (currency !== "ETH" && currency !== "WETH") continue;
-    if (Number(o?.price?.decimals ?? 18) !== 18) continue;
-    const value = o?.price?.value;
-    if (typeof value !== "string" || !/^\d+$/.test(value)) continue;
+    // a flat collection offer only: no single trait, no trait list, no numeric trait list, no token list
+    const c = o?.criteria;
+    if (c?.trait) continue;
+    if (Array.isArray(c?.traits) && c.traits.length) continue;
+    if (Array.isArray(c?.numeric_traits) && c.numeric_traits.length) continue;
+    if (Array.isArray(c?.tokens) && c.tokens.length) continue;
+    // fillable now: an offer the API marks other than active, or with nothing left to fill, is not a bid
+    if (o?.status !== undefined && String(o.status).toUpperCase() !== "ACTIVE") continue;
+    if (o?.remaining_quantity !== undefined && !(Number(o.remaining_quantity) > 0)) continue;
+    if (!isEth(o?.price)) continue;
+    const value = o.price.value;
     // the offer's item count is the criteria consideration's amount; an offer whose count cannot be read is dropped,
     // never taken as one item (a ten item offer read as one would post ten times the bid)
     const params = o?.protocol_data?.parameters;
@@ -508,7 +518,16 @@ export async function fetchCollectionBid({ key, slug, signal } = {}) {
     const endRaw = params?.endTime;
     const end = typeof endRaw === "string" && /^\d+$/.test(endRaw) ? Number(endRaw) : typeof endRaw === "number" ? endRaw : NaN;
     if (!Number.isFinite(end) || end <= Math.floor(Date.now() / 1000)) continue;
-    const perItem = BigInt(value) / qty;
+    let perItem = BigInt(value) / qty;
+    // the API's own per item price wins when it answers; a total that disagrees with it by more than rounding is a
+    // response the parser does not understand, dropped
+    if (o?.price_per_item !== undefined) {
+      if (!isEth(o.price_per_item)) continue;
+      const stated = BigInt(o.price_per_item.value);
+      const gap = stated > perItem ? stated - perItem : perItem - stated;
+      if (gap * 100n > stated) continue;
+      perItem = stated;
+    }
     if (perItem === 0n) continue;
     if (!best || perItem > best.bidWei) best = { bidWei: perItem, hash: typeof o.order_hash === "string" ? o.order_hash : undefined, slug: s };
   }
