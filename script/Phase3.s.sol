@@ -94,8 +94,9 @@ contract Phase3 is Script, LaunchChecks {
     function params() public pure returns (Params memory p) {
         p.cushion = 150_000 ether;
         p.bid = BalanceBid({
-            floorBps: 8_000,
-            capBps: 10_000,
+            // a flat 95 percent of par at launch, the Core's own exchange rate (C12); the owner moves it with setBid
+            floorBps: 9_500,
+            capBps: 9_500,
             climbBps: 50,
             stepSeconds: 600,
             dropPer100PointsBps: 29,
@@ -433,7 +434,7 @@ contract Phase3 is Script, LaunchChecks {
     /// @dev the bid band and spender, the sweep shares, redeemer 2 and the CC reference
     function _readbackRedeemers(IBalanceTreasuryV2 t, IControllerV3 v3, Deployed memory d, Params memory p, bool live) private {
         (uint16 floorBps, uint16 capBps,,,,) = ICreditBid(d.bid).bid();
-        _check("bid 8,000 to 10,000 bps of par", floorBps == p.bid.floorBps && capBps == p.bid.capBps, "");
+        _check("bid band as the params (9,500 flat at launch)", floorBps == p.bid.floorBps && capBps == p.bid.capBps, "");
         SpenderState memory rb = t.spenders(d.bid);
         _check(
             "bid registered as a spender, caps",

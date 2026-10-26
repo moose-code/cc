@@ -78,13 +78,10 @@ contract Phase3Test is LiveFixture {
         user = _user("phase3 user");
     }
 
-    /// the owner's migrate run, then the Core settings send `SET_balanceBidCapBps=10000` of the command sequence
+    /// the owner's migrate run; the Core's cap stays as it is (the cap send was dropped, decision 296)
     function _migrate() internal {
         script.migrate(address(core), d, script.params(), false);
         ctl = IControllerV1(address(v3));
-        Settings memory cfg = core.settings();
-        cfg.balanceBidCapBps = 10_000;
-        _setSettings(cfg);
     }
 
     function test_migrationMovesEverythingAndTheCoreRunsAgainstV2() public {
@@ -164,7 +161,7 @@ contract Phase3Test is LiveFixture {
         _migrate();
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
-        assertEq(bidm.bidBpsNow(), 10_000, "the shipped band climbs to 10,000");
+        assertEq(bidm.bidBpsNow(), 9_500, "the shipped band is a flat 95 percent of par");
         BalanceBid memory b = script.params().bid;
         b.floorBps = 11_000;
         b.capBps = 11_000;
