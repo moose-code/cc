@@ -275,8 +275,8 @@ readback() {
   rows_ok "$log"
   echo
   echo "readback: $READBACK_ROWS of $READBACK_ROWS. Expected: v2 custody about 570,081 BALANCE, pro-rata bucket about 57,037"
-  echo "(the v1 claim reserve), bid and redeemer 2 buckets 0 until their step (decision 295), the bid bucket 90,000 after"
-  echo "the bid step, cushion 150,000, floor ask 0.008961 ETH, V3 quote step 300, floor multiplier 13,750 (the Core's cap"
+  echo "(the v1 claim reserve), bid and redeemer 2 buckets 0 until their step (decision 295), the bid bucket the whole"
+  echo "surplus above the cushion after the bid step (decision 298), cushion 150,000, floor ask 0.008961 ETH, V3 quote step 300, floor multiplier 13,750 (the Core's cap"
   echo "stays 11,000: step 3 is dropped, decision 296)."
 }
 
@@ -371,11 +371,11 @@ if [ "$(printf '%s' "$sp" | field 2)" != true ]; then
     echo "  $RERUN"
     exit 0
   fi
-  # the bid's budget is allocated in the same run while its bucket is empty: 2 sends, else the switch alone
-  want=1
-  [ "$(printf '%s' "$sp" | field 12)" = 0 ] && want=2
+  # the bid's share (unless a stopped run already set it), the sweep into its bucket, then the switch
+  want=2
+  [ "$(printf '%s' "$sp" | field 3)" != 10000 ] && want=3
   export STEP=bid
-  dry "$P3" "$want" "133,617 gas with the allocation, 38,346 for the switch alone"
+  dry "$P3" "$want" "183,675 gas"
   yes_or_exit
   send "$P3"
   [ "$(c call "$TREASURY_V2" "spenders(address)($SPENDER_TUPLE)" "$CREDIT_BID" | field 2)" = true ] || stop "the bid spender is not on after the send"

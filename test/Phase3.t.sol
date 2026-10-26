@@ -119,7 +119,9 @@ contract Phase3Test is LiveFixture {
         // the bid is a newly registered spender: it draws nothing for a day, which also covers the return lock
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
-        assertEq(bidm.bidBudget(), script.params().bidBudget, "the bid step funded the bid from the surplus");
+        assertEq(t.surplus(), 0, "the bid step swept the whole surplus");
+        assertGt(bidm.bidBudget(), 0, "into the bid's bucket");
+        assertEq(t.working(), t.cushion(), "the Core's exchange keeps the cushion");
 
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
