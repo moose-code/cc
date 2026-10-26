@@ -281,7 +281,8 @@ contract Phase3Test is LiveFixture {
         assertTrue(v3.ccPoolKeySet() && okcc && ccRef != 0, "the migrate run set the CC reference");
         (, uint16 step, uint16 tol,,,) = v3.quote();
         uint256 margin = core.settings().balanceBidMarginBps;
-        assertLt((10_000 + uint256(step)) * (10_000 + tol) * (10_000 - margin), 0.995e12, "at least 50 bps headroom");
+        assertLt((10_000 + uint256(step)) * (10_000 + tol) * (10_000 - margin), 0.995e12, "at least 50 bps headroom at the pinned margin");
+        assertLt((10_000 + uint256(step)) * (10_000 + tol) * (10_000 - 500), 0.995e12, "and at the live margin 500 of decision C12, the 95 percent exchange");
         _checkLoosening();
         _checkViews();
         vm.warp(block.timestamp + 1 hours);
@@ -587,6 +588,9 @@ contract Phase3Test is LiveFixture {
         vm.expectRevert(abi.encodeWithSelector(IControllerV3.BadSetting.selector, bytes32("floorStepBps")));
         vm.prank(owner);
         v3.setMarketFloor(IControllerV3.MarketFloor({poster: p.floor.poster, spreadBps: 300, stepBps: 0, minSeconds: 600, maxStale: 6 hours}));
+        vm.expectRevert(abi.encodeWithSelector(IControllerV3.BadSetting.selector, bytes32("floorStepBps")));
+        vm.prank(owner);
+        v3.setMarketFloor(IControllerV3.MarketFloor({poster: p.floor.poster, spreadBps: 300, stepBps: 10_000, minSeconds: 600, maxStale: 6 hours}));
     }
 
     function test_marketFloorStaleOnlyRefusesTheCreditsItBinds() public {

@@ -29,6 +29,22 @@ test("fetchCollectionBid: the best readable flat offer per item", async () => {
   assert.equal(r?.bidWei, 9_000_000_000_000_000n, "a ten item 0.09 offer is 0.009 per item and beats 0.0087; trait and USDC offers are skipped");
 });
 
+test("fetchCollectionBid: cancelled, exhausted, trait listed and contradictory offers are dropped, price_per_item wins", async () => {
+  const ten = { protocol_data: { parameters: { endTime: future, consideration: [{ startAmount: "10" }] } } };
+  serve({ offers: [offer("90000000000000000", { ...ten, status: "CANCELLED" })] });
+  assert.equal(await fetchCollectionBid({ key: "k", slug: "demo" }), undefined, "a cancelled offer is not a bid");
+  serve({ offers: [offer("90000000000000000", { ...ten, status: "ACTIVE", remaining_quantity: 0 })] });
+  assert.equal(await fetchCollectionBid({ key: "k", slug: "demo" }), undefined, "a filled offer is not a bid");
+  serve({ offers: [offer("90000000000000000", { ...ten, criteria: { collection: { slug: "demo" }, traits: [{ type: "Background", value: "Red" }] } })] });
+  assert.equal(await fetchCollectionBid({ key: "k", slug: "demo" }), undefined, "a trait list offer is not flat");
+  serve({ offers: [offer("90000000000000000", { ...ten, criteria: { collection: { slug: "demo" }, numeric_traits: [{ type: "Score", min: 700 }] } })] });
+  assert.equal(await fetchCollectionBid({ key: "k", slug: "demo" }), undefined, "a numeric trait offer is not flat");
+  serve({ offers: [offer("90000000000000000", { ...ten, price_per_item: { currency: "WETH", decimals: 18, value: "90000000000000000" } })] });
+  assert.equal(await fetchCollectionBid({ key: "k", slug: "demo" }), undefined, "a total that contradicts price_per_item is dropped");
+  serve({ offers: [offer("90000000000000000", { ...ten, status: "ACTIVE", remaining_quantity: 3, price_per_item: { currency: "WETH", decimals: 18, value: "9000000000000000" } })] });
+  assert.equal((await fetchCollectionBid({ key: "k", slug: "demo" }))?.bidWei, 9_000_000_000_000_000n, "a partly filled active offer prices at its per item value");
+});
+
 test("fetchCollectionBid: an unreadable item count, an expired offer and a malformed body are dropped", async () => {
   serve({ offers: [offer("90000000000000000", { protocol_data: { parameters: { endTime: future, consideration: [{ startAmount: "garbage" }] } } })] });
   assert.equal(await fetchCollectionBid({ key: "k", slug: "demo" }), undefined, "a count that cannot be read is not one item");

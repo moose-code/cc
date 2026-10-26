@@ -57,7 +57,7 @@ returned, custody less the debt and the committed payouts moves, the pro-rata bu
 **$BALANCE bid: `CreditBid.sellCredit(uint256[] ids, uint256 minOut)`, anyone.** A spender module
 (`src/adapters/CreditBid.sol`), its budget its bucket, its per call and per period caps its spender caps.
 - Price per point = `bidBps / 10_000 * unitPerPoint`. `bidBps` climbs while idle, drops per 100 points filled,
-  bounded `[bidFloorBps, bidCapBps]` (e.g. 8,500..11,500).
+  bounded `[bidFloorBps, bidCapBps]` (8,000..10,000, never above par, decision 285).
 - Its ETH value may not exceed the Credit's ETH bid by more than `bidOverEthBps`, using the controller's protected
   $BALANCE price. A failed or stale read pauses the bid.
 - Each fill: pay the seller from `bidBudget` (artist royalty on top through the split, at `buyToArtistBps`), send
