@@ -107,6 +107,11 @@ no_fail() {
 $(grep -E '^[[:space:]]*FAIL  ' "$1")"; fi
 }
 
+# the log printed a table of `n of n checks passed`
+table_ok() {
+  grep -qE "^[[:space:]]*$2 of $2 checks passed" "$1" || stop "the $3 table did not pass $2 of $2: $(grep -E 'checks passed' "$1" | head -1)"
+}
+
 rows_ok() {
   no_fail "$1"
   grep -qE "^[[:space:]]*$READBACK_ROWS of $READBACK_ROWS checks passed" "$1" \
@@ -116,6 +121,7 @@ rows_ok() {
 # the dry run of one step: exit 0, no FAIL row, exactly `want` transactions
 dry() {
   local script=$1 want=$2 ref=$3 log="$LOGS/$WHERE-dry-$(date +%s).log" n json
+  DRY_LOG=$log
   json="broadcast/$(basename "${script%%:*}")/1/dry-run/run-latest.json"
   rm -f "$json"
   echo
@@ -233,7 +239,10 @@ if [ ! -f "$REC" ]; then
   echo "== deploy: out/ against the pinned build hashes"
   MAINNET_RPC_URL=$RPC forge test --match-path test/BuildIdentity.t.sol || stop "test/BuildIdentity.t.sol failed: out/ is not the pinned build"
   export STEP=deploy
-  dry "$P3" 5 "11,343,936 gas"
+  dry "$P3" 5 "11,334,137 gas"
+  table_ok "$DRY_LOG" 4 "deploy preview"
+  grep -qF 'ok    preview: band (1+step)(1+tol)(1-margin) < 1  |  300' "$DRY_LOG" \
+    || stop "the deploy preview's band row does not read the reference step 300"
   yes_or_exit
   send "$P3"
 fi
@@ -265,7 +274,8 @@ readback() {
   rows_ok "$log"
   echo
   echo "readback: $READBACK_ROWS of $READBACK_ROWS. Rehearsal figures: v2 custody about 570,081 BALANCE, pro-rata bucket"
-  echo "about 57,037, bid bucket about 90,761, redeemer 2 bucket about 272,283, cushion 150,000, floor ask 0.008961 ETH."
+  echo "about 57,037, bid bucket about 90,761, redeemer 2 bucket about 272,283, cushion 150,000, floor ask 0.008961 ETH,"
+  echo "V3 quote step 300, floor multiplier 13,750 before the cap send and 12,500 after."
 }
 
 # --- 2 migrate. done: the Core's controller is V3 (the last of its 18 sends). not started: v1 is the module with its
@@ -285,7 +295,8 @@ if [ "$(lc "$ctl")" != "$(lc "$CONTROLLER_V3")" ]; then
     echo
     echo "Between setBalanceModule(v2) and v2's switches inside this one migrate run, the Core's BALANCE exchange"
     echo "reads 0. It clears within the same run, a few blocks later, when v2's switches go on."
-    dry "$P3" 18 "1,942,366 gas"
+    dry "$P3" 18 "1,942,345 gas"
+    table_ok "$DRY_LOG" 13 "migrate preview"
     yes_or_exit
     send "$P3"
   else
@@ -294,6 +305,16 @@ if [ "$(lc "$ctl")" != "$(lc "$CONTROLLER_V3")" ]; then
   [ "$(lc "$(c call "$CORE" 'controller()(address)')")" = "$(lc "$CONTROLLER_V3")" ] || stop "the Core's controller is not V3 after the migrate send"
   readback ""
   MIGRATED_NOW=1
+  # the exchange paying from v2 is the one production fact the fork cannot prove: v2's available is the cushion
+  # (the sweep took the surplus) and the Core bids BALANCE for the pile head
+  avail=$(c call "$TREASURY_V2" 'available()(uint256)' | word)
+  head=$(c call "$CORE" 'pilePage(uint256,uint256)(uint256[])' 0 1 | tr -d '[]' | awk -F', ' '{print $1}' | word)
+  bal=$(c call "$CORE" 'balanceBidOf(uint256)(uint256)' "$head" | word)
+  echo
+  echo "v2 available(): $(cast from-wei "$avail") BALANCE (expected about 150,000, the cushion)"
+  echo "Core balanceBidOf(credit $head): $(cast from-wei "$bal") BALANCE (expected nonzero)"
+  near "$avail" 150000000000000000000000 || stop "v2 available() is $avail, not the 150,000 BALANCE cushion"
+  [ "$bal" != 0 ] || stop "the Core's balanceBidOf($head) reads 0 after the migrate: the exchange is not paying from v2"
   cat <<EOF
 
 Keeper, by hand on Fly, before going on (this script never touches the keeper). The running keeper must be built
@@ -303,11 +324,14 @@ secret of cc-keeper-mainnet. Deploy it from the main checkout:
 
   cd $ROOT && fly deploy . --config keeper/fly.mainnet.toml --ha=false
 
-Then watch its log and confirm postMarketFloor runs and is not skipping with "no collection bid observed on OpenSea":
+Then watch its log. Within a few minutes it should print "collection bid observed", and postMarketFloor should not
+skip with "no collection bid observed on OpenSea":
 
   fly logs --app cc-keeper-mainnet
 
-The floor posted by this run goes stale after 6 hours, so do this today.
+Without the keeper's posts the floor this run posted goes stale after 6 hours, and the credits the floor term lifts
+stop selling until a fresh post. Nothing is lost: credits priced by points keep selling, and the owner can repost
+with ControllerV3 postMarketFloor as a stopgap.
 EOF
 else
   echo "migrate: done (the Core's controller is V3)"
@@ -318,9 +342,8 @@ WHERE=cap
 cap=$(c call "$CORE" "settings()($SETTINGS_TUPLE)" | field 32)
 if [ "$cap" != 10000 ]; then
   export SEND=1 SET_balanceBidCapBps=10000
-  dry "$SS" 1 "328,994 gas"
-  log=$(ls -t "$LOGS"/cap-dry-*.log | head -1)
-  changed=$(grep -E '^[[:space:]]*\* ' "$log" | sed 's/^ *//')
+  dry "$SS" 1 "219,347 gas"
+  changed=$(grep -E '^[[:space:]]*\* ' "$DRY_LOG" | sed 's/^ *//')
   [ "$(printf '%s\n' "$changed" | wc -l | tr -d ' ')" = 1 ] && [[ "$changed" == "* balanceBidCapBps | $cap | 10000 | "* ]] \
     || stop "the settings send must change balanceBidCapBps alone, from $cap to 10000; it changes:
 $changed"
