@@ -30,10 +30,22 @@ import {LaunchChecks} from "./Checks.sol";
 ///   its successor to be the selected module, so the module changes before the funds move
 /// - `bid`: the bid spender on. run at least the Core's `returnLockSeconds` after `setController(V3)`: credits
 ///   ControllerV2 sold before the switch carry no V3 sale record
+/// - `ens`: `vault.creditcycle.eth` to v2 on its public resolver, from the name's owner (the Core owner). any time
+///   after `migrate`
 /// - `readback`: the checks alone
 ///
 /// `STEP=deploy forge script script/Phase3.s.sol --rpc-url https://gateway.tenderly.co/public/mainnet --sender <owner>`
 /// is the dry run; the send adds `--broadcast --slow --account ripe0x`
+interface IEnsRegistry {
+    function owner(bytes32 node) external view returns (address);
+    function resolver(bytes32 node) external view returns (address);
+}
+
+interface IEnsResolver {
+    function addr(bytes32 node) external view returns (address);
+    function setAddr(bytes32 node, address a) external;
+}
+
 contract Phase3 is Script, LaunchChecks {
     error NotOwner(address owner, address signer);
     error CreateFailed(string name);
@@ -136,6 +148,7 @@ contract Phase3 is Script, LaunchChecks {
         d.redeemer = IBalanceTreasuryV2(d.treasury).proRataRedeemer();
         if (step == keccak256("migrate")) migrate(core, d, p, true);
         else if (step == keccak256("bid")) enableBid(core, d, true);
+        else if (step == keccak256("ens")) ens(core, d, true);
         else readback(core, d, p);
     }
 
@@ -272,6 +285,32 @@ contract Phase3 is Script, LaunchChecks {
         ICreditBid(d.bid).setBid(p.bid);
         t.setSwitches(true, true);
         t.sweep();
+    }
+
+    /// the ens registry, the vault name and its node
+    address public constant ENS_REGISTRY = 0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e;
+    bytes32 public constant VAULT_NODE = 0xafdad34bdab44b570b0fafbb86b35b5647eb86dfbd34357f594e910ca745415d;
+
+    /// @notice the send of `ens`: `setAddr(vault.creditcycle.eth, v2)` on the name's current resolver. the name must be
+    /// owned by the Core owner in the registry (unwrapped) and v2 must be the Core's module
+    function ens(address core, Deployed memory d, bool broadcast) public {
+        ICore c = ICore(payable(core));
+        IEnsRegistry reg = IEnsRegistry(ENS_REGISTRY);
+        IEnsResolver res = IEnsResolver(reg.resolver(VAULT_NODE));
+        _reset();
+        _eq("preview: vault.creditcycle.eth owner is the Core owner", reg.owner(VAULT_NODE), c.owner());
+        _code("preview: the name has a resolver", address(res));
+        _eq("preview: v2 is the Core's module", c.balanceModule(), d.treasury);
+        _info("preview: addr before", vm.toString(res.addr(VAULT_NODE)));
+        _print("phase 3 ens preview");
+        _require();
+        _start(c, broadcast);
+        res.setAddr(VAULT_NODE, d.treasury);
+        _stop(broadcast);
+        _reset();
+        _eq("vault.creditcycle.eth resolves to v2", res.addr(VAULT_NODE), d.treasury);
+        _print("phase 3 ens readback");
+        _require();
     }
 
     /// @notice the send of `bid`: the bid spender on

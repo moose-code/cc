@@ -8,7 +8,7 @@ import {IPhase2BalanceTreasury} from "../src/interfaces/IPhase2BalanceTreasury.s
 import {IBalanceTreasuryV2} from "../src/interfaces/IBalanceTreasuryV2.sol";
 import {IRedeemer, CcQuote, Mainnet, Settings} from "../src/interfaces/Interfaces.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {Phase3} from "../script/Phase3.s.sol";
+import {Phase3, IEnsRegistry, IEnsResolver} from "../script/Phase3.s.sol";
 import {IMarketRedeemer} from "../src/interfaces/IMarketRedeemer.sol";
 import {ICreditBid} from "../src/interfaces/ICreditBid.sol";
 import {IdleLoosening, BalanceBid} from "../src/interfaces/Interfaces.sol";
@@ -460,6 +460,17 @@ contract Phase3Test is LiveFixture {
         vm.prank(owner);
         v3t.setSwitches(true, true);
         assertEq(v3t.available(), v3t.working(), "the successor answers the Core");
+    }
+
+    function test_ensStepPointsTheVaultNameAtV2() public {
+        // promise: the ens step moves vault.creditcycle.eth from v1 to v2 through the owner's setAddr and refuses before v2 is the module
+        vm.expectRevert();
+        script.ens(address(core), d, false);
+        _migrate();
+        IEnsResolver res = IEnsResolver(IEnsRegistry(script.ENS_REGISTRY()).resolver(script.VAULT_NODE()));
+        assertEq(res.addr(script.VAULT_NODE()), address(v1), "the name points at v1 today");
+        script.ens(address(core), d, false);
+        assertEq(res.addr(script.VAULT_NODE()), address(t), "the name points at v2");
     }
 
     // ------------------------------------------------------------------ market floor reference
