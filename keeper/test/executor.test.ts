@@ -1,7 +1,8 @@
 // promise: the keeper simulates the fee-bearing pending call, refuses a pending base fee above its ceiling, and treats an unpaid paid door as a breaker failure
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseEther, parseGwei, keccak256 } from "viem";
+import { parseEther, parseGwei, keccak256, encodeFunctionData } from "viem";
+import { controllerV3Abi } from "@cc/engine/abis";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { mkdtempSync, mkdirSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,6 +26,7 @@ const policy: Policy = {
   bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec,
   // a high cost cap so the executor-mechanics tests exercise the send path; the drift gate lives in decide, not here
   refresh: { ...cfg.refresh, maxCostEth: parseEther("1") },
+  floor: { poster: keeper, tolBps: cfg.floor.tolBps },
 };
 const call: Intended = {
   door: "refreshReference", functionName: "refreshReference", args: [], gas: 60_000n,
@@ -329,4 +331,30 @@ test("executor: receipt accounting failure retains pending and breaker, then rec
   assert.equal((await exec.reconcile())?.kind, "reconciled");
   assert.equal(ledger.snapshot().txs, 1);
   assert.equal(pending.current, undefined);
+});
+
+// promise: the postMarketFloor call goes through the executor's send path end to end: simulated at pending, rechecked
+// as an unpaid door under the cost cap, encoded against the V3 abi to the controller, and sent (SEC-01 of the phase 3
+// audit: the door was missing from recheck's unpaid branch and never sent)
+test("executor: postMarketFloor is rechecked as an unpaid door and sent to the controller", async () => {
+  const gasUsed = 60_000n;
+  let sentTo: string | undefined;
+  let sentData: string | undefined;
+  const client: any = {
+    getBlock: async () => ({ baseFeePerGas: parseGwei("0.3") }),
+    estimateGas: async ({ to, data }: { to: string; data: string }) => { sentTo = to; sentData = data; return gasUsed; },
+    getBalance: async () => parseEther("1"),
+    getTransactionCount: async () => 0,
+    request: async () => "0x" + "66".repeat(32),
+    getTransactionReceipt: async () => ({ status: "success", gasUsed, effectiveGasPrice: parseGwei("0.3"), blockNumber: 2n }),
+  };
+  const floorCall: Intended = {
+    door: "postMarketFloor", functionName: "postMarketFloor", target: "controller", args: [8_700_000_000_000_000n], gas: gasUsed,
+    payment: 0n, cost: 0n, key: "postMarketFloor",
+  };
+  const exec = new Executor(client, cfg, policy, { address: keeper, impersonate: true }, new Ledger(undefined, cfg.dailyBudget), new Breaker(2, 60), new PendingStore());
+  const out = await exec.run(floorCall, state);
+  assert.equal(out.kind, "sent", String((out as { reason?: string }).reason ?? out.kind));
+  assert.equal(sentTo?.toLowerCase(), rec.controller.toLowerCase(), "the call goes to the controller");
+  assert.equal(sentData?.slice(0, 10), encodeFunctionData({ abi: controllerV3Abi, functionName: "postMarketFloor", args: [8_700_000_000_000_000n] }).slice(0, 10), "encoded with the V3 abi");
 });

@@ -5,6 +5,7 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { isAddressEqual, type PublicClient } from "viem";
 import { coreAbi } from "@cc/engine/abis";
+import { fetchCollectionBid } from "@cc/engine/opensea";
 import { txError } from "@cc/engine/errors";
 import { describe, loadConfig, OWNER, type Config } from "./config.ts";
 import { readClient, readFixed, readState, type Fixed } from "./chain.ts";
@@ -83,6 +84,14 @@ export function listingCooldown(outcome: Outcome, listing?: Listing): { key: str
 export class Keeper {
   private seen = new Map<string, bigint>();
   private lastBookAt = 0n;
+  // the block the keeper last sent a syncFill, so the door fires at most once per block (syncFill has no on-chain
+  // per-block guard, unlike the two refresh calls)
+  private lastSyncFillBlock = 0n;
+  // the collection's best flat bid last seen on OpenSea, for the postMarketFloor door; refreshed every
+  // FLOOR_REFRESH_SEC while the door is on, dropped after three refresh periods without an answer so a dead API
+  // never feeds a stale bid to the controller
+  private marketBid: { wei: bigint; at: number } | undefined;
+  private marketBidAskedAt = 0;
   private skipLogged = new Map<string, number>();
   private client: PublicClient;
   private cfg: Config;
@@ -106,10 +115,32 @@ export class Keeper {
     this.policy = policy;
   }
 
+  // the collection bid for the postMarketFloor door, asked of OpenSea at most once per FLOOR_REFRESH_SEC and only
+  // while the door is on and an API key is set; a failed ask keeps the last observation for three periods
+  private async collectionBid(): Promise<bigint | undefined> {
+    if (!this.cfg.doorsOn.has("postMarketFloor") || !this.cfg.opensea.key) return undefined;
+    const now = Date.now();
+    const period = this.cfg.floor.refreshSec * 1000;
+    if (now - this.marketBidAskedAt >= period) {
+      this.marketBidAskedAt = now;
+      try {
+        const bid = await fetchCollectionBid({ key: this.cfg.opensea.key });
+        if (bid) {
+          this.marketBid = { wei: bid.bidWei, at: now };
+          log("info", "collection bid observed", { bidWei: String(bid.bidWei), hash: bid.hash, slug: bid.slug });
+        } else log("warn", "collection bid unavailable, keeping the last observation", {});
+      } catch (e) {
+        log("warn", "collection bid fetch failed, keeping the last observation", { error: safeError(e) });
+      }
+    }
+    if (this.marketBid && now - this.marketBid.at > 3 * period) this.marketBid = undefined;
+    return this.marketBid?.wei;
+  }
+
   async tick(): Promise<TickResult> {
     const read = await readState(this.client, this.cfg.record.core, this.fixed, this.cfg.split);
     const { snap } = read;
-    const state = { ...read.state, lastBookAt: this.lastBookAt };
+    const state = { ...read.state, lastBookAt: this.lastBookAt, lastSyncFillBlock: this.lastSyncFillBlock, marketBidWei: await this.collectionBid() };
     const pending = await this.exec.reconcile();
     if (pending) {
       log("info", "pending transaction", { block: state.blockNumber, outcome: pending });
@@ -151,6 +182,7 @@ export class Keeper {
       // one transaction per tick: the next decision reads the state after it
       if (outcome.kind === "sent" || (outcome.kind === "failed" && this.exec.hasPending())) {
         if (outcome.kind === "sent" && c.door === "book") this.lastBookAt = state.timestamp;
+        if (outcome.kind === "sent" && c.door === "syncFill") this.lastSyncFillBlock = state.blockNumber;
         break;
       }
     }
@@ -184,6 +216,8 @@ export async function build(env: NodeJS.ProcessEnv = process.env) {
   const breaker = new Breaker(cfg.breakerThreshold, cfg.breakerPauseSec);
   const policy: Policy = {
     doors: cfg.doors, doorsOn: cfg.doorsOn, margin: cfg.margin, listingDelaySec: cfg.listingDelaySec, bookMinWei: cfg.bookMinWei, bookMinSec: cfg.bookMinSec, refresh: cfg.refresh,
+    // the keeper is the floor poster the owner names in the migrate params; the controller refuses any other sender
+    floor: { poster: signer.address, tolBps: cfg.floor.tolBps },
     // the keeper names itself as the split's distributor, so a distribution incentive pays its own wallet
     split: cfg.split ? { ...cfg.split, distributor: signer.address } : undefined,
   };

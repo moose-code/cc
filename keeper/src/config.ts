@@ -7,8 +7,8 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAddress, parseEther, parseGwei, type Address } from "viem";
 
-export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "distributeSplit";
-export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "refreshReference", "distributeSplit"];
+export type Door = "buyListing" | "buyback" | "compose" | "collectEscrow" | "book" | "redeemStatement" | "refreshReference" | "syncFill" | "refreshCcReference" | "postMarketFloor" | "distributeSplit";
+export const DOORS: readonly Door[] = ["buyListing", "buyback", "compose", "collectEscrow", "book", "redeemStatement", "refreshReference", "syncFill", "refreshCcReference", "postMarketFloor", "distributeSplit"];
 
 // the owner key never signs a keeper transaction (decision 57)
 export const OWNER: Address = "0xCB43078C32423F5348Cab5885911C3B5faE217F9";
@@ -71,6 +71,9 @@ export interface Config {
   // the refreshReference door, which calls the controller's unpaid refreshReference() directly: the spot-to-reference
   // drift (bps) that counts, how long it must persist, and the ceiling on the keeper's own gas for the call
   refresh: { driftBps: number; persistSec: number; maxCostEth: bigint };
+  // the postMarketFloor door: the bid move (bps of the posted floor) under which a post waits, and how often the
+  // keeper asks OpenSea for the collection's best offer (seconds). the gas cap is the refresh door's
+  floor: { tolBps: number; refreshSec: number };
   tickMs: number;
   breakerThreshold: number;
   breakerPauseSec: number;
@@ -164,6 +167,9 @@ const DOOR_DEFAULT_TIP: { [d in Door]: string } = {
   book: "0.05",
   redeemStatement: "0.05",
   refreshReference: "0.05",
+  syncFill: "0.05",
+  refreshCcReference: "0.05",
+  postMarketFloor: "0.05",
   distributeSplit: "0.05",
 };
 
@@ -175,6 +181,9 @@ const DOOR_DEFAULT_BASEFEE: { [d in Door]: string } = {
   book: "3",
   redeemStatement: "3",
   refreshReference: "3",
+  syncFill: "3",
+  refreshCcReference: "3",
+  postMarketFloor: "3",
   distributeSplit: "3",
 };
 
@@ -293,6 +302,10 @@ export function loadConfig(env: Env, readRec: (p: string) => Deployment = readRe
       persistSec: num(env, "REFRESH_PERSIST_SEC", 600),
       maxCostEth: ether(env, "REFRESH_MAX_COST_ETH", "0.00005"),
     },
+    floor: {
+      tolBps: num(env, "FLOOR_TOL_BPS", 200),
+      refreshSec: num(env, "FLOOR_REFRESH_SEC", 300),
+    },
     tickMs: num(env, "TICK_MS", 12_000),
     breakerThreshold: num(env, "BREAKER_THRESHOLD", 3),
     breakerPauseSec: num(env, "BREAKER_PAUSE_SEC", 3600),
@@ -346,6 +359,7 @@ export function describe(c: Config) {
     bookMinEth: Number(c.bookMinWei) / 1e18,
     bookMinSec: c.bookMinSec,
     refresh: { driftBps: c.refresh.driftBps, persistSec: c.refresh.persistSec, maxCostEth: Number(c.refresh.maxCostEth) / 1e18 },
+    floor: c.floor,
     strategy: c.strategy.mode,
     strategyFullRead: c.strategyFullRead,
     indexer: Boolean(c.indexerUrl),

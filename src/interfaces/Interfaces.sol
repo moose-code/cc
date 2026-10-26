@@ -66,6 +66,95 @@ interface IRedemptionPolicy {
     function isRedemptionPolicy() external pure returns (bool);
 }
 
+/// the credit bid module's band (src/adapters/CreditBid.sol). the price is `bidBps` of par (a credit's score times
+/// `unitPerPoint`): it climbs `climbBps` per full `stepSeconds` since the last fill and drops `dropPer100PointsBps` per
+/// 100 points filled, inside [floorBps, capBps]. each payout is also capped so its eth value at the controller's
+/// protected sale price is at most the Core's eth price for the credit plus `overEthBps`. the per call, per period and
+/// lifetime caps on what the bid pays are the module's spender caps in the treasury
+struct BalanceBid {
+    uint16 floorBps;
+    uint16 capBps;
+    uint16 climbBps;
+    uint32 stepSeconds;
+    uint16 dropPer100PointsBps;
+    uint16 overEthBps;
+}
+
+/// a treasury v2 registered spender: a redeemer (a contract the treasury quotes through `IRedeemer` for a CC burn) or a
+/// module that draws itself (`draw`), the credit bid among them. it draws only from `bucket`, only while `on`, from
+/// `activeAt`, at most `perCall` per draw, `perPeriod` per day and `lifetime` in all. `epoch` advances on every change
+/// to its terms here
+struct SpenderState {
+    bool registered;
+    bool on;
+    uint16 shareBps;
+    uint64 epoch;
+    uint40 activeAt;
+    uint40 periodStart;
+    uint128 perCall;
+    uint128 perPeriod;
+    uint128 lifetime;
+    uint128 periodUsed;
+    uint128 lifetimeUsed;
+    uint256 bucket;
+    uint256 totalIn;
+    uint256 totalOut;
+}
+
+/// a treasury v2 committed payout: linear vesting from `start` to `end`, or the whole amount at `end` when not linear
+struct CommittedPayout {
+    address recipient;
+    address redeemer;
+    uint40 start;
+    uint40 end;
+    bool linear;
+    uint128 amount;
+    uint128 released;
+}
+
+/// ControllerV3's idle loosening of the value mode buy price. `bps` per full `stepSeconds` without a purchase, at most `capBps`
+struct IdleLoosening {
+    uint32 stepSeconds;
+    uint16 bps;
+    uint16 capBps;
+}
+
+/// ControllerV3's CC reference settings. `avgSeconds` is the averaging time: a refresh after `elapsed` seconds moves the
+/// reference `min(elapsed, avgSeconds) / avgSeconds` of the way to the spot, then the rate and step bounds clip it
+struct CcQuote {
+    uint32 rateBpsPerHour;
+    uint16 stepBps;
+    uint32 maxStale;
+    uint32 minSeconds;
+    uint32 avgSeconds;
+    uint128 minLiquidity;
+}
+
+/// ControllerV3's market floor settings (docs/reviews/PRICING-REVIEW-2026-10-23.md section 7). the market pays a flat
+/// collection offer for any Credit whatever its points, so a per point ask under that offer gives the Credit away. the
+/// controller keeps a posted market floor, wei per Credit, and a pile credit asks at least `floor * (10_000 +
+/// spreadBps) / 10_000`. `poster` may post beside the owner; a post raises the floor freely, lowers it at most
+/// `stepBps` from the last value (rounded up), and comes at most once per `minSeconds`. a floor older than `maxStale` seconds blocks the sale of every credit the
+/// floor term binds on (its per point ask is under the floor) until a fresh post; `maxStale` 0 turns the term off
+struct MarketFloor {
+    address poster;
+    uint16 spreadBps;
+    uint16 stepBps;
+    uint32 minSeconds;
+    uint32 maxStale;
+}
+
+/// a redemption design of treasury v2, registered by the owner. the treasury calls `quote` once per redemption, before
+/// it burns `ccIn` of `burner`'s CC, with the redeemer's own `bucket` and the CC supply before the burn. it answers the
+/// payout and its mode: 0 immediate, 1 linear vesting over `duration` seconds, 2 claimable after `duration` seconds. the
+/// treasury enforces the bucket, the caps, the burn and the recipient; a redeemer can lower a payout and never pay from
+/// anything but its own bucket
+interface IRedeemer {
+    function quote(address burner, uint256 ccIn, uint256 bucket, uint256 ccSupply, bytes calldata data)
+        external
+        returns (uint256 amount, uint8 mode, uint32 duration);
+}
+
 interface ICreditScore {
     /// score of a credit in ten-thousandths of a point, 800_000 to 8_000_000 (80 to 800 points). pure in `seed` and
     /// `paidAt`, which are fixed at mint

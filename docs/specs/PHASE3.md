@@ -43,11 +43,19 @@ Keep the Core-facing interface of v1 unchanged: `unitPerPoint` stays the constan
 conversion to bring in `rating * unitPerPoint`, Core.sol:1047), plus `available()`, `redeem`, working payments and
 the conversion path.
 
-**Buckets.** Claim debt and owed payments as in v1; `cushion` (owner parameter, e.g. 150k) reserved for the Core's
-80% exchange; `bidBudget` for the $BALANCE bid; one bucket per redeemer. No bucket pays from another, the debt or
-the cushion. `available()` = working funds above all earmarks.
+**Custody and spenders (decision 292).** The treasury is the custodian and holds no pricing rule. Claim debt and
+owed payments as in v1; `cushion` (owner parameter, e.g. 150k) reserved for the Core's 80% exchange; one bucket per
+registered spender. A spender is any contract the owner registers (`registerSpender`, bucket, switch off by default,
+per call / per period / lifetime caps, a one day activation delay, a sweep share): a redeemer, quoted through
+`IRedeemer` for a CC burn in `redeemCC`, or a module that draws itself through `draw(to, amount, accrue)`, the credit
+bid among them. The treasury checks only the bucket, the caps, the recipient, the switch and the pause. No bucket pays
+from another, the debt or the cushion. `available()` = working funds above all earmarks. A new rule is a new spender:
+deploy, register, fund its bucket, switch it on; the treasury never migrates for a rule. `migrateTo(successor)` exists
+as a last resort only, the v1 handshake again: every switch and spender off, every bucket but the pro-rata one
+returned, custody less the debt and the committed payouts moves, the pro-rata bucket lands in the successor's.
 
-**$BALANCE bid: `sellCredit(uint256[] ids, uint256 minOut)`, anyone.**
+**$BALANCE bid: `CreditBid.sellCredit(uint256[] ids, uint256 minOut)`, anyone.** A spender module
+(`src/adapters/CreditBid.sol`), its budget its bucket, its per call and per period caps its spender caps.
 - Price per point = `bidBps / 10_000 * unitPerPoint`. `bidBps` climbs while idle, drops per 100 points filled,
   bounded `[bidFloorBps, bidCapBps]` (e.g. 8,500..11,500).
 - Its ETH value may not exceed the Credit's ETH bid by more than `bidOverEthBps`, using the controller's protected
@@ -72,7 +80,8 @@ into `bidBudget` and the redeemer buckets in owner-set shares. The conversion co
   committed amount is reserved in full when created.
 - Redeemer 1, shipped off: the current plan. Pays `ccIn * B / S` less `redemptionFeeBps` (B = its bucket, S = CC
   supply). The v1 claim reserve migrates into its bucket. `/claim` reads it. Turning it on stays the owner's decision.
-- Adding a design later: deploy the redeemer, register it, fund its bucket, switch it on. No treasury migration.
+- Adding a design later: deploy the redeemer or module, register it as a spender, fund its bucket, switch it on. No
+  treasury migration, for a redemption rule or a bid rule alike.
 
 **Owner powers.** Parameters, pause, redeemer registration and bucket shares. Decide whether to add one-way locks
 (for example on `withdrawWorking`).

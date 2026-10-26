@@ -105,3 +105,6 @@ export declare function fetchListings(o: {
 }): Promise<FetchResult>;
 
 export declare function basicParams(p: any): BasicParams;
+
+/** the collection's best flat bid (highest ETH or WETH collection offer, per item), or undefined when OpenSea did not answer */
+export declare function fetchCollectionBid(o?: { key?: string; slug?: string; signal?: AbortSignal }): Promise<{ bidWei: bigint; hash?: string; slug: string } | undefined>;
