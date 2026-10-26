@@ -120,7 +120,7 @@ rows_ok() {
 
 # the dry run of one step: exit 0, no FAIL row, exactly `want` transactions
 dry() {
-  local script=$1 want=$2 ref=$3 log="$LOGS/$WHERE-dry-$(date +%s).log" n json
+  local script=$1 want=$2 ref=$3 log="$LOGS/$WHERE-dry-$(date +%s).log" n json est
   DRY_LOG=$log
   json="broadcast/$(basename "${script%%:*}")/1/dry-run/run-latest.json"
   rm -f "$json"
@@ -131,7 +131,9 @@ dry() {
   n=$(jq '.transactions | length' "$json" 2>/dev/null || true)
   [ "$n" = "$want" ] || stop "the dry run prepared ${n:-no} transactions, expected $want"
   echo
-  echo "$WHERE: $n transaction(s) prepared. $(grep -E 'Estimated total gas used' "$log" | tail -1 | sed 's/^ *//') (rehearsal: $ref)"
+  est=$(grep -E 'Estimated total gas used' "$log" | tail -1 | awk '{print $NF}')
+  echo "$WHERE: $n transaction(s) prepared. forge estimates $est gas with its 130 percent limit multiplier, so about"
+  echo "$((est * 10 / 13)) used (rehearsal: $ref). $(grep -E 'Estimated amount required' "$log" | tail -1 | sed 's/^ *//')"
 }
 
 # the owner's yes, read from the terminal
