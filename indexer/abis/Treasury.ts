@@ -1443,6 +1443,25 @@ export const treasuryLogAbi = [
   },
   {
     "type": "function",
+    "name": "drawableTotal",
+    "inputs": [
+      {
+        "name": "spender",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "earmarked",
     "inputs": [],
     "outputs": [
