@@ -88,6 +88,7 @@ interface IBalanceTreasuryV2 {
     function custody() external view returns (uint256);
     function draw(address to, uint256 amount, bool accrue) external;
     function drawable(address spender) external view returns (uint256);
+    function drawableTotal(address spender) external view returns (uint256);
     function earmarked() external view returns (uint256);
     function migrateTo(address successor) external returns (uint256 moved);
     function migrated() external view returns (bool);

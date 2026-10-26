@@ -368,8 +368,8 @@ export function refreshCcReferenceNeeded(s: State): { ok: boolean; reason: strin
 // observed on OpenSea this tick, minSeconds since the last post (the contract reverts TooSoon), and then either the
 // clamped target differs from the posted floor by more than tolBps or the post is past half of maxStale (a refresh of
 // the same number, so the lifted credits stay for sale). the target is clamped here the way the contract clamps it,
-// so the posted number is known before the send and a bid that jumped far takes several posts to reach, one step
-// each. the cost cap and the ceiling are applied by the caller, the same as the other unpaid doors
+// so the posted number is known before the send: a rise lands at once, a bid that fell far takes several posts to
+// reach, one step down each. the cost cap and the ceiling are applied by the caller, the same as the other unpaid doors
 export function postMarketFloorNeeded(
   s: Pick<State, "isV3" | "timestamp" | "floorPoster" | "floorStepBps" | "floorMinSeconds" | "floorMaxStale" | "floorPostedWei" | "floorPostedTime" | "marketBidWei">,
   f: Policy["floor"],
@@ -380,13 +380,12 @@ export function postMarketFloorNeeded(
   if (s.marketBidWei === undefined || s.marketBidWei === 0n) return { ok: false, reason: "no collection bid observed on OpenSea" };
   const elapsed = s.timestamp - s.floorPostedTime;
   if (elapsed < s.floorMinSeconds) return { ok: false, reason: `floor posted at ${s.floorPostedTime}, next post at ${s.floorPostedTime + s.floorMinSeconds}` };
+  // the contract's clamp: a rise is taken whole, a drop is at most one step (rounded up); only the first post is free
   let target = s.marketBidWei;
   const last = s.floorPostedWei;
-  if (last !== 0n) {
-    const lo = (last * (10_000n - s.floorStepBps)) / 10_000n;
-    const hi = (last * (10_000n + s.floorStepBps)) / 10_000n;
+  if (s.floorPostedTime !== 0n) {
+    const lo = (last * (10_000n - s.floorStepBps) + 9_999n) / 10_000n;
     if (target < lo) target = lo;
-    if (target > hi) target = hi;
   }
   const diff = target > last ? target - last : last - target;
   const moved = last === 0n || diff * 10_000n > last * BigInt(f.tolBps);
@@ -687,6 +686,7 @@ export function recheck(c: Intended, s: State, listing: Listing | undefined, gas
     case "refreshReference":
     case "syncFill":
     case "refreshCcReference":
+    case "postMarketFloor":
       // unpaid, direct to the controller: it clears while the measured gas keeps the keeper's own cost at or under the cap
       return { ok: cost <= p.refresh.maxCostEth, payment: 0n, cost };
     case "collectEscrow":

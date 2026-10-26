@@ -32,7 +32,8 @@ import {LaunchChecks} from "./Checks.sol";
 ///   ControllerV2 sold before the switch carry no V3 sale record
 /// - `ens`: `vault.creditcycle.eth` to v2 on its public resolver, from the name's owner (the Core owner). any time
 ///   after `migrate`
-/// - `readback`: the checks alone
+/// - `readback`: the checks alone, right after `migrate`; `LIVE=1` for the running system after `bid` (the bid on,
+///   the keeper kept posts reported rather than required fresh)
 ///
 /// `STEP=deploy forge script script/Phase3.s.sol --rpc-url https://gateway.tenderly.co/public/mainnet --sender <owner>`
 /// is the dry run; the send adds `--broadcast --slow --account ripe0x`
@@ -61,6 +62,9 @@ contract Phase3 is Script, LaunchChecks {
         uint128 bidPerPeriod;
         uint16 proRataShareBps;
         uint128 proRataPerPeriod;
+        /// the credit sale spread V3 ships with, set at deploy whatever the live ControllerV2 holds (decision 291:
+        /// the engine's ask is 1.25 par, never the cheapest per point ask)
+        uint16 creditSpreadBps;
         uint16 statementSaleMultiplierBps;
         uint32 statementRedeemDelaySeconds;
         uint16 quoteStepBps;
@@ -100,6 +104,7 @@ contract Phase3 is Script, LaunchChecks {
         p.bidPerPeriod = 60_000 ether;
         p.proRataShareBps = 0;
         p.proRataPerPeriod = 50_000 ether;
+        p.creditSpreadBps = 2_500;
         p.statementSaleMultiplierBps = 11_000;
         p.statementRedeemDelaySeconds = 3_600;
         p.quoteStepBps = 900;
@@ -149,7 +154,7 @@ contract Phase3 is Script, LaunchChecks {
         if (step == keccak256("migrate")) migrate(core, d, p, true);
         else if (step == keccak256("bid")) enableBid(core, d, true);
         else if (step == keccak256("ens")) ens(core, d, true);
-        else readback(core, d, p);
+        else readback(core, d, p, vm.envOr("LIVE", false));
     }
 
     /// @notice the sends of `deploy`. `broadcast` false creates from this contract, as a test does
@@ -160,7 +165,7 @@ contract Phase3 is Script, LaunchChecks {
         CreditSale memory credit = CreditSale({
             saleOn: v2c.creditSaleOn(),
             window: v2c.creditWindow(),
-            spreadBps: v2c.creditSpreadBps(),
+            spreadBps: p.creditSpreadBps,
             startBps: v2c.creditStartBps()
         });
         Quote memory q;
@@ -231,7 +236,7 @@ contract Phase3 is Script, LaunchChecks {
         v3.postMarketFloor(p.floorWei);
         c.setController(d.controller);
         _stop(broadcast);
-        readback(core, d, p);
+        readback(core, d, p, false);
     }
 
     function _migratePreview(ICore c, Deployed memory d) private {
@@ -241,6 +246,9 @@ contract Phase3 is Script, LaunchChecks {
         _reset();
         _eq("preview: v2 core", t.core(), address(c));
         _eq("preview: v2 predecessor is the live module", t.predecessor(), address(v1));
+        _eq("preview: v2 balance token is the Core's", t.balanceToken(), c.balanceToken());
+        _eq("preview: v2 coin is the Core's", t.ccToken(), c.COIN());
+        _eq("preview: CreditBid core", ICreditBid(d.bid).core(), address(c));
         _eq("preview: V3 CORE", v3.CORE(), address(c));
         _check("preview: v2 switches off, no spender on", !t.conversionEnabled() && !t.workingPaymentsEnabled() && !t.ccRedemptionEnabled(), "");
         _eq("preview: CreditBid treasury", ICreditBid(d.bid).treasury(), d.treasury);
@@ -313,17 +321,41 @@ contract Phase3 is Script, LaunchChecks {
         _require();
     }
 
-    /// @notice the send of `bid`: the bid spender on
+    /// @notice the send of `bid`: the bid spender on, once v2 is the module, the bid is its registered spender past
+    /// its activation, and the band is set; then the switch read back
     function enableBid(address core, Deployed memory d, bool broadcast) public {
         ICore c = ICore(payable(core));
+        IBalanceTreasuryV2 t = IBalanceTreasuryV2(d.treasury);
+        ICreditBid b = ICreditBid(d.bid);
+        SpenderState memory r = t.spenders(d.bid);
+        _reset();
+        _eq("preview: v2 is the Core's module", c.balanceModule(), d.treasury);
+        _eq("preview: Core controller is V3", c.controller(), d.controller);
+        _eq("preview: CreditBid treasury", b.treasury(), d.treasury);
+        _check("preview: bid registered as a spender, off", r.registered && !r.on, "");
+        _check("preview: bid activation passed", block.timestamp >= r.activeAt, vm.toString(r.activeAt));
+        (uint16 floorBps, uint16 capBps,,,,) = b.bid();
+        _check("preview: band set", floorBps != 0 && capBps != 0, "");
+        _check("preview: bid cap under the credit floor multiplier", capBps < IControllerV3(d.controller).floorMultBps(), vm.toString(capBps));
+        _check("preview: bid bucket funded", r.bucket != 0, vm.toString(r.bucket));
+        _print("phase 3 bid preview");
+        _require();
         _start(c, broadcast);
-        IBalanceTreasuryV2(d.treasury).setSpenderOn(d.bid, true);
+        t.setSpenderOn(d.bid, true);
         _stop(broadcast);
+        _reset();
+        _check("bid spender on", t.spenders(d.bid).on, "");
+        _check("bid enabled", b.bidEnabled(), "");
+        _info("bid now (bps of par)", vm.toString(b.bidBpsNow()));
+        _print("phase 3 bid readback");
+        _require();
     }
 
     /// @notice the live state after `migrate`: the module and controller, the moved funds, the v2 settings and every
-    /// view the Core, keeper, indexer and web read
-    function readback(address core, Deployed memory d, Params memory p) public {
+    /// view the Core, keeper, indexer and web read. `live` false is the state right after `migrate` (bid off, the
+    /// floor and CC reference fresh from the run); `live` true (`LIVE=1`) is the running system after `bid`: the bid
+    /// on, and the two posts reported, not required fresh, since the keeper keeps them
+    function readback(address core, Deployed memory d, Params memory p, bool live) public {
         ICore c = ICore(payable(core));
         IBalanceTreasuryV2 t = IBalanceTreasuryV2(d.treasury);
         IControllerV3 v3 = IControllerV3(d.controller);
@@ -339,7 +371,11 @@ contract Phase3 is Script, LaunchChecks {
         _check("v1 migrated, holding only its debt", v1.migrated() && v1.custody() == v1.totalOwed(), vm.toString(v1.custody()));
         _readbackFunds(t, d, p);
         _check("v2 working at or above the cushion", t.working() >= t.cushion(), vm.toString(t.working()));
-        _check("v2 conversion and working payments on, every spender off", t.conversionEnabled() && t.workingPaymentsEnabled() && !t.ccRedemptionEnabled(), "");
+        _check("v2 conversion and working payments on", t.conversionEnabled() && t.workingPaymentsEnabled(), "");
+        if (live) _check("bid spender on, redeemers off", t.spenders(d.bid).on && !t.spenders(d.market).on && !t.spenders(d.redeemer).on, "");
+        else _check("every spender off", !t.ccRedemptionEnabled(), "");
+        _eq("V3 credit spread", IControllerV3(d.controller).creditSpreadBps(), p.creditSpreadBps);
+        _eq("V3 floor multiplier from the spread and the live cap", IControllerV3(d.controller).floorMultBps(), (10_000 + uint256(p.creditSpreadBps)) * c.settings().balanceBidCapBps / 10_000);
         _check("v2 available answers", t.available() == t.working(), vm.toString(t.available()));
         (uint256 vb, bool okb) = v3.valuePerPoint(false);
         (uint256 vs, bool oks) = v3.valuePerPoint(true);
@@ -352,8 +388,8 @@ contract Phase3 is Script, LaunchChecks {
         _check("V3 legacy views", v3.markupBps() == p.statementSaleMultiplierBps && v3.decayHours() == 1 && v3.ageEligibilityOn(), "");
         (bool ready,,) = v3.nextPage();
         _info("V3 nextPage", ready ? "ready" : "not ready");
-        _readbackFloor(v3, p);
-        _readbackRedeemers(t, IControllerV3(d.controller), d, p);
+        _readbackFloor(v3, p, live);
+        _readbackRedeemers(t, IControllerV3(d.controller), d, p, live);
         _print("phase 3 readback");
         _require();
     }
@@ -368,22 +404,23 @@ contract Phase3 is Script, LaunchChecks {
     }
 
     /// @dev the market floor reference: set to the params and posted fresh
-    function _readbackFloor(IControllerV3 v3, Params memory p) private {
+    function _readbackFloor(IControllerV3 v3, Params memory p, bool live) private {
         (address poster, uint16 fSpread, uint16 fStep, uint32 fMin, uint32 fStale) = v3.marketFloor();
         (uint256 floorAsk, bool floorFresh) = v3.marketFloorAsk();
         bool setOk = poster == p.floor.poster && fSpread == p.floor.spreadBps && fStep == p.floor.stepBps && fMin == p.floor.minSeconds && fStale == p.floor.maxStale;
         _check("V3 market floor set", setOk, "");
-        _check("V3 market floor posted and fresh", floorFresh && floorAsk == p.floorWei * (10_000 + p.floor.spreadBps) / 10_000, vm.toString(floorAsk));
+        if (live) _info("V3 market floor ask / fresh (the keeper posts)", string.concat(vm.toString(floorAsk), " / ", floorFresh ? "fresh" : "stale"));
+        else _check("V3 market floor posted and fresh", floorFresh && floorAsk == p.floorWei * (10_000 + p.floor.spreadBps) / 10_000, vm.toString(floorAsk));
     }
 
     /// @dev the bid band and spender, the sweep shares, redeemer 2 and the CC reference
-    function _readbackRedeemers(IBalanceTreasuryV2 t, IControllerV3 v3, Deployed memory d, Params memory p) private {
+    function _readbackRedeemers(IBalanceTreasuryV2 t, IControllerV3 v3, Deployed memory d, Params memory p, bool live) private {
         (uint16 floorBps, uint16 capBps,,,,) = ICreditBid(d.bid).bid();
         _check("bid 8,000 to 10,000 bps of par", floorBps == p.bid.floorBps && capBps == p.bid.capBps, "");
         SpenderState memory rb = t.spenders(d.bid);
         _check(
-            "bid registered as a spender, off, caps",
-            rb.registered && !rb.on && rb.perCall == p.bidPerCall && rb.perPeriod == p.bidPerPeriod,
+            "bid registered as a spender, caps",
+            rb.registered && rb.on == live && rb.perCall == p.bidPerCall && rb.perPeriod == p.bidPerPeriod,
             ""
         );
         SpenderState memory r2 = t.spenders(d.market);
@@ -401,9 +438,14 @@ contract Phase3 is Script, LaunchChecks {
         _info("redeemer 2 bucket", vm.toString(r2.bucket));
         _eq("redeemer 2 premium", IMarketRedeemer(d.market).premiumBps(), p.marketPremiumBps);
         (uint256 ccRef, bool okCc) = v3.ccPrice();
-        _check("V3 CC reference set and usable", v3.ccPoolKeySet() && okCc, vm.toString(ccRef));
         (uint256 per1e18, bool okM) = IMarketRedeemer(d.market).preview(1e18);
-        _check("redeemer 2 prices a burn", okM && per1e18 != 0, vm.toString(per1e18));
+        if (live) {
+            _check("V3 CC reference set", v3.ccPoolKeySet() && ccRef != 0, vm.toString(ccRef));
+            _info("V3 CC reference usable / redeemer 2 preview (the keeper refreshes)", string.concat(okCc ? "fresh" : "stale", " / ", vm.toString(per1e18)));
+        } else {
+            _check("V3 CC reference set and usable", v3.ccPoolKeySet() && okCc, vm.toString(ccRef));
+            _check("redeemer 2 prices a burn", okM && per1e18 != 0, vm.toString(per1e18));
+        }
     }
 
     /// @dev out/ equals the pinned build and the live code equals out/, immutables masked

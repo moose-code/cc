@@ -63,8 +63,10 @@ import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 /// 7. a market floor on credit asks: the market pays a flat collection bid for any Credit whatever its points (about
 ///    0.0087 ETH on 2026-10-23 against 0.0022 ETH of points for a 100 point Credit), so a per point ask under that bid
 ///    gives the Credit to a bot that fills the bid within the hour. a posted floor (the owner, or a poster the owner
-///    names, under a step and a cadence) times a spread is the least any pile credit asks; a credit the term binds on
-///    does not sell while the post is older than `maxStale`. the term never lowers an ask
+///    names, under a cadence, free to raise and clamped to one step down) times a spread is the least any pile credit
+///    asks; a credit the term binds on does not sell while the post is older than `maxStale`. the term never lowers
+///    an ask. the poster's power is a price feed, never custody: a bad post up stops sales, a bad post down takes
+///    many paced steps and bottoms at the points and cost floors
 interface ICoinOf {
     function COIN() external view returns (address);
 }
@@ -581,12 +583,13 @@ contract ControllerV3 is IController {
         if (!isOwner) {
             if (msg.sender != f.poster || f.poster == address(0)) revert OnlyPoster();
             if (block.timestamp < uint256(marketFloorTime) + f.minSeconds) revert TooSoon();
-            uint256 last = marketFloorWei;
-            if (last != 0) {
-                uint256 lo = last * (BPS - f.stepBps) / BPS;
-                uint256 hi = last * (BPS + f.stepBps) / BPS;
+            // a rise is taken whole, so a genuine bid rise lifts the ask at once (a bid the term lags is a free
+            // credit for whoever fills it); a drop is clamped to one step, rounded up, so the floor reaches a lower
+            // bid in paced steps and never reaches zero by rounding. only the first post is unclamped
+            if (marketFloorTime != 0) {
+                uint256 last = marketFloorWei;
+                uint256 lo = (last * (BPS - f.stepBps) + BPS - 1) / BPS;
                 if (floorWei < lo) floorWei = lo;
-                if (floorWei > hi) floorWei = hi;
             }
         }
         // forge-lint: disable-next-line(unsafe-typecast)

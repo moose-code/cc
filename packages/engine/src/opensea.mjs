@@ -464,8 +464,8 @@ export function basicParams(p) {
   };
 }
 
-// the collection's best flat bid: the highest active collection offer (no trait criteria) in ETH or WETH, per item,
-// from OpenSea's offers endpoint. `slug` is read from the contract when not given. returns undefined when OpenSea does
+// the collection's best flat bid: the highest unexpired collection offer (no trait criteria) in ETH or WETH, per item
+// (the offer's value over its readable item count), from OpenSea's offers endpoint. `slug` is read from the contract when not given. returns undefined when OpenSea does
 // not answer, so a caller keeps its last observation and never posts a floor it did not see. no listing book is
 // touched; the call is one GET, retried once on 429
 export async function fetchCollectionBid({ key, slug, signal } = {}) {
@@ -498,8 +498,16 @@ export async function fetchCollectionBid({ key, slug, signal } = {}) {
     if (Number(o?.price?.decimals ?? 18) !== 18) continue;
     const value = o?.price?.value;
     if (typeof value !== "string" || !/^\d+$/.test(value)) continue;
-    const qtyRaw = o?.protocol_data?.parameters?.consideration?.[0]?.startAmount;
-    const qty = typeof qtyRaw === "string" && /^\d+$/.test(qtyRaw) && BigInt(qtyRaw) > 0n ? BigInt(qtyRaw) : 1n;
+    // the offer's item count is the criteria consideration's amount; an offer whose count cannot be read is dropped,
+    // never taken as one item (a ten item offer read as one would post ten times the bid)
+    const params = o?.protocol_data?.parameters;
+    const qtyRaw = params?.consideration?.[0]?.startAmount;
+    if (typeof qtyRaw !== "string" || !/^\d+$/.test(qtyRaw) || BigInt(qtyRaw) === 0n) continue;
+    const qty = BigInt(qtyRaw);
+    // an offer past its end time, or with an end time that cannot be read, is not a bid anyone can fill
+    const endRaw = params?.endTime;
+    const end = typeof endRaw === "string" && /^\d+$/.test(endRaw) ? Number(endRaw) : typeof endRaw === "number" ? endRaw : NaN;
+    if (!Number.isFinite(end) || end <= Math.floor(Date.now() / 1000)) continue;
     const perItem = BigInt(value) / qty;
     if (perItem === 0n) continue;
     if (!best || perItem > best.bidWei) best = { bidWei: perItem, hash: typeof o.order_hash === "string" ? o.order_hash : undefined, slug: s };

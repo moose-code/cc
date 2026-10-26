@@ -629,7 +629,14 @@ test("postMarketFloor: a moved collection bid makes one unpaid controller call",
   assert.equal(c.payment, 0n, "postMarketFloor is unpaid");
   assert.equal(c.note?.target, parseEther("0.0095"), "a bid inside one step is the target itself");
   const far = decide(state({ ...v3Floor, marketBidWei: parseEther("0.02"), timestamp: 10_000n }), [], gas("0.3"), p, new Map());
-  assert.equal(far.calls[0]?.note?.target, parseEther("0.0087") * 11_000n / 10_000n, "a bid past one step is clamped to one step up");
+  assert.equal(far.calls[0]?.note?.target, parseEther("0.02"), "a rise is taken whole, the contract does not clamp it");
+  // the executor's post-simulation recheck: the door is unpaid and clears while the measured gas keeps the keeper's
+  // cost under the refresh cap, and is refused above it
+  const ok = recheck(c, state({ ...v3Floor, timestamp: 10_000n }), undefined, 60_000n, gas("0.3"), p);
+  assert.equal(ok.ok, true, "recheck clears an unpaid post under the cost cap");
+  assert.equal(ok.payment, 0n);
+  const over = recheck(c, state({ ...v3Floor, timestamp: 10_000n }), undefined, 60_000n, gas("2.9"), p);
+  assert.equal(over.ok, false, "recheck refuses when the measured cost is over REFRESH_MAX_COST_ETH");
 });
 
 // promise: the door waits off V3, while the term is off, when the keeper is not the poster, without an observed bid,
@@ -656,5 +663,10 @@ test("postMarketFloor: the first post goes unclamped and a drop steps down", () 
   const first = decide(state({ ...v3Floor, floorPostedWei: 0n, floorPostedTime: 0n, timestamp: 10_000n }), [], gas("0.3"), p, new Map());
   assert.equal(first.calls[0]?.note?.target, parseEther("0.0095"), "the first post is the bid itself");
   const drop = decide(state({ ...v3Floor, marketBidWei: parseEther("0.004"), timestamp: 10_000n }), [], gas("0.3"), p, new Map());
-  assert.equal(drop.calls[0]?.note?.target, parseEther("0.0087") * 9_000n / 10_000n, "a drop is clamped to one step down");
+  assert.equal(drop.calls[0]?.note?.target, (parseEther("0.0087") * 9_000n + 9_999n) / 10_000n, "a drop is clamped to one step down, rounded up");
+  // a posted floor of 1 wei with a post time is not a first post: the keeper mirrors the contract and cannot reach zero
+  const tiny = decide(state({ ...v3Floor, floorPostedWei: 1n, floorPostedTime: 1n, marketBidWei: 1n, timestamp: 10_000n }), [], gas("0.3"), p, new Map());
+  assert.equal(tiny.calls.length, 0, "a 1 wei floor at a 1 wei bid has nothing to post");
+  const zero = decide(state({ ...v3Floor, floorPostedWei: 1n, floorPostedTime: 1n, marketBidWei: 0n, timestamp: 10_000n }), [], gas("0.3"), p, new Map());
+  assert.equal(zero.calls.length, 0, "a zero observation never posts");
 });

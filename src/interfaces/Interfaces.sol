@@ -133,8 +133,8 @@ struct CcQuote {
 /// ControllerV3's market floor settings (docs/reviews/PRICING-REVIEW-2026-10-23.md section 7). the market pays a flat
 /// collection offer for any Credit whatever its points, so a per point ask under that offer gives the Credit away. the
 /// controller keeps a posted market floor, wei per Credit, and a pile credit asks at least `floor * (10_000 +
-/// spreadBps) / 10_000`. `poster` may post beside the owner; a post moves the floor at most `stepBps` from the last
-/// value and at most once per `minSeconds`. a floor older than `maxStale` seconds blocks the sale of every credit the
+/// spreadBps) / 10_000`. `poster` may post beside the owner; a post raises the floor freely, lowers it at most
+/// `stepBps` from the last value (rounded up), and comes at most once per `minSeconds`. a floor older than `maxStale` seconds blocks the sale of every credit the
 /// floor term binds on (its per point ask is under the floor) until a fresh post; `maxStale` 0 turns the term off
 struct MarketFloor {
     address poster;

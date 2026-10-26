@@ -320,13 +320,20 @@ contract BalanceTreasuryV2 is IBalanceModule {
         return spenderList.length;
     }
 
-    /// what `spender` may draw now in one call: its bucket inside its caps, zero while it is off, not yet active, the
-    /// treasury is paused or not the module
+    /// what `spender` may draw now in one call: `drawableTotal` capped at `perCall`
     function drawable(address spender) external view returns (uint256) {
+        uint256 x = drawableTotal(spender);
+        uint256 perCall = _spenders[spender].perCall;
+        return x > perCall ? perCall : x;
+    }
+
+    /// what `spender` may draw now over any number of calls: its bucket inside its period and lifetime room, zero
+    /// while it is off, not yet active, the treasury is paused or not the module. a module that pays in several
+    /// draws quotes against this and `perCall` on each draw
+    function drawableTotal(address spender) public view returns (uint256) {
         SpenderState storage r = _spenders[spender];
         if (!r.registered || !r.on || paused || block.timestamp < r.activeAt || !selectedForClaims()) return 0;
         uint256 x = r.bucket;
-        if (x > r.perCall) x = r.perCall;
         uint256 used = block.timestamp >= uint256(r.periodStart) + PERIOD ? 0 : r.periodUsed;
         uint256 period = r.perPeriod > used ? r.perPeriod - used : 0;
         if (x > period) x = period;
@@ -411,14 +418,17 @@ contract BalanceTreasuryV2 is IBalanceModule {
 
     // ------------------------------------------------------------------ funding
 
-    /// moves the surplus (working funds above the cushion) into the spender buckets in the owner's shares; the
-    /// unshared rest stays working. anyone may call
+    /// moves the whole surplus (working funds above the cushion) into the spender buckets in proportion to the
+    /// owner's shares, `s * share / totalShareBps`; with no share set nothing moves. the surplus is split in full so
+    /// a repeated call finds nothing left: a share is a proportion of what leaves working funds, never a rate at which
+    /// working funds drain (a partial share base would re-share the remainder on every call). anyone may call
     function sweep() external nonReentrant notPaused returns (uint256 moved) {
         uint256 s = surplus();
-        if (s == 0) return 0;
+        uint256 total = totalShareBps;
+        if (s == 0 || total == 0) return 0;
         for (uint256 i; i < spenderList.length; ++i) {
             SpenderState storage r = _spenders[spenderList[i]];
-            uint256 x = s * r.shareBps / BPS;
+            uint256 x = s * r.shareBps / total;
             if (x != 0) {
                 _fill(r, x);
                 moved += x;
@@ -702,7 +712,9 @@ contract BalanceTreasuryV2 is IBalanceModule {
     /// predecessor, not have migrated itself, have every switch off and already be the selected module of its Core,
     /// so the order is select the successor, migrate, enable it. this treasury then refuses every switch and spender
     /// forever; `claim` and `release` keep paying what it left behind, and later inflows leave through
-    /// `withdrawWorking`. a rule change never needs this: a new rule is a new spender
+    /// `withdrawWorking`. a rule change never needs this: a new rule is a new spender. the successor's answers are its
+    /// own word: the owner alone selects it, so this is the owner's power to move every token but the debt and the
+    /// committed payouts to a contract of its choosing, to be pinned and rehearsed like the v1 to v2 move
     function migrateTo(address successor) external onlyOwner nonReentrant returns (uint256 moved) {
         if (migrated) revert Migrated();
         if (conversionEnabled || workingPaymentsEnabled || ccRedemptionEnabled()) revert SwitchesOn();
@@ -732,8 +744,11 @@ contract BalanceTreasuryV2 is IBalanceModule {
         totalBuckets = 0;
         ++r.epoch;
         migrated = true;
+        uint256 held = SafeTransferLib.balanceOf(balanceToken, successor);
         if (moved != 0) SafeTransferLib.safeTransfer(balanceToken, successor, moved);
         next.receiveMigration(claims);
+        // the token's word, not the successor's: the custody landed and stayed through the import
+        if (SafeTransferLib.balanceOf(balanceToken, successor) < held + moved) revert ShortPayment();
         emit TreasuryMigrated(successor, moved, claims);
     }
 }

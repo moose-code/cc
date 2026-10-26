@@ -245,7 +245,7 @@ contract Phase3Test is LiveFixture {
     }
 
     function test_breakEvenRunKeepsWorkingAboveTheCushion() public {
-        // promise: a scripted run of bid fills, conversions and redemptions leaves working funds at or above the cushion
+        // promise: a scripted run of bid fills, conversions and redemptions leaves working funds at or above the cushion and the treasury solvent; the cushion bounds what leaves working funds, not the loop's profit (the artist royalty and the conversion contribution are costs the cushion does not stop), so this is a solvency and allocation check, not break even
         _migrate();
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
@@ -327,7 +327,13 @@ contract Phase3Test is LiveFixture {
         (uint256 spot, bool oks) = v3.spotPrice();
         assertTrue(oks && spot != 0 && v3.referencePrice() != 0 && v3.referenceTime() != 0, "the reference");
         assertTrue(v3.balancePoolKeySet() && v3.creditSaleOn() && v3.statementSalesEnabled(), "flags");
-        assertEq(v3.floorMultBps(), 11_000, "floorMultBps at the Core's cap of par");
+        assertEq(v3.creditSpreadBps(), script.params().creditSpreadBps, "the deploy set the spread, whatever V2 held");
+        assertEq(v3.floorMultBps(), (10_000 + uint256(script.params().creditSpreadBps)) * core.settings().balanceBidCapBps / 10_000, "floorMultBps from the spread and the Core's cap");
+        uint256 sid = _compose();
+        (, uint256 sCost,) = core.statementInfo(sid);
+        assertGt(v3.priceOf(sid), 0, "priceOf a held Statement");
+        assertGe(v3.priceOf(sid), sCost * core.settings().saleFloorBps / 10_000, "the Statement ask is at least the Core's floor");
+        assertFalse(v3.atFloor(sid), "a fresh Statement is not at its floor");
         assertEq(v3.markupBps(), 11_000, "markupBps");
         assertEq(v3.decayHours(), 1, "decayHours");
         assertEq(v3.startCapBps(), 11_000, "startCapBps");
@@ -473,6 +479,44 @@ contract Phase3Test is LiveFixture {
         assertEq(res.addr(script.VAULT_NODE()), address(t), "the name points at v2");
     }
 
+    function test_sweepSplitsTheWholeSurplusOnceByProportion() public {
+        // promise: a sweep moves the whole surplus into the buckets in proportion to the shares, so a second sweep finds nothing, and a partial share total does not drain working funds over repeated calls
+        _migrate();
+        assertEq(t.surplus(), 0, "the migrate run's sweep took the whole surplus");
+        assertEq(t.sweep(), 0, "nothing left to sweep");
+        vm.startPrank(owner);
+        t.setSpenderShare(d.market, 0);
+        t.unallocate(d.market, _bucket(d.market));
+        vm.stopPrank();
+        uint256 s = t.surplus();
+        assertGt(s, 0, "the returned bucket is surplus again");
+        uint256 bidBucket = _bucket(d.bid);
+        assertEq(t.sweep(), s, "a 25 percent share alone takes the whole surplus");
+        assertEq(_bucket(d.bid) - bidBucket, s, "all of it to the one shared bucket");
+        assertEq(t.sweep(), 0, "and a repeat moves nothing: no compounding drain");
+        assertGe(t.working(), t.cushion(), "the cushion is untouched");
+    }
+
+    function test_quoteCreditNeverQuotesWhatTheFillCannotSettle() public {
+        // promise: quoteCredit answers zero when the seller payout and the artist royalty together exceed the bid's period room, and the fill reverts rather than paying the seller without the royalty
+        _migrate();
+        vm.warp(block.timestamp + 1 days);
+        script.enableBid(address(core), d, false);
+        uint256 id = _credits(seller, 1)[0];
+        (uint256 q, uint256 toArtist) = bidm.quoteCredit(id);
+        assertGt(q, 0, "quotes at the launch caps");
+        vm.prank(owner);
+        t.setSpenderCaps(d.bid, uint128(q + toArtist), uint128(q + toArtist / 2), type(uint128).max);
+        (uint256 q2,) = bidm.quoteCredit(id);
+        assertEq(q2, 0, "a period room short of both draws quotes zero");
+        vm.prank(seller);
+        CREDITS.setApprovalForAll(address(bidm), true);
+        vm.expectRevert(abi.encodeWithSignature("OverCap()"));
+        vm.prank(seller);
+        bidm.sellCredit(_one(id), 0);
+        assertEq(CREDITS.ownerOf(id), seller, "the credit never left: the whole fill rolled back");
+    }
+
     // ------------------------------------------------------------------ market floor reference
 
     function test_marketFloorLiftsSmallCreditsToTheCollectionBidPlusSpread() public {
@@ -508,7 +552,7 @@ contract Phase3Test is LiveFixture {
     }
 
     function test_marketFloorPosterIsClampedAndPacedAndTheOwnerIsNot() public {
-        // promise: the poster moves the floor at most stepBps per post and at most once per minSeconds, anyone else is refused, and the owner posts any floor at any time
+        // promise: the poster raises the floor freely, lowers it at most stepBps per post (rounded up, so it never reaches zero by rounding) and posts at most once per minSeconds; anyone else is refused; the owner posts any floor at any time; only the first post is unclamped
         _migrate();
         Phase3.Params memory p = script.params();
         uint256 last = v3.marketFloorWei();
@@ -521,15 +565,25 @@ contract Phase3Test is LiveFixture {
         vm.warp(block.timestamp + p.floor.minSeconds);
         vm.prank(p.floor.poster);
         v3.postMarketFloor(last * 3);
-        assertEq(v3.marketFloorWei(), last * (10_000 + p.floor.stepBps) / 10_000, "a jump up is clamped to one step");
+        assertEq(v3.marketFloorWei(), last * 3, "a rise is taken whole: a lagged floor gives credits away");
         last = v3.marketFloorWei();
         vm.warp(block.timestamp + p.floor.minSeconds);
         vm.prank(p.floor.poster);
         v3.postMarketFloor(1);
-        assertEq(v3.marketFloorWei(), last * (10_000 - p.floor.stepBps) / 10_000, "a drop is clamped to one step");
+        assertEq(v3.marketFloorWei(), (last * (10_000 - p.floor.stepBps) + 9_999) / 10_000, "a drop is clamped to one step, rounded up");
         vm.prank(owner);
+        v3.postMarketFloor(1);
+        vm.warp(block.timestamp + p.floor.minSeconds);
+        vm.prank(p.floor.poster);
+        v3.postMarketFloor(0);
+        assertEq(v3.marketFloorWei(), 1, "from 1 wei the poster cannot reach zero");
+        vm.warp(block.timestamp + p.floor.minSeconds);
+        vm.prank(p.floor.poster);
         v3.postMarketFloor(last * 3);
-        assertEq(v3.marketFloorWei(), last * 3, "the owner is neither clamped nor paced");
+        assertEq(v3.marketFloorWei(), last * 3, "and a zero floor never reopens the first post exemption, only a rise is free");
+        vm.prank(owner);
+        v3.postMarketFloor(last);
+        assertEq(v3.marketFloorWei(), last, "the owner is neither clamped nor paced");
         vm.expectRevert(abi.encodeWithSelector(IControllerV3.BadSetting.selector, bytes32("floorStepBps")));
         vm.prank(owner);
         v3.setMarketFloor(IControllerV3.MarketFloor({poster: p.floor.poster, spreadBps: 300, stepBps: 0, minSeconds: 600, maxStale: 6 hours}));

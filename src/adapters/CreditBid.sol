@@ -38,6 +38,7 @@ interface IBidTreasury {
     function selected() external view returns (bool);
     function spenders(address spender) external view returns (SpenderState memory);
     function drawable(address spender) external view returns (uint256);
+    function drawableTotal(address spender) external view returns (uint256);
     function draw(address to, uint256 amount, bool accrue) external;
 }
 
@@ -147,16 +148,18 @@ contract CreditBid {
         if (bps >= floorMult) bps = floorMult - 1;
     }
 
-    /// what `sellCredit([id])` would pay the seller and the artist now, zero when the bid could not price or fund it
-    /// inside the treasury's caps. the return lock and the holder are checked only by the fill
+    /// what `sellCredit([id])` would pay the seller and the artist now, zero when the bid could not price or settle it
+    /// inside the treasury's caps (both draws). the return lock and the holder are checked only by the fill
     function quoteCredit(uint256 id) external view returns (uint256 paid, uint256 toArtist) {
         if (!bidEnabled()) return (0, 0);
         (bool ok, uint256 ethPrice, uint256 vSell) = _ethTerms();
         if (!ok) return (0, 0);
         paid = _price(_scoreOf(id), _fillBps(), ethPrice, vSell, bid.overEthBps);
         toArtist = paid * IBidCore(core).settings().buyToArtistBps / BPS;
-        uint256 room = IBidTreasury(treasury).drawable(address(this));
-        if (paid > room || paid + toArtist > bidBudget()) return (0, 0);
+        // the fill is two draws: each at most perCall, both together inside the bucket, the period and the lifetime
+        IBidTreasury t = IBidTreasury(treasury);
+        uint256 perCall = t.spenders(address(this)).perCall;
+        if (paid > perCall || toArtist > perCall || paid + toArtist > t.drawableTotal(address(this))) return (0, 0);
     }
 
     // ------------------------------------------------------------------ the fill
