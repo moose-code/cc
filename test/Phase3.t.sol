@@ -159,20 +159,25 @@ contract Phase3Test is LiveFixture {
         bidm.sellCredit(_one(id), 0);
     }
 
-    function test_bidNeverPaysAbovePar() public {
-        // promise: the v2 bid is bounded at par, refuses a cap above par, and stays under the controller's credit floor multiplier
+    function test_bidCanPayAboveParUnderTheFloorMultiplier() public {
+        // promise: the owner may set the v2 bid's cap above par (decision 296) and a fill then pays above par, while a cap at or above the controller's credit floor multiplier is refused
         _migrate();
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
-        assertEq(bidm.bidBpsNow(), 10_000, "the bid climbed to its cap, par");
+        assertEq(bidm.bidBpsNow(), 10_000, "the shipped band climbs to 10,000");
+        BalanceBid memory b = script.params().bid;
+        b.floorBps = 11_000;
+        b.capBps = 11_000;
+        b.overEthBps = 5_000;
+        vm.prank(owner);
+        bidm.setBid(b);
+        assertEq(bidm.bidBpsNow(), 11_000, "the owner set the bid above par");
         assertLt(bidm.bidBpsNow(), v3.floorMultBps(), "under the resale floor multiplier");
         uint256 id = _credits(seller, 1)[0];
         (uint256 q,) = bidm.quoteCredit(id);
-        assertGt(q, 0, "the bid quotes");
-        assertLe(q, _scoreOf(id) * 1e14, "never above par");
-        BalanceBid memory b = script.params().bid;
-        b.capBps = 10_001;
-        vm.expectRevert(abi.encodeWithSignature("BadSetting(bytes32)", bytes32("bidBand")));
+        assertEq(q, _scoreOf(id) * 1e14 * 11_000 / 10_000, "a fill pays 110 percent of par");
+        b.capBps = uint16(v3.floorMultBps());
+        vm.expectRevert(abi.encodeWithSignature("BadSetting(bytes32)", bytes32("bidCap")));
         vm.prank(owner);
         bidm.setBid(b);
     }

@@ -242,12 +242,11 @@ contract CreditBid {
 
     // ------------------------------------------------------------------ owner
 
-    /// sets the band and restarts its price at `floorBps`. the cap is at most par and must stay below the controller's
-    /// credit floor multiplier, so a credit the engine resells after its return lock is still worth more at the engine
-    /// than here
+    /// sets the band and restarts its price at `floorBps`. the cap may be above par (decision 296: a credit bought
+    /// above par loses that premium on conversion, the owner's choice) and must stay below the controller's credit
+    /// floor multiplier, so a credit the engine resells after its return lock is still worth more at the engine than here
     function setBid(BalanceBid calldata v) external onlyOwner {
-        // par is the ceiling: a credit bought above par loses BALANCE on conversion
-        if (v.floorBps > v.capBps || v.capBps == 0 || v.capBps > BPS) revert BadSetting("bidBand");
+        if (v.floorBps > v.capBps || v.capBps == 0) revert BadSetting("bidBand");
         if (v.climbBps != 0 && v.stepSeconds == 0) revert BadSetting("bidStep");
         if (v.capBps >= IBidController(IBidCore(core).controller()).floorMultBps()) revert BadSetting("bidCap");
         bid = v;

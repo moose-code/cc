@@ -3,7 +3,7 @@
 #
 #   cd /Users/dd/CascadeProjects/cc/cc && script/phase3/deploy.sh
 #
-# order: 1 deploy, 2 migrate and its readback, 3 the Core's balanceBidCapBps to 10,000, 5 ens, 6 readback, then 4 bid
+# order: 1 deploy, 2 migrate and its readback, 5 ens, 6 readback, then 4 bid
 # once its spender activation has passed, then the live readback. every sending step is the repository's own script:
 # a dry run first (no keystore, --sender the owner, no --broadcast) that must exit 0 with no FAIL row and the expected
 # transaction count, then the same step with --broadcast --slow --account ripe0x after the owner types yes.
@@ -27,7 +27,6 @@ ENS_REGISTRY=0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e
 VAULT_NODE=0xafdad34bdab44b570b0fafbb86b35b5647eb86dfbd34357f594e910ca745415d
 REC=deployments/1-phase3.json
 P3=script/Phase3.s.sol:Phase3
-SS=script/SetSettings.s.sol:SetSettings
 LOGS=cache/phase3
 READBACK_ROWS=40
 # the v1 custody and claim reserve the rehearsal moved (docs/STATUS.md 2026-10-26); a live value further than 1 BALANCE
@@ -35,7 +34,6 @@ READBACK_ROWS=40
 WANT_CUSTODY=570081549034400000000000
 WANT_RESERVE=57037287580000000000000
 WANT_AVAILABLE=513044261454400000000000
-SETTINGS_TUPLE="(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool,uint16,uint16)"
 SPENDER_TUPLE="(bool,bool,uint16,uint64,uint40,uint40,uint128,uint128,uint128,uint128,uint128,uint256,uint256,uint256)"
 RERUN="cd $ROOT && script/phase3/deploy.sh"
 WHERE=checks
@@ -242,7 +240,7 @@ if [ ! -f "$REC" ]; then
   echo "== deploy: out/ against the pinned build hashes"
   MAINNET_RPC_URL=$RPC forge test --match-path test/BuildIdentity.t.sol || stop "test/BuildIdentity.t.sol failed: out/ is not the pinned build"
   export STEP=deploy
-  dry "$P3" 5 "11,334,137 gas"
+  dry "$P3" 5 "11,327,948 gas"
   table_ok "$DRY_LOG" 4 "deploy preview"
   grep -qF 'ok    preview: band (1+step)(1+tol)(1-margin) < 1  |  300' "$DRY_LOG" \
     || stop "the deploy preview's band row does not read the reference step 300"
@@ -278,8 +276,8 @@ readback() {
   echo
   echo "readback: $READBACK_ROWS of $READBACK_ROWS. Expected: v2 custody about 570,081 BALANCE, pro-rata bucket about 57,037"
   echo "(the v1 claim reserve), bid and redeemer 2 buckets 0 until their step (decision 295), the bid bucket 90,000 after"
-  echo "the bid step, cushion 150,000, floor ask 0.008961 ETH, V3 quote step 300, floor multiplier 13,750 before the cap"
-  echo "send and 12,500 after."
+  echo "the bid step, cushion 150,000, floor ask 0.008961 ETH, V3 quote step 300, floor multiplier 13,750 (the Core's cap"
+  echo "stays 11,000: step 3 is dropped, decision 296)."
 }
 
 # --- 2 migrate. done: the Core's controller is V3 (the last of its 18 sends). not started: v1 is the module with its
@@ -299,7 +297,7 @@ if [ "$(lc "$ctl")" != "$(lc "$CONTROLLER_V3")" ]; then
     echo
     echo "Between setBalanceModule(v2) and v2's switches inside this one migrate run, the Core's BALANCE exchange"
     echo "reads 0. It clears within the same run, a few blocks later, when v2's switches go on."
-    dry "$P3" 18 "1,820,919 gas"
+    dry "$P3" 18 "1,820,812 gas"
     table_ok "$DRY_LOG" 13 "migrate preview"
     yes_or_exit
     send "$P3"
@@ -341,24 +339,6 @@ EOF
 else
   echo "migrate: done (the Core's controller is V3)"
 fi
-
-# --- 3 the Core's balanceBidCapBps to 10,000
-WHERE=cap
-cap=$(c call "$CORE" "settings()($SETTINGS_TUPLE)" | field 32)
-if [ "$cap" != 10000 ]; then
-  export SEND=1 SET_balanceBidCapBps=10000
-  dry "$SS" 1 "219,347 gas"
-  changed=$(grep -E '^[[:space:]]*\* ' "$DRY_LOG" | sed 's/^ *//')
-  [ "$(printf '%s\n' "$changed" | wc -l | tr -d ' ')" = 1 ] && [[ "$changed" == "* balanceBidCapBps | $cap | 10000 | "* ]] \
-    || stop "the settings send must change balanceBidCapBps alone, from $cap to 10000; it changes:
-$changed"
-  echo "$changed"
-  yes_or_exit
-  send "$SS"
-  unset SEND SET_balanceBidCapBps
-  [ "$(c call "$CORE" "settings()($SETTINGS_TUPLE)" | field 32)" = 10000 ] || stop "balanceBidCapBps does not read 10000 after the send"
-fi
-echo "cap: balanceBidCapBps reads 10000"
 
 # --- 5 ens
 WHERE=ens
