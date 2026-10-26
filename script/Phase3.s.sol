@@ -437,11 +437,16 @@ contract Phase3 is Script, LaunchChecks {
         );
         _info("redeemer 2 bucket", vm.toString(r2.bucket));
         _eq("redeemer 2 premium", IMarketRedeemer(d.market).premiumBps(), p.marketPremiumBps);
+        _readbackCc(v3, d, live);
+    }
+
+    /// @dev the CC reference and redeemer 2's price: required fresh right after the run, reported once the keeper owns it
+    function _readbackCc(IControllerV3 v3, Deployed memory d, bool live) private {
         (uint256 ccRef, bool okCc) = v3.ccPrice();
         (uint256 per1e18, bool okM) = IMarketRedeemer(d.market).preview(1e18);
         if (live) {
-            _check("V3 CC reference set", v3.ccPoolKeySet() && ccRef != 0, vm.toString(ccRef));
-            _info("V3 CC reference usable / redeemer 2 preview (the keeper refreshes)", string.concat(okCc ? "fresh" : "stale", " / ", vm.toString(per1e18)));
+            _check("V3 CC reference set", v3.ccPoolKeySet() && v3.ccReferencePrice() != 0, vm.toString(v3.ccReferencePrice()));
+            _info("V3 CC reference usable / redeemer 2 preview (the keeper refreshes)", string.concat(okCc ? vm.toString(ccRef) : "stale", " / ", vm.toString(per1e18)));
         } else {
             _check("V3 CC reference set and usable", v3.ccPoolKeySet() && okCc, vm.toString(ccRef));
             _check("redeemer 2 prices a burn", okM && per1e18 != 0, vm.toString(per1e18));
