@@ -1,7 +1,7 @@
 import { ponder } from "ponder:registry";
 import { zeroAddress, type Hex } from "viem";
 
-import { COLLECTIONS, CORE_ADDRESS, MARKET_REDEEMER, STRATEGY_ADDRESS } from "../ponder.config";
+import { COLLECTIONS, CORE_ADDRESS, CREDIT_BID, MARKET_REDEEMER, STRATEGY_ADDRESS } from "../ponder.config";
 import {
   activity,
   anchorMove,
@@ -604,9 +604,11 @@ async function treasuryEventRow(
   row: Pick<TreasuryRow, "kind"> & Partial<Omit<TreasuryRow, "id" | "treasury" | "kind" | "blockNumber" | "blockTimestamp" | "txHash" | "logIndex">>,
   patch: Partial<Omit<TreasuryStateRow, "id" | "balanceToken" | "setBlock" | "active">> = {},
   totals: Partial<Record<StateTotalKey, bigint>> = {},
+  // a spender module's own event (CreditBid) lands on its treasury's rows, logged under its own source
+  at: { treasury: Hex; source: "creditBid" } | null = null,
 ) {
-  await record(ctx, e, "treasury", name);
-  const id = lc(e.log.address);
+  await record(ctx, e, at?.source ?? "treasury", name);
+  const id = at?.treasury ?? lc(e.log.address);
   await ctx.db.insert(treasuryEvent).values({ id: idOf(e), treasury: id, ...row, ...posOf(e) }).onConflictDoNothing();
   const cur = await ctx.db.find(treasuryState, { id });
   if (!cur) throw new Error(`${name} from treasury ${id} before its BalanceModuleSet`);
@@ -693,17 +695,23 @@ ponder.on("Treasury:CCRedeemed(address indexed redeemer, address indexed burner,
   await bumpRedeemer(context, event, r, {}, { redeemedCcTotal: ccIn, paidBalanceTotal: amount, redemptions: 1n });
 });
 
-// phase 2 switches are conversion, working payments and CC redemption; v2's third switch is the bid. one signature,
-// so the meaning of the third flag follows the module version recorded at BalanceModuleSet.
-ponder.on("Treasury:SwitchesSet", async ({ event, context }) => {
-  const { conversionEnabled, workingPaymentsEnabled } = event.args;
-  const third = (event.args as { ccRedemptionEnabled: boolean }).ccRedemptionEnabled;
-  const cur = await context.db.find(treasuryState, { id: lc(event.log.address) });
-  const thirdPatch = cur?.version === "v2" ? { bidEnabled: third } : { ccRedemptionEnabled: third };
+// phase 2 switches: conversion, working payments and CC redemption
+ponder.on("Treasury:SwitchesSet(bool conversionEnabled, bool workingPaymentsEnabled, bool ccRedemptionEnabled)", async ({ event, context }) => {
+  const { conversionEnabled, workingPaymentsEnabled, ccRedemptionEnabled } = event.args;
   await treasuryEventRow(
     context, event, "SwitchesSet",
-    { kind: "switches_set", detail: toJson({ conversionEnabled, workingPaymentsEnabled, third }) },
-    { conversionEnabled, workingPaymentsEnabled, ...thirdPatch },
+    { kind: "switches_set", detail: toJson({ conversionEnabled, workingPaymentsEnabled, ccRedemptionEnabled }) },
+    { conversionEnabled, workingPaymentsEnabled, ccRedemptionEnabled },
+  );
+});
+
+// v2 switches: conversion and working payments; redemption and the bid are spender switches (SpenderSwitched)
+ponder.on("Treasury:SwitchesSet(bool conversionEnabled, bool workingPaymentsEnabled)", async ({ event, context }) => {
+  const { conversionEnabled, workingPaymentsEnabled } = event.args;
+  await treasuryEventRow(
+    context, event, "SwitchesSet",
+    { kind: "switches_set", detail: toJson({ conversionEnabled, workingPaymentsEnabled }) },
+    { conversionEnabled, workingPaymentsEnabled },
   );
 });
 
@@ -752,12 +760,25 @@ ponder.on("Treasury:WorkingWithdrawn", async ({ event, context }) => {
   await treasuryEventRow(context, event, "WorkingWithdrawn", { kind: "working_withdrawn", amount, actor: lc(to) }, {}, { ownerWithdrawnTotal: amount });
 });
 
-ponder.on("Treasury:TreasuryMigrated", async ({ event, context }) => {
+ponder.on("Treasury:TreasuryMigrated(address indexed successor, uint256 moved, uint256 claimsImported, uint64 configEpoch)", async ({ event, context }) => {
   const { successor, moved, claimsImported } = event.args;
   const configEpoch = BigInt(event.args.configEpoch);
   await treasuryEventRow(
     context, event, "TreasuryMigrated",
     { kind: "migrated_out", amount: moved, claimReserve: 0n, configEpoch, actor: lc(successor), detail: toJson({ claimsImported }) },
+    migratedOutPatch(successor, configEpoch),
+  );
+});
+
+// v2 `migrateTo` (decision 292, the last resort): custody less the debt and the committed payouts moves; the pro-rata
+// bucket is exported as the successor's claim import. v2 keeps no treasury wide epoch, so the stored one is carried
+ponder.on("Treasury:TreasuryMigrated(address indexed successor, uint256 moved, uint256 claimsExported)", async ({ event, context }) => {
+  const { successor, moved, claimsExported } = event.args;
+  const cur = await context.db.find(treasuryState, { id: lc(event.log.address) });
+  const configEpoch = cur?.configEpoch ?? 0n;
+  await treasuryEventRow(
+    context, event, "TreasuryMigrated",
+    { kind: "migrated_out", amount: moved, claimReserve: 0n, configEpoch, actor: lc(successor), detail: toJson({ claimsExported }) },
     migratedOutPatch(successor, configEpoch),
   );
 });
@@ -784,86 +805,86 @@ ponder.on("Treasury:MigrationReceived(address indexed predecessor, uint256 claim
 
 // ---- treasury: phase 3 only (BalanceTreasuryV2) -----------------------------------------------------------------
 
-// a $BALANCE bid call: the seller's Credits bought for paid (artist royalty on top), bidBudget the budget after the fill
-ponder.on("Treasury:BidFill", async ({ event, context }) => {
-  const { seller, credits, paid, toArtist, bidBudget } = event.args;
-  await treasuryEventRow(
-    context, event, "BidFill",
-    { kind: "bid_fill", amount: paid, actor: lc(seller), detail: toJson({ credits, toArtist, bidBudget }) },
-    { bidBudget },
-    { bidOutTotal: paid + toArtist, bidFills: 1n, bidCreditsTotal: credits },
-  );
-});
-
-// one credit bought by the bid; recorded to the log for per-credit score and bidBps, aggregated by BidFill above
-ponder.on("Treasury:CreditSold", async ({ event, context }) => {
-  await record(context, event, "treasury", "CreditSold");
-});
-
-// surplus working funds moved into the bid budget and the redeemer buckets in the owner's shares. BidFill carries the
-// authoritative budget after a fill; between fills a sweep adds toBid to the last known budget.
+// surplus working funds moved into the spender buckets in the owner's shares. the per spender split is not in the
+// event; a spender's bucket is a live read (section 9.6c), the bid's budget also the last BidFill's
 ponder.on("Treasury:Swept", async ({ event, context }) => {
-  const { surplus, toBid, toBuckets } = event.args;
-  const cur = await context.db.find(treasuryState, { id: lc(event.log.address) });
+  const { surplus, toBuckets } = event.args;
   await treasuryEventRow(
     context, event, "Swept",
-    { kind: "swept", amount: surplus, detail: toJson({ toBid, toBuckets }) },
-    { bidBudget: (cur?.bidBudget ?? 0n) + toBid },
-    { bidInTotal: toBid, sweptSurplusTotal: surplus, bucketsFundedTotal: toBuckets },
+    { kind: "swept", amount: surplus, detail: toJson({ toBuckets }) },
+    {},
+    { sweptSurplusTotal: surplus, bucketsFundedTotal: toBuckets },
   );
 });
 
-// owner surplus moved into (Allocated) or out of (Unallocated) a redeemer's bucket
+// a module spender paid from its own bucket (the credit bid's seller payouts and royalties among them); bucket is the
+// spender's bucket after the draw
+ponder.on("Treasury:Drawn", async ({ event, context }) => {
+  const { spender, to, amount, accrued, bucket } = event.args;
+  const addr = lc(spender);
+  const isBid = CREDIT_BID?.address === addr;
+  await treasuryEventRow(
+    context, event, "Drawn",
+    { kind: "drawn", amount, actor: lc(to), redeemer: addr, detail: toJson({ accrued, bucket }) },
+    isBid ? { bidBudget: bucket } : {},
+    isBid ? { bidOutTotal: amount } : {},
+  );
+  await bumpRedeemer(context, event, addr, {}, { paidBalanceTotal: amount });
+});
+
+// owner surplus moved into (Allocated) or out of (Unallocated) a spender's bucket
 ponder.on("Treasury:Allocated", async ({ event, context }) => {
-  const { redeemer: r, amount } = event.args;
+  const { spender: r, amount } = event.args;
   const addr = lc(r);
   await treasuryEventRow(context, event, "Allocated", { kind: "allocated", amount, redeemer: addr }, {}, { allocatedTotal: amount });
   await bumpRedeemer(context, event, addr, {}, { allocatedTotal: amount });
 });
 
 ponder.on("Treasury:Unallocated", async ({ event, context }) => {
-  const { redeemer: r, amount } = event.args;
+  const { spender: r, amount } = event.args;
   const addr = lc(r);
   await treasuryEventRow(context, event, "Unallocated", { kind: "unallocated", amount, redeemer: addr }, {}, { unallocatedTotal: amount });
   await bumpRedeemer(context, event, addr, {}, { unallocatedTotal: amount });
 });
 
-ponder.on("Treasury:RedeemerRegistered", async ({ event, context }) => {
-  const { redeemer: r, activeAt } = event.args;
+ponder.on("Treasury:SpenderRegistered", async ({ event, context }) => {
+  const { spender: r, activeAt } = event.args;
   const addr = lc(r);
-  await treasuryEventRow(context, event, "RedeemerRegistered", { kind: "redeemer_registered", redeemer: addr, detail: toJson({ activeAt }) });
+  await treasuryEventRow(context, event, "SpenderRegistered", { kind: "redeemer_registered", redeemer: addr, detail: toJson({ activeAt }) });
   await bumpRedeemer(context, event, addr, { registered: true, activeAt: BigInt(activeAt) });
 });
 
-ponder.on("Treasury:RedeemerCapsSet", async ({ event, context }) => {
-  const { redeemer: r, perCall, perPeriod, lifetime, epoch } = event.args;
+ponder.on("Treasury:SpenderCapsSet", async ({ event, context }) => {
+  const { spender: r, perCall, perPeriod, lifetime, epoch } = event.args;
   const addr = lc(r);
-  await treasuryEventRow(context, event, "RedeemerCapsSet", { kind: "redeemer_caps_set", redeemer: addr, configEpoch: BigInt(epoch), detail: toJson({ perCall, perPeriod, lifetime }) });
+  await treasuryEventRow(context, event, "SpenderCapsSet", { kind: "redeemer_caps_set", redeemer: addr, configEpoch: BigInt(epoch), detail: toJson({ perCall, perPeriod, lifetime }) });
   await bumpRedeemer(context, event, addr, { perCall, perPeriod, lifetime, epoch: BigInt(epoch) });
 });
 
-ponder.on("Treasury:RedeemerSwitched", async ({ event, context }) => {
-  const { redeemer: r, on } = event.args;
+ponder.on("Treasury:SpenderSwitched", async ({ event, context }) => {
+  const { spender: r, on } = event.args;
   const addr = lc(r);
-  await treasuryEventRow(context, event, "RedeemerSwitched", { kind: "redeemer_switched", redeemer: addr, detail: toJson({ on }) });
+  const isBid = CREDIT_BID?.address === addr;
+  await treasuryEventRow(context, event, "SpenderSwitched", { kind: "redeemer_switched", redeemer: addr, detail: toJson({ on }) }, isBid ? { bidEnabled: on } : {});
   await bumpRedeemer(context, event, addr, { on });
 });
 
-// a redeemer's share of a sweep, plus the bid's share and the running total (treasury-wide)
+// a spender's share of a sweep and the running total (treasury-wide); the credit bid's share is the bid share
 ponder.on("Treasury:SharesSet", async ({ event, context }) => {
-  const { redeemer: r, shareBps, bidShareBps, totalShareBps } = event.args;
+  const { spender: r, shareBps, totalShareBps } = event.args;
   const addr = lc(r);
+  const isBid = CREDIT_BID?.address === addr;
   await treasuryEventRow(
     context, event, "SharesSet",
-    { kind: "shares_set", redeemer: addr, bps: Number(shareBps), detail: toJson({ bidShareBps, totalShareBps }) },
-    { bidShareBps: Number(bidShareBps), totalShareBps: Number(totalShareBps) },
+    { kind: "shares_set", redeemer: addr, bps: Number(shareBps), detail: toJson({ totalShareBps }) },
+    { totalShareBps: Number(totalShareBps), ...(isBid ? { bidShareBps: Number(shareBps) } : {}) },
   );
   await bumpRedeemer(context, event, addr, { shareBps: Number(shareBps) });
 });
 
 // Redeemer 2 (MarketRedeemer, a static source, ponder.config.ts) sets its premium; PremiumSet also fires at
 // construction, before the treasury registers it. The premium and epoch land on the same `treasury:redeemer` row the
-// treasury's RedeemerRegistered writes, so this upserts (creating the row if it arrives first). The row's treasury is
+// treasury's SpenderRegistered writes, so this upserts (creating the row if it arrives first). The row's treasury is
 // taken from the deployment record because PremiumSet is emitted by the redeemer, not the treasury. Registered only
 // when MARKET_REDEEMER is configured; otherwise the source indexes nothing (ponder.config.ts).
 if (MARKET_REDEEMER) {
@@ -904,9 +925,30 @@ ponder.on("Treasury:PausedSet", async ({ event, context }) => {
   await treasuryEventRow(context, event, "PausedSet", { kind: "paused_set", detail: toJson({ paused }) }, { paused });
 });
 
-ponder.on("Treasury:BidSet", async ({ event, context }) => {
-  await treasuryEventRow(context, event, "BidSet", { kind: "bid_set", detail: toJson(event.args.bid) });
-});
+// the credit bid (CreditBid, a spender module, ponder.config.ts): its events land on its treasury's rows. Registered
+// only when CREDIT_BID is configured; otherwise the source indexes nothing
+if (CREDIT_BID) {
+  const at = { treasury: CREDIT_BID.treasury, source: "creditBid" as const };
+  // a $BALANCE bid call: the seller's Credits bought for paid (artist royalty on top), bidBudget the bucket after it.
+  // the payouts themselves are the treasury's Drawn events
+  ponder.on("CreditBid:BidFill", async ({ event, context }) => {
+    const { seller, credits, paid, toArtist, bidBudget } = event.args;
+    await treasuryEventRow(
+      context, event, "BidFill",
+      { kind: "bid_fill", amount: paid, actor: lc(seller), detail: toJson({ credits, toArtist, bidBudget }) },
+      { bidBudget },
+      { bidFills: 1n, bidCreditsTotal: credits },
+      at,
+    );
+  });
+  // one credit bought by the bid; logged for its score and bidBps, aggregated by BidFill above
+  ponder.on("CreditBid:CreditSold", async ({ event, context }) => {
+    await record(context, event, "creditBid", "CreditSold");
+  });
+  ponder.on("CreditBid:BidSet", async ({ event, context }) => {
+    await treasuryEventRow(context, event, "BidSet", { kind: "bid_set", detail: toJson(event.args.bid) }, {}, {}, at);
+  });
+}
 
 ponder.on("Treasury:TokenRescued", async ({ event, context }) => {
   await record(context, event, "treasury", "TokenRescued");

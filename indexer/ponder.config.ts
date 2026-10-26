@@ -7,6 +7,7 @@ import { controllerLogAbi } from "./abis/Controller";
 import { coreAbi } from "./abis/Core";
 import { creditsAbi, erc20Abi, statementsAbi, strategyAbi } from "./abis/external";
 import { marketRedeemerAbi } from "./abis/MarketRedeemer";
+import { creditBidAbi } from "./abis/CreditBid";
 import { treasuryLogAbi } from "./abis/Treasury";
 import { guardedHttp, type Endpoint } from "./src/lib/rpc";
 import { localRpc } from "./src/lib/rpc-selection";
@@ -83,6 +84,14 @@ const marketBlock = process.env.MARKET_REDEEMER_START_BLOCK || (phase3.deployBlo
 export const MARKET_REDEEMER =
   marketAddr && marketTreasury && marketBlock !== undefined
     ? { address: marketAddr, treasury: marketTreasury, deployBlock: Number(marketBlock) }
+    : undefined;
+
+// The credit bid (CreditBid, decision 292) is a spender module of the v2 treasury, a static source on the same record:
+// `creditBid` the address (CREDIT_BID_ADDRESS overrides), the treasury and the start block as for redeemer 2
+const creditBidAddr = lower(process.env.CREDIT_BID_ADDRESS || (phase3.creditBid as string | undefined));
+export const CREDIT_BID =
+  creditBidAddr && marketTreasury && marketBlock !== undefined
+    ? { address: creditBidAddr, treasury: marketTreasury, deployBlock: Number(marketBlock) }
     : undefined;
 
 // ---- RPC ---------------------------------------------------------------------------------------------------
@@ -164,6 +173,13 @@ export default createConfig({
       chain: "chain",
       address: MARKET_REDEEMER?.address ?? zeroAddress,
       startBlock: MARKET_REDEEMER?.deployBlock ?? DEPLOY_BLOCK,
+    },
+    // the credit bid, configured like redeemer 2: handlers are registered only when CREDIT_BID is set
+    CreditBid: {
+      abi: creditBidAbi,
+      chain: "chain",
+      address: CREDIT_BID?.address ?? zeroAddress,
+      startBlock: CREDIT_BID?.deployBlock ?? DEPLOY_BLOCK,
     },
   },
   blocks: {

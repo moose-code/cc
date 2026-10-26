@@ -37,7 +37,7 @@ export const treasuryV2Abi = [
     "name": "allocate",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "internalType": "address"
       },
@@ -72,184 +72,6 @@ export const treasuryV2Abi = [
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bid",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "floorBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "capBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "climbBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "stepSeconds",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "dropPer100PointsBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "overEthBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "maxPerCall",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "maxPerPeriod",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidAnchorBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidAnchorTime",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint40",
-        "internalType": "uint40"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidBpsNow",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "x",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidBudget",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidEnabled",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidIn",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidOut",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidPeriodStart",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint40",
-        "internalType": "uint40"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidPeriodUsed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bidShareBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -453,6 +275,48 @@ export const treasuryV2Abi = [
   },
   {
     "type": "function",
+    "name": "draw",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "accrue",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "drawable",
+    "inputs": [
+      {
+        "name": "spender",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "earmarked",
     "inputs": [],
     "outputs": [
@@ -466,6 +330,25 @@ export const treasuryV2Abi = [
   },
   {
     "type": "function",
+    "name": "migrateTo",
+    "inputs": [
+      {
+        "name": "successor",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "moved",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "migrated",
     "inputs": [],
     "outputs": [
@@ -475,7 +358,7 @@ export const treasuryV2Abi = [
         "internalType": "bool"
       }
     ],
-    "stateMutability": "pure"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -568,30 +451,6 @@ export const treasuryV2Abi = [
   },
   {
     "type": "function",
-    "name": "quoteCredit",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "paid",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "toArtist",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "receiveMigration",
     "inputs": [
       {
@@ -678,133 +537,10 @@ export const treasuryV2Abi = [
   },
   {
     "type": "function",
-    "name": "redeemerCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "redeemerList",
+    "name": "registerSpender",
     "inputs": [
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "redeemers",
-    "inputs": [
-      {
-        "name": "redeemer",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct RedeemerState",
-        "components": [
-          {
-            "name": "registered",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "on",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "shareBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "epoch",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "activeAt",
-            "type": "uint40",
-            "internalType": "uint40"
-          },
-          {
-            "name": "periodStart",
-            "type": "uint40",
-            "internalType": "uint40"
-          },
-          {
-            "name": "perCall",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "perPeriod",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "lifetime",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "periodUsed",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "lifetimeUsed",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "bucket",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "totalIn",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "totalOut",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "registerRedeemer",
-    "inputs": [
-      {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "internalType": "address"
       },
@@ -910,98 +646,6 @@ export const treasuryV2Abi = [
   },
   {
     "type": "function",
-    "name": "sellCredit",
-    "inputs": [
-      {
-        "name": "ids",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "minOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setBid",
-    "inputs": [
-      {
-        "name": "v",
-        "type": "tuple",
-        "internalType": "struct BalanceBid",
-        "components": [
-          {
-            "name": "floorBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "capBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "climbBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "stepSeconds",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "dropPer100PointsBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "overEthBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxPerCall",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "maxPerPeriod",
-            "type": "uint128",
-            "internalType": "uint128"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setBidShare",
-    "inputs": [
-      {
-        "name": "v",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setConversionToClaimBps",
     "inputs": [
       {
@@ -1041,10 +685,10 @@ export const treasuryV2Abi = [
   },
   {
     "type": "function",
-    "name": "setRedeemerCaps",
+    "name": "setSpenderCaps",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "internalType": "address"
       },
@@ -1069,10 +713,10 @@ export const treasuryV2Abi = [
   },
   {
     "type": "function",
-    "name": "setRedeemerOn",
+    "name": "setSpenderOn",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "internalType": "address"
       },
@@ -1087,10 +731,10 @@ export const treasuryV2Abi = [
   },
   {
     "type": "function",
-    "name": "setRedeemerShare",
+    "name": "setSpenderShare",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "internalType": "address"
       },
@@ -1116,11 +760,6 @@ export const treasuryV2Abi = [
         "name": "workingPayments",
         "type": "bool",
         "internalType": "bool"
-      },
-      {
-        "name": "bidOn",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "outputs": [],
@@ -1135,6 +774,129 @@ export const treasuryV2Abi = [
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "spenderCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "spenderList",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "spenders",
+    "inputs": [
+      {
+        "name": "spender",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct SpenderState",
+        "components": [
+          {
+            "name": "registered",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "on",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "shareBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "epoch",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "activeAt",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "periodStart",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "perCall",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "perPeriod",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "lifetime",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "periodUsed",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "lifetimeUsed",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "bucket",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalIn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalOut",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -1222,7 +984,7 @@ export const treasuryV2Abi = [
     "name": "unallocate",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "internalType": "address"
       },
@@ -1297,7 +1059,7 @@ export const treasuryV2Abi = [
     "name": "Allocated",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1307,98 +1069,6 @@ export const treasuryV2Abi = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BidFill",
-    "inputs": [
-      {
-        "name": "seller",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "credits",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "paid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toArtist",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "bidBudget",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BidSet",
-    "inputs": [
-      {
-        "name": "bid",
-        "type": "tuple",
-        "indexed": false,
-        "internalType": "struct BalanceBid",
-        "components": [
-          {
-            "name": "floorBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "capBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "climbBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "stepSeconds",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "dropPer100PointsBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "overEthBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxPerCall",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "maxPerPeriod",
-            "type": "uint128",
-            "internalType": "uint128"
-          }
-        ]
       }
     ],
     "anonymous": false
@@ -1504,40 +1174,10 @@ export const treasuryV2Abi = [
   },
   {
     "type": "event",
-    "name": "CreditSold",
+    "name": "CushionSet",
     "inputs": [
       {
-        "name": "id",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "seller",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "score",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "paid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "toArtist",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "bidBps",
+        "name": "cushion",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1547,10 +1187,34 @@ export const treasuryV2Abi = [
   },
   {
     "type": "event",
-    "name": "CushionSet",
+    "name": "Drawn",
     "inputs": [
       {
-        "name": "cushion",
+        "name": "spender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "accrued",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucket",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1636,10 +1300,35 @@ export const treasuryV2Abi = [
   },
   {
     "type": "event",
-    "name": "RedeemerCapsSet",
+    "name": "SharesSet",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "shareBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "totalShareBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SpenderCapsSet",
+    "inputs": [
+      {
+        "name": "spender",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1673,10 +1362,10 @@ export const treasuryV2Abi = [
   },
   {
     "type": "event",
-    "name": "RedeemerRegistered",
+    "name": "SpenderRegistered",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1692,10 +1381,10 @@ export const treasuryV2Abi = [
   },
   {
     "type": "event",
-    "name": "RedeemerSwitched",
+    "name": "SpenderSwitched",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1705,37 +1394,6 @@ export const treasuryV2Abi = [
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SharesSet",
-    "inputs": [
-      {
-        "name": "redeemer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "shareBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "bidShareBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "totalShareBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -1782,12 +1440,6 @@ export const treasuryV2Abi = [
         "internalType": "uint256"
       },
       {
-        "name": "toBid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "toBuckets",
         "type": "uint256",
         "indexed": false,
@@ -1808,12 +1460,6 @@ export const treasuryV2Abi = [
       },
       {
         "name": "workingPaymentsEnabled",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
-        "name": "bidEnabled",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
@@ -1848,10 +1494,35 @@ export const treasuryV2Abi = [
   },
   {
     "type": "event",
+    "name": "TreasuryMigrated",
+    "inputs": [
+      {
+        "name": "successor",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "moved",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimsExported",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Unallocated",
     "inputs": [
       {
-        "name": "redeemer",
+        "name": "spender",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1899,16 +1570,6 @@ export const treasuryV2Abi = [
         "internalType": "bytes32"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "BidOff",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "BidUnpriced",
-    "inputs": []
   },
   {
     "type": "error",
@@ -1962,30 +1623,18 @@ export const treasuryV2Abi = [
   },
   {
     "type": "error",
-    "name": "NotHeld",
+    "name": "InvalidSuccessor",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "NotInPile",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
+    "name": "Migrated",
+    "inputs": []
   },
   {
     "type": "error",
-    "name": "NotOwner",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
+    "name": "NotHeld",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2029,11 +1678,6 @@ export const treasuryV2Abi = [
   },
   {
     "type": "error",
-    "name": "RedeemerOn",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RedemptionOff",
     "inputs": []
   },
@@ -2041,17 +1685,6 @@ export const treasuryV2Abi = [
     "type": "error",
     "name": "Reentrant",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReturnLocked",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2065,12 +1698,27 @@ export const treasuryV2Abi = [
   },
   {
     "type": "error",
+    "name": "SpenderOff",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SpenderOn",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StaleEpoch",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "UnknownRedeemer",
+    "name": "SwitchesOn",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownSpender",
     "inputs": []
   },
   {

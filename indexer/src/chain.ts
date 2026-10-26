@@ -332,7 +332,8 @@ export async function readTreasury(ctx: Ctx, address: Hex) {
   };
 }
 
-/** The phase 3 treasury's state at its BalanceModuleSet block. The v2 third switch is the bid, not CC redemption. */
+/** The phase 3 treasury's state at its BalanceModuleSet block. The bid is a spender module (CreditBid, decision 292):
+ * its budget, share and switch arrive through the treasury's spender events and CreditBid's own events. */
 async function readTreasuryV2(ctx: Ctx, address: Hex) {
   const t = { address, abi: treasuryV2Abi } as const;
   const r = await ctx.client.multicall({
@@ -341,13 +342,10 @@ async function readTreasuryV2(ctx: Ctx, address: Hex) {
     contracts: [
       { ...t, functionName: "proRataRedeemer" },
       { ...t, functionName: "cushion" },
-      { ...t, functionName: "bidBudget" },
-      { ...t, functionName: "bidShareBps" },
       { ...t, functionName: "totalShareBps" },
       { ...t, functionName: "conversionToClaimBps" },
       { ...t, functionName: "conversionEnabled" },
       { ...t, functionName: "workingPaymentsEnabled" },
-      { ...t, functionName: "bidEnabled" },
       { ...t, functionName: "paused" },
       { ...t, functionName: "totalOwed" },
       { ...t, functionName: "migrated" },
@@ -360,16 +358,16 @@ async function readTreasuryV2(ctx: Ctx, address: Hex) {
     version: "v2",
     proRataRedeemer: ok<Hex>(0) ? (ok<Hex>(0)!.toLowerCase() as Hex) : null,
     cushion: big(1),
-    bidBudget: big(2),
-    bidShareBps: num(3),
-    totalShareBps: num(4),
-    conversionToClaimBps: num(5),
-    conversionEnabled: ok<boolean>(6),
-    workingPaymentsEnabled: ok<boolean>(7),
-    bidEnabled: ok<boolean>(8),
-    paused: ok<boolean>(9),
-    totalOwed: big(10) ?? 0n,
-    migrated: ok<boolean>(11) ?? false,
+    bidBudget: null,
+    bidShareBps: null,
+    totalShareBps: num(2),
+    conversionToClaimBps: num(3),
+    conversionEnabled: ok<boolean>(4),
+    workingPaymentsEnabled: ok<boolean>(5),
+    bidEnabled: null,
+    paused: ok<boolean>(6),
+    totalOwed: big(7) ?? 0n,
+    migrated: ok<boolean>(8) ?? false,
   };
 }
 

@@ -209,18 +209,20 @@ export const treasuryEventKind = onchainEnum("treasury_event_kind", [
   "migrated_out", // TreasuryMigrated (phase 2): amount moved, detail claimsImported, actor the successor, configEpoch
   "migration_received", // MigrationReceived: amount claimsImported, actor the predecessor; v2 detail custody
   // phase 3 (BalanceTreasuryV2)
-  "bid_fill", // BidFill: a $BALANCE bid call. amount the seller payout, detail credits/toArtist/bidBudget, actor the seller
-  "swept", // Swept: surplus moved into the bid budget and redeemer buckets. detail surplus/toBid/toBuckets
-  "allocated", // Allocated: owner surplus into a redeemer's bucket. redeemer, amount
-  "unallocated", // Unallocated: owner surplus out of a redeemer's bucket. redeemer, amount
-  "redeemer_registered", // RedeemerRegistered: redeemer, detail activeAt
-  "redeemer_caps_set", // RedeemerCapsSet: redeemer, configEpoch, detail perCall/perPeriod/lifetime
-  "redeemer_switched", // RedeemerSwitched: redeemer, detail on
-  "shares_set", // SharesSet: redeemer, bps the redeemer's share, detail bidShareBps/totalShareBps
+  // a spender is a redeemer or a module that draws (decision 292); the `redeemer` column holds the spender
+  "bid_fill", // CreditBid BidFill: a $BALANCE bid call. amount the seller payout, detail credits/toArtist/bidBudget, actor the seller
+  "swept", // Swept: surplus moved into the spender buckets. detail surplus/toBuckets
+  "allocated", // Allocated: owner surplus into a spender's bucket. redeemer the spender, amount
+  "unallocated", // Unallocated: owner surplus out of a spender's bucket. redeemer the spender, amount
+  "redeemer_registered", // SpenderRegistered: redeemer the spender, detail activeAt
+  "redeemer_caps_set", // SpenderCapsSet: redeemer the spender, configEpoch, detail perCall/perPeriod/lifetime
+  "redeemer_switched", // SpenderSwitched: redeemer the spender, detail on
+  "shares_set", // SharesSet: redeemer the spender, bps its share, detail totalShareBps
   "claim_released", // ClaimReleased: a vesting or deferred claim paid out. amount, recipient, detail claimId
   "cushion_set", // CushionSet: amount the reserved cushion
   "paused_set", // PausedSet (v2): detail paused
-  "bid_set", // BidSet (v2): detail the bid parameters tuple
+  "bid_set", // CreditBid BidSet: detail the bid parameters tuple
+  "drawn", // Drawn: a module spender paid from its bucket. amount, actor the payee, redeemer the spender, detail accrued/bucket
 ]);
 
 /**

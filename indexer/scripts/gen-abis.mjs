@@ -45,6 +45,7 @@ const treasury = abiOf("Phase2BalanceTreasury");
 const treasuryV2 = abiOf("BalanceTreasuryV2");
 const treasuryUnion = union(treasury, treasuryV2);
 const marketRedeemer = abiOf("MarketRedeemer");
+const creditBid = abiOf("CreditBid");
 
 emit("Core.ts", "coreAbi", merged, "Core ABI plus CoreLib events.");
 emit("ControllerV1.ts", "controllerAbi", v1, "ControllerV1 ABI.");
@@ -53,6 +54,7 @@ emit("Controller.ts", "controllerLogAbi", controllerUnion, "ControllerV1 ABI plu
 emit("Phase2BalanceTreasury.ts", "treasuryAbi", treasury, "Phase2BalanceTreasury ABI: the phase 2 balance module named by BalanceModuleSet; read with it for phase 2 state.");
 emit("BalanceTreasuryV2.ts", "treasuryV2Abi", treasuryV2, "BalanceTreasuryV2 ABI: the phase 3 balance module; read with it for phase 3 state.");
 emit("Treasury.ts", "treasuryLogAbi", treasuryUnion, "Phase2BalanceTreasury ABI plus the BalanceTreasuryV2 entries it lacks: the log ABI of the Treasury factory source.");
+emit("CreditBid.ts", "creditBidAbi", creditBid, "CreditBid ABI: the credit bid, a spender module of treasury v2 (decision 292); its BidFill, BidSet and CreditSold events.");
 emit("MarketRedeemer.ts", "marketRedeemerAbi", marketRedeemer, "MarketRedeemer ABI: redeemer 2 of treasury v2; its PremiumSet event and its views (the web reads preview/prices/premiumBps).");
 const events = (abi) => abi.filter((e) => e.type === "event").length;
 console.log(

@@ -1795,6 +1795,96 @@ export const controllerLogAbi = [
   },
   {
     "type": "function",
+    "name": "marketFloor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "poster",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "spreadBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "stepBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "minSeconds",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "maxStale",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "marketFloorAsk",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "ask",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fresh",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "marketFloorTime",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint40",
+        "internalType": "uint40"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "marketFloorWei",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "postMarketFloor",
+    "inputs": [
+      {
+        "name": "floorWei",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "refreshCcReference",
     "inputs": [],
     "outputs": [
@@ -1919,6 +2009,46 @@ export const controllerLogAbi = [
             "name": "capBps",
             "type": "uint16",
             "internalType": "uint16"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMarketFloor",
+    "inputs": [
+      {
+        "name": "v",
+        "type": "tuple",
+        "internalType": "struct MarketFloor",
+        "components": [
+          {
+            "name": "poster",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "spreadBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "stepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "minSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxStale",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -2113,5 +2243,79 @@ export const controllerLogAbi = [
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketFloorPosted",
+    "inputs": [
+      {
+        "name": "floorWei",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketFloorSet",
+    "inputs": [
+      {
+        "name": "floor",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct MarketFloor",
+        "components": [
+          {
+            "name": "poster",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "spreadBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "stepBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "minSeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "maxStale",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "OnlyPoster",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StaleFloor",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TooSoon",
+    "inputs": []
   }
 ] as const;
