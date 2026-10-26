@@ -122,7 +122,7 @@ contract Phase3Test is LiveFixture {
         // the bid is a newly registered spender: it draws nothing for a day, which also covers the return lock
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
-        assertGt(bidm.bidBudget(), 0, "the sweep funded the bid");
+        assertEq(bidm.bidBudget(), script.params().bidBudget, "the bid step funded the bid from the surplus");
 
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
@@ -206,7 +206,6 @@ contract Phase3Test is LiveFixture {
         FixedRedeemer r = new FixedRedeemer();
         vm.startPrank(owner);
         t.registerSpender(address(r), 1_000 ether, 1_500 ether, 2_000 ether);
-        t.unallocate(d.bid, 2_500 ether); // the sweep shared the whole surplus; the bid's bucket (off) gives some back
         t.allocate(address(r), 2_500 ether);
         t.setSpenderOn(address(r), true);
         vm.stopPrank();
@@ -354,7 +353,6 @@ contract Phase3Test is LiveFixture {
         m.pull(address(t), user, 1 ether, false);
         vm.startPrank(owner);
         t.registerSpender(address(m), 1_000 ether, 1_500 ether, type(uint128).max);
-        t.unallocate(d.bid, 2_000 ether);
         t.allocate(address(m), 2_000 ether);
         vm.stopPrank();
         vm.expectRevert(abi.encodeWithSignature("SpenderOff()"));
@@ -438,12 +436,12 @@ contract Phase3Test is LiveFixture {
             _deployArtifact("BalanceTreasuryV2", abi.encode(address(core), t.balanceToken(), d.redeemer, uint128(50_000 ether), address(t)))
         );
         vm.startPrank(owner);
+        t.allocate(d.market, 1_000 ether);
         t.setSwitches(false, false);
         core.setBalanceModule(address(v3t));
         vm.expectRevert(abi.encodeWithSignature("InsufficientBucket()"));
         t.migrateTo(address(v3t)); // the market bucket is still funded
         t.unallocate(d.market, _bucket(d.market));
-        t.unallocate(d.bid, _bucket(d.bid));
         t.setSpenderOn(d.redeemer, true);
         vm.expectRevert(abi.encodeWithSignature("SwitchesOn()"));
         t.migrateTo(address(v3t));
@@ -481,16 +479,15 @@ contract Phase3Test is LiveFixture {
     }
 
     function test_sweepSplitsTheWholeSurplusOnceByProportion() public {
-        // promise: a sweep moves the whole surplus into the buckets in proportion to the shares, so a second sweep finds nothing, and a partial share total does not drain working funds over repeated calls
+        // promise: with no share set (the launch, decision 295) the migrate run's sweep leaves the surplus as working funds and every spender bucket empty; once shares are set a sweep moves the whole surplus into the buckets in proportion to the shares, so a second sweep finds nothing, and a partial share total does not drain working funds over repeated calls
         _migrate();
-        assertEq(t.surplus(), 0, "the migrate run's sweep took the whole surplus");
-        assertEq(t.sweep(), 0, "nothing left to sweep");
-        vm.startPrank(owner);
-        t.setSpenderShare(d.market, 0);
-        t.unallocate(d.market, _bucket(d.market));
-        vm.stopPrank();
         uint256 s = t.surplus();
-        assertGt(s, 0, "the returned bucket is surplus again");
+        assertGt(s, 0, "the surplus stays working funds");
+        assertEq(_bucket(d.bid) + _bucket(d.market), 0, "no spender bucket funded at launch");
+        assertEq(t.available(), t.working(), "the Core's exchange can pay all of it");
+        assertEq(t.sweep(), 0, "no share set: the sweep moves nothing");
+        vm.prank(owner);
+        t.setSpenderShare(d.bid, 2_500);
         uint256 bidBucket = _bucket(d.bid);
         assertEq(t.sweep(), s, "a 25 percent share alone takes the whole surplus");
         assertEq(_bucket(d.bid) - bidBucket, s, "all of it to the one shared bucket");
@@ -846,7 +843,9 @@ contract Phase3Test is LiveFixture {
     function _marketOn() internal returns (IMarketRedeemer m) {
         _migrate();
         m = IMarketRedeemer(d.market);
-        assertGt(_bucket(d.market), 0, "the sweep funded redeemer 2");
+        assertEq(_bucket(d.market), 0, "launched unfunded");
+        vm.prank(owner);
+        t.allocate(d.market, 50_000 ether);
         vm.warp(block.timestamp + 1 days);
         vm.roll(block.number + 1);
         assertTrue(v3.refreshCcReference(), "the CC reference refreshed");

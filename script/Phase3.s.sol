@@ -28,8 +28,8 @@ import {LaunchChecks} from "./Checks.sol";
 ///   their caps and sweep shares, the bid band, v2 conversion and working payments on (every spender off), `sweep`,
 ///   the V3 pool key, CC reference, Statement sales and market floor, `setController(V3)`. the v1 `migrateTo` requires
 ///   its successor to be the selected module, so the module changes before the funds move
-/// - `bid`: the bid spender on. run at least the Core's `returnLockSeconds` after `setController(V3)`: credits
-///   ControllerV2 sold before the switch carry no V3 sale record
+/// - `bid`: the bid's budget allocated from the surplus, then the bid spender on. run at least the Core's
+///   `returnLockSeconds` after `setController(V3)`: credits ControllerV2 sold before the switch carry no V3 sale record
 /// - `ens`: `vault.creditcycle.eth` to v2 on its public resolver, from the name's owner (the Core owner). any time
 ///   after `migrate`
 /// - `readback`: the checks alone, right after `migrate`; `LIVE=1` for the running system after `bid` (the bid on,
@@ -58,6 +58,8 @@ contract Phase3 is Script, LaunchChecks {
         uint256 cushion;
         BalanceBid bid;
         uint16 bidShareBps;
+        /// the bid's bucket, allocated from the surplus by the `bid` step, not by the sweep (decision 295)
+        uint256 bidBudget;
         uint128 bidPerCall;
         uint128 bidPerPeriod;
         uint16 proRataShareBps;
@@ -99,7 +101,11 @@ contract Phase3 is Script, LaunchChecks {
             dropPer100PointsBps: 29,
             overEthBps: 500
         });
-        p.bidShareBps = 2_500;
+        // no sweep shares at launch (decision 295): the surplus stays working funds until a spender is switched on,
+        // so the Core's exchange keeps it and nothing sits in an idle bucket. sweep shares are proportions of their
+        // sum, so one share alone would take the whole surplus
+        p.bidShareBps = 0;
+        p.bidBudget = 90_000 ether;
         p.bidPerCall = 20_000 ether;
         p.bidPerPeriod = 60_000 ether;
         p.proRataShareBps = 0;
@@ -116,7 +122,7 @@ contract Phase3 is Script, LaunchChecks {
         p.marketPerCall = 5_000 ether;
         p.marketPerPeriod = 20_000 ether;
         p.marketLifetime = type(uint128).max;
-        p.marketShareBps = 7_500;
+        p.marketShareBps = 0;
         p.ccQuote = CcQuote({
             rateBpsPerHour: 6_000,
             stepBps: 900,
@@ -324,13 +330,15 @@ contract Phase3 is Script, LaunchChecks {
         _require();
     }
 
-    /// @notice the send of `bid`: the bid spender on, once v2 is the module, the bid is its registered spender past
-    /// its activation, and the band is set; then the switch read back
+    /// @notice the sends of `bid`: the bid's budget allocated from the surplus while its bucket is empty, then the bid
+    /// spender on, once v2 is the module, the bid is its registered spender past its activation, and the band is set;
+    /// then the switch read back. a run stopped after the allocation finds the bucket funded and only switches on
     function enableBid(address core, Deployed memory d, bool broadcast) public {
         ICore c = ICore(payable(core));
         IBalanceTreasuryV2 t = IBalanceTreasuryV2(d.treasury);
         ICreditBid b = ICreditBid(d.bid);
         SpenderState memory r = t.spenders(d.bid);
+        uint256 fund = r.bucket == 0 ? params().bidBudget : 0;
         _reset();
         _eq("preview: v2 is the Core's module", c.balanceModule(), d.treasury);
         _eq("preview: Core controller is V3", c.controller(), d.controller);
@@ -340,15 +348,21 @@ contract Phase3 is Script, LaunchChecks {
         (uint16 floorBps, uint16 capBps,,,,) = b.bid();
         _check("preview: band set", floorBps != 0 && capBps != 0, "");
         _check("preview: bid cap under the credit floor multiplier", capBps < IControllerV3(d.controller).floorMultBps(), vm.toString(capBps));
-        _check("preview: bid bucket funded", r.bucket != 0, vm.toString(r.bucket));
+        _check(
+            "preview: bid bucket funded, or its budget within the surplus",
+            r.bucket != 0 || (fund != 0 && fund <= t.surplus()),
+            string.concat(vm.toString(r.bucket), " / ", vm.toString(fund), " / ", vm.toString(t.surplus()))
+        );
         _print("phase 3 bid preview");
         _require();
         _start(c, broadcast);
+        if (fund != 0) t.allocate(d.bid, fund);
         t.setSpenderOn(d.bid, true);
         _stop(broadcast);
         _reset();
         _check("bid spender on", t.spenders(d.bid).on, "");
         _check("bid enabled", b.bidEnabled(), "");
+        _info("bid budget", vm.toString(b.bidBudget()));
         _info("bid now (bps of par)", vm.toString(b.bidBpsNow()));
         _print("phase 3 bid readback");
         _require();
@@ -428,7 +442,7 @@ contract Phase3 is Script, LaunchChecks {
         );
         SpenderState memory r2 = t.spenders(d.market);
         _check(
-            "v2 sweep shares: bid 2,500, redeemer 2 7,500, redeemer 1 0",
+            "v2 sweep shares as the params (none at launch)",
             rb.shareBps == p.bidShareBps && r2.shareBps == p.marketShareBps
                 && t.spenders(d.redeemer).shareBps == p.proRataShareBps,
             ""

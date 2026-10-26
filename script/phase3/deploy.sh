@@ -34,6 +34,7 @@ READBACK_ROWS=40
 # from these stops the migrate, since every bucket the readback reports derives from them
 WANT_CUSTODY=570081549034400000000000
 WANT_RESERVE=57037287580000000000000
+WANT_AVAILABLE=513044261454400000000000
 SETTINGS_TUPLE="(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool,uint16,uint16)"
 SPENDER_TUPLE="(bool,bool,uint16,uint64,uint40,uint40,uint128,uint128,uint128,uint128,uint128,uint256,uint256,uint256)"
 RERUN="cd $ROOT && script/phase3/deploy.sh"
@@ -275,9 +276,10 @@ readback() {
   unset LIVE
   rows_ok "$log"
   echo
-  echo "readback: $READBACK_ROWS of $READBACK_ROWS. Rehearsal figures: v2 custody about 570,081 BALANCE, pro-rata bucket"
-  echo "about 57,037, bid bucket about 90,761, redeemer 2 bucket about 272,283, cushion 150,000, floor ask 0.008961 ETH,"
-  echo "V3 quote step 300, floor multiplier 13,750 before the cap send and 12,500 after."
+  echo "readback: $READBACK_ROWS of $READBACK_ROWS. Expected: v2 custody about 570,081 BALANCE, pro-rata bucket about 57,037"
+  echo "(the v1 claim reserve), bid and redeemer 2 buckets 0 until their step (decision 295), the bid bucket 90,000 after"
+  echo "the bid step, cushion 150,000, floor ask 0.008961 ETH, V3 quote step 300, floor multiplier 13,750 before the cap"
+  echo "send and 12,500 after."
 }
 
 # --- 2 migrate. done: the Core's controller is V3 (the last of its 18 sends). not started: v1 is the module with its
@@ -297,7 +299,7 @@ if [ "$(lc "$ctl")" != "$(lc "$CONTROLLER_V3")" ]; then
     echo
     echo "Between setBalanceModule(v2) and v2's switches inside this one migrate run, the Core's BALANCE exchange"
     echo "reads 0. It clears within the same run, a few blocks later, when v2's switches go on."
-    dry "$P3" 18 "1,942,345 gas"
+    dry "$P3" 18 "1,820,919 gas"
     table_ok "$DRY_LOG" 13 "migrate preview"
     yes_or_exit
     send "$P3"
@@ -307,15 +309,16 @@ if [ "$(lc "$ctl")" != "$(lc "$CONTROLLER_V3")" ]; then
   [ "$(lc "$(c call "$CORE" 'controller()(address)')")" = "$(lc "$CONTROLLER_V3")" ] || stop "the Core's controller is not V3 after the migrate send"
   readback ""
   MIGRATED_NOW=1
-  # the exchange paying from v2 is the one production fact the fork cannot prove: v2's available is the cushion
-  # (the sweep took the surplus) and the Core bids BALANCE for the pile head
+  # the exchange paying from v2 is the one production fact the fork cannot prove: v2's available is its working
+  # funds, custody less the claim reserve, since no sweep share is set (decision 295), and the Core bids BALANCE for
+  # the pile head
   avail=$(c call "$TREASURY_V2" 'available()(uint256)' | word)
   head=$(c call "$CORE" 'pilePage(uint256,uint256)(uint256[])' 0 1 | tr -d '[]' | awk -F', ' '{print $1}' | word)
   bal=$(c call "$CORE" 'balanceBidOf(uint256)(uint256)' "$head" | word)
   echo
-  echo "v2 available(): $(cast from-wei "$avail") BALANCE (expected about 150,000, the cushion)"
+  echo "v2 available(): $(cast from-wei "$avail") BALANCE (expected about 513,044, the v1 custody less its claim reserve)"
   echo "Core balanceBidOf(credit $head): $(cast from-wei "$bal") BALANCE (expected nonzero)"
-  near "$avail" 150000000000000000000000 || stop "v2 available() is $avail, not the 150,000 BALANCE cushion"
+  near "$avail" "$WANT_AVAILABLE" || stop "v2 available() is $avail, not the $WANT_AVAILABLE expected"
   [ "$bal" != 0 ] || stop "the Core's balanceBidOf($head) reads 0 after the migrate: the exchange is not paying from v2"
   cat <<EOF
 
@@ -388,8 +391,11 @@ if [ "$(printf '%s' "$sp" | field 2)" != true ]; then
     echo "  $RERUN"
     exit 0
   fi
+  # the bid's budget is allocated in the same run while its bucket is empty: 2 sends, else the switch alone
+  want=1
+  [ "$(printf '%s' "$sp" | field 12)" = 0 ] && want=2
   export STEP=bid
-  dry "$P3" 1 "38,346 gas"
+  dry "$P3" "$want" "133,617 gas with the allocation, 38,346 for the switch alone"
   yes_or_exit
   send "$P3"
   [ "$(c call "$TREASURY_V2" "spenders(address)($SPENDER_TUPLE)" "$CREDIT_BID" | field 2)" = true ] || stop "the bid spender is not on after the send"
