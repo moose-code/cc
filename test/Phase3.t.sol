@@ -338,9 +338,9 @@ contract Phase3Test is LiveFixture {
         assertGt(v3.priceOf(sid), 0, "priceOf a held Statement");
         assertGe(v3.priceOf(sid), sCost * core.settings().saleFloorBps / 10_000, "the Statement ask is at least the Core's floor");
         assertFalse(v3.atFloor(sid), "a fresh Statement is not at its floor");
-        assertEq(v3.markupBps(), 15_000, "markupBps");
+        assertEq(v3.markupBps(), 11_000, "markupBps");
         assertEq(v3.decayHours(), 1, "decayHours");
-        assertEq(v3.startCapBps(), 15_000, "startCapBps");
+        assertEq(v3.startCapBps(), 11_000, "startCapBps");
         assertEq(v3.anchorBps(), 10_000, "anchorBps");
         assertTrue(v3.ageEligibilityOn(), "ageEligibilityOn");
         assertGt(v3.pointRate(), 0, "pointRate");

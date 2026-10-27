@@ -21,7 +21,7 @@ import {LaunchChecks} from "./Checks.sol";
 /// simulates exactly the sends and prints their gas.
 ///
 /// - `deploy`: ProRataRedeemer (fee 0), BalanceTreasuryV2 (v1 as predecessor), ControllerV3 (the live credit sale,
-///   the live quote at step 300, Statement ask 1.5x, Statement redemption delay 1 hour, idle loosening at cap 0),
+///   the live quote at step 300, Statement ask 1.1x, Statement redemption delay 1 hour, idle loosening at cap 0),
 ///   MarketRedeemer (premium 500 bps) and CreditBid (the balance bid, a spender of v2). nothing live changes
 /// - `migrate` (`TREASURY_V2`, `CONTROLLER_V3`, `MARKET_REDEEMER`, `CREDIT_BID`): v1 switches off,
 ///   `setBalanceModule(v2)`, v1 `migrateTo(v2)`, the v2 settings, the bid and redeemer 2 registered as spenders with
@@ -116,7 +116,7 @@ contract Phase3 is Script, LaunchChecks {
         p.proRataShareBps = 0;
         p.proRataPerPeriod = 50_000 ether;
         p.creditSpreadBps = 2_500;
-        p.statementSaleMultiplierBps = 15_000;
+        p.statementSaleMultiplierBps = 11_000;
         p.statementRedeemDelaySeconds = 3_600;
         // the reference step. the deploy preview requires (1 + step)(1 + tol)(1 - margin) < 1 with the Core's live
         // margin and the controller's tol: at the live margin 500 (decision C12, the 95 percent exchange) and tol 100
@@ -406,7 +406,7 @@ contract Phase3 is Script, LaunchChecks {
         (uint256 vs, bool oks) = v3.valuePerPoint(true);
         _check("V3 valuePerPoint answers both sides", okb && oks && vb != 0 && vs >= vb * 10_000 / (10_000 + 700), "");
         _check("Core ethPrice nonzero", c.ethPrice() != 0, vm.toString(c.ethPrice()));
-        _check("V3 Statement sales on, ask 1.5x, delay 1 hour", v3.statementSalesEnabled() && v3.statementSaleMultiplierBps() == p.statementSaleMultiplierBps && v3.statementRedeemDelaySeconds() == p.statementRedeemDelaySeconds, "");
+        _check("V3 Statement sales on, ask 1.1x, delay 1 hour", v3.statementSalesEnabled() && v3.statementSaleMultiplierBps() == p.statementSaleMultiplierBps && v3.statementRedeemDelaySeconds() == p.statementRedeemDelaySeconds, "");
         (, uint16 step,,,,) = v3.quote();
         _eq("V3 quote step", step, p.quoteStepBps);
         _check("V3 idle loosening within its cap", v3.idleLoosenBps() <= p.idle.capBps, vm.toString(v3.idleLoosenBps()));
