@@ -56,6 +56,8 @@ contract Phase3 is Script, LaunchChecks {
     /// the owner's choices: decisions 279 to 288
     struct Params {
         uint256 cushion;
+        /// the share of each Statement conversion earmarked to the pro-rata redeemer's bucket (decision 299: none)
+        uint16 conversionToClaimBps;
         BalanceBid bid;
         uint16 bidShareBps;
         /// the bid's sweep share from the `bid` step on: the only share, so every sweep moves the whole surplus above
@@ -94,6 +96,7 @@ contract Phase3 is Script, LaunchChecks {
 
     function params() public pure returns (Params memory p) {
         p.cushion = 150_000 ether;
+        p.conversionToClaimBps = 0;
         p.bid = BalanceBid({
             // a flat 95 percent of par at launch, the Core's own exchange rate (C12); the owner moves it with setBid
             floorBps: 9_500,
@@ -296,6 +299,7 @@ contract Phase3 is Script, LaunchChecks {
         c.setBalanceModule(d.treasury);
         v1.migrateTo(d.treasury);
         t.setCushion(p.cushion);
+        t.setConversionToClaimBps(p.conversionToClaimBps);
         t.registerSpender(d.bid, p.bidPerCall, p.bidPerPeriod, type(uint128).max);
         t.setSpenderShare(d.bid, p.bidShareBps);
         if (p.proRataShareBps != 0) t.setSpenderShare(d.redeemer, p.proRataShareBps);
@@ -421,6 +425,7 @@ contract Phase3 is Script, LaunchChecks {
         uint256 bucket = t.spenders(d.redeemer).bucket;
         _info("v2 custody / pro-rata bucket / bid bucket", string.concat(vm.toString(t.custody()), " / ", vm.toString(bucket), " / ", vm.toString(ICreditBid(d.bid).bidBudget())));
         _eq("v2 cushion", t.cushion(), p.cushion);
+        _eq("v2 conversion earmark to the pro-rata bucket", t.conversionToClaimBps(), p.conversionToClaimBps);
         _info("bid now (bps of par)", vm.toString(ICreditBid(d.bid).bidBpsNow()));
     }
 

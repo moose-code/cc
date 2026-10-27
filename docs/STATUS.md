@@ -42,6 +42,8 @@ the baton for whoever directs this project next. read it first, then docs/SPEC.m
 
 ## 1. where we are
 
+2026-10-27 The migrate run turns the conversion earmark off (`setConversionToClaimBps(0)`, decision 299): 19 sends, readback 41 rows. Evidence: `test/Phase3.t.sol` 21/21; rehearsal on an anvil fork of block 26,285,451, every receipt status 1: deploy 5 creations 11,327,936 gas; migrate 19 sends 1,868,017 gas, readback 41/41 (earmark 0); ens 42,052 gas; readback 41/41; bid refused before activation, after one day 3 sends 183,675 gas, working and available 150,000; `LIVE=1` readback 41/41.
+
 2026-10-26 The `bid` step now sets the bid's sweep share to 10,000, sweeps and switches on (decision 298; 2 or 3 sends). Evidence: `test/Phase3.t.sol` 21/21; rehearsal on an anvil fork of block 26,278,379, every receipt status 1: deploy 5 creations 11,327,948 gas; migrate 18 sends 1,820,812 gas, readback 40/40, available 513,044.26, bid and redeemer 2 buckets 0; ens 42,052 gas; readback 40/40; bid refused before activation, after one day 3 sends 183,675 gas, bid bucket 363,044.26 at 9,500 bps, working and available 150,000 (the cushion); `LIVE=1` readback 40/40.
 
 2026-10-26 ControllerV3 ships the Statement ask at 15,000 (1.5x, ControllerV2's live value, decision 297) instead of 11,000; `test/Phase3.t.sol` 21/21.

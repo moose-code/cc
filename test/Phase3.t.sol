@@ -110,7 +110,7 @@ contract Phase3Test is LiveFixture {
         core.redeemStatement(sid);
         uint256 got = t.custody() - before;
         assertGe(got, rating * 1e14, "the conversion returned at least par into v2");
-        assertEq(_bucket(d.redeemer) - bucketBefore, got / 10, "10 percent fed the pro-rata bucket");
+        assertEq(_bucket(d.redeemer), bucketBefore, "no conversion earmark: the pro-rata bucket is unchanged (decision 299)");
     }
 
     function test_bidBuysAdoptsAndRefusesTheResaleLoop() public {

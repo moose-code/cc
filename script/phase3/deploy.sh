@@ -28,7 +28,7 @@ VAULT_NODE=0xafdad34bdab44b570b0fafbb86b35b5647eb86dfbd34357f594e910ca745415d
 REC=deployments/1-phase3.json
 P3=script/Phase3.s.sol:Phase3
 LOGS=cache/phase3
-READBACK_ROWS=40
+READBACK_ROWS=41
 # the v1 custody and claim reserve the rehearsal moved (docs/STATUS.md 2026-10-26); a live value further than 1 BALANCE
 # from these stops the migrate, since every bucket the readback reports derives from them
 WANT_CUSTODY=570081549034400000000000
@@ -280,7 +280,7 @@ readback() {
   echo "stays 11,000: step 3 is dropped, decision 296)."
 }
 
-# --- 2 migrate. done: the Core's controller is V3 (the last of its 18 sends). not started: v1 is the module with its
+# --- 2 migrate. done: the Core's controller is V3 (the last of its 19 sends). not started: v1 is the module with its
 # switches on. anything between is a migrate that stopped partway
 WHERE=migrate
 MIGRATED_NOW=0
@@ -297,12 +297,12 @@ if [ "$(lc "$ctl")" != "$(lc "$CONTROLLER_V3")" ]; then
     echo
     echo "Between setBalanceModule(v2) and v2's switches inside this one migrate run, the Core's BALANCE exchange"
     echo "reads 0. It clears within the same run, a few blocks later, when v2's switches go on."
-    dry "$P3" 18 "1,820,812 gas"
+    dry "$P3" 19 "1,868,017 gas"
     table_ok "$DRY_LOG" 13 "migrate preview"
     yes_or_exit
     send "$P3"
   else
-    resume 18 "$V1"
+    resume 19 "$V1"
   fi
   [ "$(lc "$(c call "$CORE" 'controller()(address)')")" = "$(lc "$CONTROLLER_V3")" ] || stop "the Core's controller is not V3 after the migrate send"
   readback ""
