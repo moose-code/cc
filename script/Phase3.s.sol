@@ -21,15 +21,15 @@ import {LaunchChecks} from "./Checks.sol";
 /// simulates exactly the sends and prints their gas.
 ///
 /// - `deploy`: ProRataRedeemer (fee 0), BalanceTreasuryV2 (v1 as predecessor), ControllerV3 (the live credit sale,
-///   the live quote at step 900, Statement ask 1.1x, Statement redemption delay 1 hour, idle loosening at cap 0),
+///   the live quote at step 300, Statement ask 1.1x, Statement redemption delay 1 hour, idle loosening at cap 0),
 ///   MarketRedeemer (premium 500 bps) and CreditBid (the balance bid, a spender of v2). nothing live changes
 /// - `migrate` (`TREASURY_V2`, `CONTROLLER_V3`, `MARKET_REDEEMER`, `CREDIT_BID`): v1 switches off,
 ///   `setBalanceModule(v2)`, v1 `migrateTo(v2)`, the v2 settings, the bid and redeemer 2 registered as spenders with
 ///   their caps and sweep shares, the bid band, v2 conversion and working payments on (every spender off), `sweep`,
 ///   the V3 pool key, CC reference, Statement sales and market floor, `setController(V3)`. the v1 `migrateTo` requires
 ///   its successor to be the selected module, so the module changes before the funds move
-/// - `bid`: the bid spender on. run at least the Core's `returnLockSeconds` after `setController(V3)`: credits
-///   ControllerV2 sold before the switch carry no V3 sale record
+/// - `bid`: the bid's sweep share, a sweep into its bucket, then the bid spender on. run at least the Core's
+///   `returnLockSeconds` after `setController(V3)`: credits ControllerV2 sold before the switch carry no V3 sale record
 /// - `ens`: `vault.creditcycle.eth` to v2 on its public resolver, from the name's owner (the Core owner). any time
 ///   after `migrate`
 /// - `readback`: the checks alone, right after `migrate`; `LIVE=1` for the running system after `bid` (the bid on,
@@ -56,8 +56,13 @@ contract Phase3 is Script, LaunchChecks {
     /// the owner's choices: decisions 279 to 288
     struct Params {
         uint256 cushion;
+        /// the share of each Statement conversion earmarked to the pro-rata redeemer's bucket (decision 299: none)
+        uint16 conversionToClaimBps;
         BalanceBid bid;
         uint16 bidShareBps;
+        /// the bid's sweep share from the `bid` step on: the only share, so every sweep moves the whole surplus above
+        /// the cushion into the bid's bucket (decision 298)
+        uint16 bidShareOnBps;
         uint128 bidPerCall;
         uint128 bidPerPeriod;
         uint16 proRataShareBps;
@@ -91,15 +96,21 @@ contract Phase3 is Script, LaunchChecks {
 
     function params() public pure returns (Params memory p) {
         p.cushion = 150_000 ether;
+        p.conversionToClaimBps = 0;
         p.bid = BalanceBid({
-            floorBps: 8_000,
-            capBps: 10_000,
+            // a flat 95 percent of par at launch, the Core's own exchange rate (C12); the owner moves it with setBid
+            floorBps: 9_500,
+            capBps: 9_500,
             climbBps: 50,
             stepSeconds: 600,
             dropPer100PointsBps: 29,
             overEthBps: 500
         });
-        p.bidShareBps = 2_500;
+        // no sweep shares at migrate (decision 295): the surplus stays working funds until a spender is switched on.
+        // the `bid` step sets the bid's share (decision 298); shares are proportions of their sum, so the bid alone
+        // takes the whole surplus above the cushion at every sweep, and the Core's exchange keeps the cushion
+        p.bidShareBps = 0;
+        p.bidShareOnBps = 10_000;
         p.bidPerCall = 20_000 ether;
         p.bidPerPeriod = 60_000 ether;
         p.proRataShareBps = 0;
@@ -116,7 +127,7 @@ contract Phase3 is Script, LaunchChecks {
         p.marketPerCall = 5_000 ether;
         p.marketPerPeriod = 20_000 ether;
         p.marketLifetime = type(uint128).max;
-        p.marketShareBps = 7_500;
+        p.marketShareBps = 0;
         p.ccQuote = CcQuote({
             rateBpsPerHour: 6_000,
             stepBps: 900,
@@ -288,6 +299,7 @@ contract Phase3 is Script, LaunchChecks {
         c.setBalanceModule(d.treasury);
         v1.migrateTo(d.treasury);
         t.setCushion(p.cushion);
+        t.setConversionToClaimBps(p.conversionToClaimBps);
         t.registerSpender(d.bid, p.bidPerCall, p.bidPerPeriod, type(uint128).max);
         t.setSpenderShare(d.bid, p.bidShareBps);
         if (p.proRataShareBps != 0) t.setSpenderShare(d.redeemer, p.proRataShareBps);
@@ -324,13 +336,15 @@ contract Phase3 is Script, LaunchChecks {
         _require();
     }
 
-    /// @notice the send of `bid`: the bid spender on, once v2 is the module, the bid is its registered spender past
-    /// its activation, and the band is set; then the switch read back
+    /// @notice the sends of `bid`: the bid's sweep share (unless already set), a sweep that moves the surplus above the
+    /// cushion into its bucket, then the bid spender on, once v2 is the module, the bid is its registered spender past
+    /// its activation, and the band is set; then the switch read back. a run stopped partway skips the share it set
     function enableBid(address core, Deployed memory d, bool broadcast) public {
         ICore c = ICore(payable(core));
         IBalanceTreasuryV2 t = IBalanceTreasuryV2(d.treasury);
         ICreditBid b = ICreditBid(d.bid);
         SpenderState memory r = t.spenders(d.bid);
+        uint16 share = params().bidShareOnBps;
         _reset();
         _eq("preview: v2 is the Core's module", c.balanceModule(), d.treasury);
         _eq("preview: Core controller is V3", c.controller(), d.controller);
@@ -340,15 +354,23 @@ contract Phase3 is Script, LaunchChecks {
         (uint16 floorBps, uint16 capBps,,,,) = b.bid();
         _check("preview: band set", floorBps != 0 && capBps != 0, "");
         _check("preview: bid cap under the credit floor multiplier", capBps < IControllerV3(d.controller).floorMultBps(), vm.toString(capBps));
-        _check("preview: bid bucket funded", r.bucket != 0, vm.toString(r.bucket));
+        _check(
+            "preview: bid bucket funded, or a surplus to sweep into it",
+            r.bucket != 0 || t.surplus() != 0,
+            string.concat(vm.toString(r.bucket), " / ", vm.toString(t.surplus()))
+        );
         _print("phase 3 bid preview");
         _require();
         _start(c, broadcast);
+        if (r.shareBps != share) t.setSpenderShare(d.bid, share);
+        t.sweep();
         t.setSpenderOn(d.bid, true);
         _stop(broadcast);
         _reset();
         _check("bid spender on", t.spenders(d.bid).on, "");
         _check("bid enabled", b.bidEnabled(), "");
+        _eq("bid sweep share", t.spenders(d.bid).shareBps, share);
+        _info("bid budget", vm.toString(b.bidBudget()));
         _info("bid now (bps of par)", vm.toString(b.bidBpsNow()));
         _print("phase 3 bid readback");
         _require();
@@ -403,6 +425,7 @@ contract Phase3 is Script, LaunchChecks {
         uint256 bucket = t.spenders(d.redeemer).bucket;
         _info("v2 custody / pro-rata bucket / bid bucket", string.concat(vm.toString(t.custody()), " / ", vm.toString(bucket), " / ", vm.toString(ICreditBid(d.bid).bidBudget())));
         _eq("v2 cushion", t.cushion(), p.cushion);
+        _eq("v2 conversion earmark to the pro-rata bucket", t.conversionToClaimBps(), p.conversionToClaimBps);
         _info("bid now (bps of par)", vm.toString(ICreditBid(d.bid).bidBpsNow()));
     }
 
@@ -419,7 +442,7 @@ contract Phase3 is Script, LaunchChecks {
     /// @dev the bid band and spender, the sweep shares, redeemer 2 and the CC reference
     function _readbackRedeemers(IBalanceTreasuryV2 t, IControllerV3 v3, Deployed memory d, Params memory p, bool live) private {
         (uint16 floorBps, uint16 capBps,,,,) = ICreditBid(d.bid).bid();
-        _check("bid 8,000 to 10,000 bps of par", floorBps == p.bid.floorBps && capBps == p.bid.capBps, "");
+        _check("bid band as the params (9,500 flat at launch)", floorBps == p.bid.floorBps && capBps == p.bid.capBps, "");
         SpenderState memory rb = t.spenders(d.bid);
         _check(
             "bid registered as a spender, caps",
@@ -428,8 +451,8 @@ contract Phase3 is Script, LaunchChecks {
         );
         SpenderState memory r2 = t.spenders(d.market);
         _check(
-            "v2 sweep shares: bid 2,500, redeemer 2 7,500, redeemer 1 0",
-            rb.shareBps == p.bidShareBps && r2.shareBps == p.marketShareBps
+            "v2 sweep shares as the params (none at migrate, the bid 10,000 once on)",
+            rb.shareBps == (live ? p.bidShareOnBps : p.bidShareBps) && r2.shareBps == p.marketShareBps
                 && t.spenders(d.redeemer).shareBps == p.proRataShareBps,
             ""
         );

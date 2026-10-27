@@ -78,13 +78,10 @@ contract Phase3Test is LiveFixture {
         user = _user("phase3 user");
     }
 
-    /// the owner's migrate run, then the Core settings send `SET_balanceBidCapBps=10000` of the command sequence
+    /// the owner's migrate run; the Core's cap stays as it is (the cap send was dropped, decision 296)
     function _migrate() internal {
         script.migrate(address(core), d, script.params(), false);
         ctl = IControllerV1(address(v3));
-        Settings memory cfg = core.settings();
-        cfg.balanceBidCapBps = 10_000;
-        _setSettings(cfg);
     }
 
     function test_migrationMovesEverythingAndTheCoreRunsAgainstV2() public {
@@ -113,7 +110,7 @@ contract Phase3Test is LiveFixture {
         core.redeemStatement(sid);
         uint256 got = t.custody() - before;
         assertGe(got, rating * 1e14, "the conversion returned at least par into v2");
-        assertEq(_bucket(d.redeemer) - bucketBefore, got / 10, "10 percent fed the pro-rata bucket");
+        assertEq(_bucket(d.redeemer), bucketBefore, "no conversion earmark: the pro-rata bucket is unchanged (decision 299)");
     }
 
     function test_bidBuysAdoptsAndRefusesTheResaleLoop() public {
@@ -122,7 +119,9 @@ contract Phase3Test is LiveFixture {
         // the bid is a newly registered spender: it draws nothing for a day, which also covers the return lock
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
-        assertGt(bidm.bidBudget(), 0, "the sweep funded the bid");
+        assertEq(t.surplus(), 0, "the bid step swept the whole surplus");
+        assertGt(bidm.bidBudget(), 0, "into the bid's bucket");
+        assertEq(t.working(), t.cushion(), "the Core's exchange keeps the cushion");
 
         uint256[] memory ids = _credits(seller, 1);
         vm.prank(seller);
@@ -159,20 +158,25 @@ contract Phase3Test is LiveFixture {
         bidm.sellCredit(_one(id), 0);
     }
 
-    function test_bidNeverPaysAbovePar() public {
-        // promise: the v2 bid is bounded at par, refuses a cap above par, and stays under the controller's credit floor multiplier
+    function test_bidCanPayAboveParUnderTheFloorMultiplier() public {
+        // promise: the owner may set the v2 bid's cap above par (decision 296) and a fill then pays above par, while a cap at or above the controller's credit floor multiplier is refused
         _migrate();
         vm.warp(block.timestamp + 1 days);
         script.enableBid(address(core), d, false);
-        assertEq(bidm.bidBpsNow(), 10_000, "the bid climbed to its cap, par");
+        assertEq(bidm.bidBpsNow(), 9_500, "the shipped band is a flat 95 percent of par");
+        BalanceBid memory b = script.params().bid;
+        b.floorBps = 11_000;
+        b.capBps = 11_000;
+        b.overEthBps = 5_000;
+        vm.prank(owner);
+        bidm.setBid(b);
+        assertEq(bidm.bidBpsNow(), 11_000, "the owner set the bid above par");
         assertLt(bidm.bidBpsNow(), v3.floorMultBps(), "under the resale floor multiplier");
         uint256 id = _credits(seller, 1)[0];
         (uint256 q,) = bidm.quoteCredit(id);
-        assertGt(q, 0, "the bid quotes");
-        assertLe(q, _scoreOf(id) * 1e14, "never above par");
-        BalanceBid memory b = script.params().bid;
-        b.capBps = 10_001;
-        vm.expectRevert(abi.encodeWithSignature("BadSetting(bytes32)", bytes32("bidBand")));
+        assertEq(q, _scoreOf(id) * 1e14 * 11_000 / 10_000, "a fill pays 110 percent of par");
+        b.capBps = uint16(v3.floorMultBps());
+        vm.expectRevert(abi.encodeWithSignature("BadSetting(bytes32)", bytes32("bidCap")));
         vm.prank(owner);
         bidm.setBid(b);
     }
@@ -206,7 +210,6 @@ contract Phase3Test is LiveFixture {
         FixedRedeemer r = new FixedRedeemer();
         vm.startPrank(owner);
         t.registerSpender(address(r), 1_000 ether, 1_500 ether, 2_000 ether);
-        t.unallocate(d.bid, 2_500 ether); // the sweep shared the whole surplus; the bid's bucket (off) gives some back
         t.allocate(address(r), 2_500 ether);
         t.setSpenderOn(address(r), true);
         vm.stopPrank();
@@ -354,7 +357,6 @@ contract Phase3Test is LiveFixture {
         m.pull(address(t), user, 1 ether, false);
         vm.startPrank(owner);
         t.registerSpender(address(m), 1_000 ether, 1_500 ether, type(uint128).max);
-        t.unallocate(d.bid, 2_000 ether);
         t.allocate(address(m), 2_000 ether);
         vm.stopPrank();
         vm.expectRevert(abi.encodeWithSignature("SpenderOff()"));
@@ -438,12 +440,12 @@ contract Phase3Test is LiveFixture {
             _deployArtifact("BalanceTreasuryV2", abi.encode(address(core), t.balanceToken(), d.redeemer, uint128(50_000 ether), address(t)))
         );
         vm.startPrank(owner);
+        t.allocate(d.market, 1_000 ether);
         t.setSwitches(false, false);
         core.setBalanceModule(address(v3t));
         vm.expectRevert(abi.encodeWithSignature("InsufficientBucket()"));
         t.migrateTo(address(v3t)); // the market bucket is still funded
         t.unallocate(d.market, _bucket(d.market));
-        t.unallocate(d.bid, _bucket(d.bid));
         t.setSpenderOn(d.redeemer, true);
         vm.expectRevert(abi.encodeWithSignature("SwitchesOn()"));
         t.migrateTo(address(v3t));
@@ -481,16 +483,15 @@ contract Phase3Test is LiveFixture {
     }
 
     function test_sweepSplitsTheWholeSurplusOnceByProportion() public {
-        // promise: a sweep moves the whole surplus into the buckets in proportion to the shares, so a second sweep finds nothing, and a partial share total does not drain working funds over repeated calls
+        // promise: with no share set (the launch, decision 295) the migrate run's sweep leaves the surplus as working funds and every spender bucket empty; once shares are set a sweep moves the whole surplus into the buckets in proportion to the shares, so a second sweep finds nothing, and a partial share total does not drain working funds over repeated calls
         _migrate();
-        assertEq(t.surplus(), 0, "the migrate run's sweep took the whole surplus");
-        assertEq(t.sweep(), 0, "nothing left to sweep");
-        vm.startPrank(owner);
-        t.setSpenderShare(d.market, 0);
-        t.unallocate(d.market, _bucket(d.market));
-        vm.stopPrank();
         uint256 s = t.surplus();
-        assertGt(s, 0, "the returned bucket is surplus again");
+        assertGt(s, 0, "the surplus stays working funds");
+        assertEq(_bucket(d.bid) + _bucket(d.market), 0, "no spender bucket funded at launch");
+        assertEq(t.available(), t.working(), "the Core's exchange can pay all of it");
+        assertEq(t.sweep(), 0, "no share set: the sweep moves nothing");
+        vm.prank(owner);
+        t.setSpenderShare(d.bid, 2_500);
         uint256 bidBucket = _bucket(d.bid);
         assertEq(t.sweep(), s, "a 25 percent share alone takes the whole surplus");
         assertEq(_bucket(d.bid) - bidBucket, s, "all of it to the one shared bucket");
@@ -846,7 +847,9 @@ contract Phase3Test is LiveFixture {
     function _marketOn() internal returns (IMarketRedeemer m) {
         _migrate();
         m = IMarketRedeemer(d.market);
-        assertGt(_bucket(d.market), 0, "the sweep funded redeemer 2");
+        assertEq(_bucket(d.market), 0, "launched unfunded");
+        vm.prank(owner);
+        t.allocate(d.market, 50_000 ether);
         vm.warp(block.timestamp + 1 days);
         vm.roll(block.number + 1);
         assertTrue(v3.refreshCcReference(), "the CC reference refreshed");

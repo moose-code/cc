@@ -3,7 +3,7 @@
 #
 #   cd /Users/dd/CascadeProjects/cc/cc && script/phase3/deploy.sh
 #
-# order: 1 deploy, 2 migrate and its readback, 3 the Core's balanceBidCapBps to 10,000, 5 ens, 6 readback, then 4 bid
+# order: 1 deploy, 2 migrate and its readback, 5 ens, 6 readback, then 4 bid
 # once its spender activation has passed, then the live readback. every sending step is the repository's own script:
 # a dry run first (no keystore, --sender the owner, no --broadcast) that must exit 0 with no FAIL row and the expected
 # transaction count, then the same step with --broadcast --slow --account ripe0x after the owner types yes.
@@ -27,14 +27,13 @@ ENS_REGISTRY=0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e
 VAULT_NODE=0xafdad34bdab44b570b0fafbb86b35b5647eb86dfbd34357f594e910ca745415d
 REC=deployments/1-phase3.json
 P3=script/Phase3.s.sol:Phase3
-SS=script/SetSettings.s.sol:SetSettings
 LOGS=cache/phase3
-READBACK_ROWS=40
+READBACK_ROWS=41
 # the v1 custody and claim reserve the rehearsal moved (docs/STATUS.md 2026-10-26); a live value further than 1 BALANCE
 # from these stops the migrate, since every bucket the readback reports derives from them
 WANT_CUSTODY=570081549034400000000000
 WANT_RESERVE=57037287580000000000000
-SETTINGS_TUPLE="(uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint16,uint32,uint16,bool,bool,uint16,uint16,uint16,uint128,uint64,uint48,uint64,uint64,uint48,uint16,uint24,uint32,uint96,uint16,uint16,uint16,uint16,uint32,uint32,uint32,uint32,uint64,uint32,bool,uint16,uint16)"
+WANT_AVAILABLE=513044261454400000000000
 SPENDER_TUPLE="(bool,bool,uint16,uint64,uint40,uint40,uint128,uint128,uint128,uint128,uint128,uint256,uint256,uint256)"
 RERUN="cd $ROOT && script/phase3/deploy.sh"
 WHERE=checks
@@ -241,7 +240,7 @@ if [ ! -f "$REC" ]; then
   echo "== deploy: out/ against the pinned build hashes"
   MAINNET_RPC_URL=$RPC forge test --match-path test/BuildIdentity.t.sol || stop "test/BuildIdentity.t.sol failed: out/ is not the pinned build"
   export STEP=deploy
-  dry "$P3" 5 "11,334,137 gas"
+  dry "$P3" 5 "11,327,948 gas"
   table_ok "$DRY_LOG" 4 "deploy preview"
   grep -qF 'ok    preview: band (1+step)(1+tol)(1-margin) < 1  |  300' "$DRY_LOG" \
     || stop "the deploy preview's band row does not read the reference step 300"
@@ -275,12 +274,13 @@ readback() {
   unset LIVE
   rows_ok "$log"
   echo
-  echo "readback: $READBACK_ROWS of $READBACK_ROWS. Rehearsal figures: v2 custody about 570,081 BALANCE, pro-rata bucket"
-  echo "about 57,037, bid bucket about 90,761, redeemer 2 bucket about 272,283, cushion 150,000, floor ask 0.008961 ETH,"
-  echo "V3 quote step 300, floor multiplier 13,750 before the cap send and 12,500 after."
+  echo "readback: $READBACK_ROWS of $READBACK_ROWS. Expected: v2 custody about 570,081 BALANCE, pro-rata bucket about 57,037"
+  echo "(the v1 claim reserve), bid and redeemer 2 buckets 0 until their step (decision 295), the bid bucket the whole"
+  echo "surplus above the cushion after the bid step (decision 298), cushion 150,000, floor ask 0.008961 ETH, V3 quote step 300, floor multiplier 13,750 (the Core's cap"
+  echo "stays 11,000: step 3 is dropped, decision 296)."
 }
 
-# --- 2 migrate. done: the Core's controller is V3 (the last of its 18 sends). not started: v1 is the module with its
+# --- 2 migrate. done: the Core's controller is V3 (the last of its 19 sends). not started: v1 is the module with its
 # switches on. anything between is a migrate that stopped partway
 WHERE=migrate
 MIGRATED_NOW=0
@@ -297,25 +297,26 @@ if [ "$(lc "$ctl")" != "$(lc "$CONTROLLER_V3")" ]; then
     echo
     echo "Between setBalanceModule(v2) and v2's switches inside this one migrate run, the Core's BALANCE exchange"
     echo "reads 0. It clears within the same run, a few blocks later, when v2's switches go on."
-    dry "$P3" 18 "1,942,345 gas"
+    dry "$P3" 19 "1,868,017 gas"
     table_ok "$DRY_LOG" 13 "migrate preview"
     yes_or_exit
     send "$P3"
   else
-    resume 18 "$V1"
+    resume 19 "$V1"
   fi
   [ "$(lc "$(c call "$CORE" 'controller()(address)')")" = "$(lc "$CONTROLLER_V3")" ] || stop "the Core's controller is not V3 after the migrate send"
   readback ""
   MIGRATED_NOW=1
-  # the exchange paying from v2 is the one production fact the fork cannot prove: v2's available is the cushion
-  # (the sweep took the surplus) and the Core bids BALANCE for the pile head
+  # the exchange paying from v2 is the one production fact the fork cannot prove: v2's available is its working
+  # funds, custody less the claim reserve, since no sweep share is set (decision 295), and the Core bids BALANCE for
+  # the pile head
   avail=$(c call "$TREASURY_V2" 'available()(uint256)' | word)
   head=$(c call "$CORE" 'pilePage(uint256,uint256)(uint256[])' 0 1 | tr -d '[]' | awk -F', ' '{print $1}' | word)
   bal=$(c call "$CORE" 'balanceBidOf(uint256)(uint256)' "$head" | word)
   echo
-  echo "v2 available(): $(cast from-wei "$avail") BALANCE (expected about 150,000, the cushion)"
+  echo "v2 available(): $(cast from-wei "$avail") BALANCE (expected about 513,044, the v1 custody less its claim reserve)"
   echo "Core balanceBidOf(credit $head): $(cast from-wei "$bal") BALANCE (expected nonzero)"
-  near "$avail" 150000000000000000000000 || stop "v2 available() is $avail, not the 150,000 BALANCE cushion"
+  near "$avail" "$WANT_AVAILABLE" || stop "v2 available() is $avail, not the $WANT_AVAILABLE expected"
   [ "$bal" != 0 ] || stop "the Core's balanceBidOf($head) reads 0 after the migrate: the exchange is not paying from v2"
   cat <<EOF
 
@@ -338,24 +339,6 @@ EOF
 else
   echo "migrate: done (the Core's controller is V3)"
 fi
-
-# --- 3 the Core's balanceBidCapBps to 10,000
-WHERE=cap
-cap=$(c call "$CORE" "settings()($SETTINGS_TUPLE)" | field 32)
-if [ "$cap" != 10000 ]; then
-  export SEND=1 SET_balanceBidCapBps=10000
-  dry "$SS" 1 "219,347 gas"
-  changed=$(grep -E '^[[:space:]]*\* ' "$DRY_LOG" | sed 's/^ *//')
-  [ "$(printf '%s\n' "$changed" | wc -l | tr -d ' ')" = 1 ] && [[ "$changed" == "* balanceBidCapBps | $cap | 10000 | "* ]] \
-    || stop "the settings send must change balanceBidCapBps alone, from $cap to 10000; it changes:
-$changed"
-  echo "$changed"
-  yes_or_exit
-  send "$SS"
-  unset SEND SET_balanceBidCapBps
-  [ "$(c call "$CORE" "settings()($SETTINGS_TUPLE)" | field 32)" = 10000 ] || stop "balanceBidCapBps does not read 10000 after the send"
-fi
-echo "cap: balanceBidCapBps reads 10000"
 
 # --- 5 ens
 WHERE=ens
@@ -388,8 +371,11 @@ if [ "$(printf '%s' "$sp" | field 2)" != true ]; then
     echo "  $RERUN"
     exit 0
   fi
+  # the bid's share (unless a stopped run already set it), the sweep into its bucket, then the switch
+  want=2
+  [ "$(printf '%s' "$sp" | field 3)" != 10000 ] && want=3
   export STEP=bid
-  dry "$P3" 1 "38,346 gas"
+  dry "$P3" "$want" "183,675 gas"
   yes_or_exit
   send "$P3"
   [ "$(c call "$TREASURY_V2" "spenders(address)($SPENDER_TUPLE)" "$CREDIT_BID" | field 2)" = true ] || stop "the bid spender is not on after the send"
