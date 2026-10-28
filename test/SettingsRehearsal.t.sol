@@ -21,8 +21,9 @@ contract SettingsRehearsalTest is LiveFixture {
         ctl2 = IControllerV2(CONTROLLER_V2);
         user = _user("rehearsal user");
         t = IPhase2BalanceTreasury(TREASURY_V1);
-        require(address(core.controller()) == CONTROLLER_V2, "fork is not at the live V2 stage");
-        require(core.balanceModule() == TREASURY_V1, "fork is not at the live v1 treasury");
+        // the session is rehearsed against the live stage C state (ControllerV2 and the v1 treasury bound): run with
+        // LIVE_FORK_BLOCK at a current block; the default pin predates that stage and the suite skips there
+        if (core.controller() != CONTROLLER_V2 || core.balanceModule() != TREASURY_V1) vm.skip(true);
     }
 
     /// the owner session: SetSettings fields on the Core and V2, the cost share, then the claim steps
